@@ -54,7 +54,14 @@ export function RecordPaymentDialog({
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [provider, setProvider] = useState<PaymentProvider | null>(null);
   const [fee, setFee] = useState(0);
-  const [cheque, setCheque] = useState<ChequeDetails | null>(null);
+  const [chequeInput, setCheque] = useState<ChequeDetails | null>(null);
+  const [drawerEdited, setDrawerEdited] = useState(false);
+  // The drawer defaults to the contact, which may still be loading when the
+  // method changes to cheque.
+  const cheque =
+    chequeInput && !chequeInput.drawer && !drawerEdited && vendorOrClient
+      ? { ...chequeInput, drawer: vendorOrClient.name }
+      : chequeInput;
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -235,7 +242,10 @@ export function RecordPaymentDialog({
           {isCheque && cheque ? (
             <ChequeFields
               cheque={cheque}
-              onChange={(patch) => setCheque({ ...cheque, ...patch })}
+              onChange={(patch) => {
+                if ('drawer' in patch) setDrawerEdited(true);
+                setCheque({ ...cheque, ...patch });
+              }}
               direction={direction}
               paymentDate={date}
             />
