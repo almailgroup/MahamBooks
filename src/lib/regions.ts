@@ -48,7 +48,8 @@ export const REGION_DEFAULTS: Record<string, RegionDefaults> = {
   BH: base('BHD', 'en-US', 'VAT No.', { name: 'VAT', rate: 10 }),
   OM: base('OMR', 'en-US', 'VATIN', { name: 'VAT', rate: 5 }),
   QA: base('QAR', 'en-US', 'Tax ID', null),
-  KW: base('KWD', 'en-KW', 'Tax card no.', null),
+  // MOCI requires Arabic on invoices; English is printed next to it.
+  KW: base('KWD', 'en-KW', 'Tax card no.', null, { language: 'ar-en' }),
   EG: base('EGP', 'en-US', 'Tax Reg. No.', { name: 'VAT', rate: 14 }),
   JO: base('JOD', 'en-US', 'Tax No.', { name: 'GST', rate: 16 }),
   MA: base('MAD', 'fr-FR', 'ICE', { name: 'TVA', rate: 20 }, { language: 'fr' }),

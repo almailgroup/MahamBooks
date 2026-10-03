@@ -1,20 +1,24 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   PageFooter,
   Party,
   PaymentInfo,
   RunningHeader,
+  SignatureBlock,
   Stamp,
   TNUM,
   TotalsTable,
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -39,7 +43,9 @@ function Classic({ model, theme }: TemplateProps) {
   };
   const box: Style = { borderWidth: 0.75, borderColor: BORDER };
   const metaRows = [
-    ...(model.number ? [{ label: model.numberLabel, value: model.number }] : []),
+    ...(model.number
+      ? [{ label: model.numberLabel, secondary: model.numberLabelSecondary, value: model.number }]
+      : []),
     ...model.meta,
   ];
 
@@ -58,6 +64,18 @@ function Classic({ model, theme }: TemplateProps) {
           >
             {c.name}
           </Text>
+          {c.nameSecondary ? (
+            <Text
+              style={{
+                fontSize: c.logo ? 8.5 : 10,
+                fontWeight: 600,
+                color: theme.ink,
+                marginTop: 1,
+              }}
+            >
+              {c.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={[...c.addressLines, ...companyContactLines(model), companyIdLine(model)]}
             style={{ fontSize: 8, color: theme.body, lineHeight: 1.45, marginTop: 2 }}
@@ -71,11 +89,25 @@ function Classic({ model, theme }: TemplateProps) {
               color: theme.accentInk,
               textTransform: 'uppercase',
               letterSpacing: 2,
-              marginBottom: 8,
+              marginBottom: model.titleSecondary ? 1 : 8,
             }}
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                color: theme.accentInk,
+                textTransform: 'uppercase',
+                letterSpacing: 2,
+                marginBottom: 8,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           <View style={sx(box, { width: '100%' })}>
             {metaRows.map((m, i) => (
               <View
@@ -86,7 +118,9 @@ function Classic({ model, theme }: TemplateProps) {
                   borderTopColor: BORDER,
                 }}
               >
-                <Text
+                <Label
+                  text={m.label}
+                  secondary={m.secondary}
                   style={{
                     width: 92,
                     fontSize: 8,
@@ -98,9 +132,9 @@ function Classic({ model, theme }: TemplateProps) {
                     borderRightWidth: 0.75,
                     borderRightColor: BORDER,
                   }}
-                >
-                  {m.label}
-                </Text>
+                  secondaryStyle={{ fontWeight: 400 }}
+                  stack
+                />
                 <Text
                   style={sx(
                     {
@@ -124,10 +158,15 @@ function Classic({ model, theme }: TemplateProps) {
 
       <View style={{ flexDirection: 'row', marginBottom: 18 }}>
         <View style={sx(box, { flex: 1, marginRight: model.shipTo ? 10 : 0 })}>
-          <Text style={stripLabel}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={stripLabel}
+          />
           <Party
             style={{ padding: 8 }}
             name={model.client.name}
+            nameSecondary={model.client.nameSecondary}
             lines={clientLines(model)}
             nameStyle={{ fontSize: 9.5, color: theme.ink }}
             linesStyle={{ fontSize: 8, color: theme.body, lineHeight: 1.45 }}
@@ -135,7 +174,7 @@ function Classic({ model, theme }: TemplateProps) {
         </View>
         {model.shipTo ? (
           <View style={sx(box, { flex: 1 })}>
-            <Text style={stripLabel}>{model.labels.shipTo}</Text>
+            <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={stripLabel} />
             <Party
               style={{ padding: 8 }}
               name={model.shipTo.name}
@@ -156,19 +195,29 @@ function Classic({ model, theme }: TemplateProps) {
               padding: 10,
             }}
           >
-            <Text
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
               style={{
                 fontSize: 7.5,
                 fontWeight: 700,
                 color: theme.muted,
                 textTransform: 'uppercase',
                 letterSpacing: 0.6,
+                textAlign: 'center',
               }}
-            >
-              {model.amountDue.label}
-            </Text>
+              stack
+            />
             <Text
-              style={sx({ fontSize: 18, fontWeight: 700, color: theme.ink, marginTop: 4 }, TNUM)}
+              style={sx(
+                {
+                  fontSize: fitSize(model.amountDue.value, 18, 17),
+                  fontWeight: 700,
+                  color: theme.ink,
+                  marginTop: 4,
+                },
+                TNUM,
+              )}
             >
               {model.amountDue.value}
             </Text>
@@ -207,7 +256,11 @@ function Classic({ model, theme }: TemplateProps) {
         <View style={{ flex: 1, paddingRight: 16 }}>
           {model.payment ? (
             <View style={sx(box)}>
-              <Text style={stripLabel}>{model.labels.paymentDetails}</Text>
+              <Label
+                text={model.labels.paymentDetails}
+                secondary={en(model, 'paymentDetails')}
+                style={stripLabel}
+              />
               <View style={{ padding: 8 }}>
                 <PaymentInfo model={model} theme={theme} showTitle={false} />
               </View>
@@ -247,7 +300,7 @@ function Classic({ model, theme }: TemplateProps) {
         >
           {model.notes ? (
             <View style={sx(box, { flex: 1, marginRight: model.terms ? 10 : 0 })}>
-              <Text style={stripLabel}>{model.labels.notes}</Text>
+              <Label text={model.labels.notes} secondary={en(model, 'notes')} style={stripLabel} />
               <Text style={{ fontSize: 8.5, color: theme.body, lineHeight: 1.5, padding: 8 }}>
                 {model.notes}
               </Text>
@@ -255,7 +308,7 @@ function Classic({ model, theme }: TemplateProps) {
           ) : null}
           {model.terms ? (
             <View style={sx(box, { flex: 1 })}>
-              <Text style={stripLabel}>{model.labels.terms}</Text>
+              <Label text={model.labels.terms} secondary={en(model, 'terms')} style={stripLabel} />
               <Text style={{ fontSize: 8, color: theme.muted, lineHeight: 1.5, padding: 8 }}>
                 {model.terms}
               </Text>
@@ -263,6 +316,19 @@ function Classic({ model, theme }: TemplateProps) {
           ) : null}
         </View>
       ) : null}
+
+      <SignatureBlock
+        model={model}
+        theme={theme}
+        lineColor={BORDER}
+        labelStyle={{
+          fontSize: 7.5,
+          fontWeight: 700,
+          color: theme.ink,
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+        }}
+      />
 
       <View
         fixed

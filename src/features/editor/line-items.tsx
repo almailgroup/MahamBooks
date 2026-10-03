@@ -5,16 +5,26 @@ import {
   Copy,
   GripVertical,
   Heading,
+  ListPlus,
   MoreHorizontal,
   Plus,
   Trash2,
 } from 'lucide-react';
-import type { LineItem, Product, TaxLine, TaxRate } from '@/db/types';
+import type {
+  DocumentLanguage,
+  ItemCondition,
+  LineItem,
+  Product,
+  TaxLine,
+  TaxRate,
+} from '@/db/types';
+import { isRtlLanguage } from '@/pdf/labels';
+import { t } from '@/i18n';
 import { taxLineOf, type CalcLineResult } from '@/lib/calc';
 import { cn } from '@/lib/cn';
 import { newHeading, newLineItem } from '@/db/documents';
 import { Button } from '@/components/ui/button';
-import { Input, NumberInput, Textarea } from '@/components/ui/form';
+import { Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import {
   DropdownContent,
   DropdownItem,
@@ -76,6 +86,7 @@ export function LineItemsEditor({
   currencySymbol,
   formatMoney,
   formatPrice,
+  language,
 }: {
   items: LineItem[];
   onChange: (items: LineItem[]) => void;
@@ -87,7 +98,14 @@ export function LineItemsEditor({
   currencySymbol: string;
   formatMoney: (amount: number) => string;
   formatPrice: (amount: number) => string;
+  /** Language the document prints in; Arabic names are asked for unless it is not Arabic. */
+  language?: DocumentLanguage;
 }) {
+  const showArabic =
+    language === undefined || isRtlLanguage(language) || items.some((i) => i.nameAr?.trim());
+  /** Lines selling goods can carry their condition and serial number. */
+  const hasGoodsDetails = (item: LineItem) =>
+    item.condition !== undefined || item.serialNumber !== undefined;
   const update = (index: number, patch: Partial<LineItem>) =>
     onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   const remove = (index: number) => onChange(items.filter((_, i) => i !== index));
@@ -117,7 +135,12 @@ export function LineItemsEditor({
     update(index, {
       productId: product.id,
       name: product.name,
-      description: product.description,
+      nameAr: product.nameAr ?? '',
+      // Arabic documents use the Arabic description when there is one.
+      description:
+        language === 'ar' && product.descriptionAr?.trim()
+          ? product.descriptionAr
+          : product.description,
       unitPrice: product.unitPrice,
       unit: product.unit,
       taxes: showTaxes ? (product.taxRateIds.length ? taxes : items[index].taxes) : [],
@@ -165,6 +188,23 @@ export function LineItemsEditor({
                 <DropdownItem icon={<Heading />} onSelect={() => insertHeading(index)}>
                   Insert heading above
                 </DropdownItem>
+                {items[index].kind === 'item' ? (
+                  <DropdownItem
+                    icon={<ListPlus />}
+                    onSelect={() =>
+                      update(
+                        index,
+                        hasGoodsDetails(items[index])
+                          ? { condition: undefined, serialNumber: undefined }
+                          : { condition: null, serialNumber: '' },
+                      )
+                    }
+                  >
+                    {hasGoodsDetails(items[index])
+                      ? t('Remove condition and serial no.')
+                      : t('Add condition and serial no.')}
+                  </DropdownItem>
+                ) : null}
                 <DropdownSeparator />
                 <DropdownItem icon={<Trash2 />} danger onSelect={() => remove(index)}>
                   Remove
@@ -191,6 +231,17 @@ export function LineItemsEditor({
                     placeholder="Section heading, e.g. “Print production”"
                     className="font-semibold"
                   />
+                  {showArabic ? (
+                    <Input
+                      aria-label={t('Section heading in Arabic')}
+                      dir="rtl"
+                      lang="ar"
+                      value={item.nameAr ?? ''}
+                      onChange={(e) => update(index, { nameAr: e.target.value })}
+                      placeholder={t('Heading in Arabic')}
+                      className="font-semibold"
+                    />
+                  ) : null}
                   <Input
                     aria-label="Section note"
                     value={item.description}
@@ -253,7 +304,23 @@ export function LineItemsEditor({
                   <div className="hidden @xl:block">{menu}</div>
                 </div>
 
-                <div className="col-span-12 @xl:col-span-6 @xl:ps-6">
+                <div
+                  className={cn(
+                    'col-span-12 space-y-2 @xl:col-span-6 @xl:ps-6',
+                    // Condition and serial number sit beside the description.
+                    hasGoodsDetails(item) && '@xl:row-span-2',
+                  )}
+                >
+                  {showArabic ? (
+                    <Input
+                      aria-label={t('Arabic name of item {number}', { number: index + 1 })}
+                      dir="rtl"
+                      lang="ar"
+                      value={item.nameAr ?? ''}
+                      onChange={(e) => update(index, { nameAr: e.target.value })}
+                      placeholder={t('Name in Arabic (optional)')}
+                    />
+                  ) : null}
                   <Textarea
                     aria-label={`Item ${index + 1} description`}
                     value={item.description}
@@ -291,6 +358,40 @@ export function LineItemsEditor({
                     rates={taxRates}
                   />
                 </div>
+                {hasGoodsDetails(item) ? (
+                  <>
+                    <label className="col-span-5 @xl:col-span-2 @xl:col-start-7">
+                      <span className="mb-1 block text-xs font-medium text-slate-500">
+                        {t('Condition')}
+                      </span>
+                      <Select
+                        aria-label={t('Item {number} condition', { number: index + 1 })}
+                        value={item.condition ?? ''}
+                        onChange={(e) =>
+                          update(index, {
+                            condition: (e.target.value || null) as ItemCondition | null,
+                          })
+                        }
+                      >
+                        <option value="">{t('Not shown')}</option>
+                        <option value="new">{t('New')}</option>
+                        <option value="used">{t('Used')}</option>
+                      </Select>
+                    </label>
+                    <label className="col-span-7 @xl:col-span-4">
+                      <span className="mb-1 block text-xs font-medium text-slate-500">
+                        {t('Serial no.')}
+                      </span>
+                      <Input
+                        aria-label={t('Item {number} serial number', { number: index + 1 })}
+                        dir="ltr"
+                        value={item.serialNumber ?? ''}
+                        onChange={(e) => update(index, { serialNumber: e.target.value })}
+                        placeholder={t('Serial or IMEI number')}
+                      />
+                    </label>
+                  </>
+                ) : null}
               </div>
               <div className="mt-2 flex justify-end @xl:hidden">{menu}</div>
             </li>

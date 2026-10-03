@@ -1,9 +1,11 @@
-import { Circle, Svg, Text, View } from '@react-pdf/renderer';
+import { Circle, Svg as PdfSvg } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
 import { tint } from '@/lib/color';
+import { Svg, Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   MetaRows,
@@ -15,6 +17,9 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
+  isRtl,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -41,15 +46,21 @@ function Creative({ model, theme }: TemplateProps) {
         <Circle cx={210} cy={118} r={16} fill={tint(theme.accent, 0.55)} />
       </Svg>
       {/* Bottom-left accent; must be `fixed` because non-fixed absolute nodes in
-          the bottom margin break react-pdf's pagination. */}
+          the bottom margin break react-pdf's pagination. Render props run outside
+          React, so this one uses react-pdf's own Svg and mirrors by hand. */}
       <View
         fixed
         style={{ position: 'absolute', bottom: 0, left: 0, width: 90, height: 90 }}
         render={({ pageNumber }) =>
           pageNumber === 1 ? (
-            <Svg width={90} height={90}>
-              <Circle cx={-10} cy={100} r={85} fill={tint(theme.accent, 0.9)} />
-            </Svg>
+            <PdfSvg width={90} height={90}>
+              <Circle
+                cx={isRtl(model) ? 100 : -10}
+                cy={100}
+                r={85}
+                fill={tint(theme.accent, 0.9)}
+              />
+            </PdfSvg>
           ) : null
         }
       />
@@ -72,6 +83,20 @@ function Creative({ model, theme }: TemplateProps) {
         >
           {model.title}
         </Text>
+        {model.titleSecondary ? (
+          <Text
+            style={{
+              fontFamily: theme.fonts.heading,
+              fontSize: 13,
+              fontWeight: 700,
+              color: theme.accentInk,
+              textTransform: 'uppercase',
+              letterSpacing: 1.6,
+            }}
+          >
+            {model.titleSecondary}
+          </Text>
+        ) : null}
         {model.number ? (
           <View
             style={{
@@ -92,27 +117,41 @@ function Creative({ model, theme }: TemplateProps) {
 
       <View style={{ flexDirection: 'row', marginBottom: 20 }}>
         <View style={sx(card, { flex: 1.2, backgroundColor: theme.surface, marginRight: 10 })}>
-          <Text style={label}>{model.labels.from}</Text>
+          <Label text={model.labels.from} secondary={en(model, 'from')} style={label} />
           <Text style={{ fontSize: 9.5, fontWeight: 700, color: theme.ink, marginBottom: 2 }}>
             {c.name}
           </Text>
+          {c.nameSecondary ? (
+            <Text style={{ fontSize: 8, fontWeight: 600, color: theme.body, marginBottom: 2 }}>
+              {c.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={[...c.addressLines, ...companyContactLines(model, false), companyIdLine(model)]}
             style={{ fontSize: 7.5, color: theme.body, lineHeight: 1.45 }}
           />
         </View>
         <View style={sx(card, { flex: 1.2, backgroundColor: theme.surface, marginRight: 10 })}>
-          <Text style={label}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={label}
+          />
           <Text style={{ fontSize: 9.5, fontWeight: 700, color: theme.ink, marginBottom: 2 }}>
             {model.client.name || '—'}
           </Text>
+          {model.client.nameSecondary ? (
+            <Text style={{ fontSize: 8, fontWeight: 600, color: theme.body, marginBottom: 2 }}>
+              {model.client.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={clientLines(model, false)}
             style={{ fontSize: 7.5, color: theme.body, lineHeight: 1.45 }}
           />
           {model.shipTo ? (
             <View style={{ marginTop: 8 }}>
-              <Text style={label}>{model.labels.shipTo}</Text>
+              <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={label} />
               <Lines
                 lines={model.shipTo.lines}
                 style={{ fontSize: 7.5, color: theme.body, lineHeight: 1.45 }}
@@ -122,10 +161,22 @@ function Creative({ model, theme }: TemplateProps) {
         </View>
         <View style={{ flex: 1 }}>
           <View style={sx(card, { backgroundColor: theme.accent, marginBottom: 10 })}>
-            <Text style={sx(label, { color: theme.onAccent, opacity: 0.85 })}>
-              {model.amountDue.label}
-            </Text>
-            <Text style={sx({ fontSize: 17, fontWeight: 800, color: theme.onAccent }, TNUM)}>
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
+              style={sx(label, { color: theme.onAccent, opacity: 0.85 })}
+              secondaryStyle={{ opacity: 1 }}
+            />
+            <Text
+              style={sx(
+                {
+                  fontSize: fitSize(model.amountDue.value, 17, 11),
+                  fontWeight: 800,
+                  color: theme.onAccent,
+                },
+                TNUM,
+              )}
+            >
               {model.amountDue.value}
             </Text>
             {model.amountDue.caption ? (
@@ -135,12 +186,7 @@ function Creative({ model, theme }: TemplateProps) {
             ) : null}
           </View>
           <MetaRows
-            rows={[
-              ...model.meta,
-              ...(model.deposit
-                ? [{ label: model.deposit.label, value: model.deposit.value }]
-                : []),
-            ]}
+            rows={[...model.meta, ...(model.deposit ? [model.deposit] : [])]}
             labelStyle={{ fontSize: 8, color: theme.muted }}
             valueStyle={{ fontSize: 8, fontWeight: 700, color: theme.ink }}
             rowStyle={{ paddingVertical: 2, paddingHorizontal: 4 }}

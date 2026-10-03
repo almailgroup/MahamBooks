@@ -22,6 +22,7 @@ import { formatUnitPrice } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
@@ -107,12 +108,43 @@ function ProductDialog({
               )}
             </Field>
           </div>
+          <Field
+            label={t('Arabic name')}
+            optional
+            hint={t('Printed on Arabic and bilingual documents.')}
+          >
+            {(id) => (
+              <Input
+                id={id}
+                dir="rtl"
+                lang="ar"
+                value={draft.nameAr ?? ''}
+                onChange={(e) => set({ nameAr: e.target.value })}
+              />
+            )}
+          </Field>
           <Field label="Description" optional hint="Copied onto invoice lines.">
             {(id) => (
               <Textarea
                 id={id}
                 value={draft.description}
                 onChange={(e) => set({ description: e.target.value })}
+                rows={2}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('Arabic description')}
+            optional
+            hint={t('Used instead of the description on Arabic documents.')}
+          >
+            {(id) => (
+              <Textarea
+                id={id}
+                dir="rtl"
+                lang="ar"
+                value={draft.descriptionAr ?? ''}
+                onChange={(e) => set({ descriptionAr: e.target.value })}
                 rows={2}
               />
             )}

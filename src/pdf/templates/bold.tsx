@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   PageFooter,
@@ -13,6 +14,8 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -60,6 +63,21 @@ function Bold({ model, theme }: TemplateProps) {
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontFamily: theme.fonts.heading,
+                fontSize: 15,
+                fontWeight: 700,
+                color: theme.muted,
+                textTransform: 'uppercase',
+                letterSpacing: 2,
+                marginTop: 4,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           <View style={{ width: 54, height: 5, backgroundColor: theme.accent, marginTop: 10 }} />
           {model.number ? (
             <Text style={sx({ fontSize: 11, fontWeight: 600, color: DARK, marginTop: 10 }, TNUM)}>
@@ -80,6 +98,19 @@ function Bold({ model, theme }: TemplateProps) {
           >
             {c.name}
           </Text>
+          {c.nameSecondary ? (
+            <Text
+              style={{
+                fontSize: c.logo ? 8.5 : 10,
+                fontWeight: 600,
+                color: theme.body,
+                marginTop: 1,
+                textAlign: 'right',
+              }}
+            >
+              {c.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={[...c.addressLines, ...companyContactLines(model), companyIdLine(model)]}
             style={{
@@ -103,10 +134,19 @@ function Bold({ model, theme }: TemplateProps) {
         }}
       >
         <View style={{ flex: 1.3, paddingRight: 14 }}>
-          <Text style={darkLabel}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={darkLabel}
+          />
           <Text style={{ fontSize: 10.5, fontWeight: 700, color: '#ffffff', marginBottom: 3 }}>
             {model.client.name || '—'}
           </Text>
+          {model.client.nameSecondary ? (
+            <Text style={{ fontSize: 8.5, fontWeight: 600, color: '#e5e7eb', marginBottom: 3 }}>
+              {model.client.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={clientLines(model, false)}
             style={{ fontSize: 8, color: '#d1d5db', lineHeight: 1.45 }}
@@ -114,7 +154,7 @@ function Bold({ model, theme }: TemplateProps) {
         </View>
         {model.shipTo ? (
           <View style={{ flex: 1, paddingRight: 14 }}>
-            <Text style={darkLabel}>{model.labels.shipTo}</Text>
+            <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={darkLabel} />
             <Text style={{ fontSize: 9.5, fontWeight: 700, color: '#ffffff', marginBottom: 3 }}>
               {model.shipTo.name}
             </Text>
@@ -127,7 +167,12 @@ function Bold({ model, theme }: TemplateProps) {
         <View style={{ flex: 0.9, paddingRight: 14 }}>
           {model.meta.map((m) => (
             <View key={m.label} style={{ marginBottom: 8 }}>
-              <Text style={sx(darkLabel, { marginBottom: 2 })}>{m.label}</Text>
+              <Label
+                text={m.label}
+                secondary={m.secondary}
+                style={sx(darkLabel, { marginBottom: 2 })}
+                stack
+              />
               <Text style={sx({ fontSize: 9, fontWeight: 600, color: '#ffffff' }, TNUM)}>
                 {m.value}
               </Text>
@@ -136,12 +181,17 @@ function Bold({ model, theme }: TemplateProps) {
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'space-between' }}>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={sx(darkLabel, { textAlign: 'right' })}>{model.amountDue.label}</Text>
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
+              style={sx(darkLabel, { textAlign: 'right' })}
+              stack
+            />
             <Text
               style={sx(
                 {
                   fontFamily: theme.fonts.heading,
-                  fontSize: 20,
+                  fontSize: fitSize(model.amountDue.value, 20, 15),
                   fontWeight: 700,
                   color: theme.accentBright,
                   textAlign: 'right',

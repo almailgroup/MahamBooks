@@ -9,7 +9,7 @@ export default {
   'Kuwaiti dinar with fils': 'الدينار الكويتي بالفلس',
   'No VAT': 'بدون ضريبة قيمة مضافة',
   'Kuwait chart of accounts': 'دليل حسابات كويتي',
-  'Arabic and English': 'عربي وإنجليزي',
+  'Arabic and English': 'العربية والإنجليزية',
   'Your business': 'نشاطك التجاري',
   'Company name': 'اسم الشركة',
   'As on your commercial licence, in English.': 'بالإنجليزية، كما في الرخصة التجارية.',

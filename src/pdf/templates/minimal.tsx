@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   PageFooter,
@@ -14,6 +15,9 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
+  joinAddress,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -31,9 +35,13 @@ function Minimal({ model, theme }: TemplateProps) {
   const hairline = { borderBottomWidth: 0.5, borderBottomColor: '#d4d4d8' };
 
   const facts = [
-    ...(model.number ? [{ label: model.numberLabel, value: model.number }] : []),
+    ...(model.number
+      ? [{ label: model.numberLabel, secondary: model.numberLabelSecondary, value: model.number }]
+      : []),
     ...model.meta,
   ];
+  // Up to four facts per row; more (delivery date and place) wrap to a second row.
+  const perRow = Math.max(1, Math.min(facts.length, 4));
 
   return (
     <DocShell model={model} theme={theme} pageStyle={{ paddingTop: 48, paddingHorizontal: 48 }}>
@@ -42,16 +50,26 @@ function Minimal({ model, theme }: TemplateProps) {
           {c.logo ? (
             <Logo src={c.logo} width={140} height={44} />
           ) : (
-            <Text style={{ fontSize: 14, fontWeight: 700, color: theme.ink, letterSpacing: -0.2 }}>
-              {c.name}
-            </Text>
+            <View>
+              <Text
+                style={{ fontSize: 14, fontWeight: 700, color: theme.ink, letterSpacing: -0.2 }}
+              >
+                {c.name}
+              </Text>
+              {c.nameSecondary ? (
+                <Text style={{ fontSize: 9, color: theme.muted, marginTop: 2 }}>
+                  {c.nameSecondary}
+                </Text>
+              ) : null}
+            </View>
           )}
         </View>
         <View style={{ width: '45%' }}>
           <Lines
             lines={[
               c.logo ? c.name : '',
-              c.addressLines.join(', '),
+              c.logo ? c.nameSecondary : '',
+              joinAddress(model, c.addressLines),
               ...companyContactLines(model),
               companyIdLine(model),
             ]}
@@ -60,7 +78,13 @@ function Minimal({ model, theme }: TemplateProps) {
         </View>
       </View>
 
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'flex-end',
+          marginBottom: model.titleSecondary ? 3 : 16,
+        }}
+      >
         <Text style={{ fontSize: 30, fontWeight: 400, color: theme.ink, letterSpacing: -0.6 }}>
           {model.title}
         </Text>
@@ -75,19 +99,48 @@ function Minimal({ model, theme }: TemplateProps) {
           }}
         />
       </View>
+      {model.titleSecondary ? (
+        <Text
+          style={{
+            fontSize: 8,
+            color: theme.faint,
+            textTransform: 'uppercase',
+            letterSpacing: 2.4,
+            marginBottom: 16,
+          }}
+        >
+          {model.titleSecondary}
+        </Text>
+      ) : null}
 
       <View style={sx({ flexDirection: 'row', paddingBottom: 12, marginBottom: 18 }, hairline)}>
-        {facts.map((f) => (
-          <View key={f.label} style={{ flex: 1, paddingRight: 10 }}>
-            <Text style={label}>{f.label}</Text>
-            <Text style={sx({ fontSize: 9.5, fontWeight: 600, color: theme.ink }, TNUM)}>
-              {f.value}
-            </Text>
-          </View>
-        ))}
+        <View style={{ flex: perRow, flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 }}>
+          {facts.map((f) => (
+            <View key={f.label} style={{ width: `${100 / perRow}%`, paddingRight: 10 }}>
+              <Label text={f.label} secondary={f.secondary} style={label} stack />
+              <Text style={sx({ fontSize: 9.5, fontWeight: 600, color: theme.ink }, TNUM)}>
+                {f.value}
+              </Text>
+            </View>
+          ))}
+        </View>
         <View style={{ flex: 1.2, alignItems: 'flex-end' }}>
-          <Text style={sx(label, { textAlign: 'right' })}>{model.amountDue.label}</Text>
-          <Text style={sx({ fontSize: 14, fontWeight: 700, color: theme.accentInk }, TNUM)}>
+          <Label
+            text={model.amountDue.label}
+            secondary={model.amountDue.secondary}
+            style={sx(label, { textAlign: 'right' })}
+            stack
+          />
+          <Text
+            style={sx(
+              {
+                fontSize: fitSize(model.amountDue.value, 14, 16),
+                fontWeight: 700,
+                color: theme.accentInk,
+              },
+              TNUM,
+            )}
+          >
             {model.amountDue.value}
           </Text>
         </View>
@@ -97,7 +150,9 @@ function Minimal({ model, theme }: TemplateProps) {
         <Party
           style={{ flex: model.shipTo ? 1 : 2, paddingRight: 20 }}
           label={model.recipientLabel}
+          labelSecondary={model.recipientLabelSecondary}
           name={model.client.name}
+          nameSecondary={model.client.nameSecondary}
           lines={clientLines(model, !model.shipTo)}
           labelStyle={label}
           nameStyle={{ fontSize: 10, color: theme.ink }}
@@ -107,6 +162,7 @@ function Minimal({ model, theme }: TemplateProps) {
           <Party
             style={{ flex: 1, paddingRight: 20 }}
             label={model.labels.shipTo}
+            labelSecondary={en(model, 'shipTo')}
             name={model.shipTo.name}
             lines={model.shipTo.lines}
             labelStyle={label}
@@ -117,7 +173,7 @@ function Minimal({ model, theme }: TemplateProps) {
         <View style={{ flex: 0.8 }}>
           {model.deposit ? (
             <View>
-              <Text style={label}>{model.deposit.label}</Text>
+              <Label text={model.deposit.label} secondary={model.deposit.secondary} style={label} />
               <Text style={sx({ fontSize: 10, fontWeight: 700, color: theme.ink }, TNUM)}>
                 {model.deposit.value}
               </Text>

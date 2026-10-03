@@ -3,16 +3,23 @@ import { join } from 'node:path';
 import { describe, expect, it, beforeAll } from 'vitest';
 import { renderToBuffer } from '@react-pdf/renderer';
 import QRCode from 'qrcode';
-import type { Client, Company, InvoiceDocument } from '@/db/types';
+import type { Client, Company, DocumentLanguage, InvoiceDocument } from '@/db/types';
+import { computeDocument } from '@/lib/document-calc';
 import { registerFonts, type FontId } from './fonts';
 import { buildRenderModel } from './model';
 import { createPdfElement } from './element';
 import { TEMPLATES } from './templates';
-import { sampleClient, sampleCompany, sampleDocument, sampleLongItems } from './sample';
+import {
+  sampleClient,
+  sampleCompany,
+  sampleDocument,
+  sampleGoods,
+  sampleLongItems,
+} from './sample';
 
-// Valid 4x2 PNG, enough to exercise the logo code paths. (A corrupt image
-// makes react-pdf hang, which is why the app re-encodes uploaded logos.)
-const LOGO =
+// Valid 4x2 PNG, enough to exercise the logo, signature and stamp code paths.
+// (A corrupt image makes react-pdf hang, which is why the app re-encodes uploads.)
+const IMAGE =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAEUlEQVR4nGPgL8v7j4wZ0AUA/ZIPkShBFuMAAAAASUVORK5CYII=';
 
 const fontDir = join(import.meta.dirname, 'fonts');
@@ -30,52 +37,89 @@ const allFonts: FontId[] = [
 
 let qr = '';
 const company: Company = sampleCompany();
-company.branding.logo = LOGO;
+company.branding.logo = IMAGE;
 const client: Client = sampleClient(company.id);
 
 type Variant = {
   name: string;
-  doc: () => InvoiceDocument;
+  /** Languages to render in; all three Kuwaiti ones when missing. */
+  languages?: DocumentLanguage[];
+  doc: (language: DocumentLanguage) => InvoiceDocument;
   company?: () => Company;
   client?: () => Client | null;
 };
 
+const LANGUAGES: DocumentLanguage[] = ['en', 'ar', 'ar-en'];
+
 const variants: Variant[] = [
-  { name: 'invoice', doc: () => sampleDocument(company, client, 'invoice') },
-  {
-    name: 'paid',
-    doc: () =>
-      sampleDocument(company, client, 'invoice', {
-        status: 'paid',
-        totals: { subtotal: 0, discount: 0, taxTotal: 0, total: 0, paid: 9428.7, balance: 0 },
-      }),
-  },
-  { name: 'quote', doc: () => sampleDocument(company, client, 'quote') },
-  { name: 'credit', doc: () => sampleDocument(company, client, 'credit') },
+  { name: 'invoice', doc: (l) => sampleDocument(company, client, 'invoice', {}, l) },
+  { name: 'quote', doc: (l) => sampleDocument(company, client, 'quote', {}, l) },
+  { name: 'credit', doc: (l) => sampleDocument(company, client, 'credit', {}, l) },
   {
     name: 'multi-page',
-    doc: () => sampleDocument(company, client, 'invoice', { items: sampleLongItems() }),
+    doc: (l) => sampleDocument(company, client, 'invoice', { items: sampleLongItems() }, l),
   },
   {
     name: 'bare',
     company: () => ({
       ...company,
+      nameAr: undefined,
       branding: { ...company.branding, logo: null },
       payment: { bankDetails: '', instructions: '', paymentLink: '', showQrCode: false },
+      kuwait: undefined,
     }),
     client: () => null,
-    doc: () =>
-      sampleDocument(company, client, 'invoice', {
-        number: '',
-        items: [],
-        notes: '',
-        terms: '',
-        poNumber: '',
-        dueDate: null,
-      }),
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        { number: '', items: [], notes: '', terms: '', poNumber: '', dueDate: null },
+        l,
+      ),
+  },
+  {
+    name: 'paid with signature and stamp',
+    languages: ['en', 'ar-en'],
+    company: () => ({
+      ...company,
+      branding: { ...company.branding, signature: IMAGE, stamp: IMAGE },
+      defaults: { ...company.defaults, showHijriDate: true },
+    }),
+    doc: (l) => {
+      const doc = sampleDocument(company, client, 'invoice', {}, l);
+      const total = computeDocument(doc).total;
+      return {
+        ...doc,
+        status: 'paid',
+        totals: { subtotal: 0, discount: 0, taxTotal: 0, total: 0, paid: total, balance: 0 },
+      };
+    },
+  },
+  {
+    name: 'goods with delivery',
+    languages: ['ar-en'],
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          items: sampleGoods(),
+          deliveryDate: '2026-10-05',
+          deliveryPlace: 'Shuwaikh Industrial, Block 2',
+          paymentLink: {
+            provider: 'myfatoorah',
+            url: 'https://pay.example.com/x',
+            expiresAt: null,
+          },
+        },
+        l,
+      ),
   },
   {
     name: 'inclusive-fr-letter',
+    languages: ['fr'],
     company: () => ({
       ...company,
       language: 'fr',
@@ -87,18 +131,30 @@ const variants: Variant[] = [
       ...client,
       shippingAddress: { ...client.address, line1: 'Entrepôt 2', city: 'Lyon', country: 'FR' },
     }),
-    doc: () =>
-      sampleDocument(company, client, 'invoice', {
-        currency: 'EUR',
-        pricesIncludeTax: true,
-        discount: 5,
-        discountType: 'percent',
-        charges: [{ id: 'c1', label: 'Livraison', amount: 25, taxes: [{ name: 'TVA', rate: 20 }] }],
-        deposit: 1000,
-        depositDueDate: '2026-10-15',
-      }),
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          currency: 'EUR',
+          pricesIncludeTax: true,
+          discount: 5,
+          discountType: 'percent',
+          charges: [
+            { id: 'c1', label: 'Livraison', amount: 25, taxes: [{ name: 'TVA', rate: 20 }] },
+          ],
+          deposit: 1000,
+          depositDueDate: '2026-10-15',
+        },
+        l,
+      ),
   },
 ];
+
+const cases = variants.flatMap((v) =>
+  (v.languages ?? LANGUAGES).map((language) => [`${v.name} (${language})`, v, language] as const),
+);
 
 beforeAll(async () => {
   registerFonts(allFonts, (file) => join(fontDir, file));
@@ -106,21 +162,22 @@ beforeAll(async () => {
 });
 
 describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, template) => {
-  it.each(variants.map((v) => [v.name, v] as const))(
+  it.each(cases)(
     'renders %s',
-    async (_name, variant) => {
+    async (_name, variant, language) => {
       const model = buildRenderModel(
-        variant.doc(),
+        variant.doc(language),
         variant.company?.() ?? company,
         variant.client ? variant.client() : client,
-        { qrCode: qr },
+        { qrCode: qr, language },
       );
+      expect(model.dir).toBe(language.startsWith('ar') ? 'rtl' : 'ltr');
       const { element } = createPdfElement(model, template.id);
       const pdf = await renderToBuffer(element);
       expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
       expect(pdf.length).toBeGreaterThan(2000);
     },
-    20000,
+    30000,
   );
 });
 

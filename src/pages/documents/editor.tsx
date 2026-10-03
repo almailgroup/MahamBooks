@@ -40,6 +40,7 @@ import { TotalsPanel } from '@/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer } from '@/db/purchases';
+import { t } from '@/i18n';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
 const QUOTE_VALIDITY = [7, 14, 30, 45, 60, 90];
@@ -457,6 +458,30 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
               ) : (
                 <div />
               )}
+              {type !== 'credit' ? (
+                <>
+                  <Field label={t('Delivery date')} optional>
+                    {(fid) => (
+                      <Input
+                        id={fid}
+                        type="date"
+                        value={doc.deliveryDate ?? ''}
+                        onChange={(e) => update({ deliveryDate: e.target.value || null })}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('Delivery place')} optional>
+                    {(fid) => (
+                      <Input
+                        id={fid}
+                        value={doc.deliveryPlace ?? ''}
+                        placeholder={t('Site, warehouse or address')}
+                        onChange={(e) => update({ deliveryPlace: e.target.value })}
+                      />
+                    )}
+                  </Field>
+                </>
+              ) : null}
               <Field label="Currency">
                 {(fid) => (
                   <CurrencySelect
@@ -510,6 +535,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 currencySymbol={symbol}
                 formatMoney={money}
                 formatPrice={(amount) => formatUnitPrice(amount, doc.currency, fmt.locale)}
+                language={client?.language ?? company.language}
               />
             </CardBody>
           </Card>

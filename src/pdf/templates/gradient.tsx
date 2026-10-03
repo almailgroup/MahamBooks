@@ -1,9 +1,11 @@
-import { Defs, LinearGradient, Rect, Stop, Svg, Text, View } from '@react-pdf/renderer';
+import { Defs, LinearGradient, Rect, Stop } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
 import { readableOn, shiftHue } from '@/lib/color';
+import { Svg, Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Logo,
   MetaRows,
   PageFooter,
@@ -15,6 +17,8 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -75,31 +79,63 @@ function Gradient({ model, theme }: TemplateProps) {
               <Logo src={c.logo} width={140} height={40} />
             </View>
           ) : (
-            <Text style={{ fontSize: 18, fontWeight: 800, color: onHeader }}>{c.name}</Text>
+            <View>
+              <Text style={{ fontSize: 18, fontWeight: 800, color: onHeader }}>{c.name}</Text>
+              {c.nameSecondary ? (
+                <Text style={{ fontSize: 10, fontWeight: 600, color: onHeader, opacity: 0.9 }}>
+                  {c.nameSecondary}
+                </Text>
+              ) : null}
+            </View>
           )}
         </View>
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={{ fontSize: 28, fontWeight: 800, color: onHeader, letterSpacing: -0.5 }}>
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                color: onHeader,
+                opacity: 0.85,
+                textTransform: 'uppercase',
+                letterSpacing: 2,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           {model.number ? (
             <Text style={sx({ fontSize: 10, color: onHeader, opacity: 0.85, marginTop: 2 }, TNUM)}>
               {model.number}
             </Text>
           ) : null}
-          <Text
-            style={sx({
+          <Label
+            text={model.amountDue.label}
+            secondary={model.amountDue.secondary}
+            style={{
               fontSize: 7,
               color: onHeader,
               opacity: 0.85,
-              marginTop: 14,
+              marginTop: model.titleSecondary ? 8 : 14,
               textTransform: 'uppercase',
               letterSpacing: 0.9,
-            })}
+            }}
+            secondaryStyle={{ opacity: 1 }}
+          />
+          <Text
+            style={sx(
+              {
+                fontSize: fitSize(model.amountDue.value, 18, 18),
+                fontWeight: 800,
+                color: onHeader,
+                marginTop: 1,
+              },
+              TNUM,
+            )}
           >
-            {model.amountDue.label}
-          </Text>
-          <Text style={sx({ fontSize: 18, fontWeight: 800, color: onHeader, marginTop: 1 }, TNUM)}>
             {model.amountDue.value}
           </Text>
         </View>
@@ -109,7 +145,9 @@ function Gradient({ model, theme }: TemplateProps) {
         <Party
           style={{ flex: 1, paddingRight: 14 }}
           label={model.labels.from}
+          labelSecondary={en(model, 'from')}
           name={c.name}
+          nameSecondary={c.nameSecondary}
           lines={[...c.addressLines, ...companyContactLines(model, false), companyIdLine(model)]}
           labelStyle={label}
           nameStyle={{ fontSize: 9.5, color: theme.ink }}
@@ -118,7 +156,9 @@ function Gradient({ model, theme }: TemplateProps) {
         <Party
           style={{ flex: 1, paddingRight: 14 }}
           label={model.recipientLabel}
+          labelSecondary={model.recipientLabelSecondary}
           name={model.client.name}
+          nameSecondary={model.client.nameSecondary}
           lines={[
             ...clientLines(model, false),
             ...(model.shipTo ? ['', `${model.labels.shipTo}:`, ...model.shipTo.lines] : []),
@@ -130,12 +170,7 @@ function Gradient({ model, theme }: TemplateProps) {
         <View style={{ flex: 0.9 }}>
           <View style={{ backgroundColor: theme.accentSoft, borderRadius: 8, padding: 10 }}>
             <MetaRows
-              rows={[
-                ...model.meta,
-                ...(model.deposit
-                  ? [{ label: model.deposit.label, value: model.deposit.value }]
-                  : []),
-              ]}
+              rows={[...model.meta, ...(model.deposit ? [model.deposit] : [])]}
               labelStyle={{ fontSize: 7.5, color: theme.muted }}
               valueStyle={{ fontSize: 8, fontWeight: 700, color: theme.ink }}
               rowStyle={{ paddingVertical: 2.5 }}

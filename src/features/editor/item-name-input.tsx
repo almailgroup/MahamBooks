@@ -35,7 +35,9 @@ export function ItemNameInput({
     const live = products.filter((p) => !p.archived);
     if (!q) return live.slice(0, 8);
     return live
-      .filter((p) => `${p.name} ${p.sku} ${p.description}`.toLowerCase().includes(q))
+      .filter((p) =>
+        `${p.name} ${p.nameAr ?? ''} ${p.sku} ${p.description}`.toLowerCase().includes(q),
+      )
       .filter((p) => p.name.toLowerCase() !== q)
       .slice(0, 8);
   }, [products, value]);
@@ -106,7 +108,14 @@ export function ItemNameInput({
             >
               <Package className="size-4 shrink-0 text-slate-400" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-slate-900">{p.name}</span>
+                <span className="block truncate text-sm text-slate-900">
+                  {p.name}
+                  {p.nameAr ? (
+                    <span className="ms-2 text-slate-500" dir="rtl" lang="ar">
+                      {p.nameAr}
+                    </span>
+                  ) : null}
+                </span>
                 {p.description || p.sku ? (
                   <span className="block truncate text-xs text-slate-500">
                     {[p.sku, p.description].filter(Boolean).join(' · ')}

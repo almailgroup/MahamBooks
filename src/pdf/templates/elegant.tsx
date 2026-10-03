@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Logo,
   MetaRows,
   PageFooter,
@@ -14,6 +15,10 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  DOT,
+  en,
+  fitSize,
+  joinAddress,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -59,6 +64,18 @@ function Elegant({ model, theme }: TemplateProps) {
         >
           {c.name}
         </Text>
+        {c.nameSecondary ? (
+          <Text
+            style={{
+              fontFamily: theme.fonts.heading,
+              fontSize: c.logo ? 10 : 13,
+              color: BODY,
+              marginTop: 2,
+            }}
+          >
+            {c.nameSecondary}
+          </Text>
+        ) : null}
         <Text
           style={{
             fontSize: 7.5,
@@ -69,7 +86,7 @@ function Elegant({ model, theme }: TemplateProps) {
             lineHeight: 1.5,
           }}
         >
-          {[c.addressLines.join(', '), companyContactLines(model, false).join('  ·  ')]
+          {[joinAddress(model, c.addressLines), companyContactLines(model, false).join(DOT)]
             .filter(Boolean)
             .join('\n')}
         </Text>
@@ -88,6 +105,18 @@ function Elegant({ model, theme }: TemplateProps) {
         >
           {model.title}
         </Text>
+        {model.titleSecondary ? (
+          <Text
+            style={{
+              fontFamily: theme.fonts.heading,
+              fontStyle: 'italic',
+              fontSize: 13,
+              color: theme.accentInk,
+            }}
+          >
+            {model.titleSecondary}
+          </Text>
+        ) : null}
         {model.number ? (
           <Text
             style={sx(
@@ -110,7 +139,9 @@ function Elegant({ model, theme }: TemplateProps) {
         <Party
           style={{ flex: 1.2, paddingRight: 18 }}
           label={model.recipientLabel}
+          labelSecondary={model.recipientLabelSecondary}
           name={model.client.name}
+          nameSecondary={model.client.nameSecondary}
           lines={clientLines(model, false)}
           labelStyle={smallCaps}
           nameStyle={{ fontFamily: theme.fonts.heading, fontSize: 12, fontWeight: 400, color: INK }}
@@ -120,6 +151,7 @@ function Elegant({ model, theme }: TemplateProps) {
           <Party
             style={{ flex: 1, paddingRight: 18 }}
             label={model.labels.shipTo}
+            labelSecondary={en(model, 'shipTo')}
             name={model.shipTo.name}
             lines={model.shipTo.lines}
             labelStyle={smallCaps}
@@ -134,19 +166,27 @@ function Elegant({ model, theme }: TemplateProps) {
         ) : null}
         <View style={{ flex: 1, paddingTop: 13 }}>
           <MetaRows
-            rows={[
-              ...model.meta,
-              ...(model.deposit
-                ? [{ label: model.deposit.label, value: model.deposit.value }]
-                : []),
-            ]}
+            rows={[...model.meta, ...(model.deposit ? [model.deposit] : [])]}
             labelStyle={{ fontSize: 8.5, color: MUTED, fontStyle: 'italic' }}
             valueStyle={{ fontSize: 8.5, color: INK }}
             rowStyle={{ paddingVertical: 2.5, borderBottomWidth: 0.4, borderBottomColor: RULE }}
           />
           <View style={{ marginTop: 10, alignItems: 'flex-end' }}>
-            <Text style={sx(smallCaps, { marginBottom: 2 })}>{model.amountDue.label}</Text>
-            <Text style={sx({ fontFamily: theme.fonts.heading, fontSize: 18, color: INK }, TNUM)}>
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
+              style={sx(smallCaps, { marginBottom: 2 })}
+            />
+            <Text
+              style={sx(
+                {
+                  fontFamily: theme.fonts.heading,
+                  fontSize: fitSize(model.amountDue.value, 18, 18),
+                  color: INK,
+                },
+                TNUM,
+              )}
+            >
               {model.amountDue.value}
             </Text>
           </View>

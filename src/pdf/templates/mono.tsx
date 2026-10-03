@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   PageFooter,
@@ -12,6 +13,10 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
+  isRtl,
+  joinAddress,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -74,6 +79,18 @@ function Mono({ model, theme }: TemplateProps) {
           >
             {c.name}
           </Text>
+          {c.nameSecondary ? (
+            <Text
+              style={{
+                fontFamily: mono,
+                fontSize: c.logo ? 7.5 : 9,
+                color: '#cbd5e1',
+                marginTop: 1,
+              }}
+            >
+              {c.nameSecondary}
+            </Text>
+          ) : null}
           <Text
             style={{
               fontFamily: mono,
@@ -83,7 +100,7 @@ function Mono({ model, theme }: TemplateProps) {
               lineHeight: 1.5,
             }}
           >
-            {[c.addressLines.join(', '), companyContactLines(model, false).join(' · ')]
+            {[joinAddress(model, c.addressLines), companyContactLines(model, false).join(' · ')]
               .filter(Boolean)
               .join('\n')}
           </Text>
@@ -101,6 +118,19 @@ function Mono({ model, theme }: TemplateProps) {
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontFamily: mono,
+                fontSize: 9,
+                color: '#94a3b8',
+                textTransform: 'uppercase',
+                letterSpacing: 1.5,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           {model.number ? (
             <Text style={{ fontFamily: mono, fontSize: 10, color: '#ffffff', marginTop: 3 }}>
               {model.number}
@@ -121,10 +151,19 @@ function Mono({ model, theme }: TemplateProps) {
         style={{ flexDirection: 'row', borderWidth: 0.75, borderColor: GRID, marginBottom: 18 }}
       >
         <View style={sx(cell, { flex: 1.3 })}>
-          <Text style={label}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={label}
+          />
           <Text style={{ fontSize: 9.5, fontWeight: 700, color: theme.ink, marginBottom: 2 }}>
             {model.client.name || '—'}
           </Text>
+          {model.client.nameSecondary ? (
+            <Text style={{ fontSize: 8, fontWeight: 600, color: theme.body, marginBottom: 2 }}>
+              {model.client.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={clientLines(model, false)}
             style={{ fontSize: 7.5, color: theme.body, lineHeight: 1.45 }}
@@ -132,7 +171,7 @@ function Mono({ model, theme }: TemplateProps) {
         </View>
         {model.shipTo ? (
           <View style={cell}>
-            <Text style={label}>{model.labels.shipTo}</Text>
+            <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={label} />
             <Text style={{ fontSize: 9, fontWeight: 700, color: theme.ink, marginBottom: 2 }}>
               {model.shipTo.name}
             </Text>
@@ -145,7 +184,12 @@ function Mono({ model, theme }: TemplateProps) {
         <View style={cell}>
           {model.meta.map((m) => (
             <View key={m.label} style={{ marginBottom: 7 }}>
-              <Text style={sx(label, { marginBottom: 1 })}>{m.label}</Text>
+              <Label
+                text={m.label}
+                secondary={m.secondary}
+                style={sx(label, { marginBottom: 1 })}
+                stack
+              />
               <Text style={{ fontFamily: mono, fontSize: 8.5, color: theme.ink }}>{m.value}</Text>
             </View>
           ))}
@@ -157,8 +201,20 @@ function Mono({ model, theme }: TemplateProps) {
             alignItems: 'flex-end',
           })}
         >
-          <Text style={label}>{model.amountDue.label}</Text>
-          <Text style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: theme.ink }}>
+          <Label
+            text={model.amountDue.label}
+            secondary={model.amountDue.secondary}
+            style={sx(label, { textAlign: 'right' })}
+            stack
+          />
+          <Text
+            style={{
+              fontFamily: mono,
+              fontSize: fitSize(model.amountDue.value, 15, 15),
+              fontWeight: 600,
+              color: theme.ink,
+            }}
+          >
             {model.amountDue.value}
           </Text>
           {model.amountDue.caption ? (
@@ -183,7 +239,7 @@ function Mono({ model, theme }: TemplateProps) {
       </View>
 
       {/* Placed before the table so it always lands on the first page. */}
-      <Stamp model={model} theme={theme} style={{ top: 150, right: 60 }} />
+      <Stamp model={model} theme={theme} style={{ top: isRtl(model) ? 134 : 150, right: 60 }} />
 
       <ItemsTable
         model={model}

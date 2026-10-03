@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   MetaRows,
@@ -15,6 +16,10 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  DOT,
+  en,
+  fitSize,
+  joinAddress,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -53,10 +58,15 @@ function Compact({ model, theme }: TemplateProps) {
           {c.logo ? <Logo src={c.logo} width={96} height={38} style={{ marginRight: 12 }} /> : null}
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 11, fontWeight: 700, color: theme.ink }}>{c.name}</Text>
+            {c.nameSecondary ? (
+              <Text style={{ fontSize: 8, fontWeight: 600, color: theme.body }}>
+                {c.nameSecondary}
+              </Text>
+            ) : null}
             <Lines
               lines={[
-                c.addressLines.join(', '),
-                companyContactLines(model, false).join('  ·  '),
+                joinAddress(model, c.addressLines),
+                companyContactLines(model, false).join(DOT),
                 companyIdLine(model),
               ]}
               style={{ fontSize: 7, color: theme.muted, lineHeight: 1.4, marginTop: 1 }}
@@ -75,6 +85,19 @@ function Compact({ model, theme }: TemplateProps) {
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontSize: 7.5,
+                fontWeight: 700,
+                color: theme.accentInk,
+                textTransform: 'uppercase',
+                letterSpacing: 1.2,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           {model.number ? (
             <Text
               style={sx({ fontSize: 9, fontWeight: 600, color: theme.ink, marginTop: 1 }, TNUM)}
@@ -89,7 +112,9 @@ function Compact({ model, theme }: TemplateProps) {
         <Party
           style={{ flex: 1.3, paddingRight: 12 }}
           label={model.recipientLabel}
+          labelSecondary={model.recipientLabelSecondary}
           name={model.client.name}
+          nameSecondary={model.client.nameSecondary}
           lines={clientLines(model)}
           labelStyle={label}
           nameStyle={{ fontSize: 9, color: theme.ink }}
@@ -99,6 +124,7 @@ function Compact({ model, theme }: TemplateProps) {
           <Party
             style={{ flex: 1, paddingRight: 12 }}
             label={model.labels.shipTo}
+            labelSecondary={en(model, 'shipTo')}
             name={model.shipTo.name}
             lines={model.shipTo.lines}
             labelStyle={label}
@@ -108,12 +134,7 @@ function Compact({ model, theme }: TemplateProps) {
         ) : null}
         <View style={{ flex: 1, paddingRight: 12 }}>
           <MetaRows
-            rows={[
-              ...model.meta,
-              ...(model.deposit
-                ? [{ label: model.deposit.label, value: model.deposit.value }]
-                : []),
-            ]}
+            rows={[...model.meta, ...(model.deposit ? [model.deposit] : [])]}
             labelStyle={{ fontSize: 7.5, color: theme.muted }}
             valueStyle={{ fontSize: 7.5, fontWeight: 600, color: theme.ink }}
             rowStyle={{ paddingVertical: 1.5 }}
@@ -129,8 +150,22 @@ function Compact({ model, theme }: TemplateProps) {
             alignItems: 'flex-end',
           }}
         >
-          <Text style={sx(label, { color: theme.accentInk })}>{model.amountDue.label}</Text>
-          <Text style={sx({ fontSize: 14, fontWeight: 700, color: theme.accentInk }, TNUM)}>
+          <Label
+            text={model.amountDue.label}
+            secondary={model.amountDue.secondary}
+            style={sx(label, { color: theme.accentInk, textAlign: 'right' })}
+            stack
+          />
+          <Text
+            style={sx(
+              {
+                fontSize: fitSize(model.amountDue.value, 14, 14),
+                fontWeight: 700,
+                color: theme.accentInk,
+              },
+              TNUM,
+            )}
+          >
             {model.amountDue.value}
           </Text>
           {model.amountDue.caption ? (

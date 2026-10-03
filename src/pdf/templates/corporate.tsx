@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   MetaRows,
@@ -15,6 +16,8 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -64,6 +67,11 @@ function Corporate({ model, theme }: TemplateProps) {
                 {c.name}
               </Text>
             ) : null}
+            {c.nameSecondary ? (
+              <Text style={{ fontSize: 8.5, fontWeight: 600, color: theme.body, marginBottom: 2 }}>
+                {c.nameSecondary}
+              </Text>
+            ) : null}
             <Lines
               lines={[...c.addressLines, ...companyContactLines(model)]}
               style={{ fontSize: 8, color: theme.muted, lineHeight: 1.45 }}
@@ -90,6 +98,20 @@ function Corporate({ model, theme }: TemplateProps) {
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontSize: 8,
+                fontWeight: 700,
+                color: theme.onAccent,
+                opacity: 0.85,
+                textTransform: 'uppercase',
+                letterSpacing: 1.8,
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           {model.number ? (
             <Text
               style={sx(
@@ -109,19 +131,24 @@ function Corporate({ model, theme }: TemplateProps) {
               opacity: 1,
             }}
           >
-            <Text
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
               style={{
                 fontSize: 7,
                 color: theme.onAccent,
                 textTransform: 'uppercase',
                 letterSpacing: 0.8,
               }}
-            >
-              {model.amountDue.label}
-            </Text>
+            />
             <Text
               style={sx(
-                { fontSize: 16, fontWeight: 700, color: theme.onAccent, marginTop: 2 },
+                {
+                  fontSize: fitSize(model.amountDue.value, 16, 18),
+                  fontWeight: 700,
+                  color: theme.onAccent,
+                  marginTop: 2,
+                },
                 TNUM,
               )}
             >
@@ -134,10 +161,15 @@ function Corporate({ model, theme }: TemplateProps) {
 
       <View style={{ flexDirection: 'row', marginBottom: 20 }}>
         <View style={sx(box, { marginRight: 10 })}>
-          <Text style={boxLabel}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={boxLabel}
+          />
           <Party
             style={{ padding: 9 }}
             name={model.client.name}
+            nameSecondary={model.client.nameSecondary}
             lines={clientLines(model)}
             nameStyle={{ fontSize: 9.5, color: SLATE }}
             linesStyle={{ fontSize: 8, color: theme.body, lineHeight: 1.45 }}
@@ -145,7 +177,7 @@ function Corporate({ model, theme }: TemplateProps) {
         </View>
         {model.shipTo ? (
           <View style={sx(box, { marginRight: 10 })}>
-            <Text style={boxLabel}>{model.labels.shipTo}</Text>
+            <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={boxLabel} />
             <Party
               style={{ padding: 9 }}
               name={model.shipTo.name}
@@ -156,15 +188,21 @@ function Corporate({ model, theme }: TemplateProps) {
           </View>
         ) : null}
         <View style={box}>
-          <Text style={boxLabel}>{model.labels[model.type]}</Text>
+          <Label text={model.title} secondary={model.titleSecondary} style={boxLabel} />
           <View style={{ padding: 9 }}>
             <MetaRows
               rows={[
-                ...(model.number ? [{ label: model.numberLabel, value: model.number }] : []),
-                ...model.meta,
-                ...(model.deposit
-                  ? [{ label: model.deposit.label, value: model.deposit.value }]
+                ...(model.number
+                  ? [
+                      {
+                        label: model.numberLabel,
+                        secondary: model.numberLabelSecondary,
+                        value: model.number,
+                      },
+                    ]
                   : []),
+                ...model.meta,
+                ...(model.deposit ? [model.deposit] : []),
               ]}
               labelStyle={{ fontSize: 8, color: theme.muted }}
               valueStyle={{ fontSize: 8.5, fontWeight: 600, color: SLATE }}

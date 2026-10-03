@@ -101,7 +101,10 @@ export const FONT_FAMILIES: Record<FontId, FontFamilyDefinition> = {
     family: 'IBM Plex Sans Arabic',
     label: 'IBM Plex Sans Arabic',
     category: 'sans',
-    // Arabic has no italics: italic text uses the upright letters.
+    // Arabic has no italics: italic text uses the upright letters. Heavier
+    // weights (800 in some titles) use 700, the nearest one react-pdf finds.
+    // Each file is registered once per style: two sources of the same file
+    // would embed two subsets under one name and lose letters.
     files: [400, 500, 600, 700].flatMap((weight) =>
       (['normal', 'italic'] as const).map((style) => ({
         weight,

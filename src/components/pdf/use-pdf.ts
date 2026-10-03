@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Client, Company } from '@/db/types';
-import { buildRenderModel, type RenderableDocument, type RenderModel } from '@/pdf/model';
+import type { Client, Company, DocumentLanguage } from '@/db/types';
+import {
+  buildRenderModel,
+  paymentLinkOf,
+  type RenderableDocument,
+  type RenderModel,
+} from '@/pdf/model';
 import { renderPdf } from '@/pdf/client';
 
 const qrCache = new Map<string, string>();
@@ -19,16 +24,20 @@ export async function qrDataUrl(link: string): Promise<string | null> {
   }
 }
 
-/** Builds the render model, including the payment QR code when enabled. */
+/**
+ * Builds the render model, including the QR code of the payment link (the
+ * document's own link, else the company's) when enabled.
+ */
 export async function prepareModel(
   doc: RenderableDocument,
   company: Company,
   client: Client | null,
   accent?: string,
+  language?: DocumentLanguage,
 ): Promise<RenderModel> {
-  const link = company.payment.showQrCode ? company.payment.paymentLink.trim() : '';
+  const link = company.payment.showQrCode ? paymentLinkOf(doc, company) : '';
   const qrCode = link ? await qrDataUrl(link) : null;
-  return buildRenderModel(doc, company, client, { qrCode, accent });
+  return buildRenderModel(doc, company, client, { qrCode, accent, language });
 }
 
 export async function generatePdf(
@@ -51,9 +60,9 @@ export function useLivePdf(
   company: Company,
   client: Client | null,
   templateId: string | null,
-  options: { delay?: number; accent?: string } = {},
+  options: { delay?: number; accent?: string; language?: DocumentLanguage } = {},
 ) {
-  const { delay = 350, accent } = options;
+  const { delay = 350, accent, language } = options;
   // The latest finished render; `loading` is derived by comparing keys.
   const [done, setDone] = useState<{ key: string; blob: Blob | null; error: string | null } | null>(
     null,
@@ -61,7 +70,7 @@ export function useLivePdf(
   const latest = useRef<string | null>(null);
 
   // A stable key so re-renders with equal data don't regenerate the PDF.
-  const key = doc ? JSON.stringify([doc, company, client, templateId, accent]) : null;
+  const key = doc ? JSON.stringify([doc, company, client, templateId, accent, language]) : null;
 
   useEffect(() => {
     latest.current = key;
@@ -70,7 +79,7 @@ export function useLivePdf(
       let blob: Blob | null = null;
       let error: string | null = null;
       try {
-        const model = await prepareModel(doc, company, client, accent);
+        const model = await prepareModel(doc, company, client, accent, language);
         blob = await renderPdf(model, templateId);
       } catch (e) {
         error = e instanceof Error ? e.message : 'Could not create the PDF.';

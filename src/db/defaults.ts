@@ -144,7 +144,8 @@ export function createCompany(overrides: Partial<Company> = {}): Company {
     currency: 'KWD',
     locale,
     dateFormat: 'dd/MM/yyyy',
-    language: 'en',
+    // Kuwaiti invoices are in Arabic, with English next to it.
+    language: 'ar-en',
     branding: {
       accentColor: '#4f46e5',
       templateId: 'modern',

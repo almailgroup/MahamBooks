@@ -1,8 +1,9 @@
-import { Text, View } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
+import { Text, View } from './primitives';
 import {
   DocShell,
   ItemsTable,
+  Label,
   Lines,
   Logo,
   PageFooter,
@@ -13,6 +14,8 @@ import {
   clientLines,
   companyContactLines,
   companyIdLine,
+  en,
+  fitSize,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
@@ -58,6 +61,11 @@ function Modern({ model, theme }: TemplateProps) {
                 {c.name}
               </Text>
             ) : null}
+            {c.nameSecondary ? (
+              <Text style={{ fontSize: 8.5, fontWeight: 600, color: theme.body, marginBottom: 2 }}>
+                {c.nameSecondary}
+              </Text>
+            ) : null}
             <Lines
               lines={[...c.addressLines, ...companyContactLines(model), companyIdLine(model)]}
               style={{ fontSize: 8, color: theme.muted, lineHeight: 1.4 }}
@@ -77,6 +85,21 @@ function Modern({ model, theme }: TemplateProps) {
           >
             {model.title}
           </Text>
+          {model.titleSecondary ? (
+            <Text
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: theme.accentInk,
+                textTransform: 'uppercase',
+                letterSpacing: 2.4,
+                marginTop: 1,
+                textAlign: 'right',
+              }}
+            >
+              {model.titleSecondary}
+            </Text>
+          ) : null}
           {model.number ? (
             <Text style={sx({ fontSize: 10, color: theme.muted, marginTop: 4 }, TNUM)}>
               {model.number}
@@ -97,10 +120,19 @@ function Modern({ model, theme }: TemplateProps) {
         }}
       >
         <View style={{ flex: 1.25, paddingRight: 14 }}>
-          <Text style={label}>{model.recipientLabel}</Text>
+          <Label
+            text={model.recipientLabel}
+            secondary={model.recipientLabelSecondary}
+            style={label}
+          />
           <Text style={{ fontSize: 10.5, fontWeight: 700, color: theme.ink, marginBottom: 3 }}>
             {model.client.name || '—'}
           </Text>
+          {model.client.nameSecondary ? (
+            <Text style={{ fontSize: 8.5, fontWeight: 600, color: theme.body, marginBottom: 3 }}>
+              {model.client.nameSecondary}
+            </Text>
+          ) : null}
           <Lines
             lines={clientLines(model, false)}
             style={{ fontSize: 8.5, color: theme.body, lineHeight: 1.5 }}
@@ -108,7 +140,7 @@ function Modern({ model, theme }: TemplateProps) {
         </View>
         {model.shipTo ? (
           <View style={{ flex: 1, paddingRight: 14 }}>
-            <Text style={label}>{model.labels.shipTo}</Text>
+            <Label text={model.labels.shipTo} secondary={en(model, 'shipTo')} style={label} />
             <Text style={{ fontSize: 9, fontWeight: 700, color: theme.ink, marginBottom: 3 }}>
               {model.shipTo.name}
             </Text>
@@ -121,7 +153,11 @@ function Modern({ model, theme }: TemplateProps) {
         <View style={{ flex: 1, paddingRight: 14 }}>
           {model.meta.map((m) => (
             <View key={m.label} style={{ marginBottom: 7 }}>
-              <Text style={sx(label, { marginBottom: 2 })}>{m.label}</Text>
+              <Label
+                text={m.label}
+                secondary={m.secondary}
+                style={sx(label, { marginBottom: 2 })}
+              />
               <Text style={sx({ fontSize: 9, fontWeight: 600, color: theme.ink }, TNUM)}>
                 {m.value}
               </Text>
@@ -129,10 +165,20 @@ function Modern({ model, theme }: TemplateProps) {
           ))}
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
-          <Text style={sx(label, { textAlign: 'right' })}>{model.amountDue.label}</Text>
+          <Label
+            text={model.amountDue.label}
+            secondary={model.amountDue.secondary}
+            style={sx(label, { textAlign: 'right' })}
+            stack
+          />
           <Text
             style={sx(
-              { fontSize: 19, fontWeight: 800, color: theme.accentInk, textAlign: 'right' },
+              {
+                fontSize: fitSize(model.amountDue.value, 19, 13),
+                fontWeight: 800,
+                color: theme.accentInk,
+                textAlign: 'right',
+              },
               TNUM,
             )}
           >
@@ -145,7 +191,11 @@ function Modern({ model, theme }: TemplateProps) {
           ) : null}
           {model.deposit ? (
             <View style={{ marginTop: 8, alignItems: 'flex-end' }}>
-              <Text style={{ fontSize: 8, color: theme.muted }}>{model.deposit.label}</Text>
+              <Label
+                text={model.deposit.label}
+                secondary={model.deposit.secondary}
+                style={{ fontSize: 8, color: theme.muted, textAlign: 'right' }}
+              />
               <Text style={sx({ fontSize: 10, fontWeight: 700, color: theme.ink }, TNUM)}>
                 {model.deposit.value}
               </Text>
@@ -158,7 +208,11 @@ function Modern({ model, theme }: TemplateProps) {
       </View>
 
       {/* Placed before the table so it always lands on the first page. */}
-      <Stamp model={model} theme={theme} style={{ top: 112, right: 46 }} />
+      <Stamp
+        model={model}
+        theme={theme}
+        style={{ top: model.titleSecondary ? 128 : 112, right: 46 }}
+      />
 
       <ItemsTable
         model={model}

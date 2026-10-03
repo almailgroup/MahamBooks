@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Plus, Star, Trash2 } from 'lucide-react';
 import type { Client, ClientContact, Company } from '@/db/types';
 import { emptyAddress, isAddressEmpty } from '@/lib/geo';
+import { isValidCivilId } from '@/lib/kuwait';
 import { shortId } from '@/lib/ids';
-import { LANGUAGES } from '@/pdf/labels';
+import { DOCUMENT_LANGUAGES } from '@/pdf/languages';
+import { t, tp } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Select, Switch, Textarea } from '@/components/ui/form';
 import { AddressFields, CurrencySelect } from '@/components/fields';
@@ -37,18 +39,19 @@ export function ClientForm({
     set({ contacts: contacts.map((c, i) => (i === index ? { ...c, ...patch } : c)) });
   const customer = isCustomer(value);
   const vendor = isVendor(value);
+  const civilId = value.civilId?.trim() ?? '';
+  const civilIdWrong = civilId !== '' && !isValidCivilId(civilId);
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
-          label={kind === 'vendor' ? 'Vendor name' : 'Client name'}
-          className="sm:col-span-2"
+          label={kind === 'vendor' ? t('Vendor name') : t('Client name')}
           error={errors.name}
           hint={
             kind === 'vendor'
-              ? 'Company or person you buy from.'
-              : 'Company or person you are billing.'
+              ? t('Company or person you buy from.')
+              : t('Company or person you are billing.')
           }
         >
           {(id) => (
@@ -61,16 +64,31 @@ export function ClientForm({
             />
           )}
         </Field>
+        <Field
+          label={t('Arabic name')}
+          optional
+          hint={t('Printed on Arabic and bilingual documents.')}
+        >
+          {(id) => (
+            <Input
+              id={id}
+              dir="rtl"
+              lang="ar"
+              value={value.nameAr ?? ''}
+              onChange={(e) => set({ nameAr: e.target.value })}
+            />
+          )}
+        </Field>
       </div>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Contacts</h3>
+        <h3 className="text-sm font-semibold text-slate-900">{t('Contacts')}</h3>
         {contacts.map((contact, index) => (
           <div
             key={contact.id}
             className="grid gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
           >
-            <Field label="Name">
+            <Field label={t('Name')}>
               {(id) => (
                 <Input
                   id={id}
@@ -79,20 +97,23 @@ export function ClientForm({
                 />
               )}
             </Field>
-            <Field label="Email">
+            <Field label={t('Email')}>
               {(id) => (
                 <Input
                   id={id}
                   type="email"
+                  dir="ltr"
                   value={contact.email}
                   onChange={(e) => setContact(index, { email: e.target.value })}
                 />
               )}
             </Field>
-            <Field label="Phone">
+            <Field label={t('Phone')}>
               {(id) => (
                 <Input
                   id={id}
+                  type="tel"
+                  dir="ltr"
                   value={contact.phone}
                   onChange={(e) => setContact(index, { phone: e.target.value })}
                 />
@@ -102,8 +123,8 @@ export function ClientForm({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                title={contact.primary ? 'Primary contact' : 'Make primary'}
-                aria-label={contact.primary ? 'Primary contact' : 'Make primary contact'}
+                title={contact.primary ? t('Primary contact') : t('Make primary')}
+                aria-label={contact.primary ? t('Primary contact') : t('Make primary contact')}
                 onClick={() =>
                   set({ contacts: contacts.map((c, i) => ({ ...c, primary: i === index })) })
                 }
@@ -114,7 +135,7 @@ export function ClientForm({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Remove contact"
+                  aria-label={t('Remove contact')}
                   onClick={() => set({ contacts: contacts.filter((_, i) => i !== index) })}
                 >
                   <Trash2 />
@@ -128,13 +149,13 @@ export function ClientForm({
           size="sm"
           onClick={() => set({ contacts: [...contacts, newContact(false)] })}
         >
-          <Plus /> Add contact
+          <Plus /> {t('Add contact')}
         </Button>
       </section>
 
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-slate-900">
-          {customer ? 'Billing address' : 'Address'}
+          {customer ? t('Billing address') : t('Address')}
         </h3>
         <AddressFields value={value.address} onChange={(address) => set({ address })} />
         {customer ? (
@@ -148,7 +169,7 @@ export function ClientForm({
                   : null,
               });
             }}
-            label="Different shipping address"
+            label={t('Different shipping address')}
           />
         ) : null}
         {customer && showShipping && value.shippingAddress ? (
@@ -160,28 +181,58 @@ export function ClientForm({
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2">
-        <Field label={company.taxIdLabel || 'Tax ID'} optional>
+        <Field label={company.taxIdLabel || t('Tax ID')} optional>
           {(id) => (
             <Input id={id} value={value.taxId} onChange={(e) => set({ taxId: e.target.value })} />
           )}
         </Field>
-        <Field label="Phone (main)" optional>
+        <Field
+          label={t('Civil ID')}
+          optional
+          error={
+            civilIdWrong ? t('This Civil ID does not look right. Check the 12 digits.') : undefined
+          }
+          hint={t('For individual customers and cheque drawers.')}
+        >
           {(id) => (
-            <Input id={id} value={value.phone} onChange={(e) => set({ phone: e.target.value })} />
+            <Input
+              id={id}
+              dir="ltr"
+              inputMode="numeric"
+              maxLength={14}
+              value={value.civilId ?? ''}
+              onChange={(e) => set({ civilId: e.target.value })}
+              aria-invalid={civilIdWrong}
+            />
+          )}
+        </Field>
+        <Field label={t('Phone (main)')} optional>
+          {(id) => (
+            <Input
+              id={id}
+              type="tel"
+              dir="ltr"
+              value={value.phone}
+              onChange={(e) => set({ phone: e.target.value })}
+            />
           )}
         </Field>
         {!compact ? (
           <>
-            <Field label="Website" optional>
+            <Field label={t('Website')} optional>
               {(id) => (
                 <Input
                   id={id}
+                  dir="ltr"
                   value={value.website}
                   onChange={(e) => set({ website: e.target.value })}
                 />
               )}
             </Field>
-            <Field label="Currency" hint={`Leave as default to use ${company.currency}.`}>
+            <Field
+              label={t('Currency')}
+              hint={t('Leave as default to use {currency}.', { currency: company.currency })}
+            >
               {(id) => (
                 <div className="flex gap-2">
                   <div className="flex-1">
@@ -200,15 +251,19 @@ export function ClientForm({
                       className="h-9"
                       onClick={() => set({ currency: null })}
                     >
-                      Default
+                      {t('Default')}
                     </Button>
                   ) : null}
                 </div>
               )}
             </Field>
             <Field
-              label="Payment terms (days)"
-              hint={`Default: ${company.defaults.paymentTermsDays} days`}
+              label={t('Payment terms (days)')}
+              hint={tp(
+                company.defaults.paymentTermsDays,
+                'Default: {count} day',
+                'Default: {count} days',
+              )}
             >
               {(id) => (
                 <div className="flex gap-2">
@@ -227,14 +282,14 @@ export function ClientForm({
                       className="h-9"
                       onClick={() => set({ paymentTermsDays: null })}
                     >
-                      Default
+                      {t('Default')}
                     </Button>
                   ) : null}
                 </div>
               )}
             </Field>
             {customer ? (
-              <Field label="Document language">
+              <Field label={t('Document language')}>
                 {(id) => (
                   <Select
                     id={id}
@@ -243,10 +298,10 @@ export function ClientForm({
                       set({ language: (e.target.value || null) as Client['language'] })
                     }
                   >
-                    <option value="">Company default</option>
-                    {LANGUAGES.map((l) => (
+                    <option value="">{t('Company default')}</option>
+                    {DOCUMENT_LANGUAGES.map((l) => (
                       <option key={l.value} value={l.value}>
-                        {l.label}
+                        {t(l.label)}
                       </option>
                     ))}
                   </Select>
@@ -257,11 +312,11 @@ export function ClientForm({
               <Switch
                 checked={value.taxExempt}
                 onChange={(taxExempt) => set({ taxExempt })}
-                label="Tax exempt"
+                label={t('Tax exempt')}
                 description={
                   vendor && !customer
-                    ? 'Not registered for tax: their bills never include tax.'
-                    : 'Taxes are never applied to their documents.'
+                    ? t('Not registered for tax: their bills never include tax.')
+                    : t('Taxes are never applied to their documents.')
                 }
               />
             </div>
@@ -271,18 +326,22 @@ export function ClientForm({
                 // A contact always keeps at least one role.
                 disabled={customer && !vendor}
                 onChange={(on) => set({ isCustomer: on })}
-                label="Client"
-                description="You send them quotes and invoices."
+                label={t('Client')}
+                description={t('You send them quotes and invoices.')}
               />
               <Switch
                 checked={vendor}
                 disabled={vendor && !customer}
                 onChange={(on) => set({ isVendor: on })}
-                label="Vendor"
-                description="You record their bills and pay them."
+                label={t('Vendor')}
+                description={t('You record their bills and pay them.')}
               />
             </div>
-            <Field label="Internal notes" className="sm:col-span-2" hint="Only visible to you.">
+            <Field
+              label={t('Internal notes')}
+              className="sm:col-span-2"
+              hint={t('Only visible to you.')}
+            >
               {(id) => (
                 <Textarea
                   id={id}
@@ -300,5 +359,5 @@ export function ClientForm({
 }
 
 export function validateClient(client: Client): Partial<Record<'name', string>> {
-  return client.name.trim() ? {} : { name: 'Please enter a name.' };
+  return client.name.trim() ? {} : { name: t('Please enter a name.') };
 }

@@ -71,8 +71,11 @@ export type DateFormat =
 
 export type PageSize = 'A4' | 'LETTER';
 
-/** Language used for the words printed on documents. */
-export type DocumentLanguage = 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'nl';
+/**
+ * Language used for the words printed on documents. `ar-en` is bilingual:
+ * Arabic first (right to left), with English next to it.
+ */
+export type DocumentLanguage = 'ar-en' | 'ar' | 'en' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'nl';
 
 export interface DocumentDefaults {
   /** Days between issue date and due date for new invoices. */
@@ -94,6 +97,10 @@ export interface DocumentDefaults {
   /** Tax rates applied automatically to new lines (line mode) or new documents (document mode). */
   defaultTaxRateIds: ID[];
   pageSize: PageSize;
+  /** Print the total in words under the totals. Missing means on for Kuwaiti companies. */
+  showAmountInWords?: boolean;
+  /** Print the Hijri (Umm al-Qura) date next to the issue date. */
+  showHijriDate?: boolean;
 }
 
 export interface Branding {
@@ -542,7 +549,13 @@ export interface LineItem {
   taxes: TaxLine[];
   /** Ledger account override; null uses the product's or the company's default. */
   accountId?: ID | null;
+  /** Condition of the goods sold (printed when set, as Kuwaiti invoices require). */
+  condition?: ItemCondition | null;
+  /** Serial or IMEI number of the item sold. */
+  serialNumber?: string;
 }
+
+export type ItemCondition = 'new' | 'used';
 
 export interface Charge {
   id: ID;
@@ -605,6 +618,10 @@ export interface InvoiceDocument {
   recurringId: ID | null;
   /** Online payment link for this document (overrides the company's link). */
   paymentLink?: PaymentLink | null;
+  /** When the goods or services are delivered (printed when set). */
+  deliveryDate?: ISODate | null;
+  /** Where the goods are delivered, e.g. a site or warehouse. */
+  deliveryPlace?: string;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;

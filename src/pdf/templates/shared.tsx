@@ -1,29 +1,62 @@
 import type { ReactNode } from 'react';
-import { Document, Image, Link, Page, Text, View } from '@react-pdf/renderer';
+import { Document, Page } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
 import type { RenderModel, RenderTotal } from '../model';
+import type { LabelKey } from '../labels';
 import type { TemplateTheme } from './types';
 import { APP_NAME } from '@/lib/brand';
+import { DirectionProvider, Image, Link, Text, View, ltr, sx, useDirection } from './primitives';
+
+export { sx, ltr } from './primitives';
+
+/**
+ * Wide gaps between parts of a line. Two plain spaces in a row would let
+ * react-pdf break the line there with a stray hyphen, so the second one is a
+ * non-breaking space.
+ */
+export const GAP = ' \u00a0';
+/** "a  ·  b" separator (see GAP). */
+export const DOT = ' \u00a0·\u00a0 ';
 
 /** Tabular figures keep digits aligned in columns. */
 export const TNUM: Style = { fontFeatureSettings: ['tnum'] };
 
-type StyleInput = Style | Style[] | undefined | null | false;
-
-/** Flattens optional style fragments into one object (react-pdf accepts arrays too). */
-export function sx(...styles: StyleInput[]): Style {
-  const out: Style = {};
-  for (const s of styles) {
-    if (!s) continue;
-    if (Array.isArray(s)) Object.assign(out, sx(...s));
-    else Object.assign(out, s);
-  }
-  return out;
-}
-
 export function displayUrl(url: string): string {
   return url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
 }
+
+/**
+ * Font size for a prominent amount, made smaller when the amount is longer
+ * than the space the template has room for (`chars` characters).
+ */
+export function fitSize(value: string, size: number, chars: number): number {
+  const length = value.replace(/[\u200e\u200f]/g, '').length;
+  return length > chars ? Math.max(size * 0.6, (size * chars) / length) : size;
+}
+
+/** True when the document is laid out right to left (Arabic, bilingual). */
+export const isRtl = (model: RenderModel) => model.dir === 'rtl';
+
+/** English word for a label in bilingual documents, '' otherwise. */
+export function en(model: RenderModel, key: LabelKey): string {
+  return model.secondary?.[key] ?? '';
+}
+
+/* -------------------------------------------------------------------------- */
+/* Direction helpers (for the few places a template sets sides by hand)       */
+/* -------------------------------------------------------------------------- */
+
+/** flexDirection for a row that starts on the reading side. */
+export const rowDir = (model: RenderModel): Style['flexDirection'] =>
+  isRtl(model) ? 'row-reverse' : 'row';
+
+/** Text alignment at the start of the line (left in English, right in Arabic). */
+export const alignStart = (model: RenderModel): Style['textAlign'] =>
+  isRtl(model) ? 'right' : 'left';
+
+/** Text alignment at the end of the line (right in English, left in Arabic). */
+export const alignEnd = (model: RenderModel): Style['textAlign'] =>
+  isRtl(model) ? 'left' : 'right';
 
 /* -------------------------------------------------------------------------- */
 /* Document shell                                                             */
@@ -40,6 +73,19 @@ export function DocShell({
   pageStyle?: Style;
   children: ReactNode;
 }) {
+  const style = sx(
+    {
+      fontFamily: theme.fonts.body,
+      fontSize: 9,
+      color: theme.body,
+      paddingTop: 40,
+      paddingBottom: 64,
+      paddingHorizontal: 40,
+      // Inherited by all text, so text in either script lines up with the layout.
+      textAlign: alignStart(model),
+    },
+    pageStyle,
+  );
   return (
     <Document
       title={model.documentTitle}
@@ -47,30 +93,19 @@ export function DocShell({
       subject={model.documentTitle}
       creator={APP_NAME}
       producer={APP_NAME}
-      language={model.language}
+      language={isRtl(model) ? 'ar' : model.language}
     >
-      <Page
-        size={model.pageSize}
-        style={sx(
-          {
-            fontFamily: theme.fonts.body,
-            fontSize: 9,
-            color: theme.body,
-            paddingTop: 40,
-            paddingBottom: 64,
-            paddingHorizontal: 40,
-          },
-          pageStyle,
-        )}
-      >
-        {children}
+      <Page size={model.pageSize} style={style}>
+        <DirectionProvider dir={model.dir} font={style.fontFamily}>
+          {children}
+        </DirectionProvider>
       </Page>
     </Document>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Logo                                                                       */
+/* Logo and images                                                            */
 /* -------------------------------------------------------------------------- */
 
 export function Logo({
@@ -108,13 +143,102 @@ export function Logo({
 /* Text helpers                                                               */
 /* -------------------------------------------------------------------------- */
 
-export function Lines({ lines, style }: { lines: (string | null | undefined)[]; style?: Style }) {
-  const visible = lines.filter((l): l is string => Boolean(l && l.trim()));
-  if (visible.length === 0) return null;
-  return <Text style={style}>{visible.join('\n')}</Text>;
+const TEXT_KEYS = new Set<string>([
+  'color',
+  'direction',
+  'fontFamily',
+  'fontFeatureSettings',
+  'fontSize',
+  'fontStyle',
+  'fontWeight',
+  'letterSpacing',
+  'lineHeight',
+  'opacity',
+  'textAlign',
+  'textDecoration',
+  'textTransform',
+]);
+
+/** Splits a text style into what styles the words and what styles their box. */
+function splitTextStyle(style: Style): { text: Style; box: Style } {
+  const text: Record<string, unknown> = {};
+  const box: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(style)) {
+    (TEXT_KEYS.has(key) ? text : box)[key] = value;
+  }
+  return { text: text as Style, box: box as Style };
 }
 
-const joinParts = (parts: string[], sep = '  ·  ') => parts.filter(Boolean).join(sep);
+/**
+ * A printed label with, in bilingual documents, its English version: after
+ * it on the same line (smaller and lighter), or under it with `stack`.
+ */
+export function Label({
+  text,
+  secondary,
+  style,
+  secondaryStyle,
+  stack = false,
+}: {
+  text: string;
+  secondary?: string;
+  style?: Style;
+  secondaryStyle?: Style;
+  stack?: boolean;
+}) {
+  const base = sx(style);
+  if (!secondary || secondary === text) return <Text style={base}>{text}</Text>;
+  const size = typeof base.fontSize === 'number' ? base.fontSize : 9;
+  const english = sx(
+    { fontSize: Math.max(5.5, size * 0.84), letterSpacing: base.letterSpacing, opacity: 0.78 },
+    secondaryStyle,
+  );
+  if (stack) {
+    // The box (background, padding, borders, width) holds both lines.
+    const { text: words, box } = splitTextStyle(base);
+    return (
+      <View style={box}>
+        <Text style={words}>{text}</Text>
+        <Text style={sx(words, english, { marginTop: 0.5 })}>{secondary}</Text>
+      </View>
+    );
+  }
+  return (
+    <Text style={base}>
+      {text}
+      <Text style={english}>{`${GAP}${ltr(secondary)}`}</Text>
+    </Text>
+  );
+}
+
+/** Label of a party: "Bill to", "Ship to"… with its English in bilingual documents. */
+export function labelOf(model: RenderModel, key: LabelKey): { text: string; secondary: string } {
+  return { text: model.labels[key], secondary: en(model, key) };
+}
+
+/**
+ * Lines of text. In right-to-left documents each line is its own paragraph,
+ * so an Arabic address line, an email and a phone number each read in their
+ * own direction.
+ */
+export function Lines({ lines, style }: { lines: (string | null | undefined)[]; style?: Style }) {
+  const rtl = useDirection() === 'rtl';
+  const visible = lines.filter((l): l is string => Boolean(l && l.trim()));
+  if (visible.length === 0) return null;
+  if (!rtl || visible.length === 1) return <Text style={style}>{visible.join('\n')}</Text>;
+  const { marginTop, marginBottom, ...text } = sx(style);
+  return (
+    <View style={{ marginTop, marginBottom }}>
+      {visible.map((line, i) => (
+        <Text key={i} style={text}>
+          {line}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+const joinParts = (parts: string[], sep = DOT) => parts.filter(Boolean).join(sep);
 
 /** Email, phone and website, joined on as few lines as possible. */
 export function companyContactLines(model: RenderModel, compact = true): string[] {
@@ -124,9 +248,18 @@ export function companyContactLines(model: RenderModel, compact = true): string[
   return parts.length > 2 ? [joinParts(parts.slice(0, 2)), parts[2]] : [joinParts(parts)];
 }
 
-/** Tax and registration numbers on one line. */
+/** Address lines on one line, with the Arabic comma in Arabic documents. */
+export function joinAddress(model: RenderModel, lines: string[]): string {
+  return lines.filter(Boolean).join(isRtl(model) ? '، ' : ', ');
+}
+
+/** Tax, registration (CR) and licence numbers on one line. */
 export function companyIdLine(model: RenderModel): string {
-  return joinParts([model.company.taxLine, model.company.registrationLine]);
+  return joinParts([
+    model.company.taxLine,
+    model.company.registrationLine,
+    model.company.licenceLine,
+  ]);
 }
 
 export function clientLines(model: RenderModel, compact = true): string[] {
@@ -160,9 +293,10 @@ export interface ItemsTableStyles {
   widths?: Partial<Record<ColumnKey, number>>;
 }
 
-type ColumnKey = 'qty' | 'price' | 'discount' | 'tax' | 'amount';
+type ColumnKey = 'condition' | 'qty' | 'price' | 'discount' | 'tax' | 'amount';
 
 const MIN_WIDTHS: Record<ColumnKey, number> = {
+  condition: 44,
   qty: 44,
   price: 62,
   discount: 50,
@@ -170,11 +304,21 @@ const MIN_WIDTHS: Record<ColumnKey, number> = {
   amount: 70,
 };
 const MAX_WIDTHS: Record<ColumnKey, number> = {
+  condition: 90,
   qty: 96,
   price: 104,
   discount: 70,
   tax: 80,
   amount: 120,
+};
+
+const COLUMN_LABELS: Record<ColumnKey, LabelKey> = {
+  condition: 'condition',
+  qty: 'quantity',
+  price: 'unitPrice',
+  discount: 'discount',
+  tax: 'tax',
+  amount: 'amount',
 };
 
 /** Estimates column widths from their content so numbers never wrap. */
@@ -184,15 +328,13 @@ function columnWidths(
   paddingX: number,
   overrides: Partial<Record<ColumnKey, number>> = {},
 ): Record<ColumnKey, number> {
-  const values: Record<ColumnKey, string[]> = {
-    qty: [model.labels.quantity],
-    price: [model.labels.unitPrice],
-    discount: [model.labels.discount],
-    tax: [model.labels.tax],
-    amount: [model.labels.amount],
-  };
+  const keys = Object.keys(COLUMN_LABELS) as ColumnKey[];
+  const values = Object.fromEntries(
+    keys.map((key) => [key, [model.labels[COLUMN_LABELS[key]], en(model, COLUMN_LABELS[key])]]),
+  ) as Record<ColumnKey, string[]>;
   for (const item of model.items) {
     if (item.kind !== 'item') continue;
+    values.condition.push(item.condition);
     values.qty.push(item.quantityWithUnit);
     values.price.push(item.unitPrice);
     values.discount.push(item.discount);
@@ -200,8 +342,9 @@ function columnWidths(
     values.amount.push(item.amount);
   }
   const result = {} as Record<ColumnKey, number>;
-  (Object.keys(values) as ColumnKey[]).forEach((key) => {
-    const longest = Math.max(...values[key].map((v) => v.length));
+  keys.forEach((key) => {
+    // Bidi marks take no space.
+    const longest = Math.max(...values[key].map((v) => v.replace(/[\u200e\u200f]/g, '').length));
     const estimate = longest * fontSize * 0.56 + paddingX * 2 + 4;
     result[key] =
       overrides[key] ?? Math.round(Math.min(MAX_WIDTHS[key], Math.max(MIN_WIDTHS[key], estimate)));
@@ -218,7 +361,7 @@ export function ItemsTable({
   theme: TemplateTheme;
   styles?: ItemsTableStyles;
 }) {
-  const { labels, columns } = model;
+  const { columns } = model;
   const fontSize = styles.fontSize ?? 9;
   const px = styles.cellPaddingX ?? 8;
   const py = styles.rowPaddingY ?? 7;
@@ -227,12 +370,13 @@ export function ItemsTable({
     ? { borderLeftWidth: 0.75, borderLeftColor: styles.columnLines }
     : undefined;
 
-  const cols: { key: ColumnKey; label: string }[] = [
-    { key: 'qty', label: labels.quantity },
-    { key: 'price', label: labels.unitPrice },
-    ...(columns.discount ? [{ key: 'discount' as const, label: labels.discount }] : []),
-    ...(columns.tax ? [{ key: 'tax' as const, label: labels.tax }] : []),
-    { key: 'amount', label: labels.amount },
+  const cols: ColumnKey[] = [
+    ...(columns.condition ? (['condition'] as const) : []),
+    'qty',
+    'price',
+    ...(columns.discount ? (['discount'] as const) : []),
+    ...(columns.tax ? (['tax'] as const) : []),
+    'amount',
   ];
 
   const headerText = sx(
@@ -240,6 +384,10 @@ export function ItemsTable({
     styles.headerText,
   );
   const cell = sx({ fontSize, color: theme.body, textAlign: 'right' }, TNUM, styles.cell);
+  const detailStyle = sx(
+    { fontSize: fontSize - 1, color: theme.muted, marginTop: 2, lineHeight: 1.35 },
+    styles.detail,
+  );
   const itemRows = model.items;
   // Zebra striping counts item rows only, so headings don't shift the pattern.
   const stripe: number[] = [];
@@ -248,6 +396,18 @@ export function ItemsTable({
     stripe.push(itemCount);
     if (row.kind === 'item') itemCount += 1;
   }
+  const valueOf = (item: RenderModel['items'][number], key: ColumnKey) =>
+    key === 'condition'
+      ? item.condition
+      : key === 'qty'
+        ? item.quantityWithUnit
+        : key === 'price'
+          ? item.unitPrice
+          : key === 'discount'
+            ? item.discount
+            : key === 'tax'
+              ? item.tax
+              : item.amount;
 
   return (
     <View style={sx({ width: '100%' }, styles.container)}>
@@ -259,11 +419,21 @@ export function ItemsTable({
         )}
       >
         <View style={{ flex: 1, paddingHorizontal: px }}>
-          <Text style={headerText}>{labels.description}</Text>
+          <Label
+            text={model.labels.description}
+            secondary={en(model, 'description')}
+            style={headerText}
+            stack
+          />
         </View>
-        {cols.map((c) => (
-          <View key={c.key} style={sx({ width: w[c.key], paddingHorizontal: px }, divider)}>
-            <Text style={sx(headerText, { textAlign: 'right' })}>{c.label}</Text>
+        {cols.map((key) => (
+          <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
+            <Label
+              text={model.labels[COLUMN_LABELS[key]]}
+              secondary={en(model, COLUMN_LABELS[key])}
+              style={sx(headerText, { textAlign: key === 'condition' ? 'left' : 'right' })}
+              stack
+            />
           </View>
         ))}
       </View>
@@ -289,6 +459,9 @@ export function ItemsTable({
               >
                 {item.title}
               </Text>
+              {item.titleSecondary ? (
+                <Text style={sx(detailStyle, { marginTop: 1 })}>{item.titleSecondary}</Text>
+              ) : null}
               {item.detail ? (
                 <Text
                   style={sx(
@@ -319,42 +492,35 @@ export function ItemsTable({
               <Text style={sx({ fontSize, fontWeight: 600, color: theme.ink }, styles.title)}>
                 {item.title}
               </Text>
-              {item.detail ? (
+              {item.titleSecondary ? (
                 <Text
                   style={sx(
-                    { fontSize: fontSize - 1, color: theme.muted, marginTop: 2, lineHeight: 1.35 },
-                    styles.detail,
+                    { fontSize: fontSize - 0.5, color: theme.body, marginTop: 1 },
+                    styles.title,
+                    { fontWeight: 400 },
                   )}
                 >
-                  {item.detail}
+                  {item.titleSecondary}
                 </Text>
               ) : null}
+              {item.detail ? <Text style={detailStyle}>{item.detail}</Text> : null}
+              {item.serial ? <Text style={detailStyle}>{item.serial}</Text> : null}
             </View>
-            {cols.map((c) => {
-              const value =
-                c.key === 'qty'
-                  ? item.quantityWithUnit
-                  : c.key === 'price'
-                    ? item.unitPrice
-                    : c.key === 'discount'
-                      ? item.discount
-                      : c.key === 'tax'
-                        ? item.tax
-                        : item.amount;
-              return (
-                <View key={c.key} style={sx({ width: w[c.key], paddingHorizontal: px }, divider)}>
-                  <Text
-                    style={
-                      c.key === 'amount'
-                        ? sx(cell, { fontWeight: 600, color: theme.ink }, styles.amount)
+            {cols.map((key) => (
+              <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
+                <Text
+                  style={
+                    key === 'amount'
+                      ? sx(cell, { fontWeight: 600, color: theme.ink }, styles.amount)
+                      : key === 'condition'
+                        ? sx(cell, { textAlign: 'left' })
                         : cell
-                    }
-                  >
-                    {value}
-                  </Text>
-                </View>
-              );
-            })}
+                  }
+                >
+                  {valueOf(item, key)}
+                </Text>
+              </View>
+            ))}
           </View>
         );
       })}
@@ -381,10 +547,45 @@ export interface TotalsStyles {
   strongLabel?: Style;
   strongValue?: Style;
   note?: Style;
+  /** The amount in words under the totals. */
+  words?: Style;
+  wordsText?: Style;
 }
 
 export function emphasizedKind(model: RenderModel): RenderTotal['kind'] {
   return model.totals.some((t) => t.kind === 'balance') ? 'balance' : 'total';
+}
+
+/** The total in words (Arabic, English or both), with its label. */
+export function AmountInWords({
+  model,
+  theme,
+  style,
+  textStyle,
+}: {
+  model: RenderModel;
+  theme: TemplateTheme;
+  style?: Style;
+  textStyle?: Style;
+}) {
+  if (model.amountInWords.length === 0) return null;
+  return (
+    <View style={sx({ paddingTop: 7 }, style)}>
+      <Label
+        text={model.labels.amountInWords}
+        secondary={en(model, 'amountInWords')}
+        style={{ fontSize: 6.5, color: theme.faint, marginBottom: 2 }}
+      />
+      {model.amountInWords.map((words) => (
+        <Text
+          key={words}
+          style={sx({ fontSize: 7.5, color: theme.body, lineHeight: 1.4 }, textStyle)}
+        >
+          {words}
+        </Text>
+      ))}
+    </View>
+  );
 }
 
 export function TotalsTable({
@@ -406,6 +607,7 @@ export function TotalsTable({
   );
   const label = sx({ fontSize: 9, color: theme.muted }, styles.label);
   const value = sx({ fontSize: 9, color: theme.ink, textAlign: 'right' }, TNUM, styles.value);
+  const rowPadding = sx(styles.row).paddingHorizontal;
 
   return (
     <View
@@ -417,15 +619,15 @@ export function TotalsTable({
           return (
             <View key={i} style={sx(row, { paddingVertical: 7 }, styles.grandRow)}>
               {grandBackground}
-              <Text
+              <Label
+                text={t.label}
+                secondary={t.secondary}
                 style={sx(
                   label,
                   { fontSize: 10, fontWeight: 700, color: theme.ink },
                   styles.grandLabel,
                 )}
-              >
-                {t.label}
-              </Text>
+              />
               <Text style={sx(value, { fontSize: 12, fontWeight: 700 }, styles.grandValue)}>
                 {t.value}
               </Text>
@@ -435,9 +637,11 @@ export function TotalsTable({
         if (t.kind === 'total') {
           return (
             <View key={i} style={sx(row, styles.strongRow)}>
-              <Text style={sx(label, { fontWeight: 700, color: theme.ink }, styles.strongLabel)}>
-                {t.label}
-              </Text>
+              <Label
+                text={t.label}
+                secondary={t.secondary}
+                style={sx(label, { fontWeight: 700, color: theme.ink }, styles.strongLabel)}
+              />
               <Text style={sx(value, { fontWeight: 700 }, styles.strongValue)}>{t.value}</Text>
             </View>
           );
@@ -454,11 +658,17 @@ export function TotalsTable({
         }
         return (
           <View key={i} style={row}>
-            <Text style={label}>{t.label}</Text>
+            <Label text={t.label} secondary={t.secondary} style={label} />
             <Text style={value}>{t.value}</Text>
           </View>
         );
       })}
+      <AmountInWords
+        model={model}
+        theme={theme}
+        style={sx({ paddingHorizontal: rowPadding }, styles.words)}
+        textStyle={styles.wordsText}
+      />
     </View>
   );
 }
@@ -506,11 +716,18 @@ export function PaymentInfo({
   const p = model.payment;
   if (!p) return null;
   const text = sx({ fontSize: 8.5, color: theme.body, lineHeight: 1.45 }, textStyle);
+  const linkText = isRtl(model) ? ltr(displayUrl(p.link)) : displayUrl(p.link);
   return (
     <View wrap={false} style={{ flexDirection: 'row' }}>
       <View style={{ flex: 1, paddingRight: p.qr ? 12 : 0 }}>
-        {showTitle ? <Text style={titleStyle}>{model.labels.paymentDetails}</Text> : null}
-        {p.details ? <Text style={text}>{p.details}</Text> : null}
+        {showTitle ? (
+          <Label
+            text={model.labels.paymentDetails}
+            secondary={en(model, 'paymentDetails')}
+            style={titleStyle}
+          />
+        ) : null}
+        {p.details ? <Lines lines={p.details.split('\n')} style={text} /> : null}
         {p.instructions ? (
           <Text style={sx(text, { marginTop: p.details ? 4 : 0 })}>{p.instructions}</Text>
         ) : null}
@@ -524,16 +741,21 @@ export function PaymentInfo({
               fontWeight: 600,
             })}
           >
-            {`${model.labels.payOnline}: ${displayUrl(p.link)}`}
+            {`${model.labels.payOnline}: ${linkText}`}
           </Link>
         ) : null}
       </View>
       {p.qr ? (
         <View style={{ alignItems: 'center' }}>
           <Image src={p.qr} style={{ width: qrSize, height: qrSize }} />
-          <Text style={{ fontSize: 6.5, color: theme.muted, marginTop: 3 }}>
+          <Text style={{ fontSize: 6.5, color: theme.muted, marginTop: 3, textAlign: 'center' }}>
             {model.labels.scanToPay}
           </Text>
+          {model.secondary ? (
+            <Text style={{ fontSize: 6, color: theme.faint, textAlign: 'center' }}>
+              {model.secondary.scanToPay}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -554,6 +776,15 @@ export function Stamp({
   if (!model.stamp) return null;
   const color =
     model.stamp.tone === 'green' ? '#15803d' : model.stamp.tone === 'red' ? '#b91c1c' : '#475569';
+  const text: Style = {
+    color,
+    fontSize: size,
+    fontWeight: 700,
+    letterSpacing: 2.5,
+    textTransform: 'uppercase',
+    fontFamily: theme.fonts.heading,
+    textAlign: 'center',
+  };
   return (
     <View
       style={sx(
@@ -570,18 +801,12 @@ export function Stamp({
         style,
       )}
     >
-      <Text
-        style={{
-          color,
-          fontSize: size,
-          fontWeight: 700,
-          letterSpacing: 2.5,
-          textTransform: 'uppercase',
-          fontFamily: theme.fonts.heading,
-        }}
-      >
-        {model.stamp.text}
-      </Text>
+      <Text style={text}>{model.stamp.text}</Text>
+      {model.stamp.secondary ? (
+        <Text style={sx(text, { fontSize: size * 0.45, letterSpacing: 1.5, marginTop: -1 })}>
+          {model.stamp.secondary}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -611,7 +836,9 @@ export function StatusPill({
         style,
       )}
     >
-      <Text
+      <Label
+        text={model.stamp.text}
+        secondary={model.stamp.secondary}
         style={{
           fontSize: 7,
           fontWeight: 700,
@@ -619,11 +846,17 @@ export function StatusPill({
           textTransform: 'uppercase',
           letterSpacing: 1.2,
         }}
-      >
-        {model.stamp.text}
-      </Text>
+        secondaryStyle={{ opacity: 1 }}
+      />
     </View>
   );
+}
+
+/** "Page 2 of 3", with the English after it in bilingual documents. */
+function pageText(model: RenderModel, page: number, total: number): string {
+  const main = `${model.labels.page} ${page} ${model.labels.of} ${total}`;
+  const s = model.secondary;
+  return s ? `${main}${DOT}${ltr(`${s.page} ${page} ${s.of} ${total}`)}` : main;
 }
 
 export function PageFooter({
@@ -640,32 +873,41 @@ export function PageFooter({
   marginX?: number;
 }) {
   const text = sx({ fontSize: 7.5, color: theme.faint, lineHeight: 1.4 }, textStyle);
+  const box = sx(
+    {
+      position: 'absolute',
+      left: marginX,
+      right: marginX,
+      bottom: 22,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
+    },
+    style,
+  );
+  const numberWidth = model.secondary ? 190 : 110;
   return (
-    <View
-      fixed
-      style={sx(
-        {
-          position: 'absolute',
-          left: marginX,
-          right: marginX,
-          bottom: 22,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
-        },
-        style,
-      )}
-    >
-      <Text style={sx(text, { flex: 1, paddingRight: 16 })}>{model.footer}</Text>
+    <>
+      <View fixed style={box}>
+        <Text style={sx(text, { flex: 1, paddingRight: numberWidth + 16 })}>{model.footer}</Text>
+      </View>
+      {/* react-pdf drops text drawn by `render` when it has a line height,
+          so the page number is a fixed text of its own without one. */}
       <Text
-        style={text}
+        fixed
+        style={sx(text, {
+          position: 'absolute',
+          right: box.right,
+          bottom: box.bottom,
+          width: numberWidth,
+          textAlign: 'right',
+          lineHeight: undefined,
+        })}
         render={({ pageNumber, totalPages }) =>
-          totalPages > 1
-            ? `${model.labels.page} ${pageNumber} ${model.labels.of} ${totalPages}`
-            : ''
+          totalPages > 1 ? pageText(model, pageNumber, totalPages) : ''
         }
       />
-    </View>
+    </>
   );
 }
 
@@ -681,7 +923,9 @@ export function RunningHeader({
   style?: Style;
   marginX?: number;
 }) {
-  const text = [model.documentTitle, model.client.name].filter(Boolean).join('  ·  ');
+  const text = [`${model.title} ${model.number}`.trim(), model.client.name]
+    .filter(Boolean)
+    .join(DOT);
   return (
     <Text
       fixed
@@ -724,7 +968,7 @@ export function ClosingBand({
   if (!model.payment && !model.terms) return null;
   const terms = model.terms ? (
     <View style={{ flex: 1 }}>
-      <Text style={titleStyle}>{model.labels.terms}</Text>
+      <Label text={model.labels.terms} secondary={en(model, 'terms')} style={titleStyle} />
       <Text style={sx({ fontSize: 8, color: theme.muted, lineHeight: 1.5 }, textStyle)}>
         {model.terms}
       </Text>
@@ -785,13 +1029,13 @@ export function NotesAndTerms({
   const text = sx({ fontSize: 8.5, color: theme.body, lineHeight: 1.5 }, textStyle);
   const notesBlock = notes ? (
     <View style={{ flex: 1, paddingRight: model.terms ? 26 : 0 }}>
-      <Text style={titleStyle}>{model.labels.notes}</Text>
+      <Label text={model.labels.notes} secondary={en(model, 'notes')} style={titleStyle} />
       <Text style={text}>{notes}</Text>
     </View>
   ) : null;
   const termsBlock = model.terms ? (
     <View style={{ flex: 1 }}>
-      <Text style={titleStyle}>{model.labels.terms}</Text>
+      <Label text={model.labels.terms} secondary={en(model, 'terms')} style={titleStyle} />
       <Text style={sx(text, { fontSize: 8, color: theme.muted })}>{model.terms}</Text>
     </View>
   ) : null;
@@ -812,8 +1056,60 @@ export function NotesAndTerms({
 }
 
 /**
+ * Boxes for the authorised signature and the company stamp (with their
+ * images when uploaded) and a line for the customer to sign on receipt.
+ */
+export function SignatureBlock({
+  model,
+  theme,
+  labelStyle,
+  lineColor,
+  style,
+}: {
+  model: RenderModel;
+  theme: TemplateTheme;
+  labelStyle?: Style;
+  lineColor?: string;
+  style?: Style;
+}) {
+  const s = model.signatures;
+  if (!s) return null;
+  const caption = sx({ fontSize: 7.5, color: theme.muted }, labelStyle, { marginBottom: 0 });
+  const box = (key: LabelKey, image: string | null, last: boolean) => (
+    <View style={{ flex: 1, paddingRight: last ? 0 : 22 }}>
+      <View style={{ height: 40, justifyContent: 'flex-end' }}>
+        {image ? (
+          <Image
+            src={image}
+            style={{ height: 40, width: 120, objectFit: 'contain', objectPositionX: 0 }}
+          />
+        ) : null}
+      </View>
+      <View
+        style={{
+          borderTopWidth: 0.75,
+          borderTopColor: lineColor ?? theme.faint,
+          marginTop: 4,
+          paddingTop: 4,
+        }}
+      >
+        <Label text={model.labels[key]} secondary={en(model, key)} style={caption} />
+      </View>
+    </View>
+  );
+  return (
+    <View wrap={false} style={sx({ flexDirection: 'row', marginTop: 18 }, style)}>
+      {box('signature', s.signature, false)}
+      {box('stamp', s.stamp, !s.receivedBy)}
+      {s.receivedBy ? box('receivedBy', null, true) : null}
+    </View>
+  );
+}
+
+/**
  * The block after the items: payment details (or notes) beside the totals,
- * then notes and terms underneath. Shared so every template behaves the same.
+ * then notes and terms, and the signature boxes. Shared so every template
+ * behaves the same.
  */
 export function TotalsSection({
   model,
@@ -853,7 +1149,7 @@ export function TotalsSection({
             />
           ) : model.notes ? (
             <View>
-              <Text style={titleStyle}>{model.labels.notes}</Text>
+              <Label text={model.labels.notes} secondary={en(model, 'notes')} style={titleStyle} />
               <Text style={text}>{model.notes}</Text>
             </View>
           ) : null}
@@ -876,6 +1172,7 @@ export function TotalsSection({
           bandStyle,
         )}
       />
+      <SignatureBlock model={model} theme={theme} labelStyle={titleStyle} />
     </>
   );
 }
@@ -883,7 +1180,9 @@ export function TotalsSection({
 /** Label, name and address lines of a party (bill to, ship to, from). */
 export function Party({
   label,
+  labelSecondary,
   name,
+  nameSecondary,
   lines,
   labelStyle,
   nameStyle,
@@ -891,19 +1190,25 @@ export function Party({
   style,
 }: {
   label?: string;
+  labelSecondary?: string;
   name: string;
+  nameSecondary?: string;
   lines: string[];
   labelStyle?: Style;
   nameStyle?: Style;
   linesStyle?: Style;
   style?: Style;
 }) {
+  const nameText = sx({ fontSize: 10, fontWeight: 700, marginBottom: 2 }, nameStyle);
   return (
     <View style={style}>
-      {label ? <Text style={labelStyle}>{label}</Text> : null}
-      <Text style={sx({ fontSize: 10, fontWeight: 700, marginBottom: 2 }, nameStyle)}>
-        {name || '—'}
-      </Text>
+      {label ? <Label text={label} secondary={labelSecondary} style={labelStyle} /> : null}
+      <Text style={nameText}>{name || '—'}</Text>
+      {nameSecondary ? (
+        <Text style={sx(nameText, { fontSize: 8.5, fontWeight: 500, marginTop: -1 })}>
+          {nameSecondary}
+        </Text>
+      ) : null}
       <Lines lines={lines} style={sx({ fontSize: 8.5, lineHeight: 1.5 }, linesStyle)} />
     </View>
   );
@@ -917,7 +1222,7 @@ export function MetaRows({
   rowStyle,
   labelWidth,
 }: {
-  rows: { label: string; value: string }[];
+  rows: { label: string; secondary?: string; value: string }[];
   labelStyle?: Style;
   valueStyle?: Style;
   rowStyle?: Style;
@@ -933,10 +1238,20 @@ export function MetaRows({
             rowStyle,
           )}
         >
-          <Text style={sx(labelWidth ? { width: labelWidth } : undefined, labelStyle)}>
-            {r.label}
+          <Label
+            text={r.label}
+            secondary={r.secondary}
+            style={sx(
+              labelWidth ? { width: labelWidth } : { flexShrink: 1, paddingRight: 6 },
+              labelStyle,
+            )}
+            stack
+          />
+          <Text
+            style={sx({ textAlign: 'right', flexShrink: 1, maxWidth: '70%' }, TNUM, valueStyle)}
+          >
+            {r.value}
           </Text>
-          <Text style={sx({ textAlign: 'right' }, TNUM, valueStyle)}>{r.value}</Text>
         </View>
       ))}
     </View>
@@ -964,7 +1279,7 @@ export function ClosingSections({
     <View>
       {model.notes ? (
         <View wrap={false} style={{ marginBottom: gap }}>
-          <Text style={titleStyle}>{model.labels.notes}</Text>
+          <Label text={model.labels.notes} secondary={en(model, 'notes')} style={titleStyle} />
           <Text style={text}>{model.notes}</Text>
         </View>
       ) : null}
@@ -981,7 +1296,7 @@ export function ClosingSections({
       ) : null}
       {model.terms ? (
         <View style={{ marginBottom: gap }}>
-          <Text style={titleStyle}>{model.labels.terms}</Text>
+          <Label text={model.labels.terms} secondary={en(model, 'terms')} style={titleStyle} />
           <Text style={sx(text, { color: theme.muted, fontSize: 8 })}>{model.terms}</Text>
         </View>
       ) : null}
