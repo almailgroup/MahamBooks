@@ -27,6 +27,7 @@ import { cn } from '@/lib/cn';
 import type { Address, BusinessActivity, LegalForm } from '@/db/types';
 import { currentLanguage, msg, t } from '@/i18n';
 import { LanguageSwitch } from '@/i18n/language-switch';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Switch } from '@/components/ui/form';
@@ -168,7 +169,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
       );
       remember(null);
       void requestPersistentStorage();
-      toast.success(t('{name} is ready.', { name: company.name }));
+      toast.success(t('{name} is ready.', { name: localName(company) }));
       navigate('/');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not create the company.'));

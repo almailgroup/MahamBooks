@@ -1,21 +1,12 @@
-import { chooseOption, downloadFrom, expect, test } from './fixtures';
+import { downloadFrom, expect, test } from './fixtures';
 
 test('set up a company, invoice a new client and get paid', async ({ page }) => {
   await page.goto('./');
   await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
 
-  // Company setup: the country fills in currency and VAT defaults.
+  // Company setup: Kuwait, dinars and no VAT out of the box.
+  await expect(page.getByText('Kuwaiti dinar with fils')).toBeVisible();
   await page.getByLabel('Company name').fill('AL Mail Group');
-  await chooseOption(page, page.getByLabel('Country').first(), {
-    placeholder: 'Search countries…',
-    query: 'United Kingdom',
-  });
-  await expect(page.getByLabel('Currency')).toContainText('GBP');
-  await expect(page.getByRole('switch', { name: /I charge VAT/ })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
-  await expect(page.getByLabel('Tax name')).toHaveValue('VAT');
   await page.getByRole('button', { name: 'Create company' }).click();
 
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
@@ -33,12 +24,12 @@ test('set up a company, invoice a new client and get paid', async ({ page }) => 
   await expect(clientDialog).toBeHidden();
   await expect(page.getByLabel('Bill to')).toContainText('Acme Trading Ltd');
 
-  // 3 × £150 + 20% VAT.
+  // 3 × KD 150.250, no tax: three decimals (fils) throughout.
   await page.getByLabel('Item 1 name').fill('Bulk mail sorting');
   await page.getByLabel('Item 1 quantity').fill('3');
-  await page.getByLabel('Item 1 unit price').fill('150');
-  await expect(page.getByLabel('Item 1 amount')).toHaveText('£450.00');
-  await expect(page.getByText('£540.00').first()).toBeVisible();
+  await page.getByLabel('Item 1 unit price').fill('150.250');
+  await expect(page.getByLabel('Item 1 amount')).toHaveText('KD 450.750');
+  await expect(page.getByText('KD 450.750').first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page).toHaveURL(/#\/invoices\/[0-9a-f-]{36}$/);

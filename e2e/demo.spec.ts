@@ -36,7 +36,7 @@ test('every page renders without errors', async ({ page }) => {
     ['#/settings/accounting', 'Financial year'],
     ['#/templates', 'Brand colour'],
     ['#/settings/company', 'Company profile'],
-    ['#/settings/documents', 'Regional format'],
+    ['#/settings/documents', 'Currency and paper'],
     ['#/settings/numbering', 'Number formats'],
     ['#/settings/taxes', 'Tax rates'],
     ['#/settings/payments', 'Online payment link'],

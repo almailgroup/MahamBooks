@@ -15,7 +15,7 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   await expect(page.getByRole('heading', { name: 'أهلاً بك في AlmailBooks' })).toBeVisible();
   await expect(page.getByText('الدينار الكويتي بالفلس')).toBeVisible();
-  await expect(page.getByText('بدون ضريبة', { exact: true })).toBeVisible();
+  await expect(page.getByText('بدون ضريبة قيمة مضافة', { exact: true })).toBeVisible();
 
   await page.getByLabel('اسم الشركة').fill('Al Mail Trading');
   await page.getByLabel('الاسم بالعربية').fill('شركة الميل للتجارة');
@@ -55,7 +55,7 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
 
   // The invoices list shows the balances in dinars.
   await menu.getByRole('link', { name: 'الفواتير' }).click();
-  await expect(page.getByText('INV-1001')).toBeVisible();
+  await expect(page.getByText('INV-1001').first()).toBeVisible();
   await expect(page.getByRole('main')).toContainText(/1,250\.750.{0,3}د\.ك/);
   await expect(page.getByRole('main')).toContainText(/1,730\.750.{0,3}د\.ك/);
 
@@ -102,7 +102,7 @@ test.describe('at phone width', () => {
     await expect(page.getByText('Al Mail Trading جاهزة.')).toBeVisible();
     for (const section of ['company', 'taxes', 'payments', 'import', 'numbering']) {
       await page.goto(`./#/settings/${section}`);
-      await expect(page.getByRole('heading', { name: 'الإعدادات' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'الإعدادات', level: 1 })).toBeVisible();
       expect(await fits(), section).toBe(true);
     }
   });
