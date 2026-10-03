@@ -15,6 +15,11 @@ import type {
   TaxRate,
   VatReturnRecord,
   BankTransaction,
+  ComplianceDocument,
+  ComplianceMark,
+  DocumentRenewal,
+  Employee,
+  PeopleSettings,
 } from './types';
 import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -38,6 +43,11 @@ export class InvoiceDatabase extends Dexie {
   attachments!: Table<Attachment, string>;
   vatReturns!: Table<VatReturnRecord, string>;
   bankTransactions!: Table<BankTransaction, string>;
+  employees!: Table<Employee, string>;
+  complianceDocuments!: Table<ComplianceDocument, string>;
+  renewals!: Table<DocumentRenewal, string>;
+  complianceMarks!: Table<ComplianceMark, string>;
+  peopleSettings!: Table<PeopleSettings, string>;
   meta!: Table<KeyValue, string>;
 
   constructor(name = APP_NAME) {
@@ -72,6 +82,14 @@ export class InvoiceDatabase extends Dexie {
     this.version(5).stores({
       bankTransactions: 'id, companyId, accountId, date, fingerprint, importId',
     });
+    // People and compliance: employees, the documents register and statutory deadlines.
+    this.version(7).stores({
+      employees: 'id, companyId, [companyId+number], status',
+      complianceDocuments: 'id, companyId, employeeId, expiryDate',
+      renewals: 'id, companyId, documentKey, employeeId, expenseId',
+      complianceMarks: 'id, companyId, [companyId+key]',
+      peopleSettings: 'id, companyId',
+    });
   }
 }
 
@@ -90,6 +108,11 @@ export const DATA_TABLES = [
   'attachments',
   'vatReturns',
   'bankTransactions',
+  'employees',
+  'complianceDocuments',
+  'renewals',
+  'complianceMarks',
+  'peopleSettings',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

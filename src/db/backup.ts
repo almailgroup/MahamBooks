@@ -41,6 +41,11 @@ const backupSchema = z.object({
     attachments: z.array(ownedRow).default([]),
     vatReturns: z.array(ownedRow).default([]),
     bankTransactions: z.array(ownedRow).default([]),
+    employees: z.array(ownedRow).default([]),
+    complianceDocuments: z.array(ownedRow).default([]),
+    renewals: z.array(ownedRow).default([]),
+    complianceMarks: z.array(ownedRow).default([]),
+    peopleSettings: z.array(ownedRow).default([]),
   }),
 });
 

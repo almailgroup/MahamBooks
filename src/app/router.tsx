@@ -31,6 +31,11 @@ const BillView = lazy(() => import('@/pages/purchases/bill-view'));
 const Expenses = lazy(() => import('@/pages/purchases/expenses'));
 const Vat = lazy(() => import('@/pages/accounting/vat'));
 const Banking = lazy(() => import('@/pages/banking/index'));
+const EmployeeList = lazy(() => import('@/pages/people/list'));
+const EmployeeDetail = lazy(() => import('@/pages/people/detail'));
+const EmployeeForm = lazy(() => import('@/pages/people/form'));
+const Compliance = lazy(() => import('@/pages/compliance/index'));
+const ComplianceDocuments = lazy(() => import('@/pages/compliance/documents'));
 const NotFound = lazy(() => import('@/pages/not-found'));
 
 function Root() {
@@ -139,6 +144,12 @@ export const router = createHashRouter([
           { path: 'banking/:accountId', element: <Banking /> },
           { path: 'vat', element: <Vat /> },
           { path: 'vat/:start', element: <Vat /> },
+          { path: 'employees', element: <EmployeeList /> },
+          { path: 'employees/new', element: <EmployeeForm key="new" /> },
+          { path: 'employees/:id', element: <EmployeeDetail /> },
+          { path: 'employees/:id/edit', element: <EmployeeForm /> },
+          { path: 'compliance', element: <Compliance /> },
+          { path: 'compliance/documents', element: <ComplianceDocuments /> },
           { path: 'templates', element: <Templates /> },
           { path: 'settings/*', element: <Settings /> },
           { path: 'setup', element: <SetupPage /> },

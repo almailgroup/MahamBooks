@@ -43,7 +43,7 @@ export type CreditStatus = 'draft' | 'sent' | 'partial' | 'applied' | 'void';
 export type DocumentStatus = InvoiceStatus | QuoteStatus | CreditStatus;
 
 export type NumberedEntity =
-  DocumentType | 'payment' | 'payment_made' | 'client' | 'journal' | 'expense';
+  DocumentType | 'payment' | 'payment_made' | 'client' | 'journal' | 'expense' | 'employee';
 
 export type CounterReset = 'never' | 'yearly' | 'monthly';
 
@@ -682,7 +682,9 @@ export type ActivityEntity =
   | 'account'
   | 'journal'
   | 'vat_return'
-  | 'bank';
+  | 'bank'
+  | 'employee'
+  | 'compliance';
 
 export interface Activity {
   id: ID;
@@ -742,4 +744,193 @@ export interface Attachment {
 export interface KeyValue {
   key: string;
   value: unknown;
+}
+
+/* -------------------------------------------------------------------------- */
+/* People and compliance                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Kuwaitis and GCC nationals are insured with PIFSS and need no residency;
+ * expatriates need an Article 18 residency and a PAM work permit; domestic
+ * workers (Article 20) are outside Labour Law 6/2010.
+ */
+export type EmployeeCategory = 'kuwaiti' | 'gcc' | 'expat' | 'domestic';
+
+export type EmployeeStatus = 'active' | 'on_leave' | 'left';
+
+export type ContractType = 'unlimited' | 'fixed';
+
+/** How the wage is paid; decides the end-of-service rates (Labour Law art. 51). */
+export type PayBasis = 'monthly' | 'daily' | 'hourly' | 'piece';
+
+export type LeavingReason =
+  'resignation' | 'termination' | 'contract_end' | 'retirement' | 'dismissal' | 'death' | 'other';
+
+export interface EmployeeAllowance {
+  id: ID;
+  name: string;
+  nameAr?: string;
+  /** Monthly amount in the company currency. */
+  amount: number;
+  /** Part of the wage the end-of-service indemnity is calculated on. */
+  countsForEos: boolean;
+}
+
+/**
+ * A person on the payroll and their personnel file (Labour Law art. 80). The
+ * identity documents (Civil ID, passport, residency, work permit) and the
+ * contract end date live here only; the documents register shows them
+ * without copying them (see lib/compliance.ts, employeeDocuments).
+ */
+export interface Employee {
+  id: ID;
+  companyId: ID;
+  number: string;
+  name: string;
+  nameAr?: string;
+  /** ISO 3166-1 alpha-2 code. */
+  nationality: string;
+  category: EmployeeCategory;
+  civilId: string;
+  civilIdExpiry: ISODate | null;
+  passportNumber: string;
+  passportExpiry: ISODate | null;
+  /** Residency article ("18" private sector, "20" domestic worker…); not for Kuwaitis. */
+  residencyArticle: string;
+  residencyNumber: string;
+  residencyExpiry: ISODate | null;
+  workPermitNumber: string;
+  /** Job title registered with the Public Authority for Manpower. */
+  pamJobTitle: string;
+  /** Salary on the work permit (company currency). */
+  permitSalary: number;
+  workPermitExpiry: ISODate | null;
+  jobTitle: string;
+  jobTitleAr?: string;
+  department: string;
+  hireDate: ISODate | null;
+  probationEnd: ISODate | null;
+  contractType: ContractType;
+  /** Fixed-term contracts only. */
+  contractEnd: ISODate | null;
+  payBasis: PayBasis;
+  /** Monthly basic salary (company currency, 3 decimals in KWD). */
+  basicSalary: number;
+  allowances: EmployeeAllowance[];
+  /** First four letters of the bank's SWIFT code (see KUWAIT_BANKS) or a bank name. */
+  bank: string;
+  iban: string;
+  /** PIFSS (social security) number of Kuwaiti and GCC staff. */
+  pifssNumber: string;
+  phone: string;
+  email: string;
+  status: EmployeeStatus;
+  leavingDate: ISODate | null;
+  leavingReason: LeavingReason | null;
+  notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** Kinds of documents with an expiry date that the register tracks. */
+export type ComplianceDocumentType =
+  // Company
+  | 'commercial_licence'
+  | 'commercial_registration'
+  | 'pam_company_file'
+  | 'authorised_signatories'
+  | 'pam_salary_certificate'
+  | 'mof_tax_card'
+  | 'tax_clearance'
+  | 'kcci_membership'
+  | 'municipality_licence'
+  | 'fire_licence'
+  | 'lease_contract'
+  // Employees (the first five are read from the employee record)
+  | 'civil_id'
+  | 'passport'
+  | 'residency'
+  | 'work_permit'
+  | 'employment_contract'
+  | 'health_insurance'
+  | 'driving_licence'
+  // Vehicles
+  | 'vehicle_registration'
+  | 'vehicle_insurance'
+  | 'other';
+
+export type DocumentOwnerType = 'company' | 'employee' | 'vehicle' | 'other';
+
+/** A document kept in the register (company licences, vehicles, extra employee papers). */
+export interface ComplianceDocument {
+  id: ID;
+  companyId: ID;
+  type: ComplianceDocumentType;
+  /** Free title; the type's name is shown when empty. */
+  title: string;
+  number: string;
+  issuer: string;
+  issueDate: ISODate | null;
+  expiryDate: ISODate | null;
+  /** Expected cost of the next renewal (company currency). */
+  renewalCost: number;
+  /** Days before expiry to remind, largest first; null uses the company setting. */
+  reminderDays: number[] | null;
+  ownerType: DocumentOwnerType;
+  employeeId: ID | null;
+  /** Vehicle (plate or model) or other owner's name. */
+  ownerName: string;
+  notes: string;
+  /** No longer tracked (vehicle sold, licence cancelled); kept with its history. */
+  archived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** One renewal of a document: the old and new expiry and the fee paid, if any. */
+export interface DocumentRenewal {
+  id: ID;
+  companyId: ID;
+  /** "doc:<id>" for register records, "emp:<employeeId>:<type>" for employee documents. */
+  documentKey: string;
+  documentId: ID | null;
+  employeeId: ID | null;
+  type: ComplianceDocumentType;
+  renewedOn: ISODate;
+  previousExpiry: ISODate | null;
+  newExpiry: ISODate;
+  /** Fee paid (company currency), 0 when none. */
+  fee: number;
+  /** Expense recording the fee. */
+  expenseId: ID | null;
+  note: string;
+  createdAt: Timestamp;
+}
+
+/** A statutory deadline marked as done, e.g. "income_tax_return:2026-12-31". */
+export interface ComplianceMark {
+  id: ID;
+  companyId: ID;
+  key: string;
+  doneOn: ISODate;
+  note: string;
+  createdAt: Timestamp;
+}
+
+/** Employee and compliance settings of a company (one row per company, id = companyId). */
+export interface PeopleSettings {
+  id: ID;
+  companyId: ID;
+  /** Kuwaiti share of the workforce to aim for, in percent; null when not set. */
+  kuwaitizationTarget: number | null;
+  /** Working days in a month used for the daily wage (end of service). */
+  eosDailyDivisor: number;
+  /** Days before an expiry to remind, largest first (60/30/7). */
+  reminderDays: number[];
+  /** Months after the year end to file the audited statements with MOCI. */
+  auditFilingMonths: number;
+  /** Day of the following month PIFSS contributions are paid by. */
+  pifssDueDay: number;
+  updatedAt: Timestamp;
 }

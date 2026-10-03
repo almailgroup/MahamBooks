@@ -10,6 +10,8 @@ import {
   ChevronsUpDown,
   FileMinus,
   FileText,
+  CalendarClock,
+  IdCard,
   Landmark,
   LayoutDashboard,
   ListTree,
@@ -96,6 +98,8 @@ const NAV: { title?: string; items: NavItem[] }[] = [
   {
     title: msg('Business'),
     items: [
+      { to: '/employees', label: msg('Employees'), icon: <IdCard /> },
+      { to: '/compliance', label: msg('Compliance'), icon: <CalendarClock /> },
       { to: '/templates', label: msg('Templates'), icon: <Palette /> },
       { to: '/settings', label: msg('Settings'), icon: <Settings /> },
     ],

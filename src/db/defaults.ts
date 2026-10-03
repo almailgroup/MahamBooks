@@ -36,6 +36,7 @@ export function defaultNumbering(): Record<NumberedEntity, NumberingRule> {
     bill: rule('BILL-{year}-{counter}'),
     vendor_credit: rule('VC-{year}-{counter}'),
     expense: rule('EXP-{year}-{counter}'),
+    employee: rule('EMP-{counter}', 3),
   };
 }
 
