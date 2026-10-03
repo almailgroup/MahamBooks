@@ -142,7 +142,9 @@ export default function DashboardPage() {
         otherCurrencies.set(d.currency, (otherCurrencies.get(d.currency) ?? 0) + d.totals.balance);
     }
 
-    const received = payments.filter((p) => p.direction !== 'out');
+    // Void payments (returned or cancelled cheques) don't count.
+    const active = payments.filter((p) => !p.voided);
+    const received = active.filter((p) => p.direction !== 'out');
     const cash = received.filter((p) => p.method !== 'credit_note' && p.currency === base);
     const month = now.slice(0, 7);
 
@@ -155,7 +157,7 @@ export default function DashboardPage() {
       .map((d) => ({ doc: d, days: d.dueDate ? daysBetween(d.dueDate, now) : 0 }))
       .sort((a, b) => b.days - a.days);
     const spentThisMonth =
-      payments
+      active
         .filter(
           (p) =>
             p.direction === 'out' &&

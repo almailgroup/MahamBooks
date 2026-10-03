@@ -35,6 +35,8 @@ import {
 import { ApplyCreditDialog, RecordPaymentDialog } from '@/features/documents/payment-dialogs';
 import { AttachmentList } from '@/features/purchases/attachments';
 import { useAccounts } from '@/features/accounting/account-pickers';
+import { PaymentStatusBadge } from '@/features/payments/status-badge';
+import { t } from '@/i18n';
 
 function SummaryRow({
   label,
@@ -193,11 +195,11 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
       </Button>
     ) : isBill && open ? (
       <Button onClick={() => setRecordPayment(true)}>
-        <CreditCard /> Record payment
+        <CreditCard /> {t('Record payment')}
       </Button>
     ) : !isBill && open && doc.totals.balance > 0 ? (
       <Button onClick={() => setApplyCredit(true)}>
-        <CreditCard /> Apply to bill
+        <CreditCard /> {t('Apply to bill')}
       </Button>
     ) : null;
 
@@ -446,11 +448,11 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
 
           <Card>
             <CardHeader
-              title={isBill ? 'Payments' : 'Applied to'}
+              title={isBill ? t('Payments') : t('Applied to')}
               actions={
                 isBill && open ? (
                   <Button variant="ghost" size="sm" onClick={() => setRecordPayment(true)}>
-                    Add
+                    {t('Add')}
                   </Button>
                 ) : null
               }
@@ -468,18 +470,31 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                       <li key={p.id}>
                         <Link
                           to={`/payments-made/${p.id}`}
-                          className="hover:text-primary-700 flex items-center justify-between py-2.5 text-sm"
+                          className="hover:text-primary-700 flex items-center justify-between gap-3 py-2.5 text-sm"
                         >
-                          <span>
-                            <span className="block font-medium text-slate-800">
+                          <span className="min-w-0">
+                            <span className="flex flex-wrap items-center gap-1.5 font-medium text-slate-800">
                               {fmt.date(p.date)}
+                              <PaymentStatusBadge payment={p} />
                             </span>
                             <span className="text-xs text-slate-500">
                               {paymentMethodLabel(p.method)}
-                              {p.reference ? ` · ${p.reference}` : ''}
+                              {p.cheque?.number
+                                ? ` · ${t('Cheque {number}', { number: p.cheque.number })}`
+                                : p.reference
+                                  ? ` · ${p.reference}`
+                                  : ''}
                             </span>
                           </span>
-                          <span className="tabular font-medium">{money(amount)}</span>
+                          <span
+                            className={
+                              p.voided
+                                ? 'tabular text-slate-400 line-through'
+                                : 'tabular font-medium'
+                            }
+                          >
+                            {money(amount)}
+                          </span>
                         </Link>
                       </li>
                     );
@@ -487,7 +502,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                 </ul>
               ) : (
                 <p className="py-3 text-sm text-slate-500">
-                  {isBill ? 'No payments recorded yet.' : 'Not applied to any bill yet.'}
+                  {isBill ? t('No payments recorded yet.') : t('Not applied to any bill yet.')}
                 </p>
               )}
             </CardBody>

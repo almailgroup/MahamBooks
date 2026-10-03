@@ -1,4 +1,13 @@
-import type { DocumentStatus, DocumentType, InvoiceDocument, ISODate } from '@/db/types';
+import type {
+  ChequeStatus,
+  DocumentStatus,
+  DocumentType,
+  InvoiceDocument,
+  ISODate,
+  SecurityChequeStatus,
+} from '@/db/types';
+import { msg } from '@/i18n';
+import { dec } from './money';
 
 export type DisplayStatus = DocumentStatus | 'overdue' | 'expired' | 'open';
 
@@ -57,9 +66,10 @@ export function settledStatus(
   paid: number,
 ): DocumentStatus {
   if (doc.type === 'quote' || doc.status === 'void') return doc.status;
-  const balance = total - paid;
+  // Exact decimal arithmetic: amounts are already rounded to the currency.
+  const settled = dec(total).minus(dec(paid)).lte(0);
   const done = doc.type === 'credit' || doc.type === 'vendor_credit' ? 'applied' : 'paid';
-  if (paid !== 0 && balance < 1e-9) return done;
+  if (paid !== 0 && settled) return done;
   if (paid !== 0) return 'partial';
   return doc.status === 'draft' ? 'draft' : 'sent';
 }
@@ -68,3 +78,29 @@ export function settledStatus(
 export function isOutstanding(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean {
   return doc.type === 'invoice' && (doc.status === 'sent' || doc.status === 'partial');
 }
+
+/** Labels and colours of cheque statuses. Issued cheques waiting to be presented are "Issued". */
+export const CHEQUE_STATUS_META: Record<ChequeStatus, { label: string; tone: StatusTone }> = {
+  held: { label: msg('In hand'), tone: 'blue' },
+  deposited: { label: msg('Deposited'), tone: 'violet' },
+  cleared: { label: msg('Cleared'), tone: 'green' },
+  returned: { label: msg('Returned'), tone: 'red' },
+  cancelled: { label: msg('Cancelled'), tone: 'slate' },
+};
+
+export function chequeStatusMeta(
+  status: ChequeStatus,
+  direction: 'in' | 'out',
+): { label: string; tone: StatusTone } {
+  if (direction === 'out' && status === 'held') return { label: msg('Issued'), tone: 'blue' };
+  return CHEQUE_STATUS_META[status];
+}
+
+export const SECURITY_CHEQUE_STATUS_META: Record<
+  SecurityChequeStatus,
+  { label: string; tone: StatusTone }
+> = {
+  held: { label: msg('Held as security'), tone: 'amber' },
+  returned: { label: msg('Given back'), tone: 'slate' },
+  cashed: { label: msg('Cashed'), tone: 'green' },
+};

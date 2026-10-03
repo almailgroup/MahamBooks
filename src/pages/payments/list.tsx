@@ -3,11 +3,16 @@ import { Link, useNavigate } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { CreditCard, Download, Plus, Search } from 'lucide-react';
 import { db } from '@/db/db';
-import { paymentMethodLabel, PAYMENT_METHODS, unappliedAmount } from '@/db/payments';
+import { paymentMethodLabel, unappliedAmount } from '@/db/payments';
 import type { Client, PaymentMethod } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { downloadCsv } from '@/lib/csv';
 import { today } from '@/lib/dates';
+import { currencyPrecision, dec, round } from '@/lib/money';
+import { offeredMethods } from '@/lib/payment-methods';
+import { chequeStatusMeta } from '@/lib/status';
+import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
@@ -16,6 +21,7 @@ import {
   paymentDirection,
   type PaymentDirection,
 } from '@/features/payments/direction';
+import { PaymentStatusBadge } from '@/features/payments/status-badge';
 
 export default function PaymentListPage({ direction = 'in' }: { direction?: PaymentDirection }) {
   const copy = PAYMENT_COPY[direction];
@@ -48,7 +54,7 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
         payment: p,
         client: byClient.get(p.clientId) ?? null,
         invoices: p.documentIds.map((id) => numbers.get(id)).filter(Boolean) as string[],
-        unapplied: unappliedAmount(p),
+        unapplied: p.voided ? 0 : unappliedAmount(p),
       }))
       .sort(
         (a, b) =>
@@ -57,6 +63,15 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
       );
   }, [payments, clients, docs, direction]);
 
+  // Methods to filter by: those offered now and any older ones still in use.
+  const methods = useMemo(() => {
+    const used = new Set(rows?.map((r) => r.payment.method));
+    return [
+      ...offeredMethods(direction).map((m) => m.value),
+      ...[...used].filter((m) => !offeredMethods(direction).some((o) => o.value === m)),
+    ];
+  }, [rows, direction]);
+
   const filtered = useMemo(() => {
     if (!rows) return [];
     const q = query.trim().toLowerCase();
@@ -64,7 +79,7 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
       (r) =>
         (!method || r.payment.method === method) &&
         (!q ||
-          `${r.payment.number} ${r.client?.name ?? ''} ${r.payment.reference} ${r.invoices.join(' ')}`
+          `${r.payment.number} ${r.client?.name ?? ''} ${r.client?.nameAr ?? ''} ${r.payment.reference} ${r.payment.cheque?.number ?? ''} ${r.invoices.join(' ')}`
             .toLowerCase()
             .includes(q)),
     );
@@ -73,57 +88,64 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
   const totals = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of filtered) {
-      if (r.payment.method === 'credit_note') continue;
-      map.set(r.payment.currency, (map.get(r.payment.currency) ?? 0) + r.payment.amount);
+      if (r.payment.method === 'credit_note' || r.payment.voided) continue;
+      const c = r.payment.currency;
+      map.set(c, round(dec(map.get(c) ?? 0).plus(dec(r.payment.amount)), currencyPrecision(c)));
     }
     return [...map.entries()];
   }, [filtered]);
 
-  if (!rows) return <Spinner className="py-24" label="Loading…" />;
+  if (!rows) return <Spinner className="py-24" label={t('Loading…')} />;
+
+  const exportCsv = () =>
+    downloadCsv(
+      `${copy.base.slice(1)}-${today()}`,
+      [
+        t('Number'),
+        t('Date'),
+        t(copy.party),
+        t('Method'),
+        t('Reference'),
+        t('Cheque number'),
+        t('Status'),
+        t('Currency'),
+        t('Amount'),
+        t('Applied to'),
+        t('Unapplied'),
+      ],
+      filtered.map((r) => [
+        r.payment.number,
+        r.payment.date,
+        r.client ? localName(r.client) : '',
+        paymentMethodLabel(r.payment.method),
+        r.payment.reference,
+        r.payment.cheque?.number ?? '',
+        r.payment.cheque
+          ? t(chequeStatusMeta(r.payment.cheque.status, direction).label)
+          : r.payment.voided
+            ? t('Voided')
+            : '',
+        r.payment.currency,
+        r.payment.amount,
+        r.invoices.join(' '),
+        r.unapplied,
+      ]),
+    );
 
   return (
     <div>
       <PageHeader
-        title={copy.title}
-        description={copy.description}
+        title={t(copy.title)}
+        description={t(copy.description)}
         actions={
           <>
             {rows.length > 0 ? (
-              <Button
-                variant="outline"
-                onClick={() =>
-                  downloadCsv(
-                    `${copy.base.slice(1)}-${today()}`,
-                    [
-                      'Number',
-                      'Date',
-                      copy.party,
-                      'Method',
-                      'Reference',
-                      'Currency',
-                      'Amount',
-                      'Applied to',
-                      'Unapplied',
-                    ],
-                    filtered.map((r) => [
-                      r.payment.number,
-                      r.payment.date,
-                      r.client?.name ?? '',
-                      paymentMethodLabel(r.payment.method),
-                      r.payment.reference,
-                      r.payment.currency,
-                      r.payment.amount,
-                      r.invoices.join(' '),
-                      r.unapplied,
-                    ]),
-                  )
-                }
-              >
-                <Download /> Export CSV
+              <Button variant="outline" onClick={exportCsv}>
+                <Download /> {t('Export CSV')}
               </Button>
             ) : null}
             <ButtonLink to={`${copy.base}/new`}>
-              <Plus /> Record payment
+              <Plus /> {t('Record payment')}
             </ButtonLink>
           </>
         }
@@ -133,11 +155,11 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
         <Card>
           <EmptyState
             icon={<CreditCard />}
-            title="No payments yet"
-            description={copy.empty}
+            title={t('No payments yet')}
+            description={t(copy.empty)}
             action={
               <ButtonLink to={`${copy.base}/new`}>
-                <Plus /> Record payment
+                <Plus /> {t('Record payment')}
               </ButtonLink>
             }
           />
@@ -149,12 +171,12 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
               <Select
                 value={method}
                 onChange={(e) => setMethod(e.target.value as PaymentMethod | '')}
-                aria-label="Filter by method"
+                aria-label={t('Filter by method')}
               >
-                <option value="">All methods</option>
-                {PAYMENT_METHODS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
+                <option value="">{t('All methods')}</option>
+                {methods.map((m) => (
+                  <option key={m} value={m}>
+                    {paymentMethodLabel(m)}
                   </option>
                 ))}
               </Select>
@@ -164,24 +186,26 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search payments…"
+                placeholder={t('Search payments…')}
                 className="ps-9"
-                aria-label="Search payments"
+                aria-label={t('Search payments')}
               />
             </div>
           </div>
           {filtered.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-slate-500">No payments match.</p>
+            <p className="px-6 py-12 text-center text-sm text-slate-500">
+              {t('No payments match.')}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                    <th className="px-5 py-3">Payment</th>
-                    <th className="px-3 py-3">{copy.party}</th>
-                    <th className="hidden px-3 py-3 md:table-cell">Method</th>
-                    <th className="hidden px-3 py-3 lg:table-cell">Applied to</th>
-                    <th className="px-5 py-3 text-end">Amount</th>
+                    <th className="px-5 py-3 text-start">{t('Payment')}</th>
+                    <th className="px-3 py-3 text-start">{t(copy.party)}</th>
+                    <th className="hidden px-3 py-3 text-start md:table-cell">{t('Method')}</th>
+                    <th className="hidden px-3 py-3 text-start lg:table-cell">{t('Applied to')}</th>
+                    <th className="px-5 py-3 text-end">{t('Amount')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -204,13 +228,18 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                         </span>
                       </td>
                       <td className="max-w-56 truncate px-3 py-3 text-slate-700">
-                        {r.client?.name ?? '—'}
+                        {r.client ? localName(r.client) : '—'}
                       </td>
                       <td className="hidden px-3 py-3 text-slate-600 md:table-cell">
-                        {paymentMethodLabel(r.payment.method)}
-                        {r.payment.reference ? (
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {paymentMethodLabel(r.payment.method)}
+                          <PaymentStatusBadge payment={r.payment} />
+                        </span>
+                        {r.payment.cheque?.number || r.payment.reference ? (
                           <span className="block text-xs text-slate-400">
-                            {r.payment.reference}
+                            {r.payment.cheque?.number
+                              ? t('Cheque {number}', { number: r.payment.cheque.number })
+                              : r.payment.reference}
                           </span>
                         ) : null}
                       </td>
@@ -218,12 +247,23 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                         {r.invoices.join(', ') || '—'}
                         {r.unapplied > 0 ? (
                           <Badge tone="amber" className="ms-2">
-                            {fmt.money(r.unapplied, r.payment.currency)} unapplied
+                            {t('{amount} unapplied', {
+                              amount: fmt.money(r.unapplied, r.payment.currency),
+                            })}
                           </Badge>
                         ) : null}
                       </td>
-                      <td className="tabular px-5 py-3 text-end font-medium text-slate-900">
+                      <td
+                        className={
+                          r.payment.voided
+                            ? 'tabular px-5 py-3 text-end text-slate-400 line-through'
+                            : 'tabular px-5 py-3 text-end font-medium text-slate-900'
+                        }
+                      >
                         {fmt.money(r.payment.amount, r.payment.currency)}
+                        {r.payment.voided ? (
+                          <PaymentStatusBadge payment={r.payment} className="ms-2 md:hidden" />
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -232,13 +272,11 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
             </div>
           )}
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
-            <span>
-              {filtered.length} {filtered.length === 1 ? 'payment' : 'payments'}
-            </span>
+            <span>{tp(filtered.length, '{count} payment', '{count} payments')}</span>
             <span className="tabular flex flex-wrap gap-x-4">
               {totals.map(([currency, amount]) => (
                 <span key={currency}>
-                  {copy.total}{' '}
+                  {t(copy.total)}{' '}
                   <strong className="text-slate-900">{fmt.money(amount, currency)}</strong>
                 </span>
               ))}

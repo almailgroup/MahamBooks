@@ -1,4 +1,4 @@
-import { lazy } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createHashRouter, isRouteErrorResponse, Link, Outlet, useRouteError } from 'react-router';
 import { AlertTriangle } from 'lucide-react';
 import { CompanyProvider } from './company';
@@ -18,6 +18,9 @@ const Products = lazy(() => import('@/pages/products'));
 const PaymentList = lazy(() => import('@/pages/payments/list'));
 const PaymentDetail = lazy(() => import('@/pages/payments/detail'));
 const PaymentForm = lazy(() => import('@/pages/payments/form'));
+const PaymentVoucher = lazy(() => import('@/pages/payments/voucher'));
+const ChequeRegister = lazy(() => import('@/pages/cheques/index'));
+const ChequeRegisterPrint = lazy(() => import('@/pages/cheques/print'));
 const RecurringList = lazy(() => import('@/pages/recurring/list'));
 const RecurringEditor = lazy(() => import('@/pages/recurring/editor'));
 const Reports = lazy(() => import('@/pages/reports/index'));
@@ -47,6 +50,11 @@ function Root() {
       <Outlet />
     </CompanyProvider>
   );
+}
+
+/** Pages without the app's navigation, such as print views. */
+function Bare({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<Spinner className="min-h-dvh" />}>{children}</Suspense>;
 }
 
 function RouteError() {
@@ -115,6 +123,31 @@ export const router = createHashRouter([
     element: <Root />,
     errorElement: <RouteError />,
     children: [
+      // Print views: vouchers and the cheque register, without the navigation.
+      {
+        path: 'payments/:id/voucher',
+        element: (
+          <Bare>
+            <PaymentVoucher key="in" direction="in" />
+          </Bare>
+        ),
+      },
+      {
+        path: 'payments-made/:id/voucher',
+        element: (
+          <Bare>
+            <PaymentVoucher key="out" direction="out" />
+          </Bare>
+        ),
+      },
+      {
+        path: 'cheques/print',
+        element: (
+          <Bare>
+            <ChequeRegisterPrint />
+          </Bare>
+        ),
+      },
       {
         element: <AppLayout />,
         errorElement: <RouteError />,
@@ -127,6 +160,7 @@ export const router = createHashRouter([
           { path: 'recurring/new', element: <RecurringEditor /> },
           { path: 'recurring/:id', element: <RecurringEditor /> },
           ...paymentRoutes('payments', 'in'),
+          { path: 'cheques', element: <ChequeRegister /> },
           ...contactRoutes('clients', 'customer'),
           ...contactRoutes('vendors', 'vendor'),
           ...purchaseRoutes('bills', 'bill'),

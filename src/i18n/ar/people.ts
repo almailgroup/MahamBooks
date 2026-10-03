@@ -36,7 +36,6 @@ export default {
   Note: 'ملاحظة',
   Notes: 'ملاحظات',
   Number: 'الرقم',
-  Open: 'فتح',
   Other: 'أخرى',
   Owner: 'المالك',
   PDF: 'PDF',
@@ -392,7 +391,7 @@ export default {
   'Adds an expense paid from your bank or cash, so the books stay complete.':
     'يضيف مصروفاً مدفوعاً من البنك أو النقدية لتبقى الدفاتر مكتملة.',
   'Fee paid': 'الرسوم المدفوعة',
-  'Paid from': 'مدفوعة من',
+  'Paid from': 'الدفع من',
   'New account': 'حساب جديد',
   'Receipt number': 'رقم الإيصال',
   'The new expiry date must be after the current one.':

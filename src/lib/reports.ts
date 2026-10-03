@@ -249,6 +249,7 @@ export function paymentsReport(
     .filter(
       (x) =>
         (x.direction === 'out') === (direction === 'out') &&
+        !x.voided &&
         x.currency === currency &&
         x.method !== 'credit_note' &&
         inRange(x.date, range),

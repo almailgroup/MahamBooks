@@ -2,15 +2,32 @@ import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import type { Company, InvoiceDocument, PaymentMethod } from '@/db/types';
-import { createPayment, PAYMENT_METHODS, savePayment } from '@/db/payments';
+import type {
+  ChequeDetails,
+  Company,
+  InvoiceDocument,
+  PaymentMethod,
+  PaymentProvider,
+} from '@/db/types';
+import { createPayment, newCheque, savePayment } from '@/db/payments';
+import { useFormat } from '@/app/company';
 import { today } from '@/lib/dates';
-import { formatDate, formatMoney } from '@/lib/format';
-import { round, currencyPrecision } from '@/lib/money';
+import { currencyPrecision, dec, round, toMinor } from '@/lib/money';
+import { providersFor, takesFee } from '@/lib/payment-methods';
+import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
-import { MoneyAccountSelect, useAccounts } from '@/features/accounting/account-pickers';
+import { useAccounts } from '@/features/accounting/account-pickers';
+import {
+  CashRuleNotice,
+  ChequeFields,
+  MethodSelect,
+  noCashHint,
+  PaymentAccountSelect,
+  ProviderSelect,
+  useCashCheck,
+} from '@/features/payments/fields';
 
 /** Records a payment against one invoice (money in) or bill (money out). */
 export function RecordPaymentDialog({
@@ -24,21 +41,59 @@ export function RecordPaymentDialog({
   invoice: InvoiceDocument;
   company: Company;
 }) {
+  const out = invoice.type === 'bill';
+  const direction = out ? 'out' : 'in';
+  const fmt = useFormat();
+  const accounts = useAccounts();
+  const vendorOrClient = useLiveQuery(
+    () => (invoice.clientId ? db.clients.get(invoice.clientId) : undefined),
+    [invoice.clientId],
+  );
   const [amount, setAmount] = useState(Math.max(0, invoice.totals.balance));
   const [date, setDate] = useState(today());
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
+  const [provider, setProvider] = useState<PaymentProvider | null>(null);
+  const [fee, setFee] = useState(0);
+  const [cheque, setCheque] = useState<ChequeDetails | null>(null);
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [cashConfirmed, setCashConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const accounts = useAccounts();
-  const out = invoice.type === 'bill';
-  const money = (n: number) => formatMoney(n, invoice.currency, company.locale);
-  const overpaid = amount > invoice.totals.balance + 1e-9;
+  const precision = currencyPrecision(invoice.currency);
+  const money = (n: number) => fmt.money(n, invoice.currency);
+  const overpaid = toMinor(amount, precision) > toMinor(invoice.totals.balance, precision);
+  const cashCheck = useCashCheck(company, {
+    method,
+    direction,
+    amount,
+    currency: invoice.currency,
+    exchangeRate: invoice.exchangeRate,
+  });
+  const isCheque = method === 'cheque';
+  const showFee = takesFee(method, direction);
+
+  const changeMethod = (next: PaymentMethod) => {
+    setMethod(next);
+    setAccountId(null);
+    setCashConfirmed(false);
+    if (!providersFor(next).some((p) => p.value === provider)) setProvider(null);
+    if (next === 'cheque' && !cheque) {
+      setCheque(newCheque({ date, drawer: vendorOrClient?.name ?? '' }));
+    }
+  };
 
   const save = async () => {
-    if (amount <= 0) {
-      toast.error(out ? 'Enter the amount paid.' : 'Enter the amount received.');
+    if (!(amount > 0)) {
+      toast.error(out ? t('Enter the amount paid.') : t('Enter the amount received.'));
+      return;
+    }
+    if (isCheque && !cheque?.number.trim()) {
+      toast.error(t('Enter the cheque number.'));
+      return;
+    }
+    if ((cashCheck.status === 'over_limit' || cashCheck.status === 'banned') && !cashConfirmed) {
+      toast.error(t('Confirm the cash payment first.'));
       return;
     }
     setSaving(true);
@@ -46,7 +101,7 @@ export function RecordPaymentDialog({
       const applied = Math.min(amount, Math.max(0, invoice.totals.balance));
       await savePayment(
         createPayment(company.id, {
-          direction: out ? 'out' : 'in',
+          direction,
           clientId: invoice.clientId,
           accountId,
           date,
@@ -55,23 +110,19 @@ export function RecordPaymentDialog({
           // Same rate as the invoice unless the user records it differently later.
           exchangeRate: invoice.exchangeRate,
           method,
-          reference: reference.trim(),
+          provider,
+          fee: showFee && fee > 0 ? fee : undefined,
+          cheque: isCheque ? cheque : null,
+          reference: reference.trim() || (isCheque ? (cheque?.number.trim() ?? '') : ''),
           notes: notes.trim(),
           allocations:
-            applied > 0
-              ? [
-                  {
-                    documentId: invoice.id,
-                    amount: round(applied, currencyPrecision(invoice.currency)),
-                  },
-                ]
-              : [],
+            applied > 0 ? [{ documentId: invoice.id, amount: round(applied, precision) }] : [],
         }),
       );
-      toast.success(`Payment of ${money(amount)} recorded`);
+      toast.success(t('Payment of {amount} recorded', { amount: money(amount) }));
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not record the payment.');
+      toast.error(error instanceof Error ? error.message : t('Could not record the payment.'));
     } finally {
       setSaving(false);
     }
@@ -80,16 +131,30 @@ export function RecordPaymentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title="Record payment"
-        description={`${invoice.number} · balance ${money(invoice.totals.balance)}`}
+        title={t('Record payment')}
+        description={t('{number} · balance {amount}', {
+          number: invoice.number,
+          amount: money(invoice.totals.balance),
+        })}
+        size={isCheque ? 'lg' : 'md'}
       >
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
-              label={`Amount (${invoice.currency})`}
+              label={t('Amount ({currency})', { currency: invoice.currency })}
               hint={
                 overpaid
-                  ? `The extra ${money(amount - invoice.totals.balance)} stays as ${out ? 'an advance to the vendor' : 'client credit'}.`
+                  ? out
+                    ? t('The extra {amount} stays as an advance to the vendor.', {
+                        amount: money(
+                          round(dec(amount).minus(dec(invoice.totals.balance)), precision),
+                        ),
+                      })
+                    : t('The extra {amount} stays as client credit.', {
+                        amount: money(
+                          round(dec(amount).minus(dec(invoice.totals.balance)), precision),
+                        ),
+                      })
                   : undefined
               }
             >
@@ -103,7 +168,7 @@ export function RecordPaymentDialog({
                 />
               )}
             </Field>
-            <Field label="Date">
+            <Field label={t('Date')}>
               {(id) => (
                 <Input
                   id={id}
@@ -113,45 +178,75 @@ export function RecordPaymentDialog({
                 />
               )}
             </Field>
-            <Field label="Method">
+            <Field label={t('Method')} hint={noCashHint(company, direction)}>
               {(id) => (
-                <Select
+                <MethodSelect
                   id={id}
                   value={method}
-                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-                >
-                  {PAYMENT_METHODS.filter((m) => m.value !== 'credit_note').map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Field label={out ? 'Paid from' : 'Deposit to'}>
-              {(id) => (
-                <MoneyAccountSelect
-                  id={id}
-                  value={accountId}
-                  onChange={setAccountId}
-                  accounts={accounts ?? []}
-                  use={out ? 'payment' : 'deposit'}
-                  defaultRole={method === 'cash' ? 'cash' : 'bank'}
+                  onChange={changeMethod}
+                  direction={direction}
+                  company={company}
+                  creditNotes={false}
                 />
               )}
             </Field>
-            <Field label="Reference" optional>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={reference}
-                  onChange={(e) => setReference(e.target.value)}
-                  placeholder="Transaction ID, cheque no."
-                />
-              )}
-            </Field>
+            {isCheque ? null : (
+              <Field label={out ? t('Paid from') : t('Deposit to')}>
+                {(id) => (
+                  <PaymentAccountSelect
+                    id={id}
+                    value={accountId}
+                    onChange={setAccountId}
+                    accounts={accounts ?? []}
+                    company={company}
+                    direction={direction}
+                    method={method}
+                  />
+                )}
+              </Field>
+            )}
+            {providersFor(method).length ? (
+              <Field label={t('Provider')} optional>
+                {(id) => (
+                  <ProviderSelect id={id} method={method} value={provider} onChange={setProvider} />
+                )}
+              </Field>
+            ) : null}
+            {showFee ? (
+              <Field label={t('Fee')} optional hint={t('Recorded as KNET and card fees.')}>
+                {(id) => (
+                  <NumberInput id={id} value={fee} onValueChange={setFee} allowNegative={false} />
+                )}
+              </Field>
+            ) : null}
+            {isCheque ? null : (
+              <Field label={t('Reference')} optional>
+                {(id) => (
+                  <Input
+                    id={id}
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    placeholder={t('Transaction ID or KNET reference')}
+                  />
+                )}
+              </Field>
+            )}
           </div>
-          <Field label="Notes" optional>
+          {isCheque && cheque ? (
+            <ChequeFields
+              cheque={cheque}
+              onChange={(patch) => setCheque({ ...cheque, ...patch })}
+              direction={direction}
+              paymentDate={date}
+            />
+          ) : null}
+          <CashRuleNotice
+            company={company}
+            check={cashCheck}
+            confirmed={cashConfirmed}
+            onConfirm={setCashConfirmed}
+          />
+          <Field label={t('Notes')} optional>
             {(id) => (
               <Textarea id={id} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
             )}
@@ -159,10 +254,10 @@ export function RecordPaymentDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={save} loading={saving}>
-            Record payment
+            {t('Record payment')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -184,6 +279,7 @@ export function ApplyCreditDialog({
 }) {
   const out = credit.type === 'vendor_credit';
   const target = out ? 'bill' : 'invoice';
+  const fmt = useFormat();
   const invoices = useLiveQuery(
     () =>
       db.documents
@@ -202,7 +298,7 @@ export function ApplyCreditDialog({
   const [invoiceId, setInvoiceId] = useState('');
   const [amount, setAmount] = useState(0);
   const [saving, setSaving] = useState(false);
-  const money = (n: number) => formatMoney(n, credit.currency, company.locale);
+  const money = (n: number) => fmt.money(n, credit.currency);
   const selected = useMemo(
     () => invoices?.find((i) => i.id === invoiceId) ?? null,
     [invoices, invoiceId],
@@ -213,7 +309,7 @@ export function ApplyCreditDialog({
 
   const save = async () => {
     if (!selected || amount <= 0) {
-      toast.error(`Choose ${out ? 'a bill' : 'an invoice'} and an amount.`);
+      toast.error(out ? t('Choose a bill and an amount.') : t('Choose an invoice and an amount.'));
       return;
     }
     setSaving(true);
@@ -232,10 +328,12 @@ export function ApplyCreditDialog({
           allocations: [{ documentId: selected.id, amount: value }],
         }),
       );
-      toast.success(`${money(value)} applied to ${selected.number}`);
+      toast.success(
+        t('{amount} applied to {number}', { amount: money(value), number: selected.number }),
+      );
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not apply the credit.');
+      toast.error(error instanceof Error ? error.message : t('Could not apply the credit.'));
     } finally {
       setSaving(false);
     }
@@ -244,19 +342,24 @@ export function ApplyCreditDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title={out ? 'Apply vendor credit' : 'Apply credit note'}
-        description={`${credit.number} · ${money(credit.totals.balance)} available`}
+        title={out ? t('Apply vendor credit') : t('Apply credit note')}
+        description={t('{number} · {amount} available', {
+          number: credit.number,
+          amount: money(credit.totals.balance),
+        })}
       >
         <DialogBody>
           {invoices && invoices.length === 0 ? (
             <p className="text-sm text-slate-600">
               {out
-                ? `This vendor has no open bills in ${credit.currency}.`
-                : `This client has no open invoices in ${credit.currency}.`}
+                ? t('This vendor has no open bills in {currency}.', { currency: credit.currency })
+                : t('This client has no open invoices in {currency}.', {
+                    currency: credit.currency,
+                  })}
             </p>
           ) : (
             <>
-              <Field label={out ? 'Bill' : 'Invoice'}>
+              <Field label={out ? t('Bill') : t('Invoice')}>
                 {(id) => (
                   <Select
                     id={id}
@@ -267,18 +370,23 @@ export function ApplyCreditDialog({
                       if (inv) setAmount(Math.min(credit.totals.balance, inv.totals.balance));
                     }}
                   >
-                    <option value="">{out ? 'Choose a bill…' : 'Choose an invoice…'}</option>
+                    <option value="">{out ? t('Choose a bill…') : t('Choose an invoice…')}</option>
                     {invoices?.map((inv) => (
                       <option key={inv.id} value={inv.id}>
-                        {inv.number} ·{' '}
-                        {formatDate(inv.issueDate, company.dateFormat, company.locale)} · balance{' '}
-                        {money(inv.totals.balance)}
+                        {t('{number} · {date} · balance {amount}', {
+                          number: inv.number,
+                          date: fmt.date(inv.issueDate),
+                          amount: money(inv.totals.balance),
+                        })}
                       </option>
                     ))}
                   </Select>
                 )}
               </Field>
-              <Field label="Amount to apply" hint={`Up to ${money(max)}`}>
+              <Field
+                label={t('Amount to apply')}
+                hint={t('Up to {amount}', { amount: money(max) })}
+              >
                 {(id) => (
                   <NumberInput
                     id={id}
@@ -293,10 +401,10 @@ export function ApplyCreditDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={save} loading={saving} disabled={!selected}>
-            Apply credit
+            {t('Apply credit')}
           </Button>
         </DialogFooter>
       </DialogContent>

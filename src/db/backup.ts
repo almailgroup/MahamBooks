@@ -46,6 +46,7 @@ const backupSchema = z.object({
     renewals: z.array(ownedRow).default([]),
     complianceMarks: z.array(ownedRow).default([]),
     peopleSettings: z.array(ownedRow).default([]),
+    securityCheques: z.array(ownedRow).default([]),
   }),
 });
 

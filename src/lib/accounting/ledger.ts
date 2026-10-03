@@ -317,10 +317,16 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
 
 /**
  * Ledger lines of a payment received from a client or made to a vendor.
- * Credit-note applications only match documents and move no money.
+ * Credit-note applications only match documents and move no money, and void
+ * payments (returned or cancelled cheques) leave the books.
+ *
+ * The money side is the account stored on the payment (the clearing account
+ * for KNET and cards, post-dated cheques for cheques) or, for payments
+ * without one, bank or cash by method. A provider fee is an expense taken
+ * out of that same account on the payment date.
  */
 export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] {
-  if (payment.method === 'credit_note') return [];
+  if (payment.method === 'credit_note' || payment.voided) return [];
   const out = payment.direction === 'out';
   const p = ctx.precision;
   const rate = rateOf(payment, ctx);
@@ -339,9 +345,8 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
   const unapplied = dec(payment.amount).minus(allocated);
   if (unapplied.gt(0)) cleared += toMinor(unapplied.times(rate), p);
 
-  const bank =
-    usable(ctx, payment.accountId) ??
-    role(ctx, payment.method === 'cash' ? 'cash' : 'bank', 'bank');
+  const cashLike = payment.method === 'cash' || payment.method === 'cod';
+  const bank = usable(ctx, payment.accountId) ?? role(ctx, cashLike ? 'cash' : 'bank', 'bank');
   const base = {
     date: payment.date,
     source: 'payment' as const,
@@ -370,7 +375,22 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
       description: `Exchange difference ${payment.number}`,
     });
   }
-  return lines.filter((l) => l.amount !== 0);
+  const fee = !out && payment.fee ? toMinor(dec(payment.fee).times(rate), p) : 0;
+  if (fee > 0) {
+    const description = `Fee ${payment.number}`;
+    lines.push(
+      {
+        ...base,
+        accountId: usable(ctx, payment.feeAccountId) ?? role(ctx, 'bank_fees', 'expense'),
+        amount: fee,
+        description,
+      },
+      { ...base, accountId: bank, amount: -fee, description },
+    );
+  }
+  const kept = lines.filter((l) => l.amount !== 0);
+  if (!balanced(kept)) throw new UnbalancedEntryError(`Payment ${payment.number} does not balance`);
+  return kept;
 }
 
 /** Ledger lines of an expense: the category and input tax, paid from a money account. */
@@ -505,7 +525,7 @@ export function buildLedger(
     attempt(doc.type, doc.id, doc.number, () => postDocument(doc, ctx));
   }
   for (const payment of data.payments) {
-    if (payment.method !== 'credit_note' && needsRate(payment, ctx)) {
+    if (payment.method !== 'credit_note' && !payment.voided && needsRate(payment, ctx)) {
       problems.push({
         source: 'payment',
         sourceId: payment.id,

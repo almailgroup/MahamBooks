@@ -185,7 +185,7 @@ export default function DocumentsRegisterPage() {
                     size="sm"
                     onClick={() => setEditing({ doc, isNew: false })}
                   >
-                    <Pencil /> {t('Open')}
+                    <Pencil /> {t('Edit')}
                   </Button>
                 </li>
               ))}

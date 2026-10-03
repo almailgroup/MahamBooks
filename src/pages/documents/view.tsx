@@ -10,6 +10,7 @@ import {
   Download,
   FileMinus,
   FileText,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Printer,
@@ -46,8 +47,11 @@ import {
 import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { generatePdf, useLivePdf } from '@/components/pdf/use-pdf';
 import { downloadBlob, pdfFileName, printBlob } from '@/pdf/client';
-import { SendDialog, type EmailKind } from '@/features/documents/send-dialog';
+import { SendDialog, WhatsAppDialog, type EmailKind } from '@/features/documents/send-dialog';
 import { ApplyCreditDialog, RecordPaymentDialog } from '@/features/documents/payment-dialogs';
+import { PaymentLinkCard } from '@/features/payments/payment-link';
+import { PaymentStatusBadge } from '@/features/payments/status-badge';
+import { t } from '@/i18n';
 
 function SummaryRow({
   label,
@@ -110,6 +114,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   }, [doc?.sourceId, doc?.convertedToId]);
 
   const [send, setSend] = useState<EmailKind | null>(null);
+  const [whatsApp, setWhatsApp] = useState(false);
   const [recordPayment, setRecordPayment] = useState(false);
   const [applyCredit, setApplyCredit] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -204,7 +209,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const primaryAction =
     type === 'invoice' && (doc.status === 'sent' || doc.status === 'partial') ? (
       <Button onClick={() => setRecordPayment(true)}>
-        <CreditCard /> Record payment
+        <CreditCard /> {t('Record payment')}
       </Button>
     ) : type === 'quote' && (doc.status === 'accepted' || doc.status === 'sent') ? (
       <Button
@@ -223,7 +228,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
       (doc.status === 'sent' || doc.status === 'partial') &&
       doc.totals.balance > 0 ? (
       <Button onClick={() => setApplyCredit(true)}>
-        <CreditCard /> Apply to invoice
+        <CreditCard /> {t('Apply to invoice')}
       </Button>
     ) : doc.status === 'draft' ? (
       <Button onClick={() => setSend('document')}>
@@ -274,6 +279,15 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           <Button variant="outline" onClick={() => navigate(`${base}/${doc.id}/edit`)}>
             <Pencil /> Edit
           </Button>
+          {type === 'invoice' || type === 'quote' ? (
+            <Button
+              variant="outline"
+              onClick={() => setWhatsApp(true)}
+              aria-label={t('Share on WhatsApp')}
+            >
+              <MessageCircle /> <span className="hidden sm:inline">{t('WhatsApp')}</span>
+            </Button>
+          ) : null}
           {primaryAction}
           <DropdownMenu>
             <DropdownTrigger asChild>
@@ -426,14 +440,16 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
             </CardBody>
           </Card>
 
+          {type === 'invoice' ? <PaymentLinkCard doc={doc} /> : null}
+
           {type !== 'quote' ? (
             <Card>
               <CardHeader
-                title={type === 'credit' ? 'Applied to' : 'Payments'}
+                title={type === 'credit' ? t('Applied to') : t('Payments')}
                 actions={
                   type === 'invoice' && doc.status !== 'void' && doc.status !== 'paid' ? (
                     <Button variant="ghost" size="sm" onClick={() => setRecordPayment(true)}>
-                      Add
+                      {t('Add')}
                     </Button>
                   ) : null
                 }
@@ -452,18 +468,31 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                         <li key={p.id}>
                           <Link
                             to={`/payments/${p.id}`}
-                            className="hover:text-primary-700 flex items-center justify-between py-2.5 text-sm"
+                            className="hover:text-primary-700 flex items-center justify-between gap-3 py-2.5 text-sm"
                           >
-                            <span>
-                              <span className="block font-medium text-slate-800">
+                            <span className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-1.5 font-medium text-slate-800">
                                 {fmt.date(p.date)}
+                                <PaymentStatusBadge payment={p} />
                               </span>
                               <span className="text-xs text-slate-500">
                                 {paymentMethodLabel(p.method)}
-                                {p.reference ? ` · ${p.reference}` : ''}
+                                {p.cheque?.number
+                                  ? ` · ${t('Cheque {number}', { number: p.cheque.number })}`
+                                  : p.reference
+                                    ? ` · ${p.reference}`
+                                    : ''}
                               </span>
                             </span>
-                            <span className="tabular font-medium">{money(amount)}</span>
+                            <span
+                              className={
+                                p.voided
+                                  ? 'tabular text-slate-400 line-through'
+                                  : 'tabular font-medium'
+                              }
+                            >
+                              {money(amount)}
+                            </span>
                           </Link>
                         </li>
                       );
@@ -472,8 +501,8 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                 ) : (
                   <p className="py-3 text-sm text-slate-500">
                     {type === 'credit'
-                      ? 'Not applied to any invoice yet.'
-                      : 'No payments recorded yet.'}
+                      ? t('Not applied to any invoice yet.')
+                      : t('No payments recorded yet.')}
                   </p>
                 )}
               </CardBody>
@@ -509,6 +538,17 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           company={company}
           client={client ?? null}
           kind={send}
+          getPdf={getPdf}
+          fileName={fileName}
+        />
+      ) : null}
+      {whatsApp ? (
+        <WhatsAppDialog
+          open
+          onOpenChange={setWhatsApp}
+          doc={doc}
+          company={company}
+          client={client ?? null}
           getPdf={getPdf}
           fileName={fileName}
         />

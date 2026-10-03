@@ -1,13 +1,25 @@
+import { useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Mail, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, Mail, Pencil, Printer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deletePayment, paymentMethodLabel, unappliedAmount } from '@/db/payments';
-import type { InvoiceDocument } from '@/db/types';
+import {
+  canDeletePayment,
+  canEditPayment,
+  deletePayment,
+  paymentMethodLabel,
+  unappliedAmount,
+} from '@/db/payments';
+import type { ChequeDetails, InvoiceDocument, Payment } from '@/db/types';
 import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
 import { fillTemplate, mailtoLink } from '@/lib/email';
-import { Button } from '@/components/ui/button';
+import { bankName } from '@/lib/cheques';
+import { providerLabel } from '@/lib/payment-methods';
+import { currentLanguage, t } from '@/i18n';
+import { tr } from '@/i18n/provider';
+import { localName } from '@/i18n/names';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/overlay';
 import { useAccounts } from '@/features/accounting/account-pickers';
@@ -16,12 +28,18 @@ import {
   paymentDirection,
   type PaymentDirection,
 } from '@/features/payments/direction';
+import { PaymentStatusBadge } from '@/features/payments/status-badge';
+import {
+  ChequeActionDialog,
+  ChequeActionsMenu,
+  type ChequeAction,
+} from '@/features/cheques/action-dialogs';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2 text-sm">
       <span className="text-slate-500">{label}</span>
-      <span className="text-end text-slate-800">{value}</span>
+      <span className="min-w-0 text-end break-words text-slate-800">{value}</span>
     </div>
   );
 }
@@ -33,6 +51,7 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
+  const [action, setAction] = useState<ChequeAction | null>(null);
 
   const payment = useLiveQuery(() => db.payments.get(id), [id]);
   const client = useLiveQuery(
@@ -44,10 +63,17 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
     const ids = [...payment.documentIds, ...(payment.creditId ? [payment.creditId] : [])];
     return (await db.documents.bulkGet(ids)).filter((d): d is InvoiceDocument => Boolean(d));
   }, [payment]);
+  // The cheque this one replaced, or the one that replaced it.
+  const linked = useLiveQuery(async () => {
+    const ids = [payment?.cheque?.replacedById, payment?.cheque?.replacesId].filter(
+      (x): x is string => Boolean(x),
+    );
+    return (await db.payments.bulkGet(ids)).filter((p): p is Payment => Boolean(p));
+  }, [payment?.cheque?.replacedById, payment?.cheque?.replacesId]);
   const accounts = useAccounts();
 
   if (payment === undefined || client === undefined || !docs)
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
   if (payment && payment.companyId === company.id && paymentDirection(payment) !== direction) {
     // Links that only know "a payment" (the general ledger) land on the right page.
     return (
@@ -57,34 +83,47 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   if (!payment || payment.companyId !== company.id) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This payment could not be found.</p>
+        <p className="text-slate-600">{t('This payment could not be found.')}</p>
         <Link to={copy.base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {copy.title.toLowerCase()}
+          {t('Back to {list}', { list: t(copy.title) })}
         </Link>
       </Card>
     );
   }
 
   const money = (n: number) => fmt.money(n, payment.currency);
-  // Same choice as the ledger: the account picked, else bank (or cash for cash payments).
+  const accountName = (accountId?: string | null) => {
+    const a = accounts?.find((x) => x.id === accountId);
+    return a ? `${a.code} ${localName(a)}` : '—';
+  };
+  // Same choice as the ledger: the account stored, else bank (or cash for cash payments).
+  const cashLike = payment.method === 'cash' || payment.method === 'cod';
   const account =
     accounts?.find((a) => a.id === payment.accountId) ??
-    accounts?.find((a) => a.role === (payment.method === 'cash' ? 'cash' : 'bank')) ??
+    accounts?.find((a) => a.role === (cashLike ? 'cash' : 'bank')) ??
     accounts?.find((a) => a.role === 'bank');
   const credit = payment.creditId ? docs.find((d) => d.id === payment.creditId) : null;
-  const unapplied = unappliedAmount(payment);
+  const unapplied = payment.voided ? 0 : unappliedAmount(payment);
+  const cheque = payment.cheque;
+  const replacedBy = linked?.find((p) => p.id === cheque?.replacedById);
+  const replaces = linked?.find((p) => p.id === cheque?.replacesId);
+  const language = currentLanguage();
 
   const remove = async () => {
     const ok = await confirm({
-      title: `Delete payment ${payment.number}?`,
-      description: `${direction === 'out' ? 'Bills' : 'Invoices'} it was applied to will show the amount as unpaid again.`,
-      confirmLabel: 'Delete',
+      title: t('Delete payment {number}?', { number: payment.number }),
+      description: t(copy.deleteDescription),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
-    await deletePayment(payment.id);
-    toast.success('Payment deleted');
-    navigate(copy.base);
+    try {
+      await deletePayment(payment.id);
+      toast.success(t('Payment deleted'));
+      navigate(copy.base);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+    }
   };
 
   const contact = client?.contacts.find((c) => c.primary) ?? client?.contacts[0];
@@ -110,67 +149,136 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
     );
   };
 
+  const partyLink = client ? (
+    <Link
+      to={`${copy.contactBase}/${client.id}`}
+      className="hover:text-primary-700 font-medium text-slate-700"
+    >
+      {localName(client)}
+    </Link>
+  ) : null;
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+        <div className="min-w-0">
           <p className="mb-1 text-sm text-slate-500">
             <Link to={copy.base} className="hover:text-slate-700">
-              {copy.title}
+              {t(copy.title)}
             </Link>
           </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Payment {payment.number}
-          </h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+              {t('Payment {number}', { number: payment.number })}
+            </h1>
+            <PaymentStatusBadge payment={payment} />
+          </div>
           <p className="mt-1 text-sm text-slate-500">
-            {money(payment.amount)} {copy.preposition}{' '}
-            {client ? (
-              <Link
-                to={`${copy.contactBase}/${client.id}`}
-                className="hover:text-primary-700 font-medium text-slate-700"
-              >
-                {client.name}
-              </Link>
-            ) : (
-              `unknown ${copy.party.toLowerCase()}`
-            )}
+            {partyLink
+              ? tr(copy.from, { amount: money(payment.amount), name: partyLink })
+              : t(copy.unknownParty, { amount: money(payment.amount) })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {direction === 'in' ? (
+          {cheque ? (
+            <ChequeActionsMenu
+              payment={payment as Payment & { cheque: ChequeDetails }}
+              onAction={setAction}
+              showPaymentLink={false}
+              label={t('Cheque')}
+            />
+          ) : null}
+          {payment.method !== 'credit_note' ? (
+            <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/voucher`}>
+              <Printer /> {t('Print voucher')}
+            </ButtonLink>
+          ) : null}
+          {direction === 'in' && !payment.voided ? (
             <Button variant="outline" onClick={receipt}>
-              <Mail /> Email receipt
+              <Mail /> {t('Email receipt')}
             </Button>
           ) : null}
-          <Button variant="outline" onClick={() => navigate(`${copy.base}/${payment.id}/edit`)}>
-            <Pencil /> Edit
-          </Button>
-          <Button variant="outline" onClick={() => void remove()}>
-            <Trash2 /> Delete
-          </Button>
+          {canEditPayment(payment) ? (
+            <Button variant="outline" onClick={() => navigate(`${copy.base}/${payment.id}/edit`)}>
+              <Pencil /> {t('Edit')}
+            </Button>
+          ) : null}
+          {canDeletePayment(payment) ? (
+            <Button variant="outline" onClick={() => void remove()}>
+              <Trash2 /> {t('Delete')}
+            </Button>
+          ) : null}
         </div>
       </div>
 
+      {payment.voided ? (
+        <div
+          role="status"
+          className="flex gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900"
+        >
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-500" aria-hidden />
+          <div className="space-y-1">
+            <p className="font-medium">
+              {t('This payment is void: {reason}', {
+                reason: payment.voidReason || t('Voided'),
+              })}
+            </p>
+            <p>{t('It no longer counts in the books or against the documents it paid.')}</p>
+            {replacedBy ? (
+              <p>
+                {tr('Replaced by payment {payment}.', {
+                  payment: (
+                    <Link
+                      to={`${copy.base}/${replacedBy.id}`}
+                      className="font-medium underline underline-offset-2"
+                    >
+                      {replacedBy.number}
+                    </Link>
+                  ),
+                })}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
-          <CardHeader title="Details" />
+          <CardHeader title={t('Details')} />
           <CardBody className="divide-y divide-slate-100 py-2">
             <Row
-              label="Amount"
+              label={t('Amount')}
               value={<strong className="tabular">{money(payment.amount)}</strong>}
             />
-            <Row label="Date" value={fmt.date(payment.date)} />
-            <Row label="Method" value={paymentMethodLabel(payment.method)} />
-            {payment.method !== 'credit_note' ? (
-              <Row label={copy.account} value={account ? `${account.code} ${account.name}` : '—'} />
+            <Row label={t('Date')} value={fmt.date(payment.date)} />
+            <Row label={t('Method')} value={paymentMethodLabel(payment.method)} />
+            {payment.provider ? (
+              <Row label={t('Provider')} value={t(providerLabel(payment.provider))} />
             ) : null}
-            {payment.reference ? <Row label="Reference" value={payment.reference} /> : null}
+            {payment.fee ? (
+              <Row
+                label={t('Fee')}
+                value={
+                  <span className="tabular">
+                    {money(payment.fee)}{' '}
+                    <span className="text-slate-500">({accountName(payment.feeAccountId)})</span>
+                  </span>
+                }
+              />
+            ) : null}
+            {payment.method !== 'credit_note' ? (
+              <Row
+                label={cheque ? t('Held in') : t(copy.account)}
+                value={account ? `${account.code} ${localName(account)}` : '—'}
+              />
+            ) : null}
+            {payment.reference ? <Row label={t('Reference')} value={payment.reference} /> : null}
             {credit ? (
               <Row
-                label={direction === 'out' ? 'Vendor credit' : 'Credit note'}
+                label={t(copy.credit)}
                 value={
                   <Link
-                    to={`${direction === 'out' ? '/vendor-credits' : '/credits'}/${credit.id}`}
+                    to={`${copy.creditBase}/${credit.id}`}
                     className="text-primary-700 font-medium hover:underline"
                   >
                     {credit.number}
@@ -180,51 +288,150 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
             ) : null}
             {unapplied > 0 ? (
               <Row
-                label={`Unapplied (${copy.unapplied})`}
+                label={t(copy.unapplied)}
                 value={<span className="tabular text-amber-700">{money(unapplied)}</span>}
               />
             ) : null}
             {payment.notes ? (
               <Row
-                label="Notes"
+                label={t('Notes')}
                 value={<span className="whitespace-pre-line">{payment.notes}</span>}
               />
             ) : null}
           </CardBody>
         </Card>
-        <Card>
-          <CardHeader title="Applied to" />
-          <CardBody className="py-2">
-            {payment.allocations.length === 0 ? (
-              <p className="py-4 text-sm text-slate-500">Not applied to any {copy.doc}.</p>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {payment.allocations.map((a) => {
-                  const doc = docs.find((d) => d.id === a.documentId);
-                  return (
-                    <li
-                      key={a.documentId}
-                      className="flex items-center justify-between py-2.5 text-sm"
-                    >
-                      {doc ? (
-                        <Link
-                          to={`${DOCUMENT_ROUTES[doc.type]}/${doc.id}`}
-                          className="text-primary-700 font-medium hover:underline"
+        <div className="space-y-6">
+          {cheque ? (
+            <Card>
+              <CardHeader title={t('Cheque')} actions={<PaymentStatusBadge payment={payment} />} />
+              <CardBody className="divide-y divide-slate-100 py-2">
+                <Row label={t('Cheque number')} value={<span dir="ltr">{cheque.number}</span>} />
+                {cheque.bank ? (
+                  <Row label={t('Bank')} value={bankName(cheque.bank, language)} />
+                ) : null}
+                <Row label={t('Cheque date')} value={fmt.date(cheque.date)} />
+                {cheque.drawer ? (
+                  <Row
+                    label={direction === 'out' ? t('Pay to') : t('Drawer')}
+                    value={cheque.drawer}
+                  />
+                ) : null}
+                {cheque.drawerCivilId ? (
+                  <Row
+                    label={t('Civil ID')}
+                    value={<span dir="ltr">{cheque.drawerCivilId}</span>}
+                  />
+                ) : null}
+                {cheque.depositedOn ? (
+                  <Row label={t('Deposited on')} value={fmt.date(cheque.depositedOn)} />
+                ) : null}
+                {cheque.clearedOn ? (
+                  <Row
+                    label={t('Cleared on')}
+                    value={`${fmt.date(cheque.clearedOn)} · ${accountName(cheque.bankAccountId)}`}
+                  />
+                ) : null}
+                {cheque.returnedOn ? (
+                  <Row
+                    label={t('Returned on')}
+                    value={`${fmt.date(cheque.returnedOn)} · ${cheque.returnReason ?? ''}`}
+                  />
+                ) : null}
+                {cheque.clearingJournalId ? (
+                  <Row
+                    label={t('Clearing entry')}
+                    value={
+                      <Link
+                        to={`/journals/${cheque.clearingJournalId}`}
+                        className="text-primary-700 font-medium hover:underline"
+                      >
+                        {t('View entry')}
+                      </Link>
+                    }
+                  />
+                ) : null}
+                {replaces ? (
+                  <Row
+                    label={t('Replaces')}
+                    value={
+                      <Link
+                        to={`${copy.base}/${replaces.id}`}
+                        className="text-primary-700 font-medium hover:underline"
+                      >
+                        {t('Cheque {number}', { number: replaces.cheque?.number ?? '' })} ·{' '}
+                        {replaces.number}
+                      </Link>
+                    }
+                  />
+                ) : null}
+                {replacedBy ? (
+                  <Row
+                    label={t('Replaced by')}
+                    value={
+                      <Link
+                        to={`${copy.base}/${replacedBy.id}`}
+                        className="text-primary-700 font-medium hover:underline"
+                      >
+                        {t('Cheque {number}', { number: replacedBy.cheque?.number ?? '' })} ·{' '}
+                        {replacedBy.number}
+                      </Link>
+                    }
+                  />
+                ) : null}
+              </CardBody>
+            </Card>
+          ) : null}
+          <Card>
+            <CardHeader title={t('Applied to')} />
+            <CardBody className="py-2">
+              {payment.allocations.length === 0 ? (
+                <p className="py-4 text-sm text-slate-500">{t(copy.notApplied)}</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {payment.allocations.map((a) => {
+                    const doc = docs.find((d) => d.id === a.documentId);
+                    return (
+                      <li
+                        key={a.documentId}
+                        className="flex items-center justify-between py-2.5 text-sm"
+                      >
+                        {doc ? (
+                          <Link
+                            to={`${DOCUMENT_ROUTES[doc.type]}/${doc.id}`}
+                            className="text-primary-700 font-medium hover:underline"
+                          >
+                            {doc.number}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-400">{t(copy.deletedDoc)}</span>
+                        )}
+                        <span
+                          className={
+                            payment.voided
+                              ? 'tabular text-slate-400 line-through'
+                              : 'tabular font-medium'
+                          }
                         >
-                          {doc.number}
-                        </Link>
-                      ) : (
-                        <span className="text-slate-400">Deleted {copy.doc}</span>
-                      )}
-                      <span className="tabular font-medium">{money(a.amount)}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
+                          {money(a.amount)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       </div>
+
+      {cheque ? (
+        <ChequeActionDialog
+          action={action}
+          payment={payment as Payment & { cheque: ChequeDetails }}
+          onClose={() => setAction(null)}
+          onReplaced={(replacement) => navigate(`${copy.base}/${replacement.id}`)}
+        />
+      ) : null}
     </div>
   );
 }

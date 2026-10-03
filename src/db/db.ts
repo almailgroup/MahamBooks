@@ -20,6 +20,7 @@ import type {
   DocumentRenewal,
   Employee,
   PeopleSettings,
+  SecurityCheque,
 } from './types';
 import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -48,6 +49,7 @@ export class InvoiceDatabase extends Dexie {
   renewals!: Table<DocumentRenewal, string>;
   complianceMarks!: Table<ComplianceMark, string>;
   peopleSettings!: Table<PeopleSettings, string>;
+  securityCheques!: Table<SecurityCheque, string>;
   meta!: Table<KeyValue, string>;
 
   constructor(name = APP_NAME) {
@@ -82,6 +84,10 @@ export class InvoiceDatabase extends Dexie {
     this.version(5).stores({
       bankTransactions: 'id, companyId, accountId, date, fingerprint, importId',
     });
+    // Security (guarantee) cheques, kept off the ledger.
+    this.version(6).stores({
+      securityCheques: 'id, companyId, clientId, status',
+    });
     // People and compliance: employees, the documents register and statutory deadlines.
     this.version(7).stores({
       employees: 'id, companyId, [companyId+number], status',
@@ -113,6 +119,7 @@ export const DATA_TABLES = [
   'renewals',
   'complianceMarks',
   'peopleSettings',
+  'securityCheques',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

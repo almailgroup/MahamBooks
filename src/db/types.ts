@@ -232,8 +232,14 @@ export interface ManualJournal {
   lines: JournalLine[];
   /** Set on the entry that closes a VAT return (see VatReturn). */
   vatReturnId?: ID | null;
-  /** Money moved between two of the company's own accounts. */
-  kind?: 'transfer';
+  /**
+   * What the entry records when it was made by the app: money moved between
+   * two of the company's own accounts, a cheque clearing, or the reversal of
+   * a clearing when the cheque came back.
+   */
+  kind?: 'transfer' | 'cheque_clearing' | 'cheque_return';
+  /** Payment the entry belongs to (cheque clearings and their reversals). */
+  paymentId?: ID | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -576,16 +582,65 @@ export interface PaymentLink {
   expiresAt: ISODate | null;
 }
 
+/**
+ * How money was paid. KNET (local debit cards), WAMD (instant transfer to a
+ * mobile number), payment links, buy-now-pay-later and cash on delivery are
+ * the everyday methods in Kuwait. PayPal, Stripe and mobile money are kept
+ * for older records only.
+ */
 export type PaymentMethod =
   | 'bank_transfer'
+  | 'knet'
+  | 'wamd'
   | 'card'
   | 'cash'
   | 'cheque'
+  | 'link'
+  | 'bnpl'
+  | 'cod'
   | 'paypal'
   | 'stripe'
   | 'mobile_money'
   | 'credit_note'
   | 'other';
+
+/** Who collected a link or buy-now-pay-later payment. */
+export type PaymentProvider = PaymentLinkProvider | 'taly' | 'deema' | 'tabby';
+
+/**
+ * Where a cheque is: in hand (or issued and not yet presented), deposited at
+ * the bank, cleared, returned unpaid, or cancelled before it was presented.
+ */
+export type ChequeStatus = 'held' | 'deposited' | 'cleared' | 'returned' | 'cancelled';
+
+/** A cheque received from a customer or issued to a vendor. */
+export interface ChequeDetails {
+  number: string;
+  /** Bank code from KUWAIT_BANKS (e.g. "NBOK") or the bank's name. */
+  bank: string;
+  /** Date written on the cheque; a post-dated cheque has a later date than the payment. */
+  date: ISODate;
+  /** Who signed the cheque (received) or who it is payable to (issued). */
+  drawer: string;
+  drawerCivilId?: string;
+  status: ChequeStatus;
+  depositedOn?: ISODate | null;
+  clearedOn?: ISODate | null;
+  /** Bank account the cheque cleared into (received) or was paid from (issued). */
+  bankAccountId?: ID | null;
+  returnedOn?: ISODate | null;
+  returnReason?: string;
+  /** Journal moving the cheque from the post-dated cheques account to the bank. */
+  clearingJournalId?: ID | null;
+  /** Journal reversing the clearing when a cleared cheque came back. */
+  reversalJournalId?: ID | null;
+  /** Expense recording the bank's charge for a returned cheque. */
+  returnChargeExpenseId?: ID | null;
+  /** Payment recorded with the cheque that replaced this one. */
+  replacedById?: ID | null;
+  /** Payment whose cheque this one replaces. */
+  replacesId?: ID | null;
+}
 
 export interface PaymentAllocation {
   documentId: ID;
@@ -616,6 +671,60 @@ export interface Payment {
   documentIds: ID[];
   /** Credit note consumed by this payment (method "credit_note"). */
   creditId: ID | null;
+  /** Payment link or buy-now-pay-later provider. */
+  provider?: PaymentProvider | null;
+  /**
+   * Fee kept by KNET, the card acquirer, the link or the buy-now-pay-later
+   * provider, in the payment currency. Posted as an expense against the
+   * account the payment went into.
+   */
+  fee?: number;
+  /** Expense account for the fee (6180 KNET and card fees). */
+  feeAccountId?: ID | null;
+  cheque?: ChequeDetails | null;
+  /**
+   * A void payment stays on record (a returned or cancelled cheque) but no
+   * longer counts: it leaves the books and the balances of its documents.
+   */
+  voided?: boolean;
+  voidReason?: string;
+  voidedOn?: ISODate | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** Status of a cheque held as a guarantee (never on the ledger). */
+export type SecurityChequeStatus = 'held' | 'returned' | 'cashed';
+
+/**
+ * A security (guarantee) cheque, e.g. a tenant's rent deposit cheque. It is
+ * kept in a memo register only; cashing it records a real payment.
+ */
+export interface SecurityCheque {
+  id: ID;
+  companyId: ID;
+  /** Received from someone (default) or given to someone. */
+  direction: 'in' | 'out';
+  /** The client or vendor, when known. */
+  clientId: ID | null;
+  number: string;
+  /** Bank code from KUWAIT_BANKS or the bank's name. */
+  bank: string;
+  /** Security cheques are often left undated. */
+  date: ISODate | null;
+  amount: number;
+  currency: string;
+  /** Who signed it (received) or who holds it (given). */
+  drawer: string;
+  drawerCivilId?: string;
+  /** What it guarantees, e.g. "Rent deposit, flat 12". */
+  purpose: string;
+  notes: string;
+  status: SecurityChequeStatus;
+  returnedOn: ISODate | null;
+  cashedOn: ISODate | null;
+  /** Payment recorded when the cheque was cashed. */
+  paymentId: ID | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -684,7 +793,8 @@ export type ActivityEntity =
   | 'vat_return'
   | 'bank'
   | 'employee'
-  | 'compliance';
+  | 'compliance'
+  | 'cheque';
 
 export interface Activity {
   id: ID;

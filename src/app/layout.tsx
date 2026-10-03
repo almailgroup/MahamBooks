@@ -28,6 +28,7 @@ import {
   Truck,
   Users,
   Wallet,
+  WalletCards,
   X,
   Check,
 } from 'lucide-react';
@@ -73,6 +74,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
       { to: '/credits', label: msg('Credit notes'), icon: <FileMinus /> },
       { to: '/recurring', label: msg('Recurring'), icon: <Repeat /> },
       { to: '/payments', label: msg('Payments received'), icon: <ArrowDownLeft /> },
+      { to: '/cheques', label: msg('Cheques'), icon: <WalletCards /> },
     ],
   },
   {

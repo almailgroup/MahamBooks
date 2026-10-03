@@ -1,27 +1,58 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Wand2 } from 'lucide-react';
+import { Info, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { createPayment, PAYMENT_METHODS, savePayment } from '@/db/payments';
+import { createPayment, isChequeSettled, newCheque, savePayment } from '@/db/payments';
 import type { InvoiceDocument, Payment, PaymentMethod } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
-import { currencyPrecision, round } from '@/lib/money';
+import { accountingSettings } from '@/db/chart-setup';
+import { currencyPrecision, dec, round, toMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
+import { chequeStatusMeta } from '@/lib/status';
+import {
+  findPaymentAccount,
+  PAYMENT_ACCOUNTS,
+  providersFor,
+  takesFee,
+} from '@/lib/payment-methods';
+import { currentLanguage, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
-import { Card, CardBody, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
+import { Badge, Card, CardBody, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { CurrencySelect } from '@/components/fields';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer, isVendor } from '@/db/purchases';
-import { MoneyAccountSelect } from '@/features/accounting/account-pickers';
 import {
   PAYMENT_COPY,
   paymentDirection,
   type PaymentDirection,
 } from '@/features/payments/direction';
+import {
+  CashRuleNotice,
+  ChequeFields,
+  MethodSelect,
+  noCashHint,
+  PaymentAccountSelect,
+  ProviderSelect,
+  useCashCheck,
+} from '@/features/payments/fields';
+
+const METHODS = new Set<string>([
+  'bank_transfer',
+  'knet',
+  'cash',
+  'wamd',
+  'cheque',
+  'link',
+  'card',
+  'bnpl',
+  'cod',
+  'other',
+]);
 
 export default function PaymentFormPage({ direction = 'in' }: { direction?: PaymentDirection }) {
   const copy = PAYMENT_COPY[direction];
@@ -34,6 +65,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
   const [original, setOriginal] = useState('');
   const [saving, setSaving] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [cashConfirmed, setCashConfirmed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,10 +80,14 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
       } else {
         const clientId = params.get('client') ?? '';
         const client = clientId ? await db.clients.get(clientId) : undefined;
+        const wanted = params.get('method') ?? '';
+        const method = (METHODS.has(wanted) ? wanted : 'bank_transfer') as PaymentMethod;
         loaded = createPayment(company.id, {
           direction,
           clientId,
           currency: client?.currency ?? company.currency,
+          method,
+          cheque: method === 'cheque' ? newCheque({ drawer: client?.name ?? '' }) : null,
         });
       }
       if (!cancelled) {
@@ -106,7 +142,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
       .map((d) => ({
         doc: d,
         available: round(
-          d.totals.balance + (previous.get(d.id) ?? 0),
+          dec(d.totals.balance).plus(dec(previous.get(d.id) ?? 0)),
           currencyPrecision(d.currency),
         ),
       }))
@@ -126,20 +162,42 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
     );
   }, [clientDocs, payment, before, copy.creditType]);
 
+  const cashCheck = useCashCheck(company, {
+    method: payment?.method ?? 'bank_transfer',
+    direction,
+    amount: payment?.amount ?? 0,
+    currency: payment?.currency ?? company.currency,
+    exchangeRate: payment?.exchangeRate,
+  });
+
   if (missing) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This payment could not be found.</p>
+        <p className="text-slate-600">{t('This payment could not be found.')}</p>
         <Link to={copy.base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {copy.title.toLowerCase()}
+          {t('Back to {list}', { list: t(copy.title) })}
         </Link>
       </Card>
     );
   }
-  if (!payment || !clients || !accounts) return <Spinner className="py-24" label="Loading…" />;
+  if (!payment || !clients || !accounts) return <Spinner className="py-24" label={t('Loading…')} />;
+  if (payment.voided) {
+    return (
+      <Card className="mx-auto max-w-xl p-10 text-center">
+        <p className="text-slate-600">{t('This payment is void and can no longer be changed.')}</p>
+        <Link
+          to={`${copy.base}/${payment.id}`}
+          className="text-primary-700 mt-4 inline-block text-sm font-medium"
+        >
+          {t('Open the payment')}
+        </Link>
+      </Card>
+    );
+  }
 
   const set = (patch: Partial<Payment>) => setPayment((p) => (p ? { ...p, ...patch } : p));
   const precision = currencyPrecision(payment.currency);
+  const minor = (n: number) => toMinor(n, precision);
   const allocationFor = (docId: string) =>
     payment.allocations.find((a) => a.documentId === docId)?.amount ?? 0;
   const setAllocation = (docId: string, amount: number) =>
@@ -149,58 +207,109 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         ...(amount !== 0 ? [{ documentId: docId, amount }] : []),
       ],
     });
-  const allocated = payment.allocations.reduce((s, a) => s + a.amount, 0);
-  const unapplied = round(payment.amount - allocated, precision);
+  const allocated = round(
+    payment.allocations.reduce((s, a) => s.plus(dec(a.amount)), dec(0)),
+    precision,
+  );
+  const unapplied = round(dec(payment.amount).minus(dec(allocated)), precision);
   const isCredit = payment.method === 'credit_note';
+  const isCheque = payment.method === 'cheque';
+  // Cheque payments recorded before cheques were tracked keep their old form.
+  const legacyCheque = isCheque && !payment.cheque && before?.method === 'cheque' && !before.cheque;
+  const settled = before ? isChequeSettled(before) : false;
   const selectedCredit = credits.find((c) => c.id === payment.creditId) ?? null;
   const creditAvailable = selectedCredit
     ? round(
-        selectedCredit.totals.balance +
-          (before?.creditId === selectedCredit.id ? before.amount : 0),
+        dec(selectedCredit.totals.balance).plus(
+          dec(before?.creditId === selectedCredit.id ? before.amount : 0),
+        ),
         precision,
       )
     : 0;
+  const client = clients.find((c) => c.id === payment.clientId);
+  const template = accountingSettings(company).template;
+  const chequesKey = direction === 'out' ? 'chequesIssued' : 'chequesReceived';
+  const chequesAccount = findPaymentAccount(accounts, chequesKey, template);
+  const chequesName = chequesAccount
+    ? `${chequesAccount.code} ${localName(chequesAccount)}`
+    : `${PAYMENT_ACCOUNTS[chequesKey].code} ${
+        currentLanguage() === 'ar'
+          ? PAYMENT_ACCOUNTS[chequesKey].nameAr
+          : PAYMENT_ACCOUNTS[chequesKey].name
+      }`;
+  const fee = payment.fee ?? 0;
+  const showFee = takesFee(payment.method, direction);
+
+  const changeMethod = (method: PaymentMethod) => {
+    setCashConfirmed(false);
+    set({
+      method,
+      creditId: null,
+      // Back to the new method's own account.
+      accountId: null,
+      provider: providersFor(method).some((p) => p.value === payment.provider)
+        ? payment.provider
+        : null,
+      cheque:
+        method === 'cheque'
+          ? (payment.cheque ??
+            (legacyCheque ? null : newCheque({ date: payment.date, drawer: client?.name ?? '' })))
+          : payment.cheque,
+    });
+  };
 
   const autoApply = () => {
-    let remaining = payment.amount;
+    let remaining = dec(payment.amount);
     const next: Payment['allocations'] = [];
     for (const { doc, available } of invoices) {
-      if (remaining <= 0) break;
-      const amount = round(Math.min(available, remaining), precision);
+      if (remaining.lte(0)) break;
+      const amount = round(Math.min(available, remaining.toNumber()), precision);
       if (amount > 0) {
         next.push({ documentId: doc.id, amount });
-        remaining = round(remaining - amount, precision);
+        remaining = remaining.minus(dec(amount));
       }
     }
     set({ allocations: next });
   };
 
   const save = async () => {
-    if (!payment.clientId) return toast.error(`Choose a ${copy.party.toLowerCase()}.`);
-    if (!(payment.amount > 0)) return toast.error(`Enter the ${copy.amount.toLowerCase()}.`);
-    if (allocated - payment.amount > 1e-9)
-      return toast.error(`More is applied to ${copy.docs} than the payment amount.`);
+    if (!payment.clientId) return toast.error(t(copy.chooseParty));
+    if (!(payment.amount > 0)) return toast.error(t(copy.enterAmount));
+    if (minor(allocated) > minor(payment.amount)) return toast.error(t(copy.overApplied));
     for (const { doc, available } of invoices) {
-      if (allocationFor(doc.id) - available > 1e-9)
+      if (minor(allocationFor(doc.id)) > minor(available))
         return toast.error(
-          `${doc.number} only has ${fmt.money(available, doc.currency)} left to pay.`,
+          t('{number} only has {amount} left to pay.', {
+            number: doc.number,
+            amount: fmt.money(available, doc.currency),
+          }),
         );
     }
     if (isCredit) {
-      if (!selectedCredit) return toast.error(`Choose the ${copy.credit} to apply.`);
-      if (payment.amount - creditAvailable > 1e-9)
+      if (!selectedCredit) return toast.error(t(copy.chooseCredit));
+      if (minor(payment.amount) > minor(creditAvailable))
         return toast.error(
-          `The ${copy.credit} only has ${fmt.money(creditAvailable, payment.currency)} available.`,
+          t(copy.creditAvailable, { amount: fmt.money(creditAvailable, payment.currency) }),
         );
+    }
+    if (isCheque && !legacyCheque && !payment.cheque?.number.trim()) {
+      return toast.error(t('Enter the cheque number.'));
+    }
+    if ((cashCheck.status === 'over_limit' || cashCheck.status === 'banned') && !cashConfirmed) {
+      return toast.error(t('Confirm the cash payment first.'));
     }
     setSaving(true);
     try {
-      const saved = await savePayment({ ...payment, creditId: isCredit ? payment.creditId : null });
-      toast.success(`Payment ${saved.number} saved`);
+      const saved = await savePayment({
+        ...payment,
+        creditId: isCredit ? payment.creditId : null,
+        cheque: isCheque ? payment.cheque : null,
+      });
+      toast.success(t('Payment {number} saved', { number: saved.number }));
       allowNavigation();
       navigate(`${copy.base}/${saved.id}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save the payment.');
+      toast.error(error instanceof Error ? error.message : t('Could not save the payment.'));
       setSaving(false);
     }
   };
@@ -211,27 +320,28 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         (!c.archived && (direction === 'out' ? isVendor(c) : isCustomer(c))) ||
         c.id === payment.clientId,
     )
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ value: c.id, label: c.name, detail: c.number }));
+    .sort((a, b) => localName(a).localeCompare(localName(b)))
+    .map((c) => ({
+      value: c.id,
+      label: localName(c),
+      detail: c.number,
+      keywords: `${c.name} ${c.nameAr ?? ''}`,
+    }));
+
+  const status = payment.cheque ? chequeStatusMeta(payment.cheque.status, direction) : null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <PageHeader
-        breadcrumb={<Link to={copy.base}>{copy.title}</Link>}
-        title={
-          id
-            ? `Edit payment ${payment.number}`
-            : direction === 'out'
-              ? 'Record a payment made'
-              : 'Record a payment'
-        }
+        breadcrumb={<Link to={copy.base}>{t(copy.title)}</Link>}
+        title={id ? t('Edit payment {number}', { number: payment.number }) : t(copy.recordTitle)}
         actions={
           <>
             <Button variant="ghost" onClick={() => navigate(-1)}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
-              Save payment
+              {t('Save payment')}
             </Button>
           </>
         }
@@ -239,37 +349,43 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
 
       <Card>
         <CardBody className="grid gap-4 sm:grid-cols-2">
-          <Field label={copy.party} className="sm:col-span-2">
+          <Field label={t(copy.party)} className="sm:col-span-2">
             {(fid) => (
               <Combobox
                 id={fid}
                 value={payment.clientId || null}
                 onChange={(value) => {
-                  const client = clients.find((c) => c.id === value);
+                  const next = clients.find((c) => c.id === value);
+                  const drawer = payment.cheque?.drawer;
                   set({
                     clientId: value,
                     allocations: [],
                     creditId: null,
-                    currency: client?.currency ?? company.currency,
+                    currency: next?.currency ?? company.currency,
+                    ...(payment.cheque && (!drawer || drawer === client?.name)
+                      ? { cheque: { ...payment.cheque, drawer: next?.name ?? '' } }
+                      : {}),
                   });
                 }}
                 options={clientOptions}
-                placeholder={copy.who}
-                searchPlaceholder={`Search ${copy.parties}…`}
+                placeholder={t(copy.who)}
+                searchPlaceholder={t(copy.searchParties)}
+                disabled={settled}
               />
             )}
           </Field>
-          <Field label={copy.amount}>
+          <Field label={t(copy.amount)}>
             {(fid) => (
               <NumberInput
                 id={fid}
                 value={payment.amount}
                 onValueChange={(amount) => set({ amount })}
                 allowNegative={false}
+                disabled={settled}
               />
             )}
           </Field>
-          <Field label="Currency">
+          <Field label={t('Currency')}>
             {(fid) => (
               <CurrencySelect
                 id={fid}
@@ -278,7 +394,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
               />
             )}
           </Field>
-          <Field label="Date">
+          <Field label={t('Date')}>
             {(fid) => (
               <Input
                 id={fid}
@@ -288,39 +404,81 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
               />
             )}
           </Field>
-          <Field label="Method">
-            {(fid) => (
-              <Select
-                id={fid}
-                value={payment.method}
-                onChange={(e) => set({ method: e.target.value as PaymentMethod, creditId: null })}
-              >
-                {PAYMENT_METHODS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </Select>
-            )}
+          <Field label={t('Method')} hint={noCashHint(company, direction)}>
+            {(fid) =>
+              settled ? (
+                <Input id={fid} value={t('Cheque')} disabled />
+              ) : (
+                <MethodSelect
+                  id={fid}
+                  value={payment.method}
+                  onChange={changeMethod}
+                  direction={direction}
+                  company={company}
+                />
+              )
+            }
           </Field>
-          {!isCredit ? (
-            <Field label={copy.account} hint={copy.accountHint}>
+          {providersFor(payment.method).length ? (
+            <Field label={t('Provider')} optional>
               {(fid) => (
-                <MoneyAccountSelect
+                <ProviderSelect
+                  id={fid}
+                  method={payment.method}
+                  value={payment.provider}
+                  onChange={(provider) => set({ provider })}
+                />
+              )}
+            </Field>
+          ) : null}
+          {showFee ? (
+            <Field
+              label={t('Fee')}
+              optional
+              hint={
+                fee > 0
+                  ? t('{amount} reaches the account after the fee.', {
+                      amount: fmt.money(
+                        round(dec(payment.amount).minus(dec(fee)), precision),
+                        payment.currency,
+                      ),
+                    })
+                  : t('What KNET, the bank or the provider keeps. Recorded as KNET and card fees.')
+              }
+            >
+              {(fid) => (
+                <NumberInput
+                  id={fid}
+                  value={fee}
+                  onValueChange={(value) => set({ fee: value })}
+                  allowNegative={false}
+                />
+              )}
+            </Field>
+          ) : null}
+          {!isCredit && !isCheque ? (
+            <Field label={t(copy.account)} hint={t(copy.accountHint)}>
+              {(fid) => (
+                <PaymentAccountSelect
                   id={fid}
                   value={payment.accountId}
                   onChange={(accountId) => set({ accountId })}
                   accounts={accounts}
-                  use={direction === 'out' ? 'payment' : 'deposit'}
-                  defaultRole={payment.method === 'cash' ? 'cash' : 'bank'}
+                  company={company}
+                  direction={direction}
+                  method={payment.method}
                 />
               )}
             </Field>
           ) : null}
           {!isCredit && payment.currency !== company.currency ? (
             <Field
-              label="Exchange rate"
-              hint={`1 ${payment.currency} = ${payment.exchangeRate || '?'} ${company.currency} on the payment date`}
+              label={t('Exchange rate')}
+              hint={t('1 {currency} = {rate} {base} on the payment date', {
+                currency: payment.currency,
+                rate: payment.exchangeRate || '?',
+                base: company.currency,
+              })}
             >
               {(fid) => (
                 <NumberInput
@@ -328,17 +486,20 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                   value={payment.exchangeRate ?? 0}
                   onValueChange={(exchangeRate) => set({ exchangeRate })}
                   allowNegative={false}
+                  disabled={settled}
                 />
               )}
             </Field>
           ) : null}
           {isCredit ? (
             <Field
-              label={direction === 'out' ? 'Vendor credit' : 'Credit note'}
+              label={t(copy.credit)}
               className="sm:col-span-2"
               hint={
                 selectedCredit
-                  ? `${fmt.money(creditAvailable, payment.currency)} available`
+                  ? t('{amount} available', {
+                      amount: fmt.money(creditAvailable, payment.currency),
+                    })
                   : undefined
               }
             >
@@ -356,30 +517,29 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                   }}
                 >
                   <option value="">
-                    {credits.length
-                      ? `Choose a ${copy.credit}…`
-                      : `This ${copy.party.toLowerCase()} has no open ${copy.credit}s`}
+                    {credits.length ? t(copy.chooseCreditOption) : t(copy.noCredits)}
                   </option>
                   {credits.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.number} · {fmt.money(c.totals.balance, c.currency)} available
+                      {c.number} ·{' '}
+                      {t('{amount} available', { amount: fmt.money(c.totals.balance, c.currency) })}
                     </option>
                   ))}
                 </Select>
               )}
             </Field>
           ) : null}
-          <Field label="Reference" optional>
+          <Field label={t('Reference')} optional>
             {(fid) => (
               <Input
                 id={fid}
                 value={payment.reference}
                 onChange={(e) => set({ reference: e.target.value })}
-                placeholder="Transaction ID, cheque number…"
+                placeholder={t('Transaction ID or KNET reference')}
               />
             )}
           </Field>
-          <Field label="Notes" optional className="sm:col-span-2">
+          <Field label={t('Notes')} optional className="sm:col-span-2">
             {(fid) => (
               <Textarea
                 id={fid}
@@ -389,13 +549,62 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
               />
             )}
           </Field>
+          <CashRuleNotice
+            company={company}
+            check={cashCheck}
+            confirmed={cashConfirmed}
+            onConfirm={setCashConfirmed}
+            className="sm:col-span-2"
+          />
         </CardBody>
       </Card>
 
+      {isCheque ? (
+        <Card>
+          <CardHeader
+            title={t('Cheque')}
+            description={
+              legacyCheque
+                ? undefined
+                : direction === 'out'
+                  ? t('Held in {account} until the vendor presents it.', { account: chequesName })
+                  : t('Held in {account} until it clears.', { account: chequesName })
+            }
+            actions={status ? <Badge tone={status.tone}>{t(status.label)}</Badge> : null}
+          />
+          <CardBody>
+            {legacyCheque ? (
+              <p className="flex gap-2 text-sm text-slate-600">
+                <Info className="mt-0.5 size-4 shrink-0 text-slate-400" aria-hidden />
+                {t(
+                  'This cheque was recorded before cheques were tracked, so it is not in the cheque register.',
+                )}
+              </p>
+            ) : payment.cheque ? (
+              <ChequeFields
+                cheque={payment.cheque}
+                onChange={(patch) =>
+                  set({ cheque: payment.cheque ? { ...payment.cheque, ...patch } : null })
+                }
+                direction={direction}
+                paymentDate={payment.date}
+              />
+            ) : null}
+            {settled ? (
+              <p className="mt-4 text-sm text-slate-500">
+                {t(
+                  'This cheque has its own entries now. Only the notes and the documents it pays can change.',
+                )}
+              </p>
+            ) : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader
-          title={`Apply to ${copy.docs}`}
-          description={`Split the payment across the ${copy.party.toLowerCase()}'s open ${copy.docs}.`}
+          title={t(copy.applyTitle)}
+          description={t(copy.applyDescription)}
           actions={
             invoices.length > 0 ? (
               <Button
@@ -404,28 +613,26 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                 onClick={autoApply}
                 disabled={!(payment.amount > 0)}
               >
-                <Wand2 /> Apply oldest first
+                <Wand2 /> {t('Apply oldest first')}
               </Button>
             ) : null
           }
         />
         {!payment.clientId ? (
-          <p className="px-5 py-8 text-center text-sm text-slate-500">
-            Choose a {copy.party.toLowerCase()} to see their open {copy.docs}.
-          </p>
+          <p className="px-5 py-8 text-center text-sm text-slate-500">{t(copy.pickPartyFirst)}</p>
         ) : invoices.length === 0 ? (
           <p className="px-5 py-8 text-center text-sm text-slate-500">
-            No open {copy.docs} in {payment.currency}. The payment will be kept as {copy.unapplied}.
+            {t(copy.noOpenDocs, { currency: payment.currency })}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  <th className="px-5 py-3">{direction === 'out' ? 'Bill' : 'Invoice'}</th>
-                  <th className="px-3 py-3">Due</th>
-                  <th className="px-3 py-3 text-end">Open balance</th>
-                  <th className="w-40 px-5 py-3 text-end">Apply</th>
+                  <th className="px-5 py-3 text-start">{t(copy.doc)}</th>
+                  <th className="px-3 py-3 text-start">{t('Due')}</th>
+                  <th className="px-3 py-3 text-end">{t('Open balance')}</th>
+                  <th className="w-40 px-5 py-3 text-end">{t('Apply')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -433,14 +640,12 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                   <tr key={doc.id}>
                     <td className="px-5 py-2.5">
                       <Link
-                        to={`${direction === 'out' ? '/bills' : '/invoices'}/${doc.id}`}
+                        to={`${copy.docBase}/${doc.id}`}
                         className="hover:text-primary-700 font-medium text-slate-900"
                       >
                         {doc.number}
                       </Link>
-                      {doc.status === 'draft' ? (
-                        <span className="ms-2 text-xs text-slate-400">(draft)</span>
-                      ) : null}
+                      {doc.status === 'draft' ? <Badge className="ms-2">{t('Draft')}</Badge> : null}
                     </td>
                     <td className="px-3 py-2.5 text-slate-600">{fmt.date(doc.dueDate) || '—'}</td>
                     <td className="tabular px-3 py-2.5 text-end text-slate-700">
@@ -448,7 +653,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                     </td>
                     <td className="px-5 py-2.5">
                       <NumberInput
-                        aria-label={`Amount applied to ${doc.number}`}
+                        aria-label={t('Amount applied to {number}', { number: doc.number })}
                         value={allocationFor(doc.id)}
                         onValueChange={(v) => setAllocation(doc.id, v)}
                         allowNegative={false}
@@ -462,13 +667,14 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         )}
         <div className="flex flex-wrap justify-end gap-x-6 gap-y-1 border-t border-slate-100 px-5 py-3 text-sm">
           <span className="text-slate-500">
-            Applied{' '}
+            {t('Applied')}{' '}
             <strong className="tabular text-slate-900">
               {fmt.money(allocated, payment.currency)}
             </strong>
           </span>
           <span className={unapplied < 0 ? 'text-red-600' : 'text-slate-500'}>
-            Unapplied <strong className="tabular">{fmt.money(unapplied, payment.currency)}</strong>
+            {t('Unapplied')}{' '}
+            <strong className="tabular">{fmt.money(unapplied, payment.currency)}</strong>
           </span>
         </div>
       </Card>

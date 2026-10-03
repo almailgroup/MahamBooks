@@ -89,10 +89,17 @@ export async function draftDocument(
   });
 }
 
-/** Amount paid (invoices, bills) or applied (credit notes, vendor credits) so far. */
+/**
+ * Amount paid (invoices, bills) or applied (credit notes, vendor credits) so
+ * far. Void payments (returned or cancelled cheques) don't count.
+ */
 export async function paidAmount(doc: Pick<InvoiceDocument, 'id' | 'type'>): Promise<number> {
   if (doc.type === 'invoice' || doc.type === 'bill') {
-    const payments = await db.payments.where('documentIds').equals(doc.id).toArray();
+    const payments = await db.payments
+      .where('documentIds')
+      .equals(doc.id)
+      .filter((p) => !p.voided)
+      .toArray();
     return payments.reduce(
       (sum, p) =>
         sum +
@@ -101,7 +108,11 @@ export async function paidAmount(doc: Pick<InvoiceDocument, 'id' | 'type'>): Pro
     );
   }
   if (doc.type === 'credit' || doc.type === 'vendor_credit') {
-    const uses = await db.payments.where('creditId').equals(doc.id).toArray();
+    const uses = await db.payments
+      .where('creditId')
+      .equals(doc.id)
+      .filter((p) => !p.voided)
+      .toArray();
     return uses.reduce((sum, p) => sum + p.amount, 0);
   }
   return 0;
