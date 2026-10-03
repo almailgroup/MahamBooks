@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from './db';
 import { logActivity } from './activity';
 import { accountingSettings } from './chart-setup';
@@ -27,6 +28,7 @@ import {
   type AccountSpecKey,
 } from '@/lib/accounting/charts';
 import { ACCOUNTING_OWNED_KINDS, JOURNAL_KINDS } from '@/lib/accounting/journal-kinds';
+import { stockLedgerContext } from '@/lib/inventory/sources';
 import { financialYearLabel, YEAR_END_LABELS } from '@/lib/accounting/year-end';
 import { currencyPrecision, dec, round } from '@/lib/money';
 import { allocateNumber } from '@/lib/numbering';
@@ -447,7 +449,19 @@ export async function loadLedger(company: Company): Promise<CompanyLedger> {
     db.products.where('companyId').equals(company.id).toArray(),
     db.clients.where('companyId').equals(company.id).toArray(),
   ]);
+  // A transaction without the stock tables (seeding demo data) has no stock to post.
+  const outer = Dexie.currentTransaction;
+  const stockTables = [db.stockMovements, db.stockEntries, db.landedCosts];
+  const readable = !outer || stockTables.every((table) => outer.storeNames.includes(table.name));
+  const [movements, entries, landedCosts] = readable
+    ? await Promise.all([
+        db.stockMovements.where('companyId').equals(company.id).toArray(),
+        db.stockEntries.where('companyId').equals(company.id).toArray(),
+        db.landedCosts.where('companyId').equals(company.id).toArray(),
+      ])
+    : [[], [], []];
   const exempt = new Set(clients.filter((c) => c.taxExempt).map((c) => c.id));
+  const byId = new Map(documents.map((d) => [d.id, d]));
   const ctx: LedgerContext = {
     companyCurrency: company.currency,
     precision: currencyPrecision(company.currency),
@@ -455,9 +469,19 @@ export async function loadLedger(company: Company): Promise<CompanyLedger> {
     accountIds: new Set(accounts.map((a) => a.id)),
     productAccounts: new Map(products.map((p) => [p.id, p.incomeAccountId])),
     taxExempt: (id) => exempt.has(id),
-    documents: new Map(documents.map((d) => [d.id, d])),
+    documents: byId,
+    stock: stockLedgerContext({
+      accounts,
+      products,
+      landedCosts,
+      documents: byId,
+      template: accountingSettings(company).template,
+    }),
   };
-  const { lines, problems } = buildLedger({ documents, payments, journals, expenses }, ctx);
+  const { lines, problems } = buildLedger(
+    { documents, payments, journals, expenses, stock: { movements, entries } },
+    ctx,
+  );
   return { accounts, lines, problems, journals };
 }
 

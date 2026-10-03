@@ -17,6 +17,13 @@ const ClientList = lazy(() => import('@/pages/clients/list'));
 const ClientDetail = lazy(() => import('@/pages/clients/detail'));
 const ClientFormPage = lazy(() => import('@/pages/clients/form'));
 const Products = lazy(() => import('@/pages/products'));
+const Inventory = lazy(() => import('@/pages/inventory/index'));
+const StockEntryForm = lazy(() => import('@/pages/inventory/entry-form'));
+const StockEntryView = lazy(() => import('@/pages/inventory/entry-view'));
+const StockCount = lazy(() => import('@/pages/inventory/count'));
+const StockCountPrint = lazy(() => import('@/pages/inventory/count-print'));
+const LandedCostForm = lazy(() => import('@/pages/inventory/landed-cost-form'));
+const LandedCostView = lazy(() => import('@/pages/inventory/landed-cost-view'));
 const PaymentList = lazy(() => import('@/pages/payments/list'));
 const PaymentDetail = lazy(() => import('@/pages/payments/detail'));
 const PaymentForm = lazy(() => import('@/pages/payments/form'));
@@ -182,6 +189,14 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'inventory/count/print',
+        element: (
+          <Bare>
+            <StockCountPrint />
+          </Bare>
+        ),
+      },
+      {
         element: <AppLayout />,
         errorElement: <RouteError />,
         children: [
@@ -205,6 +220,12 @@ export const router = createHashRouter([
           ...paymentRoutes('payments-made', 'out'),
           { path: 'expenses', element: <Expenses /> },
           { path: 'products', element: <Products /> },
+          { path: 'inventory', element: <Inventory /> },
+          { path: 'inventory/adjustments/new', element: <StockEntryForm /> },
+          { path: 'inventory/entries/:id', element: <StockEntryView /> },
+          { path: 'inventory/count', element: <StockCount /> },
+          { path: 'inventory/landed-costs/new', element: <LandedCostForm /> },
+          { path: 'inventory/landed-costs/:id', element: <LandedCostView /> },
           { path: 'reports', element: <Reports /> },
           { path: 'reports/:report', element: <Reports /> },
           { path: 'accounts', element: <ChartOfAccounts /> },

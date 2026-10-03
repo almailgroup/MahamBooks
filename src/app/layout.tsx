@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
+  Boxes,
   Building2,
   ChevronsUpDown,
   ClipboardList,
@@ -70,6 +71,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
     items: [
       { to: '/', label: msg('Dashboard'), icon: <LayoutDashboard />, end: true },
       { to: '/products', label: msg('Products & services'), icon: <Package /> },
+      { to: '/inventory', label: msg('Inventory'), icon: <Boxes /> },
     ],
   },
   {

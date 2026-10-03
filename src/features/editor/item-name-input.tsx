@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Package } from 'lucide-react';
 import type { Product } from '@/db/types';
@@ -18,6 +18,8 @@ export function ItemNameInput({
   placeholder,
   id,
   ariaLabel,
+  priceOf = (p) => p.unitPrice,
+  stockOf,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -27,6 +29,10 @@ export function ItemNameInput({
   placeholder?: string;
   id?: string;
   ariaLabel?: string;
+  /** Price shown next to each suggestion (bills show the cost price). */
+  priceOf?: (product: Product) => number;
+  /** Stock on hand shown under a stock item's suggestion. */
+  stockOf?: (product: Product) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -122,9 +128,10 @@ export function ItemNameInput({
                     {[p.sku, p.description].filter(Boolean).join(' · ')}
                   </span>
                 ) : null}
+                {stockOf?.(p) ?? null}
               </span>
               <span className="tabular shrink-0 text-sm text-slate-600">
-                {formatPrice(p.unitPrice)}
+                {formatPrice(priceOf(p))}
                 {p.unit ? <span className="text-slate-400"> / {p.unit}</span> : null}
               </span>
             </button>

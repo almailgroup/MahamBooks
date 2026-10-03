@@ -9,6 +9,7 @@ const SOURCE_ROUTES: Record<LedgerSource, string> = {
   payment: '/payments',
   expense: '/expenses',
   journal: '/journals',
+  stock: '/inventory/entries',
 };
 
 /** Translate where shown: `t(SOURCE_LABELS[source])`. */
@@ -20,6 +21,7 @@ export const SOURCE_LABELS: Record<LedgerSource, string> = {
   payment: msg('Payment'),
   expense: msg('Expense'),
   journal: msg('Journal'),
+  stock: msg('Stock entry'),
 };
 
 /** Where the document behind a ledger line is shown. */

@@ -101,7 +101,10 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                 value={fmt.quantity(balance.accrued)}
               />
               {balance.adjusted ? (
-                <AmountRow label={t('Adjustments')} value={fmt.quantity(balance.adjusted)} />
+                <AmountRow
+                  label={t('Balance adjustments')}
+                  value={fmt.quantity(balance.adjusted)}
+                />
               ) : null}
               <AmountRow label={t('Taken')} value={`−${fmt.quantity(balance.taken)}`} />
             </dl>

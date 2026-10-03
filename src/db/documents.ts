@@ -21,6 +21,7 @@ import { isPurchaseType, postsToLedger } from '@/lib/document-types';
 import { deliveryStatusOf, lineProgress, orderStatus } from '@/lib/orders';
 import { msg, t } from '@/i18n';
 import { assertUnlocked } from './accounting';
+import { syncDocumentStock, withStockTables } from './inventory';
 
 /** Activity log messages of each type (English keys, shown in the reader's language). */
 const LOG: Record<DocumentType, { created: string; updated: string; deleted: string }> = {
@@ -332,7 +333,7 @@ export class DuplicateNumberError extends Error {
 export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocument> {
   return db.transaction(
     'rw',
-    [db.documents, db.companies, db.clients, db.payments, db.activities],
+    withStockTables([db.documents, db.companies, db.clients, db.payments, db.activities]),
     async () => {
       const company = await db.companies.get(input.companyId);
       if (!company) throw new Error('Company not found');
@@ -366,6 +367,7 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       doc.updatedAt = nowStamp();
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.documents.put(doc);
+      await syncDocumentStock(company.id, doc.id);
 
       await logActivity(
         company.id,
@@ -393,7 +395,7 @@ export async function setDocumentStatus(
 ): Promise<void> {
   await db.transaction(
     'rw',
-    [db.documents, db.clients, db.payments, db.companies, db.activities],
+    withStockTables([db.documents, db.clients, db.payments, db.companies, db.activities]),
     async () => {
       const doc = await db.documents.get(id);
       if (!doc) return;
@@ -409,6 +411,7 @@ export async function setDocumentStatus(
         next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
       }
       await db.documents.put(next);
+      await syncDocumentStock(doc.companyId, doc.id);
       await logActivity(
         doc.companyId,
         doc.type,
@@ -438,7 +441,14 @@ export async function markSent(id: ID): Promise<void> {
 export async function deleteDocument(id: ID): Promise<void> {
   await db.transaction(
     'rw',
-    [db.documents, db.payments, db.activities, db.clients, db.companies, db.attachments],
+    withStockTables([
+      db.documents,
+      db.payments,
+      db.activities,
+      db.clients,
+      db.companies,
+      db.attachments,
+    ]),
     async () => {
       const doc = await db.documents.get(id);
       if (!doc) return;
@@ -475,6 +485,7 @@ export async function deleteDocument(id: ID): Promise<void> {
         });
       }
       await db.documents.delete(id);
+      await syncDocumentStock(doc.companyId, doc.id);
       await logActivity(
         doc.companyId,
         doc.type,

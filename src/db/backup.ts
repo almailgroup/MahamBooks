@@ -55,6 +55,10 @@ const backupSchema = z.object({
     leaveRecords: z.array(ownedRow).default([]),
     staffLoans: z.array(ownedRow).default([]),
     finalSettlements: z.array(ownedRow).default([]),
+    warehouses: z.array(ownedRow).default([]),
+    stockMovements: z.array(ownedRow).default([]),
+    stockEntries: z.array(ownedRow).default([]),
+    landedCosts: z.array(ownedRow).default([]),
   }),
 });
 

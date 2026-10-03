@@ -290,6 +290,7 @@ const KUWAIT = bilingual([
   ['5000', 'Cost of sales', 'تكلفة المبيعات', 'expense_direct_cost', 'cost_of_sales'],
   ['5100', 'Subcontractor costs', 'تكاليف مقاولي الباطن', 'expense_direct_cost'],
   ['5200', 'Customs duty and freight', 'الرسوم الجمركية والشحن', 'expense_direct_cost'],
+  ['5300', 'Inventory adjustments', 'تسويات المخزون', 'expense_direct_cost'],
   ['6000', 'General and administrative expenses', 'مصروفات عمومية وإدارية', 'expense', 'expense'],
   ['6010', 'Salaries and wages', 'الرواتب والأجور', 'expense'],
   ['6020', 'Allowances', 'البدلات', 'expense'],
@@ -450,6 +451,22 @@ export const ACCOUNT_SPECS = {
     'مخصص مكافأة نهاية الخدمة',
     'liability_non_current',
     /end.of.service|indemnity|gratuity/i,
+  ),
+  inventory: spec('1200', 'Inventory', 'المخزون', 'asset_current', /inventor|stock/i),
+  /** Used only when the chart has no cost of sales account for automatic postings. */
+  costOfSales: spec(
+    '5000',
+    'Cost of sales',
+    'تكلفة المبيعات',
+    'expense_direct_cost',
+    /cost of (sales|goods)/i,
+  ),
+  inventoryAdjustments: spec(
+    '5300',
+    'Inventory adjustments',
+    'تسويات المخزون',
+    'expense_direct_cost',
+    /(inventory|stock) (adjustment|write)/i,
   ),
 } satisfies Record<string, AccountSpec>;
 

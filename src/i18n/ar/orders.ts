@@ -322,7 +322,7 @@ export default {
   'Add at least one item.': 'أضف بنداً واحداً على الأقل.',
   'Add at least one line.': 'أضف بنداً واحداً على الأقل.',
   'This number is already used.': 'هذا الرقم مستخدم بالفعل.',
-  'Could not save.': 'تعذر الحفظ.',
+  'Could not save.': 'تعذّر الحفظ.',
   Template: 'القالب',
   'Default ({name})': 'الافتراضي ({name})',
   'Save and confirm': 'حفظ وتأكيد',

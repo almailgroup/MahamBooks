@@ -39,6 +39,13 @@ import { TaxSelect } from '@/features/editor/tax-select';
 import { ClientDialog } from '@/features/clients/client-dialog';
 import { categoryOptions, useAccounts } from '@/features/accounting/account-pickers';
 import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
+import { ItemNameInput } from '@/features/editor/item-name-input';
+import { useInventory } from '@/features/inventory/use-inventory';
+import { StockLineHint } from '@/features/inventory/stock-hint';
+import { StockSuggestion } from '@/features/inventory/stock-suggestion';
+import { accountingSettings } from '@/db/chart-setup';
+import { stockAccounts } from '@/lib/inventory/sources';
+import { formatUnitPrice } from '@/lib/format';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
@@ -99,6 +106,7 @@ function Editor({
     [company.id],
   );
   const accounts = useAccounts();
+  const inventory = useInventory();
 
   const vendor = useMemo(
     () => clients?.find((c) => c.id === doc.clientId) ?? null,
@@ -126,15 +134,22 @@ function Editor({
   const dirty = JSON.stringify(doc) !== JSON.stringify(initial) || attachments.dirty;
   const allowNavigation = useUnsavedGuard(dirty && saving === null);
 
-  if (!clients || !taxRates || !accounts)
+  if (!clients || !taxRates || !accounts || !inventory) {
     return <Spinner className="py-24" label={t('Loading…')} />;
+  }
 
   const roles = roleMap(accounts);
   const defaultAccount = roles.expense ?? '';
-  const options = categoryOptions(
-    accounts,
-    doc.items.map((i) => i.accountId),
-  );
+  // Stock items always post to inventory.
+  const inventoryAccount =
+    stockAccounts(accounts, accountingSettings(company).template).inventory?.id ?? null;
+  const stockItem = (line: LineItem) =>
+    inventory.stockItems.find((p) => p.id === line.productId) ?? null;
+  const options = categoryOptions(accounts, [
+    ...doc.items.map((i) => i.accountId),
+    inventoryAccount,
+  ]);
+
   const update = (patch: Partial<InvoiceDocument>) => setDoc((d) => ({ ...d, ...patch }));
   const updateLine = (id: string, patch: Partial<LineItem>) =>
     setDoc((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }));
@@ -474,24 +489,57 @@ function Editor({
                       <MiniLabel>{t('Category')}</MiniLabel>
                       <Combobox
                         ariaLabel={t('Line {number} category', { number: index + 1 })}
-                        value={item.accountId || defaultAccount || null}
+                        value={
+                          (stockItem(item) ? inventoryAccount : item.accountId) ||
+                          defaultAccount ||
+                          null
+                        }
                         onChange={(accountId) => updateLine(item.id, { accountId })}
                         options={options}
                         placeholder={t('Choose a category…')}
                         searchPlaceholder={t('Search accounts…')}
+                        disabled={Boolean(stockItem(item))}
                       />
                     </div>
                     <div className="col-span-6 space-y-2 @3xl:col-span-1">
                       <MiniLabel>{t('Description')}</MiniLabel>
-                      <Textarea
-                        aria-label={t('Line {number} description', { number: index + 1 })}
+                      <ItemNameInput
+                        ariaLabel={t('Line {number} description', { number: index + 1 })}
                         value={item.name}
-                        onChange={(e) => {
-                          updateLine(item.id, { name: e.target.value });
+                        onChange={(name) => {
+                          // Typed over a stock item: the line is a plain expense again.
+                          updateLine(item.id, {
+                            name,
+                            productId: null,
+                            ...(stockItem(item) ? { accountId: defaultAccount } : {}),
+                          });
                           setErrors((x) => ({ ...x, items: undefined }));
                         }}
-                        rows={1}
-                        className="min-h-9 resize-y py-1.5"
+                        products={inventory.products}
+                        onPick={(product) => {
+                          const stock = product.kind === 'stock';
+                          updateLine(item.id, {
+                            productId: product.id,
+                            name: product.name,
+                            nameAr: product.nameAr ?? '',
+                            unit: product.unit,
+                            unitPrice: product.costPrice || item.unitPrice,
+                            accountId: stock ? inventoryAccount : item.accountId,
+                          });
+                          setErrors((x) => ({ ...x, items: undefined }));
+                        }}
+                        formatPrice={(amount) =>
+                          formatUnitPrice(
+                            amount,
+                            company.currency,
+                            fmt.locale,
+                            company.currencyDisplay ?? 'local',
+                          )
+                        }
+                        priceOf={(product) => product.costPrice ?? 0}
+                        stockOf={(product) => (
+                          <StockSuggestion inventory={inventory} product={product} />
+                        )}
                       />
                       {order ? (
                         <Input
@@ -501,6 +549,15 @@ function Editor({
                           value={item.nameAr ?? ''}
                           onChange={(e) => updateLine(item.id, { nameAr: e.target.value })}
                           placeholder={t('Name in Arabic (optional)')}
+                        />
+                      ) : null}
+                      {stockItem(item) ? (
+                        <StockLineHint
+                          inventory={inventory}
+                          line={item}
+                          lines={doc.items}
+                          use={type === 'bill' ? 'receive' : 'sell'}
+                          onWarehouseChange={(warehouseId) => updateLine(item.id, { warehouseId })}
                         />
                       ) : null}
                     </div>

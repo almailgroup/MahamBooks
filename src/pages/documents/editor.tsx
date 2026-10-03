@@ -600,6 +600,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 formatPrice={(amount) => formatUnitPrice(amount, doc.currency, fmt.locale)}
                 language={client?.language ?? company.language}
                 prices={priced}
+                stockUse={type === 'credit' ? 'receive' : 'sell'}
               />
             </CardBody>
           </Card>

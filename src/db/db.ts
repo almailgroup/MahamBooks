@@ -29,6 +29,10 @@ import type {
   LeaveRecord,
   StaffLoan,
   FinalSettlement,
+  Warehouse,
+  StockMovement,
+  StockEntry,
+  LandedCost,
 } from './types';
 import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -66,6 +70,10 @@ export class InvoiceDatabase extends Dexie {
   leaveRecords!: Table<LeaveRecord, string>;
   staffLoans!: Table<StaffLoan, string>;
   finalSettlements!: Table<FinalSettlement, string>;
+  warehouses!: Table<Warehouse, string>;
+  stockMovements!: Table<StockMovement, string>;
+  stockEntries!: Table<StockEntry, string>;
+  landedCosts!: Table<LandedCost, string>;
   meta!: Table<KeyValue, string>;
 
   constructor(name = APP_NAME) {
@@ -120,6 +128,14 @@ export class InvoiceDatabase extends Dexie {
       staffLoans: 'id, companyId, employeeId',
       finalSettlements: 'id, companyId, employeeId',
     });
+    // Inventory: warehouses, stock movements, stock entries and landed costs.
+    this.version(9).stores({
+      warehouses: 'id, companyId',
+      stockMovements:
+        'id, companyId, [companyId+productId], [companyId+date], sourceId, documentId, warehouseId',
+      stockEntries: 'id, companyId, [companyId+date]',
+      landedCosts: 'id, companyId, billId, targetBillId',
+    });
     // Fixed asset register, monthly depreciation runs and closed financial years.
     this.version(10).stores({
       assets: 'id, companyId, status, billId',
@@ -164,6 +180,10 @@ export const DATA_TABLES = [
   'leaveRecords',
   'staffLoans',
   'finalSettlements',
+  'warehouses',
+  'stockMovements',
+  'stockEntries',
+  'landedCosts',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

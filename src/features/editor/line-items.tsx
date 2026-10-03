@@ -34,6 +34,9 @@ import {
 } from '@/components/ui/overlay';
 import { ItemNameInput } from './item-name-input';
 import { TaxSelect } from './tax-select';
+import { useInventory } from '@/features/inventory/use-inventory';
+import { StockLineHint, type StockUse } from '@/features/inventory/stock-hint';
+import { StockSuggestion } from '@/features/inventory/stock-suggestion';
 
 function MiniLabel({ children }: { children: ReactNode }) {
   return (
@@ -92,6 +95,7 @@ export function LineItemsEditor({
   formatPrice,
   language,
   prices = true,
+  stockUse = 'sell',
 }: {
   items: LineItem[];
   onChange: (items: LineItem[]) => void;
@@ -107,7 +111,10 @@ export function LineItemsEditor({
   language?: DocumentLanguage;
   /** False for delivery notes: quantities, units and serial numbers only. */
   prices?: boolean;
+  /** Stock items show what is in stock; selling more than that is flagged. */
+  stockUse?: StockUse;
 }) {
+  const inventory = useInventory();
   const showArabic =
     language === undefined || isRtlLanguage(language) || items.some((i) => i.nameAr?.trim());
   /** Lines selling goods can carry their condition and serial number. */
@@ -319,7 +326,19 @@ export function LineItemsEditor({
                   products={products}
                   onPick={(p) => pickProduct(index, p)}
                   formatPrice={formatPrice}
+                  stockOf={(p) =>
+                    inventory ? <StockSuggestion inventory={inventory} product={p} /> : null
+                  }
                 />
+                {inventory && item.productId ? (
+                  <StockLineHint
+                    inventory={inventory}
+                    line={item}
+                    lines={items}
+                    use={stockUse}
+                    onWarehouseChange={(warehouseId) => update(index, { warehouseId })}
+                  />
+                ) : null}
               </div>
             </div>
           );

@@ -557,6 +557,13 @@ export interface TaxRate {
   updatedAt: Timestamp;
 }
 
+/**
+ * What an item is: a service, goods bought and sold without tracking them in
+ * stock, or a stock item with quantities on hand, a weighted average cost and
+ * cost of sales.
+ */
+export type ProductKind = 'service' | 'non_stock' | 'stock';
+
 export interface Product {
   id: ID;
   companyId: ID;
@@ -571,6 +578,17 @@ export interface Product {
   taxRateIds: ID[];
   /** Income account for sales of this item; null uses the company's sales account. */
   incomeAccountId?: ID | null;
+  /** Missing means a service (items saved before inventory existed). */
+  kind?: ProductKind;
+  /** Purchase cost of one unit (company currency): the rate on new bills and the opening stock. */
+  costPrice?: number;
+  /** Stock items: on hand at or below this quantity shows as low stock; null for no alert. */
+  reorderLevel?: number | null;
+  /** Vendor the item is usually bought from. */
+  preferredVendorId?: ID | null;
+  barcode?: string;
+  /** Harmonized System code used by customs. */
+  hsCode?: string;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -602,6 +620,8 @@ export interface LineItem {
    * from; drives what is left to invoice, bill or deliver.
    */
   sourceLineId?: ID;
+  /** Stock items: warehouse the goods leave from or arrive at; null uses the default one. */
+  warehouseId?: ID | null;
 }
 
 export type ItemCondition = 'new' | 'used';
@@ -909,7 +929,8 @@ export type ActivityEntity =
   | 'cheque'
   | 'asset'
   | 'year_end'
-  | 'payroll';
+  | 'payroll'
+  | 'stock';
 
 export interface Activity {
   id: ID;
@@ -1326,6 +1347,145 @@ export interface YearEndClose {
   /** A reopened year has its entries reversed. */
   status: 'closed' | 'reopened';
   reversalJournalIds: ID[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Inventory                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** A place stock is kept: a showroom, a store in Shuwaikh or Al-Rai. */
+export interface Warehouse {
+  id: ID;
+  companyId: ID;
+  name: string;
+  nameAr?: string;
+  address: string;
+  /** Documents move stock in and out of the default warehouse unless a line says otherwise. */
+  isDefault: boolean;
+  archived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** What moved the stock. */
+export type StockSourceType =
+  | 'bill'
+  | 'vendor_credit'
+  | 'invoice'
+  | 'credit'
+  | 'adjustment'
+  | 'opening'
+  | 'transfer'
+  | 'landed_cost';
+
+/**
+ * One stock item coming into or leaving a warehouse. Movements are derived
+ * from issued documents, stock entries and landed costs, and costed at the
+ * weighted average in date order (see lib/inventory/costing.ts); those in a
+ * locked period keep the values they were posted with.
+ */
+export interface StockMovement {
+  id: ID;
+  companyId: ID;
+  productId: ID;
+  warehouseId: ID;
+  date: ISODate;
+  /** Positive into stock, negative out of it; 0 for a landed cost, which adds value only. */
+  quantity: number;
+  /** Company-currency cost of one unit, up to 6 decimals. */
+  unitCost: number;
+  /** Company-currency value added to (positive) or taken out of (negative) stock. */
+  value: number;
+  sourceType: StockSourceType;
+  /** Document, stock entry or landed cost the movement comes from. */
+  sourceId: ID;
+  /** Line of the source the movement comes from. */
+  lineId: ID | null;
+  /** Document whose posting carries the movement (for a landed cost, the bill with the charges). */
+  documentId: ID | null;
+  /** Number of the source, shown in reports. */
+  number: string;
+  /**
+   * Value the source sets, in the company currency: the bill or vendor credit
+   * line, the opening stock or the landed cost. Null for movements costed at
+   * the weighted average.
+   */
+  sourceValue: number | null;
+  /** Credit notes: the invoice the goods were sold on, to bring them back at that cost. */
+  returnOf?: ID | null;
+  /** Landed costs: quantity received on the bill line the cost was allocated to. */
+  basisQuantity?: number | null;
+  /** Keeps movements of the same day in the order they were recorded. */
+  sequence: string;
+  notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** Stock recorded without a document: opening stock, adjustments and transfers. */
+export type StockEntryKind = 'opening' | 'adjustment' | 'transfer';
+
+export type AdjustmentReason = 'damaged' | 'expired' | 'count' | 'other';
+
+export interface StockEntryLine {
+  id: ID;
+  productId: ID;
+  /** Adjustments: positive adds stock, negative removes it. Opening stock and transfers: positive. */
+  quantity: number;
+  /** Opening stock: cost of one unit (company currency). */
+  unitCost?: number | null;
+}
+
+/** Void entries stay on record; their movements leave the books. */
+export interface StockEntry {
+  id: ID;
+  companyId: ID;
+  kind: StockEntryKind;
+  /** e.g. "ADJ-0001". */
+  number: string;
+  date: ISODate;
+  /** Where the stock is (transfers: where it leaves from). */
+  warehouseId: ID;
+  /** Transfers: where the stock goes. */
+  toWarehouseId?: ID | null;
+  /** Adjustments: why the stock changed. */
+  reason?: AdjustmentReason | null;
+  reference: string;
+  notes: string;
+  lines: StockEntryLine[];
+  status: 'posted' | 'void';
+  voidedAt?: Timestamp | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type LandedCostMethod = 'value' | 'quantity';
+
+/**
+ * Charges on a bill (customs duty, freight, clearing, insurance) added to
+ * the cost of the stock received on the same or another bill. The charges
+ * post to inventory instead of an expense, and the cost of the items rises
+ * on the date of the bill with the charges.
+ */
+export interface LandedCost {
+  id: ID;
+  companyId: ID;
+  /** e.g. "LC-0001". */
+  number: string;
+  /** Bill carrying the charges. */
+  billId: ID;
+  /** Lines and charges of that bill that are landed costs. */
+  sourceLineIds: ID[];
+  /** Bill whose stock lines receive the charges (the same bill or another one). */
+  targetBillId: ID;
+  /** Stock lines of the target bill that share the charges; empty means all of them. */
+  targetLineIds: ID[];
+  method: LandedCostMethod;
+  notes: string;
+  status: 'active' | 'void';
+  voidedAt?: Timestamp | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

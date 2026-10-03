@@ -326,7 +326,7 @@ export default {
   'Opening balance on {date}': 'الرصيد الافتتاحي في {date}',
   'Earned since {date}': 'المستحق منذ {date}',
   Earned: 'المستحق',
-  Adjustments: 'التعديلات',
+  'Balance adjustments': 'تعديلات الرصيد',
   Taken: 'المأخوذ',
   'Annual leave can be taken from {date}, after nine months of service.':
     'يمكن أخذ الإجازة السنوية اعتبارًا من {date}، بعد تسعة أشهر من الخدمة.',

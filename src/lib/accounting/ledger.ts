@@ -7,6 +7,8 @@ import type {
   InvoiceDocument,
   ManualJournal,
   Payment,
+  StockEntry,
+  StockMovement,
   TaxKind,
   TaxLine,
 } from '@/db/types';
@@ -21,10 +23,15 @@ import { postsToLedger } from '@/lib/document-types';
  * journal turns into balanced
  * debit/credit lines here. Nothing is stored twice, so the books always match
  * the documents; the lock date protects closed periods.
+ *
+ * Stock: bill and vendor credit lines of stock items post to inventory; the
+ * stock movements (costed at the weighted average, see lib/inventory) post
+ * the cost of sales of invoices and credit notes, opening stock and
+ * adjustments, so the inventory account always equals the stock valuation.
  */
 
 export type LedgerSource =
-  'invoice' | 'credit' | 'bill' | 'vendor_credit' | 'payment' | 'expense' | 'journal';
+  'invoice' | 'credit' | 'bill' | 'vendor_credit' | 'payment' | 'expense' | 'journal' | 'stock';
 
 /**
  * What a line means for VAT returns (like Odoo's tax tags): the value of
@@ -73,7 +80,26 @@ export interface LedgerContext {
   taxExempt: (clientId: ID) => boolean;
   /** All documents by id, so payments can use the invoice's exchange rate. */
   documents: Map<ID, InvoiceDocument>;
+  /** Missing until the company tracks stock. */
+  stock?: StockLedgerContext;
 }
+
+/** Accounts and items the stock postings need (see lib/inventory/accounts.ts). */
+export interface StockLedgerContext {
+  /** Stock items: their bill and vendor credit lines post to inventory. */
+  products: Set<ID>;
+  inventoryAccountId: ID | null;
+  costOfSalesAccountId: ID | null;
+  adjustmentAccountId: ID | null;
+  /** Bill lines and charges allocated as landed costs, as "billId:lineId". */
+  landedCostLines: Set<string>;
+}
+
+/** What the stock postings read from a movement. */
+export type StockMovementPosting = Pick<
+  StockMovement,
+  'value' | 'sourceValue' | 'sourceType' | 'sourceId' | 'documentId'
+>;
 
 export class UnbalancedEntryError extends Error {}
 
@@ -192,13 +218,27 @@ function isPostedType(type: DocumentType): type is PostedType {
   return postsToLedger(type);
 }
 
-/** Ledger lines of an invoice, credit note, bill or vendor credit. */
-export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLine[] {
-  if (!isPosted(doc) || !isPostedType(doc.type)) return [];
-  const rule = POSTING[doc.type];
-  const sales = rule.partner === 'receivable';
-  // Sign of the partner (receivable/payable) line; the other lines take the opposite.
-  const sign = rule.sign;
+interface WeighedEntry {
+  /** Line or charge id. */
+  id: ID;
+  kind: 'item' | 'charge';
+  /** Index in `items` or `charges`. */
+  index: number;
+  /** Share of the net amount (after the document discount, without tax). */
+  weight: Decimal;
+  taxes: TaxLine[];
+  label: string;
+}
+
+/**
+ * The document's total, taxes and net amount in company-currency minor units,
+ * and the weight of each line and charge in that net amount: its share after
+ * the document discount, without tax (prices that include tax have it backed out).
+ */
+function weighDocument(
+  doc: InvoiceDocument,
+  ctx: Pick<LedgerContext, 'companyCurrency' | 'precision' | 'taxExempt'>,
+) {
   const exempt = doc.clientId ? ctx.taxExempt(doc.clientId) : false;
   const result = computeDocument(doc, { taxExempt: exempt });
   const rate = rateOf(doc, ctx);
@@ -211,8 +251,6 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
   const reverseTaxes = taxes.filter((t) => t.kind === 'reverse_charge');
   const income = total - chargedTaxes.reduce((acc, t) => acc + t.minor, 0);
 
-  // Weight of each line in the net income: its share after the document
-  // discount, without tax (prices that include tax have it backed out).
   const ratio =
     result.subtotal === 0
       ? new Decimal(1)
@@ -223,6 +261,93 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
       .dividedBy(100)
       .plus(1);
   const docTaxes = exempt ? [] : doc.taxes;
+  const entries: WeighedEntry[] = [];
+  doc.items.forEach((item, i) => {
+    if (item.kind === 'heading') return;
+    const taxesOnLine = exempt ? [] : [...item.taxes, ...docTaxes];
+    let weight = dec(result.lines[i].net).times(ratio);
+    const charged = taxesOnLine.filter((t) => !isReverseCharge(t));
+    if (doc.pricesIncludeTax && charged.length) weight = weight.dividedBy(rateSum(charged));
+    entries.push({
+      id: item.id,
+      kind: 'item',
+      index: i,
+      weight,
+      taxes: taxesOnLine,
+      label: item.name,
+    });
+  });
+  doc.charges.forEach((charge, i) => {
+    const taxesOnCharge = exempt ? [] : charge.taxes;
+    let weight = dec(charge.amount);
+    const charged = taxesOnCharge.filter((t) => !isReverseCharge(t));
+    if (doc.pricesIncludeTax && charged.length) weight = weight.dividedBy(rateSum(charged));
+    entries.push({
+      id: charge.id,
+      kind: 'charge',
+      index: i,
+      weight,
+      taxes: taxesOnCharge,
+      label: charge.label,
+    });
+  });
+  return { exempt, total, chargedTaxes, reverseTaxes, income, entries };
+}
+
+/**
+ * Net amount of each line and charge of a document, in company-currency
+ * minor units (after the document discount, without tax). The parts add up
+ * to the document's net amount exactly. Stock lines of bills post these
+ * amounts to inventory, and their stock movements take the same values.
+ */
+export function documentLineParts(
+  doc: InvoiceDocument,
+  ctx: Pick<LedgerContext, 'companyCurrency' | 'precision' | 'taxExempt'>,
+): Map<ID, number> {
+  const w = weighDocument(doc, ctx);
+  const parts = allocate(
+    w.income,
+    w.entries.map((e) => e.weight),
+  );
+  return new Map(w.entries.map((e, i) => [e.id, parts[i]]));
+}
+
+/** Lines (and charges) of a bill or vendor credit that post to inventory. */
+function stockEntryIds(doc: InvoiceDocument, entries: WeighedEntry[], ctx: LedgerContext): Set<ID> {
+  const stock = ctx.stock;
+  const ids = new Set<ID>();
+  if (!stock || (doc.type !== 'bill' && doc.type !== 'vendor_credit')) return ids;
+  for (const e of entries) {
+    const productId = e.kind === 'item' ? doc.items[e.index].productId : null;
+    if (
+      (productId && stock.products.has(productId)) ||
+      stock.landedCostLines.has(`${doc.id}:${e.id}`)
+    ) {
+      ids.add(e.id);
+    }
+  }
+  return ids;
+}
+
+function inventoryAccount(ctx: LedgerContext): ID {
+  const id = usable(ctx, ctx.stock?.inventoryAccountId);
+  if (!id) throw new Error('No inventory account is set up.');
+  return id;
+}
+
+function costOfSalesAccount(ctx: LedgerContext): ID {
+  return usable(ctx, ctx.stock?.costOfSalesAccountId) ?? role(ctx, 'cost_of_sales');
+}
+
+/** Ledger lines of an invoice, credit note, bill or vendor credit. */
+export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLine[] {
+  if (!isPosted(doc) || !isPostedType(doc.type)) return [];
+  const rule = POSTING[doc.type];
+  const sales = rule.partner === 'receivable';
+  // Sign of the partner (receivable/payable) line; the other lines take the opposite.
+  const sign = rule.sign;
+  const w = weighDocument(doc, ctx);
+  const exempt = w.exempt;
   const flow = sales ? 'sale' : 'purchase';
   // The base lines are grouped by account and by how their tax is reported.
   const tagOf = (taxes: TaxLine[]): VatTag => {
@@ -231,36 +356,44 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     // Sales to tax-exempt clients (exports, charities) are reported as zero-rated.
     return { flow, part: 'base', kind: exempt && sales ? 'zero' : 'none', rate: 0 };
   };
-  const groups = new Map<string, { accountId: ID; weight: Decimal; label: string; vat: VatTag }>();
-  const add = (accountId: ID, weight: Decimal, label: string, taxes: TaxLine[]) => {
+  const groups = new Map<
+    string,
+    { accountId: ID; weight: Decimal; minor: number; label: string; vat: VatTag }
+  >();
+  const add = (accountId: ID, weight: Decimal, minor: number, label: string, taxes: TaxLine[]) => {
     const vat = tagOf(taxes);
     const key = `${accountId}|${vat.kind}|${vat.rate}`;
     const g = groups.get(key);
-    if (g) g.weight = g.weight.plus(weight);
-    else groups.set(key, { accountId, weight, label, vat });
+    if (g) {
+      g.weight = g.weight.plus(weight);
+      g.minor += minor;
+    } else groups.set(key, { accountId, weight, minor, label, vat });
   };
-  doc.items.forEach((item, i) => {
-    if (item.kind === 'heading') return;
-    const taxesOnLine = exempt ? [] : [...item.taxes, ...docTaxes];
-    let weight = dec(result.lines[i].net).times(ratio);
-    const charged = taxesOnLine.filter((t) => !isReverseCharge(t));
-    if (doc.pricesIncludeTax && charged.length) weight = weight.dividedBy(rateSum(charged));
-    const account =
-      usable(ctx, item.accountId) ??
-      (sales
-        ? usable(ctx, item.productId ? ctx.productAccounts.get(item.productId) : null)
-        : null) ??
-      role(ctx, rule.line);
-    add(account, weight, item.name, taxesOnLine);
+  // With stock lines, every line takes its own exact part, so the inventory
+  // posted equals the value of the stock received.
+  const stockIds = stockEntryIds(doc, w.entries, ctx);
+  const parts = stockIds.size
+    ? allocate(
+        w.income,
+        w.entries.map((e) => e.weight),
+      )
+    : null;
+  w.entries.forEach((e, i) => {
+    let account: ID;
+    if (stockIds.has(e.id)) account = inventoryAccount(ctx);
+    else if (e.kind === 'charge') account = role(ctx, rule.charges, rule.line);
+    else {
+      const item = doc.items[e.index];
+      account =
+        usable(ctx, item.accountId) ??
+        (sales
+          ? usable(ctx, item.productId ? ctx.productAccounts.get(item.productId) : null)
+          : null) ??
+        role(ctx, rule.line);
+    }
+    add(account, e.weight, parts ? parts[i] : 0, e.label, e.taxes);
   });
-  for (const charge of doc.charges) {
-    const taxesOnCharge = exempt ? [] : charge.taxes;
-    let weight = dec(charge.amount);
-    const charged = taxesOnCharge.filter((t) => !isReverseCharge(t));
-    if (doc.pricesIncludeTax && charged.length) weight = weight.dividedBy(rateSum(charged));
-    add(role(ctx, rule.charges, rule.line), weight, charge.label, taxesOnCharge);
-  }
-  if (groups.size === 0) add(role(ctx, rule.line), new Decimal(1), '', []);
+  if (groups.size === 0) add(role(ctx, rule.line), new Decimal(1), w.income, '', []);
 
   const base = {
     date: doc.issueDate,
@@ -274,15 +407,18 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     {
       ...base,
       accountId: role(ctx, rule.partner),
-      amount: sign * total,
+      amount: sign * w.total,
       description: `${noun} ${doc.number}`,
     },
   ];
   const entries = [...groups.values()];
-  allocate(
-    income,
-    entries.map((g) => g.weight),
-  ).forEach((minor, i) => {
+  const amounts = parts
+    ? entries.map((g) => g.minor)
+    : allocate(
+        w.income,
+        entries.map((g) => g.weight),
+      );
+  amounts.forEach((minor, i) => {
     const g = entries[i];
     lines.push({
       ...base,
@@ -293,7 +429,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
       vat: g.vat,
     });
   });
-  for (const t of chargedTaxes) {
+  for (const t of w.chargedTaxes) {
     lines.push({
       ...base,
       accountId: role(ctx, rule.tax),
@@ -305,7 +441,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
   // Reverse charge on a purchase: the buyer owes the VAT and reclaims it at
   // once (input and output tax). On a sale the customer accounts for it.
   if (!sales) {
-    for (const t of reverseTaxes) {
+    for (const t of w.reverseTaxes) {
       const vat: VatTag = { flow, part: 'tax', kind: 'reverse_charge', rate: t.rate };
       const description = `${t.name} ${t.rate}% reverse charge`;
       lines.push(
@@ -316,6 +452,115 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
   }
   const kept = lines.filter((l) => l.amount !== 0);
   if (!balanced(kept)) throw new UnbalancedEntryError(`${noun} ${doc.number} does not balance`);
+  return kept;
+}
+
+/**
+ * Whether a document has lines that move stock or post to inventory, so its
+ * stock postings must be checked even when it has no movements.
+ */
+function touchesStock(doc: InvoiceDocument, ctx: LedgerContext): boolean {
+  const stock = ctx.stock;
+  if (!stock) return false;
+  return (
+    doc.items.some((i) => i.kind === 'item' && i.productId && stock.products.has(i.productId)) ||
+    [...doc.items, ...doc.charges].some((l) => stock.landedCostLines.has(`${doc.id}:${l.id}`))
+  );
+}
+
+/**
+ * Stock postings of a document. Invoices and credit notes: cost of sales
+ * against inventory, at the value of their movements. Bills and vendor
+ * credits post their stock lines to inventory themselves; when the stock
+ * moved at another value (stock received into negative quantities, a landed
+ * cost on goods already sold, a vendor credit above the stock's value) the
+ * difference goes to cost of sales.
+ */
+export function postDocumentStock(
+  doc: InvoiceDocument,
+  movements: StockMovementPosting[],
+  ctx: LedgerContext,
+): LedgerLine[] {
+  if (!isPosted(doc) || !isPostedType(doc.type) || !ctx.stock) return [];
+  const p = ctx.precision;
+  const moved = movements.reduce((acc, m) => acc + toMinor(m.value, p), 0);
+  let expected = 0;
+  if (doc.type === 'bill' || doc.type === 'vendor_credit') {
+    const w = weighDocument(doc, ctx);
+    const ids = stockEntryIds(doc, w.entries, ctx);
+    if (ids.size) {
+      const parts = allocate(
+        w.income,
+        w.entries.map((e) => e.weight),
+      );
+      const posted = w.entries.reduce((acc, e, i) => acc + (ids.has(e.id) ? parts[i] : 0), 0);
+      expected = -POSTING[doc.type].sign * posted;
+    }
+  }
+  const difference = moved - expected;
+  if (difference === 0) return [];
+  const base = {
+    date: doc.issueDate,
+    source: doc.type as LedgerSource,
+    sourceId: doc.id,
+    number: doc.number,
+    contactId: doc.clientId || null,
+  };
+  const description =
+    doc.type === 'invoice' || doc.type === 'credit'
+      ? `Cost of sales ${doc.number}`
+      : `Stock cost difference ${doc.number}`;
+  return [
+    { ...base, accountId: inventoryAccount(ctx), amount: difference, description },
+    { ...base, accountId: costOfSalesAccount(ctx), amount: -difference, description },
+  ];
+}
+
+/**
+ * Ledger lines of opening stock (against opening balance equity) and stock
+ * adjustments (against inventory adjustments). Transfers between warehouses
+ * stay in the same inventory account and post nothing.
+ */
+export function postStockEntry(
+  entry: StockEntry,
+  movements: StockMovementPosting[],
+  ctx: LedgerContext,
+): LedgerLine[] {
+  if (entry.status !== 'posted' || entry.kind === 'transfer') return [];
+  const p = ctx.precision;
+  const moved = movements.reduce((acc, m) => acc + toMinor(m.value, p), 0);
+  const base = {
+    date: entry.date,
+    source: 'stock' as const,
+    sourceId: entry.id,
+    number: entry.number,
+    contactId: null,
+  };
+  const inventory = inventoryAccount(ctx);
+  let lines: LedgerLine[];
+  if (entry.kind === 'opening') {
+    // Opening stock is valued as entered; stock that had already gone below
+    // zero takes its cost from it, and the difference is cost of sales.
+    const nominal = movements.reduce((acc, m) => acc + toMinor(m.sourceValue ?? m.value, p), 0);
+    const description = `Opening stock ${entry.number}`;
+    lines = [
+      { ...base, accountId: inventory, amount: moved, description },
+      { ...base, accountId: role(ctx, 'opening_balance'), amount: -nominal, description },
+      { ...base, accountId: costOfSalesAccount(ctx), amount: nominal - moved, description },
+    ];
+  } else {
+    const adjustments = usable(ctx, ctx.stock?.adjustmentAccountId);
+    if (!adjustments) throw new Error('No inventory adjustments account is set up.');
+    const description = `Stock adjustment ${entry.number}`;
+    lines = [
+      { ...base, accountId: inventory, amount: moved, description },
+      { ...base, accountId: adjustments, amount: -moved, description },
+    ];
+  }
+  const kept = lines.filter((l) => l.amount !== 0);
+  if (!balanced(kept)) {
+    throw new UnbalancedEntryError(`Stock entry ${entry.number} does not balance`);
+  }
   return kept;
 }
 
@@ -499,6 +744,8 @@ export function buildLedger(
     payments: Payment[];
     journals: ManualJournal[];
     expenses?: Expense[];
+    /** Stock movements and entries; their postings need `ctx.stock`. */
+    stock?: { movements: StockMovementPosting[]; entries: StockEntry[] };
   },
   ctx: LedgerContext,
 ): { lines: LedgerLine[]; problems: LedgerProblem[] } {
@@ -527,6 +774,30 @@ export function buildLedger(
       });
     }
     attempt(doc.type, doc.id, doc.number, () => postDocument(doc, ctx));
+  }
+  if (data.stock && ctx.stock) {
+    const byDocument = new Map<ID, StockMovementPosting[]>();
+    const byEntry = new Map<ID, StockMovementPosting[]>();
+    const add = (map: Map<ID, StockMovementPosting[]>, key: ID, m: StockMovementPosting) => {
+      const list = map.get(key);
+      if (list) list.push(m);
+      else map.set(key, [m]);
+    };
+    for (const m of data.stock.movements) {
+      if (m.sourceType === 'opening' || m.sourceType === 'adjustment') add(byEntry, m.sourceId, m);
+      else if (m.documentId) add(byDocument, m.documentId, m);
+    }
+    for (const doc of data.documents) {
+      if (!isPosted(doc) || !isPostedType(doc.type)) continue;
+      const moved = byDocument.get(doc.id);
+      if (!moved && !touchesStock(doc, ctx)) continue;
+      attempt(doc.type, doc.id, doc.number, () => postDocumentStock(doc, moved ?? [], ctx));
+    }
+    for (const entry of data.stock.entries) {
+      attempt('stock', entry.id, entry.number, () =>
+        postStockEntry(entry, byEntry.get(entry.id) ?? [], ctx),
+      );
+    }
   }
   for (const payment of data.payments) {
     if (payment.method !== 'credit_note' && !payment.voided && needsRate(payment, ctx)) {

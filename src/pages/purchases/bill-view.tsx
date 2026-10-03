@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Trash2,
   Undo2,
+  ShipWheel,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
@@ -359,6 +360,14 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                   }
                 >
                   {t('Create vendor credit')}
+                </DropdownItem>
+              ) : null}
+              {isBill && doc.status !== 'draft' && doc.status !== 'void' ? (
+                <DropdownItem
+                  icon={<ShipWheel />}
+                  onSelect={() => navigate(`/inventory/landed-costs/new?bill=${doc.id}`)}
+                >
+                  {t('Allocate landed costs')}
                 </DropdownItem>
               ) : null}
               <DropdownItem

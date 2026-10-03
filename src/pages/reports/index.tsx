@@ -10,6 +10,7 @@ import type { StatementId } from '@/features/reports/model';
 import { GeneralLedgerReport, StatementReport } from './financial';
 import { AuditorPack } from './auditor-pack';
 import { SalesReports, type SalesReportId } from './sales';
+import { INVENTORY_REPORTS, InventoryReports, type InventoryReportId } from './inventory';
 
 const GROUPS = [
   {
@@ -47,6 +48,15 @@ const GROUPS = [
       { id: 'payments-made', label: msg('Payments made') },
     ],
   },
+  {
+    title: msg('Inventory'),
+    items: [
+      { id: 'stock-on-hand', label: msg('Stock on hand') },
+      { id: 'stock-valuation', label: msg('Stock valuation') },
+      { id: 'stock-movements', label: msg('Stock movements') },
+      { id: 'low-stock', label: msg('Low stock') },
+    ],
+  },
 ];
 
 const STATEMENTS: StatementId[] = [
@@ -78,7 +88,7 @@ export default function ReportsPage() {
     <ReportLanguageProvider>
       <PageHeader
         title={t('Reports')}
-        description={t('Financial statements, sales and purchases, from your own books.')}
+        description={t('Financial statements, sales, purchases and stock, from your own books.')}
         actions={
           <ButtonLink to="/year-end" variant="outline">
             <CalendarCheck /> {t('Year-end close')}
@@ -136,6 +146,9 @@ export default function ReportsPage() {
           {current === 'auditor-pack' ? <AuditorPack /> : null}
           {SALES.includes(current as SalesReportId) ? (
             <SalesReports report={current as SalesReportId} />
+          ) : null}
+          {INVENTORY_REPORTS.includes(current as InventoryReportId) ? (
+            <InventoryReports report={current as InventoryReportId} />
           ) : null}
         </div>
       </div>
