@@ -13,6 +13,7 @@ import type {
 import { computeDocument } from '@/lib/document-calc';
 import { isReverseCharge, taxKind } from '@/lib/calc';
 import { Decimal, dec, toMinor } from '@/lib/money';
+import { postsToLedger } from '@/lib/document-types';
 
 /**
  * The general ledger is derived from the business documents: every issued
@@ -94,9 +95,12 @@ export function needsRate(
   return !(item.exchangeRate && Number.isFinite(item.exchangeRate) && item.exchangeRate > 0);
 }
 
-/** Documents that are part of the books (issued, not void). */
+/**
+ * Documents that are part of the books (issued, not void). Quotes, proformas,
+ * sales and purchase orders and delivery notes never are.
+ */
 export function isPosted(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean {
-  if (doc.type === 'quote') return false;
+  if (!postsToLedger(doc.type)) return false;
   return doc.status !== 'draft' && doc.status !== 'void';
 }
 
@@ -134,7 +138,7 @@ function balanced(lines: LedgerLine[]): boolean {
   return lines.reduce((acc, l) => acc + l.amount, 0) === 0;
 }
 
-type PostedType = Exclude<DocumentType, 'quote'>;
+type PostedType = 'invoice' | 'credit' | 'bill' | 'vendor_credit';
 
 /** How each document type posts: the partner account side and default accounts. */
 const POSTING: Record<
@@ -185,7 +189,7 @@ const POSTING: Record<
 };
 
 function isPostedType(type: DocumentType): type is PostedType {
-  return type !== 'quote';
+  return postsToLedger(type);
 }
 
 /** Ledger lines of an invoice, credit note, bill or vendor credit. */

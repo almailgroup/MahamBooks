@@ -2,24 +2,37 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
+  ClipboardList,
   Download,
+  FileClock,
   FileMinus,
   FileText,
+  PackageCheck,
   Plus,
   Receipt,
   ReceiptText,
   ScrollText,
   Search,
+  ShoppingCart,
 } from 'lucide-react';
 import { db } from '@/db/db';
-import type { Client, DocumentType } from '@/db/types';
-import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
-import { displayStatus, type DisplayStatus } from '@/lib/status';
+import type { Client, DocumentType, InvoiceDocument } from '@/db/types';
+import {
+  DOCUMENT_LABELS,
+  DOCUMENT_ROUTES,
+  documentCount,
+  useCompany,
+  useFormat,
+} from '@/app/company';
+import { DELIVERY_STATUS_META, displayStatus, STATUS_META, type DisplayStatus } from '@/lib/status';
 import { today } from '@/lib/dates';
-import { isPurchaseType } from '@/lib/document-types';
+import { hasPrices, isPurchaseType, postsToLedger } from '@/lib/document-types';
 import { downloadCsv } from '@/lib/csv';
+import { msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
+  Badge,
   Card,
   EmptyState,
   PageHeader,
@@ -31,54 +44,80 @@ import { Input } from '@/components/ui/form';
 
 type Filter = 'all' | DisplayStatus | 'unpaid';
 
+const ALL = { value: 'all', label: msg('All') } as const;
+const DRAFT = { value: 'draft', label: msg('Draft') } as const;
+
 const FILTERS: Record<DocumentType, { value: Filter; label: string }[]> = {
   invoice: [
-    { value: 'all', label: 'All' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'unpaid', label: 'Unpaid' },
-    { value: 'overdue', label: 'Overdue' },
-    { value: 'paid', label: 'Paid' },
-    { value: 'void', label: 'Void' },
+    ALL,
+    DRAFT,
+    { value: 'unpaid', label: msg('Unpaid') },
+    { value: 'overdue', label: msg('Overdue') },
+    { value: 'paid', label: msg('Paid') },
+    { value: 'void', label: msg('Void') },
   ],
   quote: [
-    { value: 'all', label: 'All' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'sent', label: 'Sent' },
-    { value: 'accepted', label: 'Accepted' },
-    { value: 'expired', label: 'Expired' },
-    { value: 'invoiced', label: 'Invoiced' },
-    { value: 'declined', label: 'Declined' },
+    ALL,
+    DRAFT,
+    { value: 'sent', label: msg('Sent') },
+    { value: 'accepted', label: msg('Accepted') },
+    { value: 'expired', label: msg('Expired') },
+    { value: 'invoiced', label: msg('Invoiced') },
+    { value: 'converted', label: msg('Converted') },
+    { value: 'declined', label: msg('Declined') },
   ],
   credit: [
-    { value: 'all', label: 'All' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'sent', label: 'Open' },
-    { value: 'applied', label: 'Applied' },
-    { value: 'void', label: 'Void' },
+    ALL,
+    DRAFT,
+    { value: 'sent', label: msg('Open') },
+    { value: 'applied', label: msg('Applied') },
+    { value: 'void', label: msg('Void') },
   ],
   bill: [
-    { value: 'all', label: 'All' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'unpaid', label: 'Unpaid' },
-    { value: 'overdue', label: 'Overdue' },
-    { value: 'paid', label: 'Paid' },
-    { value: 'void', label: 'Void' },
+    ALL,
+    DRAFT,
+    { value: 'unpaid', label: msg('Unpaid') },
+    { value: 'overdue', label: msg('Overdue') },
+    { value: 'paid', label: msg('Paid') },
+    { value: 'void', label: msg('Void') },
   ],
   vendor_credit: [
-    { value: 'all', label: 'All' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'open', label: 'Open' },
-    { value: 'applied', label: 'Applied' },
-    { value: 'void', label: 'Void' },
+    ALL,
+    DRAFT,
+    { value: 'open', label: msg('Open') },
+    { value: 'applied', label: msg('Applied') },
+    { value: 'void', label: msg('Void') },
   ],
-};
-
-const DESCRIPTIONS: Record<DocumentType, string> = {
-  invoice: 'Bill your clients and track what is paid.',
-  quote: 'Send estimates and convert accepted quotes into invoices.',
-  credit: 'Issue credit notes and apply them to invoices.',
-  bill: 'Record bills from your suppliers and keep track of what you owe.',
-  vendor_credit: 'Credits from suppliers for returns or refunds, applied to their bills.',
+  proforma: [
+    ALL,
+    DRAFT,
+    { value: 'sent', label: msg('Sent') },
+    { value: 'accepted', label: msg('Accepted') },
+    { value: 'expired', label: msg('Expired') },
+    { value: 'converted', label: msg('Converted') },
+  ],
+  sales_order: [
+    ALL,
+    DRAFT,
+    { value: 'confirmed', label: msg('Confirmed') },
+    { value: 'partially_invoiced', label: msg('Partially invoiced') },
+    { value: 'invoiced', label: msg('Invoiced') },
+    { value: 'cancelled', label: msg('Cancelled') },
+  ],
+  purchase_order: [
+    ALL,
+    DRAFT,
+    { value: 'issued', label: msg('Issued') },
+    { value: 'partially_billed', label: msg('Partially billed') },
+    { value: 'billed', label: msg('Billed') },
+    { value: 'cancelled', label: msg('Cancelled') },
+  ],
+  delivery_note: [
+    ALL,
+    DRAFT,
+    { value: 'delivered', label: msg('Delivered') },
+    { value: 'cancelled', label: msg('Cancelled') },
+  ],
 };
 
 const ICONS: Record<DocumentType, React.ReactNode> = {
@@ -87,7 +126,22 @@ const ICONS: Record<DocumentType, React.ReactNode> = {
   credit: <FileMinus />,
   bill: <Receipt />,
   vendor_credit: <ReceiptText />,
+  proforma: <FileClock />,
+  sales_order: <ClipboardList />,
+  purchase_order: <ShoppingCart />,
+  delivery_note: <PackageCheck />,
 };
+
+/** The second date column: when it is due, valid until or delivered. */
+function secondDate(type: DocumentType): { label: string; of: (d: InvoiceDocument) => string } {
+  if (type === 'quote' || type === 'proforma') {
+    return { label: msg('Valid until'), of: (d) => d.dueDate ?? '' };
+  }
+  if (type === 'sales_order' || type === 'purchase_order' || type === 'delivery_note') {
+    return { label: msg('Delivery date'), of: (d) => d.deliveryDate ?? '' };
+  }
+  return { label: msg('Due'), of: (d) => d.dueDate ?? '' };
+}
 
 function matches(filter: Filter, status: DisplayStatus): boolean {
   if (filter === 'all') return true;
@@ -96,6 +150,15 @@ function matches(filter: Filter, status: DisplayStatus): boolean {
   if (filter === 'sent') return status === 'sent' || status === 'partial';
   if (filter === 'open') return status === 'open' || status === 'partial';
   return status === filter;
+}
+
+/** Sales orders show how far delivery has got next to their status. */
+function DeliveryBadge({ doc }: { doc: InvoiceDocument }) {
+  if (doc.type !== 'sales_order' || doc.status === 'draft' || doc.status === 'cancelled') {
+    return null;
+  }
+  const meta = DELIVERY_STATUS_META[doc.deliveryStatus ?? 'not_delivered'];
+  return <Badge tone={meta.tone}>{t(meta.label)}</Badge>;
 }
 
 export default function DocumentListPage({ type }: { type: DocumentType }) {
@@ -109,7 +172,10 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
   const labels = DOCUMENT_LABELS[type];
   const base = DOCUMENT_ROUTES[type];
   const purchase = isPurchaseType(type);
-  const party = purchase ? 'Vendor' : 'Client';
+  const party = purchase ? t('Vendor') : t('Client');
+  const priced = hasPrices(type);
+  const booked = postsToLedger(type);
+  const second = secondDate(type);
 
   const docs = useLiveQuery(
     () => db.documents.where('[companyId+type]').equals([company.id, type]).toArray(),
@@ -147,7 +213,15 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
       (r) =>
         matches(filter, r.status) &&
         (!q ||
-          `${r.doc.number} ${r.client?.name ?? ''} ${r.doc.poNumber} ${r.doc.vendorReference ?? ''}`
+          [
+            r.doc.number,
+            r.client?.name,
+            r.client?.nameAr,
+            r.doc.poNumber,
+            r.doc.vendorReference,
+            r.doc.receiverName,
+          ]
+            .join(' ')
             .toLowerCase()
             .includes(q)),
     );
@@ -156,7 +230,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
   const totalsByCurrency = useMemo(() => {
     const map = new Map<string, { total: number; balance: number }>();
     for (const { doc, status } of filtered) {
-      if (status === 'void') continue;
+      if (status === 'void' || status === 'cancelled') continue;
       const entry = map.get(doc.currency) ?? { total: 0, balance: 0 };
       entry.total += doc.totals.total;
       if ((type === 'invoice' || type === 'bill') && status !== 'draft')
@@ -167,58 +241,63 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
   }, [filtered, type]);
 
   const exportCsv = () => {
+    const money = (n: number) => (priced ? n : '');
     downloadCsv(
       `${labels.plural.toLowerCase().replace(/\s+/g, '-')}-${today()}`,
       [
-        'Number',
-        'Status',
+        t('Number'),
+        t('Status'),
         party,
-        'Issue date',
-        type === 'quote' ? 'Valid until' : 'Due date',
-        purchase ? 'Vendor reference' : 'PO',
-        'Currency',
-        'Subtotal',
-        'Discount',
-        'Tax',
-        'Total',
-        'Paid',
-        'Balance',
+        t('Issue date'),
+        t(second.label),
+        purchase ? t('Vendor reference') : t('PO number'),
+        t('Currency'),
+        t('Subtotal'),
+        t('Discount'),
+        t('Tax'),
+        t('Total'),
+        t('Paid'),
+        t('Balance'),
       ],
       filtered.map(({ doc, client, status }) => [
         doc.number,
-        status,
+        t(STATUS_META[status].label),
         client?.name ?? '',
         doc.issueDate,
-        doc.dueDate ?? '',
+        second.of(doc),
         purchase ? (doc.vendorReference ?? '') : doc.poNumber,
         doc.currency,
-        doc.totals.subtotal,
-        doc.totals.discount,
-        doc.totals.taxTotal,
-        doc.totals.total,
-        doc.totals.paid,
-        doc.totals.balance,
+        money(doc.totals.subtotal),
+        money(doc.totals.discount),
+        money(doc.totals.taxTotal),
+        money(doc.totals.total),
+        booked ? doc.totals.paid : '',
+        booked ? doc.totals.balance : '',
       ]),
     );
   };
 
-  if (!rows) return <Spinner className="py-24" label="Loading…" />;
+  if (!rows) return <Spinner className="py-24" label={t('Loading…')} />;
+
+  const createButton = (
+    <ButtonLink to={`${base}/new`}>
+      <Plus /> {t(labels.create)}
+    </ButtonLink>
+  );
 
   return (
     <div>
       <PageHeader
-        title={labels.plural}
-        description={DESCRIPTIONS[type]}
+        title={t(labels.plural)}
+        description={t(labels.description)}
         actions={
           <>
             {rows.length > 0 ? (
               <Button variant="outline" onClick={exportCsv}>
-                <Download /> Export CSV
+                <Download /> {t('Export CSV')}
               </Button>
             ) : null}
-            <ButtonLink to={`${base}/new`}>
-              <Plus /> New {labels.singular.toLowerCase()}
-            </ButtonLink>
+            {createButton}
           </>
         }
       />
@@ -227,13 +306,9 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
         <Card>
           <EmptyState
             icon={ICONS[type]}
-            title={`No ${labels.plural.toLowerCase()} yet`}
-            description={`Create your first ${labels.singular.toLowerCase()} — it only takes a minute.`}
-            action={
-              <ButtonLink to={`${base}/new`}>
-                <Plus /> New {labels.singular.toLowerCase()}
-              </ButtonLink>
-            }
+            title={t(labels.empty)}
+            description={t('It only takes a minute.')}
+            action={createButton}
           />
         </Card>
       ) : (
@@ -245,7 +320,11 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                 setLimit(50);
                 setParams(value === 'all' ? {} : { status: value }, { replace: true });
               }}
-              options={FILTERS[type].map((f) => ({ ...f, count: counts[f.value] }))}
+              options={FILTERS[type].map((f) => ({
+                value: f.value,
+                label: t(f.label),
+                count: counts[f.value],
+              }))}
             />
             <div className="relative lg:w-72">
               <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -253,17 +332,19 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={
-                  purchase ? 'Search number, vendor, reference…' : 'Search number, client, PO…'
+                  purchase
+                    ? t('Search number, vendor, reference…')
+                    : t('Search number, client, PO…')
                 }
                 className="ps-9"
-                aria-label={`Search ${labels.plural.toLowerCase()}`}
+                aria-label={t('Search {list}', { list: t(labels.plural).toLowerCase() })}
               />
             </div>
           </div>
 
           {filtered.length === 0 ? (
             <p className="px-6 py-12 text-center text-sm text-slate-500">
-              Nothing matches these filters.
+              {t('Nothing matches these filters.')}
             </p>
           ) : (
             <>
@@ -271,17 +352,19 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                      <th className="px-5 py-3">Number</th>
-                      <th className="px-3 py-3">{party}</th>
-                      <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">{type === 'quote' ? 'Valid until' : 'Due'}</th>
-                      <th className="px-3 py-3 text-end">Total</th>
-                      {type !== 'quote' ? (
+                      <th className="px-5 py-3 text-start">{t('Number')}</th>
+                      <th className="px-3 py-3 text-start">{party}</th>
+                      <th className="px-3 py-3 text-start">{t('Date')}</th>
+                      <th className="px-3 py-3 text-start">{t(second.label)}</th>
+                      {priced ? <th className="px-3 py-3 text-end">{t('Total')}</th> : null}
+                      {booked ? (
                         <th className="px-3 py-3 text-end">
-                          {type === 'credit' || type === 'vendor_credit' ? 'Remaining' : 'Balance'}
+                          {type === 'credit' || type === 'vendor_credit'
+                            ? t('Remaining')
+                            : t('Balance')}
                         </th>
                       ) : null}
-                      <th className="px-5 py-3 text-end">Status</th>
+                      <th className="px-5 py-3 text-end">{t('Status')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -306,7 +389,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                           ) : null}
                         </td>
                         <td className="max-w-56 truncate px-3 py-3 text-slate-700">
-                          {client?.name ?? '—'}
+                          {client ? localName(client) : '—'}
                         </td>
                         <td className="px-3 py-3 whitespace-nowrap text-slate-600">
                           {fmt.date(doc.issueDate)}
@@ -314,12 +397,14 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                         <td
                           className={`px-3 py-3 whitespace-nowrap ${status === 'overdue' ? 'font-medium text-red-600' : 'text-slate-600'}`}
                         >
-                          {fmt.date(doc.dueDate) || '—'}
+                          {fmt.date(second.of(doc)) || '—'}
                         </td>
-                        <td className="tabular px-3 py-3 text-end font-medium whitespace-nowrap text-slate-900">
-                          {fmt.money(doc.totals.total, doc.currency)}
-                        </td>
-                        {type !== 'quote' ? (
+                        {priced ? (
+                          <td className="tabular px-3 py-3 text-end font-medium whitespace-nowrap text-slate-900">
+                            {fmt.money(doc.totals.total, doc.currency)}
+                          </td>
+                        ) : null}
+                        {booked ? (
                           <td className="tabular px-3 py-3 text-end whitespace-nowrap text-slate-600">
                             {status === 'void' || status === 'draft'
                               ? '—'
@@ -327,7 +412,10 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                           </td>
                         ) : null}
                         <td className="px-5 py-3 text-end">
-                          <StatusBadge status={status} />
+                          <span className="inline-flex flex-wrap justify-end gap-1">
+                            <StatusBadge status={status} />
+                            <DeliveryBadge doc={doc} />
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -343,16 +431,23 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                       className="flex items-center justify-between gap-3 px-4 py-3"
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-slate-900">{client?.name ?? '—'}</p>
+                        <p className="truncate font-medium text-slate-900">
+                          {client ? localName(client) : '—'}
+                        </p>
                         <p className="text-xs text-slate-500">
-                          {doc.number} · {fmt.date(doc.issueDate)}
+                          <bdi>{doc.number}</bdi> · {fmt.date(doc.issueDate)}
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
-                        <span className="tabular text-sm font-semibold text-slate-900">
-                          {fmt.money(doc.totals.total, doc.currency)}
+                        {priced ? (
+                          <span className="tabular text-sm font-semibold whitespace-nowrap text-slate-900">
+                            {fmt.money(doc.totals.total, doc.currency)}
+                          </span>
+                        ) : null}
+                        <span className="flex flex-wrap justify-end gap-1">
+                          <StatusBadge status={status} />
+                          <DeliveryBadge doc={doc} />
                         </span>
-                        <StatusBadge status={status} />
                       </div>
                     </Link>
                   </li>
@@ -360,34 +455,31 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
               </ul>
 
               <div className="flex flex-col gap-2 border-t border-slate-100 px-5 py-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-                <span>
-                  {filtered.length}{' '}
-                  {filtered.length === 1
-                    ? labels.singular.toLowerCase()
-                    : labels.plural.toLowerCase()}
-                </span>
-                <span className="tabular flex flex-wrap gap-x-4">
-                  {totalsByCurrency.map(([currency, t]) => (
-                    <span key={currency}>
-                      Total{' '}
-                      <strong className="text-slate-900">{fmt.money(t.total, currency)}</strong>
-                      {type === 'invoice' ? (
-                        <>
-                          {' '}
-                          · Outstanding{' '}
-                          <strong className="text-slate-900">
-                            {fmt.money(t.balance, currency)}
-                          </strong>
-                        </>
-                      ) : null}
-                    </span>
-                  ))}
-                </span>
+                <span>{documentCount(type, filtered.length)}</span>
+                {priced ? (
+                  <span className="tabular flex flex-wrap gap-x-4">
+                    {totalsByCurrency.map(([currency, sum]) => (
+                      <span key={currency}>
+                        {t('Total')}{' '}
+                        <strong className="text-slate-900">{fmt.money(sum.total, currency)}</strong>
+                        {type === 'invoice' ? (
+                          <>
+                            {' '}
+                            · {t('Outstanding')}{' '}
+                            <strong className="text-slate-900">
+                              {fmt.money(sum.balance, currency)}
+                            </strong>
+                          </>
+                        ) : null}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
               </div>
               {filtered.length > limit ? (
                 <div className="border-t border-slate-100 p-3 text-center">
                   <Button variant="ghost" size="sm" onClick={() => setLimit((l) => l + 100)}>
-                    Show more ({filtered.length - limit} remaining)
+                    {t('Show more ({count} remaining)', { count: filtered.length - limit })}
                   </Button>
                 </div>
               ) : null}

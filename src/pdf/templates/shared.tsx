@@ -293,11 +293,13 @@ export interface ItemsTableStyles {
   widths?: Partial<Record<ColumnKey, number>>;
 }
 
-type ColumnKey = 'condition' | 'qty' | 'price' | 'discount' | 'tax' | 'amount';
+type ColumnKey = 'condition' | 'qty' | 'unit' | 'serial' | 'price' | 'discount' | 'tax' | 'amount';
 
 const MIN_WIDTHS: Record<ColumnKey, number> = {
   condition: 44,
   qty: 44,
+  unit: 40,
+  serial: 70,
   price: 62,
   discount: 50,
   tax: 44,
@@ -306,6 +308,8 @@ const MIN_WIDTHS: Record<ColumnKey, number> = {
 const MAX_WIDTHS: Record<ColumnKey, number> = {
   condition: 90,
   qty: 96,
+  unit: 80,
+  serial: 150,
   price: 104,
   discount: 70,
   tax: 80,
@@ -315,11 +319,35 @@ const MAX_WIDTHS: Record<ColumnKey, number> = {
 const COLUMN_LABELS: Record<ColumnKey, LabelKey> = {
   condition: 'condition',
   qty: 'quantity',
+  unit: 'unit',
+  serial: 'serialNumber',
   price: 'unitPrice',
   discount: 'discount',
   tax: 'tax',
   amount: 'amount',
 };
+
+/** What a cell shows; delivery notes give the unit a column of its own. */
+function cellValue(model: RenderModel, item: RenderModel['items'][number], key: ColumnKey): string {
+  switch (key) {
+    case 'condition':
+      return item.condition;
+    case 'qty':
+      return model.columns.prices ? item.quantityWithUnit : item.quantity;
+    case 'unit':
+      return item.unit;
+    case 'serial':
+      return item.serialNo;
+    case 'price':
+      return item.unitPrice;
+    case 'discount':
+      return item.discount;
+    case 'tax':
+      return item.tax;
+    case 'amount':
+      return item.amount;
+  }
+}
 
 /** Estimates column widths from their content so numbers never wrap. */
 function columnWidths(
@@ -334,12 +362,7 @@ function columnWidths(
   ) as Record<ColumnKey, string[]>;
   for (const item of model.items) {
     if (item.kind !== 'item') continue;
-    values.condition.push(item.condition);
-    values.qty.push(item.quantityWithUnit);
-    values.price.push(item.unitPrice);
-    values.discount.push(item.discount);
-    values.tax.push(item.tax);
-    values.amount.push(item.amount);
+    for (const key of keys) values[key].push(cellValue(model, item, key));
   }
   const result = {} as Record<ColumnKey, number>;
   keys.forEach((key) => {
@@ -370,14 +393,23 @@ export function ItemsTable({
     ? { borderLeftWidth: 0.75, borderLeftColor: styles.columnLines }
     : undefined;
 
-  const cols: ColumnKey[] = [
-    ...(columns.condition ? (['condition'] as const) : []),
-    'qty',
-    'price',
-    ...(columns.discount ? (['discount'] as const) : []),
-    ...(columns.tax ? (['tax'] as const) : []),
-    'amount',
-  ];
+  const cols: ColumnKey[] = columns.prices
+    ? [
+        ...(columns.condition ? (['condition'] as const) : []),
+        'qty',
+        'price',
+        ...(columns.discount ? (['discount'] as const) : []),
+        ...(columns.tax ? (['tax'] as const) : []),
+        'amount',
+      ]
+    : [
+        ...(columns.condition ? (['condition'] as const) : []),
+        'qty',
+        ...(columns.unit ? (['unit'] as const) : []),
+        ...(columns.serial ? (['serial'] as const) : []),
+      ];
+  /** Text columns read from the start; numbers line up at the end. */
+  const textColumn = (key: ColumnKey) => key === 'condition' || key === 'unit' || key === 'serial';
 
   const headerText = sx(
     { fontSize: fontSize - 1, fontWeight: 600, color: theme.muted },
@@ -396,18 +428,6 @@ export function ItemsTable({
     stripe.push(itemCount);
     if (row.kind === 'item') itemCount += 1;
   }
-  const valueOf = (item: RenderModel['items'][number], key: ColumnKey) =>
-    key === 'condition'
-      ? item.condition
-      : key === 'qty'
-        ? item.quantityWithUnit
-        : key === 'price'
-          ? item.unitPrice
-          : key === 'discount'
-            ? item.discount
-            : key === 'tax'
-              ? item.tax
-              : item.amount;
 
   return (
     <View style={sx({ width: '100%' }, styles.container)}>
@@ -431,7 +451,7 @@ export function ItemsTable({
             <Label
               text={model.labels[COLUMN_LABELS[key]]}
               secondary={en(model, COLUMN_LABELS[key])}
-              style={sx(headerText, { textAlign: key === 'condition' ? 'left' : 'right' })}
+              style={sx(headerText, { textAlign: textColumn(key) ? 'left' : 'right' })}
               stack
             />
           </View>
@@ -504,7 +524,9 @@ export function ItemsTable({
                 </Text>
               ) : null}
               {item.detail ? <Text style={detailStyle}>{item.detail}</Text> : null}
-              {item.serial ? <Text style={detailStyle}>{item.serial}</Text> : null}
+              {item.serial && !columns.serial ? (
+                <Text style={detailStyle}>{item.serial}</Text>
+              ) : null}
             </View>
             {cols.map((key) => (
               <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
@@ -512,12 +534,12 @@ export function ItemsTable({
                   style={
                     key === 'amount'
                       ? sx(cell, { fontWeight: 600, color: theme.ink }, styles.amount)
-                      : key === 'condition'
+                      : textColumn(key)
                         ? sx(cell, { textAlign: 'left' })
                         : cell
                   }
                 >
-                  {valueOf(item, key)}
+                  {cellValue(model, item, key)}
                 </Text>
               </View>
             ))}
@@ -600,6 +622,8 @@ export function TotalsTable({
   /** Drawn behind the emphasised row (e.g. a gradient). */
   grandBackground?: ReactNode;
 }) {
+  // Delivery notes carry no amounts.
+  if (model.totals.length === 0) return null;
   const emphasized = emphasizedKind(model);
   const row = sx(
     { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
@@ -1074,6 +1098,17 @@ export function SignatureBlock({
 }) {
   const s = model.signatures;
   if (!s) return null;
+  if (model.receipt) {
+    return (
+      <DeliverySignatures
+        model={model}
+        theme={theme}
+        labelStyle={labelStyle}
+        lineColor={lineColor}
+        style={style}
+      />
+    );
+  }
   const caption = sx({ fontSize: 7.5, color: theme.muted }, labelStyle, { marginBottom: 0 });
   const box = (key: LabelKey, image: string | null, last: boolean) => (
     <View style={{ flex: 1, paddingRight: last ? 0 : 22 }}>
@@ -1102,6 +1137,100 @@ export function SignatureBlock({
       {box('signature', s.signature, false)}
       {box('stamp', s.stamp, !s.receivedBy)}
       {s.receivedBy ? box('receivedBy', null, true) : null}
+    </View>
+  );
+}
+
+/**
+ * Delivery notes: the company signs and stamps as the one delivering, the
+ * customer as the one receiving, under "received in good order", with the
+ * receiver's name, Civil ID and the date (filled in once it is known).
+ */
+function DeliverySignatures({
+  model,
+  theme,
+  labelStyle,
+  lineColor,
+  style,
+}: {
+  model: RenderModel;
+  theme: TemplateTheme;
+  labelStyle?: Style;
+  lineColor?: string;
+  style?: Style;
+}) {
+  const s = model.signatures;
+  const r = model.receipt;
+  if (!s || !r) return null;
+  const line = lineColor ?? theme.faint;
+  const caption = sx({ fontSize: 7.5, color: theme.muted }, labelStyle, { marginBottom: 0 });
+  const heading = sx(caption, { fontSize: 8.5, fontWeight: 700, color: theme.ink });
+  const box = (key: LabelKey, image: string | null, last: boolean) => (
+    <View style={{ flex: 1, paddingRight: last ? 0 : 14 }}>
+      <View style={{ height: 36, justifyContent: 'flex-end' }}>
+        {image ? (
+          <Image
+            src={image}
+            style={{ height: 36, width: 100, objectFit: 'contain', objectPositionX: 0 }}
+          />
+        ) : null}
+      </View>
+      <View style={{ borderTopWidth: 0.75, borderTopColor: line, marginTop: 4, paddingTop: 4 }}>
+        <Label text={model.labels[key]} secondary={en(model, key)} style={caption} />
+      </View>
+    </View>
+  );
+  const field = (key: LabelKey, value: string) => (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 8 }}>
+      <View style={{ width: 78, paddingRight: 6 }}>
+        <Label text={model.labels[key]} secondary={en(model, key)} style={caption} stack />
+      </View>
+      <View style={{ flex: 1, minHeight: 12, borderBottomWidth: 0.75, borderBottomColor: line }}>
+        <Text style={sx({ fontSize: 8.5, color: theme.ink, paddingBottom: 1 }, TNUM)}>{value}</Text>
+      </View>
+    </View>
+  );
+  const statement = sx({ fontSize: 7.5, color: theme.body, lineHeight: 1.4 });
+  // Both sides end with their signature and stamp boxes, level with each other.
+  return (
+    <View wrap={false} style={sx({ marginTop: 20 }, style)}>
+      <View style={{ flexDirection: 'row' }}>
+        <View style={{ flex: 1, paddingRight: 26 }}>
+          <Label
+            text={model.labels.deliveredBy}
+            secondary={en(model, 'deliveredBy')}
+            style={heading}
+          />
+          {field('receiverName', '')}
+          {field('date', '')}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Label
+            text={model.labels.receivedBy}
+            secondary={en(model, 'receivedBy')}
+            style={heading}
+          />
+          <Text style={sx(statement, { marginTop: 3 })}>{model.labels.receivedInGoodOrder}</Text>
+          {model.secondary ? (
+            <Text style={sx(statement, { color: theme.muted })}>
+              {model.secondary.receivedInGoodOrder}
+            </Text>
+          ) : null}
+          {field('receiverName', r.name)}
+          {field('civilId', r.civilId ? ltr(r.civilId) : '')}
+          {field('date', r.date)}
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', marginTop: 6 }}>
+        <View style={{ flex: 1, flexDirection: 'row', paddingRight: 26 }}>
+          {box('signature', s.signature, false)}
+          {box('stamp', s.stamp, true)}
+        </View>
+        <View style={{ flex: 1, flexDirection: 'row' }}>
+          {box('receiverSignature', null, false)}
+          {box('stamp', null, true)}
+        </View>
+      </View>
     </View>
   );
 }

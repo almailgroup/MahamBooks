@@ -54,7 +54,7 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   await expect(page.getByText('تم استيراد فاتورتين').first()).toBeVisible();
 
   // The invoices list shows the balances in dinars.
-  await menu.getByRole('link', { name: 'الفواتير' }).click();
+  await menu.getByRole('link', { name: 'الفواتير', exact: true }).click();
   await expect(page.getByText('INV-1001').first()).toBeVisible();
   await expect(page.getByRole('main')).toContainText(/1,250\.750.{0,3}د\.ك/);
   await expect(page.getByRole('main')).toContainText(/1,730\.750.{0,3}د\.ك/);

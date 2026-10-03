@@ -80,7 +80,7 @@ export function StatusBadge({ status, className }: { status: DisplayStatus; clas
   const meta = STATUS_META[status];
   return (
     <Badge tone={meta.tone} className={className}>
-      {meta.label}
+      {t(meta.label)}
     </Badge>
   );
 }

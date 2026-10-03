@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ChevronDown, Eye, EyeOff, FileText, Save, Send } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Eye, EyeOff, FileText, Save, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import {
@@ -14,12 +14,20 @@ import {
   suggestNumber,
 } from '@/db/documents';
 import type { DocumentType, InvoiceDocument, TaxLine } from '@/db/types';
-import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
+import {
+  DOCUMENT_LABELS,
+  DOCUMENT_ROUTES,
+  documentNoun,
+  useCompany,
+  useFormat,
+} from '@/app/company';
 import { computeDocument } from '@/lib/document-calc';
 import { addDaysISO, daysBetween } from '@/lib/dates';
 import { currencySymbol, formatUnitPrice } from '@/lib/format';
+import { hasPrices, postsToLedger } from '@/lib/document-types';
 import { cn } from '@/lib/cn';
 import { TEMPLATE_META } from '@/pdf/template-meta';
+import { t, tp } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
@@ -40,12 +48,18 @@ import { TotalsPanel } from '@/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer } from '@/db/purchases';
-import { t } from '@/i18n';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
 const QUOTE_VALIDITY = [7, 14, 30, 45, 60, 90];
 
 type SaveIntent = 'save' | 'sent' | 'download';
+
+/** Who the document is for, as the client field calls it. */
+function clientLabel(type: DocumentType): string {
+  if (type === 'quote') return t('Prepared for');
+  if (type === 'sales_order' || type === 'delivery_note') return t('Customer');
+  return t('Bill to');
+}
 
 export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const { id } = useParams();
@@ -54,6 +68,10 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const company = useCompany();
   const fmt = useFormat();
   const labels = DOCUMENT_LABELS[type];
+  const priced = hasPrices(type);
+  // Quotes and proformas are valid until a date; invoices are due on one.
+  const validity = type === 'quote' || type === 'proforma';
+  const dated = type === 'invoice' || validity;
 
   const clients = useLiveQuery(
     () => db.clients.where('companyId').equals(company.id).toArray(),
@@ -157,18 +175,18 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   if (notFound) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {labels.singular.toLowerCase()} could not be found.</p>
+        <p className="text-slate-600">{t('This document could not be found.')}</p>
         <Link
           to={DOCUMENT_ROUTES[type]}
           className="text-primary-700 mt-4 inline-block text-sm font-medium"
         >
-          Back to {labels.plural.toLowerCase()}
+          {t('Back to {list}', { list: t(labels.plural).toLowerCase() })}
         </Link>
       </Card>
     );
   }
   if (!doc || !result || !clients || !products || !taxRates) {
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
   }
 
   const update = (patch: Partial<InvoiceDocument>) => setDoc((d) => (d ? { ...d, ...patch } : d));
@@ -178,7 +196,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const showLineTaxes = company.defaults.lineTaxes || doc.items.some((i) => i.taxes.length > 0);
 
   const termsDays = doc.dueDate ? daysBetween(doc.issueDate, doc.dueDate) : null;
-  const termsOptions = type === 'quote' ? QUOTE_VALIDITY : PAYMENT_TERMS;
+  const termsOptions = validity ? QUOTE_VALIDITY : PAYMENT_TERMS;
   const termsValue =
     termsDays === null ? 'none' : termsOptions.includes(termsDays) ? String(termsDays) : 'custom';
 
@@ -203,17 +221,17 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
 
   const save = async (intent: SaveIntent) => {
     const found: typeof errors = {};
-    if (!doc.clientId) found.client = 'Choose who this is for.';
+    if (!doc.clientId) found.client = t('Choose who this is for.');
     const hasContent = doc.items.some(
       (i) => i.kind === 'item' && (i.name.trim() || i.description.trim() || i.unitPrice !== 0),
     );
-    if (!hasContent) found.items = 'Add at least one item.';
+    if (!hasContent) found.items = t('Add at least one item.');
     if (doc.number.trim() && (await isNumberTaken(company.id, type, doc.number, doc.id))) {
-      found.number = 'This number is already used.';
+      found.number = t('This number is already used.');
     }
     setErrors(found);
     if (Object.keys(found).length) {
-      toast.error('Please fix the highlighted fields.');
+      toast.error(t('Please fix the highlighted fields.'));
       return;
     }
     setSaving(intent);
@@ -228,15 +246,17 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         charges: doc.charges.filter((c) => c.label.trim() || c.amount !== 0),
       });
       if (intent === 'sent') await markSent(saved.id);
-      toast.success(`${labels.singular} ${saved.number} saved`);
+      toast.success(
+        t('{document} {number} saved', { document: t(labels.singular), number: saved.number }),
+      );
       allowNavigation();
       navigate(`${DOCUMENT_ROUTES[type]}/${saved.id}`, {
         state: intent === 'download' ? { download: true } : undefined,
       });
     } catch (error) {
       if (error instanceof DuplicateNumberError)
-        setErrors({ number: 'This number is already used.' });
-      toast.error(error instanceof Error ? error.message : 'Could not save.');
+        setErrors({ number: t('This number is already used.') });
+      toast.error(error instanceof Error ? error.message : t('Could not save.'));
       setSaving(null);
     }
   };
@@ -248,37 +268,45 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
     .map((c) => ({
       value: c.id,
       label: c.name,
-      detail: [c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
+      detail: [c.nameAr, c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
         .filter(Boolean)
         .join(' · '),
-      keywords: c.number,
+      keywords: [c.number, c.nameAr].filter(Boolean).join(' '),
     }));
 
   const preview = <PdfPreview blob={pdf.blob} loading={pdf.loading} error={pdf.error} />;
 
+  const defaultTemplate =
+    TEMPLATE_META.find((m) => m.id === company.branding.templateId)?.name ?? 'Modern';
   const templateSelect = (
     <Select
-      aria-label="Template"
+      aria-label={t('Template')}
       value={doc.templateId ?? ''}
       onChange={(e) => update({ templateId: e.target.value || null })}
       className="h-8 text-xs"
     >
-      <option value="">
-        Default ({TEMPLATE_META.find((t) => t.id === company.branding.templateId)?.name ?? 'Modern'}
-        )
-      </option>
-      {TEMPLATE_META.map((t) => (
-        <option key={t.id} value={t.id}>
-          {t.name}
+      <option value="">{t('Default ({name})', { name: defaultTemplate })}</option>
+      {TEMPLATE_META.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.name}
         </option>
       ))}
     </Select>
   );
 
+  // Sales orders are confirmed rather than sent; delivery notes are marked as
+  // delivered from their page, with who signed for them.
+  const sendLabel =
+    type === 'sales_order'
+      ? t('Save and confirm')
+      : type === 'delivery_note'
+        ? null
+        : t('Save and mark as sent');
+
   const saveButtons = (
     <div className="flex items-center gap-2">
       <Button variant="ghost" onClick={() => navigate(-1)}>
-        Cancel
+        {t('Cancel')}
       </Button>
       <div className="flex">
         <Button
@@ -287,26 +315,29 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
           disabled={saving !== null}
           className="rounded-e-none"
         >
-          <Save /> Save
+          <Save /> {t('Save')}
         </Button>
         <DropdownMenu>
           <DropdownTrigger asChild>
             <Button
               className="border-primary-500 rounded-s-none border-s px-2"
               disabled={saving !== null}
-              aria-label="More save options"
+              aria-label={t('More save options')}
             >
               <ChevronDown />
             </Button>
           </DropdownTrigger>
           <DropdownContent>
-            {doc.status === 'draft' ? (
-              <DropdownItem icon={<Send />} onSelect={() => void save('sent')}>
-                Save and mark as sent
+            {doc.status === 'draft' && sendLabel ? (
+              <DropdownItem
+                icon={type === 'sales_order' ? <CheckCircle2 /> : <Send />}
+                onSelect={() => void save('sent')}
+              >
+                {sendLabel}
               </DropdownItem>
             ) : null}
             <DropdownItem icon={<FileText />} onSelect={() => void save('download')}>
-              Save and download PDF
+              {t('Save and download PDF')}
             </DropdownItem>
           </DropdownContent>
         </DropdownMenu>
@@ -320,25 +351,26 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         <div>
           <p className="mb-1 text-sm text-slate-500">
             <Link to={DOCUMENT_ROUTES[type]} className="hover:text-slate-700">
-              {labels.plural}
+              {t(labels.plural)}
             </Link>
           </p>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             {isNew
-              ? `New ${labels.singular.toLowerCase()}`
-              : `Edit ${labels.singular.toLowerCase()} ${doc.number}`}
+              ? t(labels.create)
+              : t('Edit {document} {number}', { document: documentNoun(type), number: doc.number })}
           </h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" className="xl:hidden" onClick={() => setMobilePreview(true)}>
-            <Eye /> Preview
+            <Eye /> {t('Preview')}
           </Button>
           <Button
             variant="outline"
             className="hidden xl:inline-flex"
             onClick={() => setShowPreview((s) => !s)}
           >
-            {showPreview ? <EyeOff /> : <Eye />} {showPreview ? 'Hide preview' : 'Show preview'}
+            {showPreview ? <EyeOff /> : <Eye />}{' '}
+            {showPreview ? t('Hide preview') : t('Show preview')}
           </Button>
           {saveButtons}
         </div>
@@ -353,28 +385,24 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         <div className="min-w-0 space-y-6">
           <Card>
             <CardBody className="grid gap-4 md:grid-cols-2">
-              <Field
-                label={type === 'quote' ? 'Prepared for' : 'Bill to'}
-                error={errors.client}
-                className="md:col-span-2"
-              >
+              <Field label={clientLabel(type)} error={errors.client} className="md:col-span-2">
                 {(fid) => (
                   <Combobox
                     id={fid}
                     value={doc.clientId || null}
                     onChange={selectClient}
                     options={clientOptions}
-                    placeholder="Choose a client…"
-                    searchPlaceholder="Search clients…"
+                    placeholder={t('Choose a client…')}
+                    searchPlaceholder={t('Search clients…')}
                     onCreate={(name) => setClientDialog({ open: true, name })}
-                    createLabel="New client"
+                    createLabel={t('New client')}
                   />
                 )}
               </Field>
               <Field
-                label={`${labels.singular} number`}
+                label={t(labels.numberLabel)}
                 error={errors.number}
-                hint={isNew && !doc.number ? 'Assigned automatically when saved.' : undefined}
+                hint={isNew && !doc.number ? t('Assigned automatically when saved.') : undefined}
               >
                 {(fid) => (
                   <Input
@@ -389,7 +417,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                   />
                 )}
               </Field>
-              <Field label="PO / reference" optional>
+              <Field label={t('PO / reference')} optional>
                 {(fid) => (
                   <Input
                     id={fid}
@@ -398,7 +426,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                   />
                 )}
               </Field>
-              <Field label="Issue date">
+              <Field label={t('Issue date')}>
                 {(fid) => (
                   <Input
                     id={fid}
@@ -418,12 +446,12 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                   />
                 )}
               </Field>
-              {type !== 'credit' ? (
-                <Field label={type === 'quote' ? 'Valid until' : 'Due date'}>
+              {dated ? (
+                <Field label={validity ? t('Valid until') : t('Due date')}>
                   {(fid) => (
                     <div className="flex flex-wrap gap-2">
                       <Select
-                        aria-label={type === 'quote' ? 'Validity' : 'Payment terms'}
+                        aria-label={validity ? t('Validity') : t('Payment terms')}
                         value={termsValue}
                         onChange={(e) => {
                           const v = e.target.value;
@@ -433,17 +461,19 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                         }}
                         className="w-36"
                       >
-                        {type === 'invoice' ? <option value="none">No due date</option> : null}
+                        <option value="none">
+                          {validity ? t('No end date') : t('No due date')}
+                        </option>
                         {termsOptions.map((d) => (
                           <option key={d} value={d}>
-                            {type === 'quote'
-                              ? `${d} days`
+                            {validity
+                              ? tp(d, '{count} day', '{count} days')
                               : d === 0
-                                ? 'Due on receipt'
-                                : `Net ${d}`}
+                                ? t('Due on receipt')
+                                : t('Net {days}', { days: d })}
                           </option>
                         ))}
-                        <option value="custom">Custom</option>
+                        <option value="custom">{t('Custom')}</option>
                       </Select>
                       <Input
                         id={fid}
@@ -455,12 +485,12 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     </div>
                   )}
                 </Field>
-              ) : (
+              ) : type === 'credit' ? (
                 <div />
-              )}
+              ) : null}
               {type !== 'credit' ? (
                 <>
-                  <Field label={t('Delivery date')} optional>
+                  <Field label={t('Delivery date')} optional={type !== 'delivery_note'}>
                     {(fid) => (
                       <Input
                         id={fid}
@@ -470,7 +500,10 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                       />
                     )}
                   </Field>
-                  <Field label={t('Delivery place')} optional>
+                  <Field
+                    label={type === 'delivery_note' ? t('Deliver to') : t('Delivery place')}
+                    optional
+                  >
                     {(fid) => (
                       <Input
                         id={fid}
@@ -482,19 +515,49 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                   </Field>
                 </>
               ) : null}
-              <Field label="Currency">
-                {(fid) => (
-                  <CurrencySelect
-                    id={fid}
-                    value={doc.currency}
-                    onChange={(currency) => update({ currency })}
-                  />
-                )}
-              </Field>
-              {doc.currency !== company.currency && type !== 'quote' ? (
+              {type === 'delivery_note' && doc.status === 'delivered' ? (
+                <>
+                  <Field label={t('Received by')}>
+                    {(fid) => (
+                      <Input
+                        id={fid}
+                        value={doc.receiverName ?? ''}
+                        onChange={(e) => update({ receiverName: e.target.value })}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('Civil ID number')} optional>
+                    {(fid) => (
+                      <Input
+                        id={fid}
+                        dir="ltr"
+                        inputMode="numeric"
+                        value={doc.receiverCivilId ?? ''}
+                        onChange={(e) => update({ receiverCivilId: e.target.value })}
+                      />
+                    )}
+                  </Field>
+                </>
+              ) : null}
+              {priced ? (
+                <Field label={t('Currency')}>
+                  {(fid) => (
+                    <CurrencySelect
+                      id={fid}
+                      value={doc.currency}
+                      onChange={(currency) => update({ currency })}
+                    />
+                  )}
+                </Field>
+              ) : null}
+              {doc.currency !== company.currency && postsToLedger(type) ? (
                 <Field
-                  label="Exchange rate"
-                  hint={`1 ${doc.currency} = ${doc.exchangeRate || '?'} ${company.currency}, used for your books`}
+                  label={t('Exchange rate')}
+                  hint={t('1 {currency} = {rate} {base}, used for your books', {
+                    currency: doc.currency,
+                    rate: doc.exchangeRate || '?',
+                    base: company.currency,
+                  })}
                 >
                   {(fid) => (
                     <NumberInput
@@ -511,12 +574,12 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
 
           <Card>
             <CardHeader
-              title="Items"
+              title={t('Items')}
               description={
                 errors.items ? (
                   <span className="text-red-600">{errors.items}</span>
                 ) : (
-                  'Type to search your products & services.'
+                  t('Type to search your products & services.')
                 )
               }
             />
@@ -536,15 +599,16 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 formatMoney={money}
                 formatPrice={(amount) => formatUnitPrice(amount, doc.currency, fmt.locale)}
                 language={client?.language ?? company.language}
+                prices={priced}
               />
             </CardBody>
           </Card>
 
-          <div className={cn('grid gap-6', !showPreview && 'lg:grid-cols-2')}>
+          <div className={cn('grid gap-6', !showPreview && priced && 'lg:grid-cols-2')}>
             <Card className={cn(!showPreview && 'lg:order-1')}>
-              <CardHeader title="Notes & terms" />
+              <CardHeader title={t('Notes & terms')} />
               <CardBody className="space-y-4">
-                <Field label="Notes" hint="Shown on the document.">
+                <Field label={t('Notes')} hint={t('Shown on the document.')}>
                   {(fid) => (
                     <Textarea
                       id={fid}
@@ -554,7 +618,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     />
                   )}
                 </Field>
-                <Field label="Terms & conditions">
+                <Field label={t('Terms & conditions')}>
                   {(fid) => (
                     <Textarea
                       id={fid}
@@ -564,7 +628,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     />
                   )}
                 </Field>
-                <Field label="Footer">
+                <Field label={t('Footer')}>
                   {(fid) => (
                     <Input
                       id={fid}
@@ -573,7 +637,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     />
                   )}
                 </Field>
-                <Field label="Private notes" hint="Only visible to you, never printed.">
+                <Field label={t('Private notes')} hint={t('Only visible to you, never printed.')}>
                   {(fid) => (
                     <Textarea
                       id={fid}
@@ -585,24 +649,27 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 </Field>
               </CardBody>
             </Card>
-            <Card className={cn('-order-1', !showPreview && 'lg:order-2')}>
-              <CardHeader title="Totals" />
-              <CardBody>
-                <TotalsPanel
-                  doc={doc}
-                  onChange={update}
-                  result={result}
-                  taxRates={taxRates}
-                  showDocumentTaxes={company.defaults.documentTaxes}
-                  showLineTaxes={showLineTaxes}
-                  defaultTaxes={defaultTaxes}
-                  currencySymbol={symbol}
-                  money={money}
-                  percent={fmt.percent}
-                  taxExempt={Boolean(client?.taxExempt)}
-                />
-              </CardBody>
-            </Card>
+            {priced ? (
+              <Card className={cn('-order-1', !showPreview && 'lg:order-2')}>
+                <CardHeader title={t('Totals')} />
+                <CardBody>
+                  <TotalsPanel
+                    doc={doc}
+                    onChange={update}
+                    result={result}
+                    taxRates={taxRates}
+                    showDocumentTaxes={company.defaults.documentTaxes}
+                    showLineTaxes={showLineTaxes}
+                    defaultTaxes={defaultTaxes}
+                    currencySymbol={symbol}
+                    money={money}
+                    percent={fmt.percent}
+                    taxExempt={Boolean(client?.taxExempt)}
+                    allowDeposit={type === 'invoice' || type === 'proforma'}
+                  />
+                </CardBody>
+              </Card>
+            ) : null}
           </div>
 
           <div className="flex justify-end border-t border-slate-200 pt-4 xl:hidden">
@@ -614,7 +681,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
           <aside className="hidden xl:block">
             <div className="sticky top-20 space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-slate-700">Live preview</p>
+                <p className="text-sm font-medium text-slate-700">{t('Live preview')}</p>
                 <div className="w-48">{templateSelect}</div>
               </div>
               <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-xl bg-slate-200/60 p-4">
@@ -626,7 +693,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
       </div>
 
       <Dialog open={mobilePreview} onOpenChange={setMobilePreview}>
-        <DialogContent title="Preview" size="xl">
+        <DialogContent title={t('Preview')} size="xl">
           <div className="space-y-3 bg-slate-100 p-4">
             <div className="max-w-56">{templateSelect}</div>
             {preview}

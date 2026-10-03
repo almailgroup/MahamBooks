@@ -6,6 +6,8 @@ import { AppLayout } from './layout';
 import { Spinner } from '@/components/ui/misc';
 import { buttonClass } from '@/components/ui/button';
 import SetupPage from '@/pages/setup';
+import type { DocumentType, PurchaseDocumentType } from '@/db/types';
+import { t } from '@/i18n';
 
 const Dashboard = lazy(() => import('@/pages/dashboard'));
 const DocumentList = lazy(() => import('@/pages/documents/list'));
@@ -56,7 +58,7 @@ const NotFound = lazy(() => import('@/pages/not-found'));
 function Root() {
   return (
     <CompanyProvider
-      fallback={<Spinner className="min-h-dvh" label="Loading…" />}
+      fallback={<Spinner className="min-h-dvh" label={t('Loading…')} />}
       onboarding={<SetupPage firstRun />}
     >
       <Outlet />
@@ -75,24 +77,24 @@ function RouteError() {
     ? `${error.status} ${error.statusText}`
     : error instanceof Error
       ? error.message
-      : 'Unknown error';
+      : t('Unknown error');
   return (
     <div className="flex min-h-dvh items-center justify-center bg-slate-50 p-6">
       <div className="max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
         <AlertTriangle className="mx-auto size-10 text-amber-500" />
-        <h1 className="mt-4 text-lg font-semibold text-slate-900">Something went wrong</h1>
+        <h1 className="mt-4 text-lg font-semibold text-slate-900">{t('Something went wrong')}</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Your data is safe — it is stored in this browser. Try reloading the page.
+          {t('Your data is safe — it is stored in this browser. Try reloading the page.')}
         </p>
         <pre className="mt-4 max-h-32 overflow-auto rounded-md bg-slate-50 p-3 text-start text-xs text-slate-500">
           {message}
         </pre>
         <div className="mt-6 flex justify-center gap-3">
           <button className={buttonClass('outline')} onClick={() => window.location.reload()}>
-            Reload
+            {t('Reload')}
           </button>
           <Link to="/" className={buttonClass('primary')} reloadDocument>
-            Go to dashboard
+            {t('Go to dashboard')}
           </Link>
         </div>
       </div>
@@ -100,15 +102,18 @@ function RouteError() {
   );
 }
 
-const documentRoutes = (path: string, type: 'invoice' | 'quote' | 'credit') => [
+// Sales documents: one list, editor and page for invoices, quotes, credit
+// notes, proforma invoices, sales orders and delivery notes.
+const documentRoutes = (path: string, type: Exclude<DocumentType, PurchaseDocumentType>) => [
   { path, element: <DocumentList key={type} type={type} /> },
   { path: `${path}/new`, element: <DocumentEditor key={`${type}-new`} type={type} /> },
   { path: `${path}/:id`, element: <DocumentView key={type} type={type} /> },
   { path: `${path}/:id/edit`, element: <DocumentEditor key={type} type={type} /> },
 ];
 
-// Bills and vendor credits: the same list as sales documents, their own editor and page.
-const purchaseRoutes = (path: string, type: 'bill' | 'vendor_credit') => [
+// Bills, vendor credits and purchase orders: the same list as sales documents,
+// their own editor and page.
+const purchaseRoutes = (path: string, type: PurchaseDocumentType) => [
   { path, element: <DocumentList key={type} type={type} /> },
   { path: `${path}/new`, element: <BillEditor key={`${type}-new`} type={type} /> },
   { path: `${path}/:id`, element: <BillView key={type} type={type} /> },
@@ -184,6 +189,9 @@ export const router = createHashRouter([
           ...documentRoutes('invoices', 'invoice'),
           ...documentRoutes('quotes', 'quote'),
           ...documentRoutes('credits', 'credit'),
+          ...documentRoutes('proformas', 'proforma'),
+          ...documentRoutes('sales-orders', 'sales_order'),
+          ...documentRoutes('delivery-notes', 'delivery_note'),
           { path: 'recurring', element: <RecurringList /> },
           { path: 'recurring/new', element: <RecurringEditor /> },
           { path: 'recurring/:id', element: <RecurringEditor /> },
@@ -193,6 +201,7 @@ export const router = createHashRouter([
           ...contactRoutes('vendors', 'vendor'),
           ...purchaseRoutes('bills', 'bill'),
           ...purchaseRoutes('vendor-credits', 'vendor_credit'),
+          ...purchaseRoutes('purchase-orders', 'purchase_order'),
           ...paymentRoutes('payments-made', 'out'),
           { path: 'expenses', element: <Expenses /> },
           { path: 'products', element: <Products /> },

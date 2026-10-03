@@ -42,6 +42,22 @@ describe('document labels', () => {
     });
   });
 
+  it('name orders and delivery notes the Kuwaiti way', () => {
+    expect(defaultLabels('ar')).toMatchObject({
+      proforma: 'فاتورة مبدئية',
+      salesOrder: 'أمر بيع',
+      purchaseOrder: 'أمر شراء',
+      deliveryNote: 'إذن تسليم',
+      receivedBy: 'المستلم',
+      civilId: 'الرقم المدني',
+    });
+    expect(defaultLabels('en')).toMatchObject({
+      proforma: 'Proforma Invoice',
+      deliveryNote: 'Delivery Note',
+      receivedBy: 'Received by',
+    });
+  });
+
   it('print Arabic with English beside it in bilingual documents', () => {
     const { primary, secondary } = documentLabels('ar-en');
     expect(primary.invoice).toBe('فاتورة');

@@ -16,7 +16,7 @@ export default {
 
   // General words
   Approved: 'معتمد',
-  Paid: 'تم الدفع',
+  Paid: 'مدفوعة',
   Verify: 'تحقق',
   'Check the current figure with the authority before relying on it.':
     'تحقق من الرقم الحالي لدى الجهة المختصة قبل الاعتماد عليه.',
@@ -49,7 +49,7 @@ export default {
     one: 'يوم واحد',
     two: 'يومان',
     few: '{count} أيام',
-    many: '{count} يومًا',
+    many: '{count} يوماً',
     other: '{count} يوم',
   },
   '{count} employees': {
@@ -280,11 +280,11 @@ export default {
   'Upload it to your bank’s corporate service to pay the salaries. Banks use different layouts: ask yours and set the columns to match.':
     'ارفعه إلى خدمة الشركات لدى بنكك لدفع الرواتب. تختلف صيغ الملفات بين البنوك: اسأل بنكك واضبط الأعمدة لتطابقها.',
   Layout: 'الصيغة',
-  Custom: 'مخصصة',
+  Custom: 'مخصص',
   'Salary month as': 'كتابة شهر الراتب',
   'Columns, in order': 'الأعمدة بالترتيب',
-  'Move up': 'تحريك لأعلى',
-  'Move down': 'تحريك لأسفل',
+  'Move up': 'نقل لأعلى',
+  'Move down': 'نقل لأسفل',
   'First row has the column names': 'الصف الأول يحمل أسماء الأعمدة',
   'Add a valid IBAN for these employees first:': 'أضف رقم آيبان صحيحًا لهؤلاء الموظفين أولًا:',
   '{count} transfers, total {amount}': '{count} تحويل، الإجمالي {amount}',
@@ -314,7 +314,7 @@ export default {
   'Bereavement leave': 'إجازة الوفاة',
   'Unpaid leave': 'إجازة بدون أجر',
   'Full pay': 'بأجر كامل',
-  Unpaid: 'بدون أجر',
+  'Without pay': 'بدون أجر',
   '{percent} pay': 'بنسبة {percent} من الأجر',
   'Cancel this leave?': 'إلغاء هذه الإجازة؟',
   'It no longer counts against the balance or in pay runs prepared from now on.':

@@ -16,11 +16,19 @@ import {
 import { roleMap } from '@/db/accounting';
 import { isVendor } from '@/db/purchases';
 import type { InvoiceDocument, LineItem, PurchaseDocumentType, TaxLine } from '@/db/types';
-import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
+import {
+  DOCUMENT_LABELS,
+  DOCUMENT_ROUTES,
+  documentNoun,
+  useCompany,
+  useFormat,
+} from '@/app/company';
 import { computeDocument } from '@/lib/document-calc';
 import { addDaysISO, daysBetween } from '@/lib/dates';
 import { currencySymbol } from '@/lib/format';
+import { issuedStatus } from '@/lib/status';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
@@ -47,6 +55,13 @@ function MiniLabel({ children }: { children: React.ReactNode }) {
 
 type SaveIntent = 'draft' | 'open';
 
+/** The vendor's own number for this document. */
+function referenceLabel(type: PurchaseDocumentType): string {
+  if (type === 'bill') return t("Vendor's invoice number");
+  if (type === 'vendor_credit') return t("Vendor's credit note number");
+  return t("Vendor's quote number");
+}
+
 function Editor({
   type,
   initial,
@@ -63,7 +78,7 @@ function Editor({
   const fmt = useFormat();
   const labels = DOCUMENT_LABELS[type];
   const base = DOCUMENT_ROUTES[type];
-  const noun = labels.singular.toLowerCase();
+  const order = type === 'purchase_order';
 
   const [doc, setDoc] = useState(initial);
   const [numberHint, setNumberHint] = useState('');
@@ -111,7 +126,8 @@ function Editor({
   const dirty = JSON.stringify(doc) !== JSON.stringify(initial) || attachments.dirty;
   const allowNavigation = useUnsavedGuard(dirty && saving === null);
 
-  if (!clients || !taxRates || !accounts) return <Spinner className="py-24" label="Loading…" />;
+  if (!clients || !taxRates || !accounts)
+    return <Spinner className="py-24" label={t('Loading…')} />;
 
   const roles = roleMap(accounts);
   const defaultAccount = roles.expense ?? '';
@@ -149,33 +165,41 @@ function Editor({
 
   const save = async (intent: SaveIntent) => {
     const found: typeof errors = {};
-    if (!doc.clientId) found.vendor = 'Choose the vendor.';
+    if (!doc.clientId) found.vendor = t('Choose the vendor.');
     const hasContent = lines.some((i) => i.name.trim() || i.unitPrice !== 0);
-    if (!hasContent) found.items = 'Add at least one line.';
+    if (!hasContent) found.items = t('Add at least one line.');
     if (doc.number.trim() && (await isNumberTaken(company.id, type, doc.number, doc.id))) {
-      found.number = 'This number is already used.';
+      found.number = t('This number is already used.');
     }
     setErrors(found);
     if (Object.keys(found).length) {
-      toast.error('Please fix the highlighted fields.');
+      toast.error(t('Please fix the highlighted fields.'));
       return;
     }
     setSaving(intent);
     try {
       const saved = await saveDocument({
         ...doc,
-        status: intent === 'draft' ? 'draft' : doc.status === 'draft' ? 'sent' : doc.status,
+        // Saving takes a draft out of the office: an open bill, an issued order.
+        status:
+          intent === 'draft'
+            ? 'draft'
+            : doc.status === 'draft'
+              ? (issuedStatus(type) ?? doc.status)
+              : doc.status,
         items: doc.items.filter((i) => i.name.trim() || i.unitPrice !== 0),
         charges: doc.charges.filter((c) => c.label.trim() || c.amount !== 0),
       });
       await attachments.commit(company.id);
-      toast.success(`${labels.singular} ${saved.number} saved`);
+      toast.success(
+        t('{document} {number} saved', { document: t(labels.singular), number: saved.number }),
+      );
       allowNavigation();
       navigate(`${base}/${saved.id}`);
     } catch (error) {
       if (error instanceof DuplicateNumberError)
-        setErrors({ number: 'This number is already used.' });
-      toast.error(error instanceof Error ? error.message : 'Could not save.');
+        setErrors({ number: t('This number is already used.') });
+      toast.error(error instanceof Error ? error.message : t('Could not save.'));
       setSaving(null);
     }
   };
@@ -186,16 +210,16 @@ function Editor({
     .map((c) => ({
       value: c.id,
       label: c.name,
-      detail: [c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
+      detail: [c.nameAr, c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
         .filter(Boolean)
         .join(' · '),
-      keywords: c.number,
+      keywords: [c.number, c.nameAr].filter(Boolean).join(' '),
     }));
 
   const actions = (
     <div className="flex flex-wrap items-center gap-2">
       <Button variant="ghost" onClick={() => navigate(-1)}>
-        Cancel
+        {t('Cancel')}
       </Button>
       {doc.status === 'draft' ? (
         <Button
@@ -204,7 +228,7 @@ function Editor({
           loading={saving === 'draft'}
           disabled={saving !== null}
         >
-          Save as draft
+          {t('Save as draft')}
         </Button>
       ) : null}
       <Button
@@ -212,10 +236,19 @@ function Editor({
         loading={saving === 'open'}
         disabled={saving !== null}
       >
-        Save
+        {t('Save')}
       </Button>
     </div>
   );
+
+  const columns = [
+    { key: 'category', label: t('Category') },
+    { key: 'description', label: t('Description') },
+    { key: 'qty', label: t('Qty'), end: true },
+    { key: 'rate', label: t('Rate'), end: true },
+    { key: 'tax', label: t('Tax') },
+    { key: 'amount', label: t('Amount'), end: true },
+  ];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -223,11 +256,13 @@ function Editor({
         <div>
           <p className="mb-1 text-sm text-slate-500">
             <Link to={base} className="hover:text-slate-700">
-              {labels.plural}
+              {t(labels.plural)}
             </Link>
           </p>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            {isNew ? `New ${noun}` : `Edit ${noun} ${doc.number}`}
+            {isNew
+              ? t(labels.create)
+              : t('Edit {document} {number}', { document: documentNoun(type), number: doc.number })}
           </h1>
         </div>
         {actions}
@@ -236,37 +271,34 @@ function Editor({
       <div className="space-y-6">
         <Card>
           <CardBody className="grid gap-4 md:grid-cols-2">
-            <Field label="Vendor" error={errors.vendor} className="md:col-span-2">
+            <Field label={t('Vendor')} error={errors.vendor} className="md:col-span-2">
               {(fid) => (
                 <Combobox
                   id={fid}
                   value={doc.clientId || null}
                   onChange={selectVendor}
                   options={vendorOptions}
-                  placeholder="Choose a vendor…"
-                  searchPlaceholder="Search vendors…"
+                  placeholder={t('Choose a vendor…')}
+                  searchPlaceholder={t('Search vendors…')}
                   onCreate={(name) => setVendorDialog({ open: true, name })}
-                  createLabel="New vendor"
+                  createLabel={t('New vendor')}
                 />
               )}
             </Field>
-            <Field
-              label={type === 'bill' ? "Vendor's invoice number" : "Vendor's credit note number"}
-              optional
-            >
+            <Field label={referenceLabel(type)} optional>
               {(fid) => (
                 <Input
                   id={fid}
                   value={doc.vendorReference ?? ''}
                   onChange={(e) => update({ vendorReference: e.target.value })}
-                  placeholder="As printed on their document"
+                  placeholder={t('As printed on their document')}
                 />
               )}
             </Field>
             <Field
-              label={`${labels.singular} number`}
+              label={t(labels.numberLabel)}
               error={errors.number}
-              hint={isNew && !doc.number ? 'Your own number, assigned when saved.' : undefined}
+              hint={isNew && !doc.number ? t('Your own number, assigned when saved.') : undefined}
             >
               {(fid) => (
                 <Input
@@ -281,7 +313,7 @@ function Editor({
                 />
               )}
             </Field>
-            <Field label={type === 'bill' ? 'Bill date' : 'Date'}>
+            <Field label={type === 'bill' ? t('Bill date') : order ? t('Order date') : t('Date')}>
               {(fid) => (
                 <Input
                   id={fid}
@@ -302,11 +334,11 @@ function Editor({
               )}
             </Field>
             {type === 'bill' ? (
-              <Field label="Due date">
+              <Field label={t('Due date')}>
                 {(fid) => (
                   <div className="flex flex-wrap gap-2">
                     <Select
-                      aria-label="Payment terms"
+                      aria-label={t('Payment terms')}
                       value={termsValue}
                       onChange={(e) => {
                         const v = e.target.value;
@@ -316,13 +348,13 @@ function Editor({
                       }}
                       className="w-36"
                     >
-                      <option value="none">No due date</option>
+                      <option value="none">{t('No due date')}</option>
                       {PAYMENT_TERMS.map((d) => (
                         <option key={d} value={d}>
-                          {d === 0 ? 'Due on receipt' : `Net ${d}`}
+                          {d === 0 ? t('Due on receipt') : t('Net {days}', { days: d })}
                         </option>
                       ))}
-                      <option value="custom">Custom</option>
+                      <option value="custom">{t('Custom')}</option>
                     </Select>
                     <Input
                       id={fid}
@@ -335,16 +367,41 @@ function Editor({
                 )}
               </Field>
             ) : null}
-            <Field label="PO / reference" optional>
-              {(fid) => (
-                <Input
-                  id={fid}
-                  value={doc.poNumber}
-                  onChange={(e) => update({ poNumber: e.target.value })}
-                />
-              )}
-            </Field>
-            <Field label="Currency">
+            {order ? (
+              <>
+                <Field label={t('Delivery date')} optional>
+                  {(fid) => (
+                    <Input
+                      id={fid}
+                      type="date"
+                      value={doc.deliveryDate ?? ''}
+                      onChange={(e) => update({ deliveryDate: e.target.value || null })}
+                    />
+                  )}
+                </Field>
+                <Field label={t('Deliver to')} optional>
+                  {(fid) => (
+                    <Input
+                      id={fid}
+                      value={doc.deliveryPlace ?? ''}
+                      placeholder={t('Site, warehouse or address')}
+                      onChange={(e) => update({ deliveryPlace: e.target.value })}
+                    />
+                  )}
+                </Field>
+              </>
+            ) : (
+              <Field label={t('PO / reference')} optional>
+                {(fid) => (
+                  <Input
+                    id={fid}
+                    value={doc.poNumber}
+                    onChange={(e) => update({ poNumber: e.target.value })}
+                  />
+                )}
+              </Field>
+            )}
+            <Field label={t('Currency')}>
               {(fid) => (
                 <CurrencySelect
                   id={fid}
@@ -353,10 +410,14 @@ function Editor({
                 />
               )}
             </Field>
-            {doc.currency !== company.currency ? (
+            {doc.currency !== company.currency && !order ? (
               <Field
-                label="Exchange rate"
-                hint={`1 ${doc.currency} = ${doc.exchangeRate || '?'} ${company.currency}, used for your books`}
+                label={t('Exchange rate')}
+                hint={t('1 {currency} = {rate} {base}, used for your books', {
+                  currency: doc.currency,
+                  rate: doc.exchangeRate || '?',
+                  base: company.currency,
+                })}
               >
                 {(fid) => (
                   <NumberInput
@@ -373,27 +434,29 @@ function Editor({
 
         <Card>
           <CardHeader
-            title="Lines"
+            title={t('Lines')}
             description={
               errors.items ? (
                 <span className="text-red-600">{errors.items}</span>
+              ) : order ? (
+                t('What you are ordering. The categories carry over to the bill.')
               ) : (
-                'Each line goes to an expense or asset account in your books.'
+                t('Each line goes to an expense or asset account in your books.')
               )
             }
           />
           {/* Container queries: a table on wide cards, stacked fields on phones. */}
           <div className="@container">
             <div className={cn(LINE_GRID, 'hidden border-b border-slate-100 py-2.5 @3xl:grid')}>
-              {['Category', 'Description', 'Qty', 'Rate', 'Tax', 'Amount'].map((label) => (
+              {columns.map((column) => (
                 <span
-                  key={label}
+                  key={column.key}
                   className={cn(
                     'text-xs font-medium tracking-wide text-slate-500 uppercase',
-                    (label === 'Qty' || label === 'Rate' || label === 'Amount') && 'text-end',
+                    column.end && 'text-end',
                   )}
                 >
-                  {label}
+                  {column.label}
                 </span>
               ))}
             </div>
@@ -408,20 +471,20 @@ function Editor({
                     )}
                   >
                     <div className="col-span-6 @3xl:col-span-1">
-                      <MiniLabel>Category</MiniLabel>
+                      <MiniLabel>{t('Category')}</MiniLabel>
                       <Combobox
-                        ariaLabel={`Line ${index + 1} category`}
+                        ariaLabel={t('Line {number} category', { number: index + 1 })}
                         value={item.accountId || defaultAccount || null}
                         onChange={(accountId) => updateLine(item.id, { accountId })}
                         options={options}
-                        placeholder="Choose a category…"
-                        searchPlaceholder="Search accounts…"
+                        placeholder={t('Choose a category…')}
+                        searchPlaceholder={t('Search accounts…')}
                       />
                     </div>
-                    <div className="col-span-6 @3xl:col-span-1">
-                      <MiniLabel>Description</MiniLabel>
+                    <div className="col-span-6 space-y-2 @3xl:col-span-1">
+                      <MiniLabel>{t('Description')}</MiniLabel>
                       <Textarea
-                        aria-label={`Line ${index + 1} description`}
+                        aria-label={t('Line {number} description', { number: index + 1 })}
                         value={item.name}
                         onChange={(e) => {
                           updateLine(item.id, { name: e.target.value });
@@ -430,19 +493,29 @@ function Editor({
                         rows={1}
                         className="min-h-9 resize-y py-1.5"
                       />
+                      {order ? (
+                        <Input
+                          aria-label={t('Arabic name of line {number}', { number: index + 1 })}
+                          dir="rtl"
+                          lang="ar"
+                          value={item.nameAr ?? ''}
+                          onChange={(e) => updateLine(item.id, { nameAr: e.target.value })}
+                          placeholder={t('Name in Arabic (optional)')}
+                        />
+                      ) : null}
                     </div>
                     <div className="col-span-2 @3xl:col-span-1">
-                      <MiniLabel>Qty</MiniLabel>
+                      <MiniLabel>{t('Qty')}</MiniLabel>
                       <NumberInput
-                        aria-label={`Line ${index + 1} quantity`}
+                        aria-label={t('Line {number} quantity', { number: index + 1 })}
                         value={item.quantity}
                         onValueChange={(quantity) => updateLine(item.id, { quantity })}
                       />
                     </div>
                     <div className="col-span-2 @3xl:col-span-1">
-                      <MiniLabel>Rate</MiniLabel>
+                      <MiniLabel>{t('Rate')}</MiniLabel>
                       <NumberInput
-                        aria-label={`Line ${index + 1} rate`}
+                        aria-label={t('Line {number} rate', { number: index + 1 })}
                         value={item.unitPrice}
                         onValueChange={(unitPrice) => {
                           updateLine(item.id, { unitPrice });
@@ -451,7 +524,7 @@ function Editor({
                       />
                     </div>
                     <div className="col-span-2 @3xl:col-span-1">
-                      <MiniLabel>Tax</MiniLabel>
+                      <MiniLabel>{t('Tax')}</MiniLabel>
                       <TaxSelect
                         value={item.taxes}
                         onChange={(taxes) => updateLine(item.id, { taxes })}
@@ -460,7 +533,7 @@ function Editor({
                     </div>
                     <p
                       className="tabular col-span-5 self-center text-end font-medium text-slate-900 @3xl:col-span-1 @3xl:self-start @3xl:pt-2"
-                      aria-label={`Line ${index + 1} amount`}
+                      aria-label={t('Line {number} amount', { number: index + 1 })}
                     >
                       {money(result.lines[index]?.net ?? 0)}
                     </p>
@@ -468,7 +541,7 @@ function Editor({
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        aria-label={`Remove line ${index + 1}`}
+                        aria-label={t('Remove line {number}', { number: index + 1 })}
                         disabled={lines.length <= 1}
                         onClick={() => update({ items: doc.items.filter((i) => i.id !== item.id) })}
                       >
@@ -496,7 +569,7 @@ function Editor({
                 })
               }
             >
-              <Plus /> Add line
+              <Plus /> {t('Add line')}
             </Button>
           </div>
         </Card>
@@ -504,8 +577,14 @@ function Editor({
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader
-              title="Attachments"
-              description={`A photo or PDF of the ${type === 'bill' ? 'bill' : 'credit note'} you received.`}
+              title={t('Attachments')}
+              description={
+                type === 'bill'
+                  ? t('A photo or PDF of the bill you received.')
+                  : type === 'vendor_credit'
+                    ? t('A photo or PDF of the credit note you received.')
+                    : t('Quotes or other files for this order.')
+              }
             />
             <CardBody>
               <AttachmentList
@@ -516,7 +595,7 @@ function Editor({
             </CardBody>
           </Card>
           <Card className="-order-1 lg:order-none">
-            <CardHeader title="Totals" />
+            <CardHeader title={t('Totals')} />
             <CardBody>
               <TotalsPanel
                 doc={doc}
@@ -534,9 +613,36 @@ function Editor({
             </CardBody>
           </Card>
           <Card className="lg:col-span-2">
-            <CardHeader title="Notes" />
-            <CardBody>
-              <Field label="Notes" hint="Only visible to you.">
+            <CardHeader title={order ? t('Notes & terms') : t('Notes')} />
+            <CardBody className="space-y-4">
+              {order ? (
+                <>
+                  <Field label={t('Notes')} hint={t('Shown on the document.')}>
+                    {(fid) => (
+                      <Textarea
+                        id={fid}
+                        value={doc.notes}
+                        onChange={(e) => update({ notes: e.target.value })}
+                        rows={2}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('Terms & conditions')}>
+                    {(fid) => (
+                      <Textarea
+                        id={fid}
+                        value={doc.terms}
+                        onChange={(e) => update({ terms: e.target.value })}
+                        rows={3}
+                      />
+                    )}
+                  </Field>
+                </>
+              ) : null}
+              <Field
+                label={order ? t('Private notes') : t('Notes')}
+                hint={order ? t('Only visible to you, never printed.') : t('Only visible to you.')}
+              >
                 {(fid) => (
                   <Textarea
                     id={fid}
@@ -567,7 +673,7 @@ function Editor({
   );
 }
 
-/** New or existing bill / vendor credit. */
+/** New or existing bill, vendor credit or purchase order. */
 export default function BillEditorPage({ type }: { type: PurchaseDocumentType }) {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -613,17 +719,17 @@ export default function BillEditorPage({ type }: { type: PurchaseDocumentType })
   if (state === 'missing') {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {labels.singular.toLowerCase()} could not be found.</p>
+        <p className="text-slate-600">{t('This document could not be found.')}</p>
         <Link
           to={DOCUMENT_ROUTES[type]}
           className="text-primary-700 mt-4 inline-block text-sm font-medium"
         >
-          Back to {labels.plural.toLowerCase()}
+          {t('Back to {list}', { list: t(labels.plural).toLowerCase() })}
         </Link>
       </Card>
     );
   }
-  if (!state) return <Spinner className="py-24" label="Loading…" />;
+  if (!state) return <Spinner className="py-24" label={t('Loading…')} />;
   return (
     <Editor
       key={state.doc.id}

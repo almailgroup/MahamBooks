@@ -1,7 +1,8 @@
 import { Plus, Trash2 } from 'lucide-react';
 import type { Charge, InvoiceDocument, TaxLine, TaxRate } from '@/db/types';
 import type { CalcResult } from '@/lib/calc';
-import { isPurchaseType } from '@/lib/document-types';
+import { isPurchaseType, postsToLedger } from '@/lib/document-types';
+import { t } from '@/i18n';
 import { shortId } from '@/lib/ids';
 import { currencyPrecision, round } from '@/lib/money';
 import { Button } from '@/components/ui/button';
@@ -67,14 +68,14 @@ export function TotalsPanel({
 
   return (
     <div className="space-y-4">
-      <Row label="Subtotal" value={money(result.subtotal)} />
+      <Row label={t('Subtotal')} value={money(result.subtotal)} />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm text-slate-600">Discount</span>
+        <span className="text-sm text-slate-600">{t('Discount')}</span>
         <div className="flex items-center gap-3">
           <div className="w-32">
             <DiscountInput
-              ariaLabel="Document discount"
+              ariaLabel={t('Document discount')}
               value={doc.discount}
               type={doc.discountType}
               currencySymbol={currencySymbol}
@@ -89,13 +90,13 @@ export function TotalsPanel({
 
       {showDocumentTaxes || doc.taxes.length > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm text-slate-600">Tax on total</span>
+          <span className="text-sm text-slate-600">{t('Tax on total')}</span>
           <div className="w-56">
             <TaxSelect
               value={doc.taxes}
               onChange={(taxes) => onChange({ taxes })}
               rates={taxRates}
-              placeholder="None"
+              placeholder={t('None')}
             />
           </div>
         </div>
@@ -108,13 +109,13 @@ export function TotalsPanel({
             className="grid grid-cols-[1fr_7rem_auto] items-center gap-2 sm:grid-cols-[1fr_7rem_8rem_auto]"
           >
             <Input
-              aria-label="Charge label"
+              aria-label={t('Charge label')}
               value={charge.label}
               onChange={(e) => setCharge(index, { label: e.target.value })}
-              placeholder="e.g. Shipping"
+              placeholder={t('e.g. Shipping')}
             />
             <NumberInput
-              aria-label="Charge amount"
+              aria-label={t('Charge amount')}
               value={charge.amount}
               onValueChange={(amount) => setCharge(index, { amount })}
             />
@@ -128,7 +129,7 @@ export function TotalsPanel({
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Remove charge"
+              aria-label={t('Remove charge')}
               onClick={() => onChange({ charges: doc.charges.filter((_, i) => i !== index) })}
             >
               <Trash2 />
@@ -144,7 +145,7 @@ export function TotalsPanel({
                 ...doc.charges,
                 {
                   id: shortId(),
-                  label: 'Shipping',
+                  label: t('Shipping'),
                   amount: 0,
                   taxes: showLineTaxes ? defaultTaxes : doc.taxes,
                 },
@@ -152,40 +153,50 @@ export function TotalsPanel({
             })
           }
         >
-          <Plus /> Add charge (shipping, handling…)
+          <Plus /> {t('Add charge (shipping, handling…)')}
         </Button>
       </div>
 
       <div className="border-t border-slate-100 pt-3">
         {!doc.pricesIncludeTax
-          ? charged.map((t) => (
-              <Row key={t.key} label={`${t.name} ${percent(t.rate)}`} value={money(t.amount)} />
-            ))
-          : null}
-        <Row label="Total" value={money(result.total)} strong />
-        {doc.pricesIncludeTax
-          ? charged.map((t) => (
+          ? charged.map((tax) => (
               <Row
-                key={t.key}
-                label={`Includes ${t.name} ${percent(t.rate)}`}
-                value={money(t.amount)}
+                key={tax.key}
+                label={`${tax.name} ${percent(tax.rate)}`}
+                value={money(tax.amount)}
               />
             ))
           : null}
-        {reverse.map((t) => (
+        <Row label={t('Total')} value={money(result.total)} strong />
+        {doc.pricesIncludeTax
+          ? charged.map((tax) => (
+              <Row
+                key={tax.key}
+                label={t('Includes {tax}', { tax: `${tax.name} ${percent(tax.rate)}` })}
+                value={money(tax.amount)}
+              />
+            ))
+          : null}
+        {reverse.map((tax) => (
           <Row
-            key={t.key}
-            label={`Reverse charge ${t.name} ${percent(t.rate)} · ${
-              isPurchaseType(doc.type) ? 'you account for it' : 'the client accounts for it'
-            }`}
-            value={money(t.amount)}
+            key={tax.key}
+            label={
+              isPurchaseType(doc.type)
+                ? t('Reverse charge {tax} · you account for it', {
+                    tax: `${tax.name} ${percent(tax.rate)}`,
+                  })
+                : t('Reverse charge {tax} · the client accounts for it', {
+                    tax: `${tax.name} ${percent(tax.rate)}`,
+                  })
+            }
+            value={money(tax.amount)}
           />
         ))}
-        {doc.type !== 'quote' && result.paid !== 0 ? (
+        {postsToLedger(doc.type) && result.paid !== 0 ? (
           <>
-            <Row label={isCredit ? 'Applied' : 'Paid'} value={money(-result.paid)} />
+            <Row label={isCredit ? t('Applied') : t('Paid')} value={money(-result.paid)} />
             <Row
-              label={isCredit ? 'Remaining credit' : 'Balance due'}
+              label={isCredit ? t('Remaining credit') : t('Balance due')}
               value={money(result.balance)}
               strong
             />
@@ -194,8 +205,8 @@ export function TotalsPanel({
         {taxExempt ? (
           <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {isPurchaseType(doc.type)
-              ? 'This vendor is not registered for tax — taxes are not applied.'
-              : 'This client is tax exempt — taxes are not applied.'}
+              ? t('This vendor is not registered for tax — taxes are not applied.')
+              : t('This client is tax exempt — taxes are not applied.')}
           </p>
         ) : null}
       </div>
@@ -204,8 +215,8 @@ export function TotalsPanel({
         <Switch
           checked={doc.pricesIncludeTax}
           onChange={(pricesIncludeTax) => onChange({ pricesIncludeTax })}
-          label="Prices include tax"
-          description="Tax is calculated backwards from the entered prices."
+          label={t('Prices include tax')}
+          description={t('Tax is calculated backwards from the entered prices.')}
         />
         {allowDeposit ? (
           <>
@@ -221,14 +232,14 @@ export function TotalsPanel({
                     : { deposit: 0, depositDueDate: null },
                 )
               }
-              label="Request a deposit"
-              description="Shows a deposit amount due before the full balance."
+              label={t('Request a deposit')}
+              description={t('Shows a deposit amount due before the full balance.')}
             />
             {doc.deposit > 0 ? (
               <div className="grid grid-cols-2 gap-3">
                 <label className="text-sm">
                   <span className="mb-1 block text-xs font-medium text-slate-500">
-                    Deposit amount
+                    {t('Deposit amount')}
                   </span>
                   <NumberInput
                     value={doc.deposit}
@@ -237,7 +248,9 @@ export function TotalsPanel({
                   />
                 </label>
                 <label className="text-sm">
-                  <span className="mb-1 block text-xs font-medium text-slate-500">Deposit due</span>
+                  <span className="mb-1 block text-xs font-medium text-slate-500">
+                    {t('Deposit due')}
+                  </span>
                   <Input
                     type="date"
                     value={doc.depositDueDate ?? ''}

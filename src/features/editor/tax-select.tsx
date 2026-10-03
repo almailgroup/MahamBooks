@@ -3,10 +3,11 @@ import { Check, ChevronDown } from 'lucide-react';
 import type { TaxLine, TaxRate } from '@/db/types';
 import { taxKey, taxLineOf } from '@/lib/calc';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 
-function label(t: TaxLine) {
-  const base = `${t.name} ${Number(t.rate.toFixed(4))}%`;
-  return t.kind === 'reverse_charge' ? `${base} reverse charge` : base;
+function label(tax: TaxLine) {
+  const base = `${tax.name} ${Number(tax.rate.toFixed(4))}%`;
+  return tax.kind === 'reverse_charge' ? `${base} (${t('Reverse charge')})` : base;
 }
 
 /** Multi-select of tax rates. Values are snapshots ({name, rate}). */
@@ -15,7 +16,7 @@ export function TaxSelect({
   onChange,
   rates,
   className,
-  placeholder = 'No tax',
+  placeholder: placeholderText,
   id,
 }: {
   value: TaxLine[];
@@ -25,6 +26,7 @@ export function TaxSelect({
   placeholder?: string;
   id?: string;
 }) {
+  const placeholder = placeholderText ?? t('No tax');
   const selected = new Set(value.map(taxKey));
   const options: TaxLine[] = [...rates.filter((r) => !r.archived).map(taxLineOf)];
   // Keep taxes that are no longer configured but are still on this document.
@@ -70,7 +72,7 @@ export function TaxSelect({
         >
           {options.length === 0 ? (
             <p className="px-3 py-3 text-sm text-slate-500">
-              No tax rates yet. Add them in Settings → Taxes.
+              {t('No tax rates yet. Add them in Settings → Taxes.')}
             </p>
           ) : (
             options.map((t) => {
@@ -101,7 +103,7 @@ export function TaxSelect({
               onClick={() => onChange([])}
               className="mt-1 w-full rounded-md border-t border-slate-100 px-2.5 py-2 text-start text-sm text-slate-500 hover:bg-slate-50"
             >
-              Clear
+              {t('Clear')}
             </button>
           ) : null}
         </Popover.Content>

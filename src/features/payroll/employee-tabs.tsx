@@ -55,7 +55,7 @@ export function LeaveTab({ employee }: { employee: Employee }) {
     percent === 100
       ? t('Full pay')
       : percent === 0
-        ? t('Unpaid')
+        ? t('Without pay')
         : t('{percent} pay', { percent: fmt.percent(percent) });
 
   const cancel = async (id: string) => {

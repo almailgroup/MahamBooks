@@ -71,11 +71,30 @@ const HUMAN: Record<LabelKey, string> = {
   voidStamp: msg('Void stamp'),
   overdueStamp: msg('Overdue stamp'),
   acceptedStamp: msg('Accepted stamp'),
+  proforma: msg('Proforma invoice title'),
+  salesOrder: msg('Sales order title'),
+  purchaseOrder: msg('Purchase order title'),
+  deliveryNote: msg('Delivery note title'),
+  proformaNumber: msg('Proforma number'),
+  salesOrderNumber: msg('Sales order number'),
+  purchaseOrderNumber: msg('Purchase order number'),
+  deliveryNoteNumber: msg('Delivery note number'),
+  supplier: msg('Supplier'),
+  deliveredTo: msg('Delivered to'),
+  deliveredBy: msg('Delivered by'),
+  receiverName: msg('Name of the person receiving'),
+  civilId: msg('Civil ID number'),
+  date: msg('Date'),
+  unit: msg('Unit column'),
+  receivedInGoodOrder: msg('Receipt wording on delivery notes'),
+  deliveredStamp: msg('Delivered stamp'),
+  cancelledStamp: msg('Cancelled stamp'),
+  receiverSignature: msg('Signature of the person receiving'),
 };
 
 const HINTS: Partial<Record<LabelKey, string>> = {
   invoice: msg('For example “Tax invoice”'),
-  quote: msg('For example “Estimate” or “Proforma invoice”'),
+  quote: msg('For example “Estimate” or “Quotation”'),
 };
 
 /** The sets of words a document language prints (bilingual documents print two). */

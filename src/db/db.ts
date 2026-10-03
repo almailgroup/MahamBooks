@@ -126,6 +126,12 @@ export class InvoiceDatabase extends Dexie {
       depreciationRuns: 'id, companyId, [companyId+period]',
       yearEnds: 'id, companyId, [companyId+yearEnd]',
     });
+    // Orders: a sales or purchase order finds the invoices, bills and delivery
+    // notes created from it by their source.
+    this.version(13).stores({
+      documents:
+        'id, companyId, [companyId+type], [companyId+type+number], clientId, issueDate, status, recurringId, sourceId',
+    });
   }
 }
 

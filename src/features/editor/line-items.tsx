@@ -41,12 +41,16 @@ function MiniLabel({ children }: { children: ReactNode }) {
   );
 }
 
+function FieldLabel({ children }: { children: ReactNode }) {
+  return <span className="mb-1 block text-xs font-medium text-slate-500">{children}</span>;
+}
+
 export function DiscountInput({
   value,
   type,
   onChange,
   currencySymbol,
-  ariaLabel = 'Discount',
+  ariaLabel,
 }: {
   value: number;
   type: 'percent' | 'amount';
@@ -57,7 +61,7 @@ export function DiscountInput({
   return (
     <div className="flex">
       <NumberInput
-        aria-label={ariaLabel}
+        aria-label={ariaLabel ?? t('Discount')}
         value={value}
         onValueChange={(v) => onChange(v, type)}
         allowNegative={false}
@@ -67,7 +71,7 @@ export function DiscountInput({
         type="button"
         onClick={() => onChange(value, type === 'percent' ? 'amount' : 'percent')}
         className="h-9 min-w-9 rounded-e-lg border border-s-0 border-slate-300 bg-slate-50 px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-        title={type === 'percent' ? 'Switch to a fixed amount' : 'Switch to a percentage'}
+        title={type === 'percent' ? t('Switch to a fixed amount') : t('Switch to a percentage')}
       >
         {type === 'percent' ? '%' : currencySymbol}
       </button>
@@ -87,6 +91,7 @@ export function LineItemsEditor({
   formatMoney,
   formatPrice,
   language,
+  prices = true,
 }: {
   items: LineItem[];
   onChange: (items: LineItem[]) => void;
@@ -100,12 +105,14 @@ export function LineItemsEditor({
   formatPrice: (amount: number) => string;
   /** Language the document prints in; Arabic names are asked for unless it is not Arabic. */
   language?: DocumentLanguage;
+  /** False for delivery notes: quantities, units and serial numbers only. */
+  prices?: boolean;
 }) {
   const showArabic =
     language === undefined || isRtlLanguage(language) || items.some((i) => i.nameAr?.trim());
   /** Lines selling goods can carry their condition and serial number. */
   const hasGoodsDetails = (item: LineItem) =>
-    item.condition !== undefined || item.serialNumber !== undefined;
+    item.condition !== undefined || (prices && item.serialNumber !== undefined);
   const update = (index: number, patch: Partial<LineItem>) =>
     onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   const remove = (index: number) => onChange(items.filter((_, i) => i !== index));
@@ -147,15 +154,50 @@ export function LineItemsEditor({
     });
   };
 
+  const serialInput = (item: LineItem, index: number) => (
+    <Input
+      aria-label={t('Item {number} serial number', { number: index + 1 })}
+      dir="ltr"
+      value={item.serialNumber ?? ''}
+      onChange={(e) => update(index, { serialNumber: e.target.value })}
+      placeholder={t('Serial or IMEI number')}
+    />
+  );
+  const conditionSelect = (item: LineItem, index: number) => (
+    <Select
+      aria-label={t('Item {number} condition', { number: index + 1 })}
+      value={item.condition ?? ''}
+      onChange={(e) =>
+        update(index, {
+          condition: (e.target.value || null) as ItemCondition | null,
+        })
+      }
+    >
+      <option value="">{t('Not shown')}</option>
+      <option value="new">{t('New')}</option>
+      <option value="used">{t('Used')}</option>
+    </Select>
+  );
+
   // Container queries: the layout follows the editor's width, not the screen's,
   // because the live preview takes part of the screen.
   return (
     <div className="@container">
       <div className="hidden grid-cols-12 gap-3 px-3 pb-2 text-xs font-medium tracking-wide text-slate-500 uppercase @xl:grid">
-        <span className="col-span-6 ps-5">Item</span>
-        <span className="col-span-2 text-end">Qty</span>
-        <span className="col-span-2 text-end">Price</span>
-        <span className="col-span-2 pe-9 text-end">Amount</span>
+        {prices ? (
+          <>
+            <span className="col-span-6 ps-5">{t('Item')}</span>
+            <span className="col-span-2 text-end">{t('Qty')}</span>
+            <span className="col-span-2 text-end">{t('Price')}</span>
+            <span className="col-span-2 pe-9 text-end">{t('Amount')}</span>
+          </>
+        ) : (
+          <>
+            <span className="col-span-7 ps-5">{t('Item')}</span>
+            <span className="col-span-2 text-end">{t('Qty')}</span>
+            <span className="col-span-3 pe-9">{t('Unit')}</span>
+          </>
+        )}
       </div>
 
       <ol className="space-y-2">
@@ -163,7 +205,11 @@ export function LineItemsEditor({
           const menu = (
             <DropdownMenu>
               <DropdownTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={`Line ${index + 1} actions`}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Line {number} actions', { number: index + 1 })}
+                >
                   <MoreHorizontal />
                 </Button>
               </DropdownTrigger>
@@ -173,20 +219,20 @@ export function LineItemsEditor({
                   disabled={index === 0}
                   onSelect={() => move(index, -1)}
                 >
-                  Move up
+                  {t('Move up')}
                 </DropdownItem>
                 <DropdownItem
                   icon={<ArrowDown />}
                   disabled={index === items.length - 1}
                   onSelect={() => move(index, 1)}
                 >
-                  Move down
+                  {t('Move down')}
                 </DropdownItem>
                 <DropdownItem icon={<Copy />} onSelect={() => duplicate(index)}>
-                  Duplicate
+                  {t('Duplicate')}
                 </DropdownItem>
                 <DropdownItem icon={<Heading />} onSelect={() => insertHeading(index)}>
-                  Insert heading above
+                  {t('Insert heading above')}
                 </DropdownItem>
                 {items[index].kind === 'item' ? (
                   <DropdownItem
@@ -195,19 +241,23 @@ export function LineItemsEditor({
                       update(
                         index,
                         hasGoodsDetails(items[index])
-                          ? { condition: undefined, serialNumber: undefined }
-                          : { condition: null, serialNumber: '' },
+                          ? { condition: undefined, ...(prices ? { serialNumber: undefined } : {}) }
+                          : { condition: null, serialNumber: items[index].serialNumber ?? '' },
                       )
                     }
                   >
-                    {hasGoodsDetails(items[index])
-                      ? t('Remove condition and serial no.')
-                      : t('Add condition and serial no.')}
+                    {prices
+                      ? hasGoodsDetails(items[index])
+                        ? t('Remove condition and serial no.')
+                        : t('Add condition and serial no.')
+                      : hasGoodsDetails(items[index])
+                        ? t('Remove condition')
+                        : t('Add condition')}
                   </DropdownItem>
                 ) : null}
                 <DropdownSeparator />
                 <DropdownItem icon={<Trash2 />} danger onSelect={() => remove(index)}>
-                  Remove
+                  {t('Remove')}
                 </DropdownItem>
               </DropdownContent>
             </DropdownMenu>
@@ -225,10 +275,10 @@ export function LineItemsEditor({
                 />
                 <div className="flex-1 space-y-2">
                   <Input
-                    aria-label="Section heading"
+                    aria-label={t('Section heading')}
                     value={item.name}
                     onChange={(e) => update(index, { name: e.target.value })}
-                    placeholder="Section heading, e.g. “Print production”"
+                    placeholder={t('Section heading, e.g. “Print production”')}
                     className="font-semibold"
                   />
                   {showArabic ? (
@@ -243,10 +293,10 @@ export function LineItemsEditor({
                     />
                   ) : null}
                   <Input
-                    aria-label="Section note"
+                    aria-label={t('Section note')}
                     value={item.description}
                     onChange={(e) => update(index, { description: e.target.value })}
-                    placeholder="Optional note"
+                    placeholder={t('Optional note')}
                     className="h-8 text-xs"
                   />
                 </div>
@@ -255,48 +305,123 @@ export function LineItemsEditor({
             );
           }
 
+          const nameInput = (
+            <div className="flex items-start gap-2">
+              <GripVertical
+                className="mt-2.5 hidden size-4 shrink-0 text-slate-300 @xl:block"
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <ItemNameInput
+                  ariaLabel={t('Item {number} name', { number: index + 1 })}
+                  value={item.name}
+                  onChange={(name) => update(index, { name, productId: null })}
+                  products={products}
+                  onPick={(p) => pickProduct(index, p)}
+                  formatPrice={formatPrice}
+                />
+              </div>
+            </div>
+          );
+          const quantityInput = (
+            <NumberInput
+              aria-label={t('Item {number} quantity', { number: index + 1 })}
+              value={item.quantity}
+              onValueChange={(quantity) => update(index, { quantity })}
+            />
+          );
+          const unitInput = (
+            <Input
+              aria-label={t('Item {number} unit', { number: index + 1 })}
+              value={item.unit}
+              onChange={(e) => update(index, { unit: e.target.value })}
+              placeholder={t('pcs, hrs…')}
+              className={prices ? 'text-end' : undefined}
+            />
+          );
+          const details = (
+            <>
+              {showArabic ? (
+                <Input
+                  aria-label={t('Arabic name of item {number}', { number: index + 1 })}
+                  dir="rtl"
+                  lang="ar"
+                  value={item.nameAr ?? ''}
+                  onChange={(e) => update(index, { nameAr: e.target.value })}
+                  placeholder={t('Name in Arabic (optional)')}
+                />
+              ) : null}
+              <Textarea
+                aria-label={t('Item {number} description', { number: index + 1 })}
+                value={item.description}
+                onChange={(e) => update(index, { description: e.target.value })}
+                placeholder={t('Description (optional)')}
+                rows={1}
+                className="min-h-9 resize-y py-1.5 text-sm"
+              />
+            </>
+          );
+
+          if (!prices) {
+            // Delivery notes: what goes out, how many and which serial numbers.
+            return (
+              <li
+                key={item.id}
+                className="rounded-lg border border-slate-200 bg-white p-3 shadow-xs"
+              >
+                <div className="grid grid-cols-12 gap-x-3 gap-y-2">
+                  <div className="col-span-12 @xl:col-span-7">{nameInput}</div>
+                  <div className="col-span-5 @xl:col-span-2">
+                    <MiniLabel>{t('Qty')}</MiniLabel>
+                    {quantityInput}
+                  </div>
+                  <div className="col-span-7 flex items-start gap-1 @xl:col-span-3">
+                    <div className="min-w-0 flex-1">
+                      <MiniLabel>{t('Unit')}</MiniLabel>
+                      {unitInput}
+                    </div>
+                    <div className="hidden @xl:block">{menu}</div>
+                  </div>
+                  <div className="col-span-12 space-y-2 @xl:col-span-7 @xl:ps-6">{details}</div>
+                  <label className="col-span-12 @xl:col-span-5">
+                    <FieldLabel>{t('Serial no.')}</FieldLabel>
+                    {serialInput(item, index)}
+                  </label>
+                  {item.condition !== undefined ? (
+                    <label className="col-span-12 @xl:col-span-5 @xl:col-start-8">
+                      <FieldLabel>{t('Condition')}</FieldLabel>
+                      {conditionSelect(item, index)}
+                    </label>
+                  ) : null}
+                </div>
+                <div className="mt-2 flex justify-end @xl:hidden">{menu}</div>
+              </li>
+            );
+          }
+
           const line = lines[index];
           return (
             <li key={item.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-xs">
               <div className="grid grid-cols-12 gap-x-3 gap-y-2">
-                <div className="col-span-12 flex items-start gap-2 @xl:col-span-6">
-                  <GripVertical
-                    className="mt-2.5 hidden size-4 shrink-0 text-slate-300 @xl:block"
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <ItemNameInput
-                      ariaLabel={`Item ${index + 1} name`}
-                      value={item.name}
-                      onChange={(name) => update(index, { name, productId: null })}
-                      products={products}
-                      onPick={(p) => pickProduct(index, p)}
-                      formatPrice={formatPrice}
-                    />
-                  </div>
+                <div className="col-span-12 @xl:col-span-6">{nameInput}</div>
+                <div className="col-span-4 @xl:col-span-2">
+                  <MiniLabel>{t('Qty')}</MiniLabel>
+                  {quantityInput}
                 </div>
                 <div className="col-span-4 @xl:col-span-2">
-                  <MiniLabel>Qty</MiniLabel>
+                  <MiniLabel>{t('Price')}</MiniLabel>
                   <NumberInput
-                    aria-label={`Item ${index + 1} quantity`}
-                    value={item.quantity}
-                    onValueChange={(quantity) => update(index, { quantity })}
-                  />
-                </div>
-                <div className="col-span-4 @xl:col-span-2">
-                  <MiniLabel>Price</MiniLabel>
-                  <NumberInput
-                    aria-label={`Item ${index + 1} unit price`}
+                    aria-label={t('Item {number} unit price', { number: index + 1 })}
                     value={item.unitPrice}
                     onValueChange={(unitPrice) => update(index, { unitPrice })}
                   />
                 </div>
                 <div className="col-span-4 flex items-start justify-end gap-1 @xl:col-span-2">
                   <div className="min-w-0 flex-1 text-end">
-                    <MiniLabel>Amount</MiniLabel>
+                    <MiniLabel>{t('Amount')}</MiniLabel>
                     <p
                       className="tabular truncate pt-2 text-sm font-semibold text-slate-900"
-                      aria-label={`Item ${index + 1} amount`}
+                      aria-label={t('Item {number} amount', { number: index + 1 })}
                     >
                       {formatMoney(line?.net ?? 0)}
                     </p>
@@ -311,39 +436,16 @@ export function LineItemsEditor({
                     hasGoodsDetails(item) && '@xl:row-span-2',
                   )}
                 >
-                  {showArabic ? (
-                    <Input
-                      aria-label={t('Arabic name of item {number}', { number: index + 1 })}
-                      dir="rtl"
-                      lang="ar"
-                      value={item.nameAr ?? ''}
-                      onChange={(e) => update(index, { nameAr: e.target.value })}
-                      placeholder={t('Name in Arabic (optional)')}
-                    />
-                  ) : null}
-                  <Textarea
-                    aria-label={`Item ${index + 1} description`}
-                    value={item.description}
-                    onChange={(e) => update(index, { description: e.target.value })}
-                    placeholder="Description (optional)"
-                    rows={1}
-                    className="min-h-9 resize-y py-1.5 text-sm"
-                  />
+                  {details}
                 </div>
                 <div className="col-span-4 @xl:col-span-2">
-                  <span className="mb-1 block text-xs font-medium text-slate-500">Unit</span>
-                  <Input
-                    aria-label={`Item ${index + 1} unit`}
-                    value={item.unit}
-                    onChange={(e) => update(index, { unit: e.target.value })}
-                    placeholder="pcs, hrs…"
-                    className="text-end"
-                  />
+                  <FieldLabel>{t('Unit')}</FieldLabel>
+                  {unitInput}
                 </div>
                 <div className="col-span-4 @xl:col-span-2">
-                  <span className="mb-1 block text-xs font-medium text-slate-500">Discount</span>
+                  <FieldLabel>{t('Discount')}</FieldLabel>
                   <DiscountInput
-                    ariaLabel={`Item ${index + 1} discount`}
+                    ariaLabel={t('Item {number} discount', { number: index + 1 })}
                     value={item.discount}
                     type={item.discountType}
                     currencySymbol={currencySymbol}
@@ -351,7 +453,7 @@ export function LineItemsEditor({
                   />
                 </div>
                 <div className={cn('col-span-4 @xl:col-span-2', !showTaxes && 'invisible')}>
-                  <span className="mb-1 block text-xs font-medium text-slate-500">Tax</span>
+                  <FieldLabel>{t('Tax')}</FieldLabel>
                   <TaxSelect
                     value={item.taxes}
                     onChange={(taxes) => update(index, { taxes })}
@@ -361,34 +463,12 @@ export function LineItemsEditor({
                 {hasGoodsDetails(item) ? (
                   <>
                     <label className="col-span-5 @xl:col-span-2 @xl:col-start-7">
-                      <span className="mb-1 block text-xs font-medium text-slate-500">
-                        {t('Condition')}
-                      </span>
-                      <Select
-                        aria-label={t('Item {number} condition', { number: index + 1 })}
-                        value={item.condition ?? ''}
-                        onChange={(e) =>
-                          update(index, {
-                            condition: (e.target.value || null) as ItemCondition | null,
-                          })
-                        }
-                      >
-                        <option value="">{t('Not shown')}</option>
-                        <option value="new">{t('New')}</option>
-                        <option value="used">{t('Used')}</option>
-                      </Select>
+                      <FieldLabel>{t('Condition')}</FieldLabel>
+                      {conditionSelect(item, index)}
                     </label>
                     <label className="col-span-7 @xl:col-span-4">
-                      <span className="mb-1 block text-xs font-medium text-slate-500">
-                        {t('Serial no.')}
-                      </span>
-                      <Input
-                        aria-label={t('Item {number} serial number', { number: index + 1 })}
-                        dir="ltr"
-                        value={item.serialNumber ?? ''}
-                        onChange={(e) => update(index, { serialNumber: e.target.value })}
-                        placeholder={t('Serial or IMEI number')}
-                      />
+                      <FieldLabel>{t('Serial no.')}</FieldLabel>
+                      {serialInput(item, index)}
                     </label>
                   </>
                 ) : null}
@@ -405,10 +485,10 @@ export function LineItemsEditor({
           size="sm"
           onClick={() => onChange([...items, newLineItem(showTaxes ? defaultTaxes : [])])}
         >
-          <Plus /> Add item
+          <Plus /> {t('Add item')}
         </Button>
         <Button variant="ghost" size="sm" onClick={() => onChange([...items, newHeading()])}>
-          <Heading /> Add section heading
+          <Heading /> {t('Add section heading')}
         </Button>
       </div>
     </div>

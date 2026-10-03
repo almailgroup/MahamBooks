@@ -56,6 +56,74 @@ const variants: Variant[] = [
   { name: 'quote', doc: (l) => sampleDocument(company, client, 'quote', {}, l) },
   { name: 'credit', doc: (l) => sampleDocument(company, client, 'credit', {}, l) },
   {
+    name: 'proforma',
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        { type: 'proforma', number: 'PF-2026-0004', deposit: 500, depositDueDate: '2026-10-15' },
+        l,
+      ),
+  },
+  {
+    name: 'sales order',
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          type: 'sales_order',
+          number: 'SO-2026-0011',
+          status: 'confirmed',
+          dueDate: null,
+          deliveryDate: '2026-10-20',
+        },
+        l,
+      ),
+  },
+  {
+    name: 'purchase order',
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          type: 'purchase_order',
+          number: 'PO-2026-0007',
+          status: 'issued',
+          dueDate: null,
+          deliveryPlace: 'Warehouse 4, Shuwaikh Industrial',
+        },
+        l,
+      ),
+  },
+  {
+    name: 'delivery note',
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          type: 'delivery_note',
+          number: 'DN-2026-0009',
+          status: 'delivered',
+          items: sampleGoods(),
+          dueDate: null,
+          notes: '',
+          terms: '',
+          deliveryDate: '2026-10-03',
+          deliveryPlace: 'Warehouse 4, Shuwaikh Industrial',
+          receiverName: 'Ahmad Al-Mutairi',
+          receiverCivilId: '287010112349',
+        },
+        l,
+      ),
+  },
+  {
     name: 'multi-page',
     doc: (l) => sampleDocument(company, client, 'invoice', { items: sampleLongItems() }, l),
   },

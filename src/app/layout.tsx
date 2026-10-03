@@ -9,6 +9,10 @@ import {
   BarChart3,
   Building2,
   ChevronsUpDown,
+  ClipboardList,
+  FileClock,
+  PackageCheck,
+  ShoppingCart,
   FileMinus,
   FileText,
   CalendarClock,
@@ -74,6 +78,9 @@ const NAV: { title?: string; items: NavItem[] }[] = [
       { to: '/clients', label: msg('Clients'), icon: <Users /> },
       { to: '/invoices', label: msg('Invoices'), icon: <FileText /> },
       { to: '/quotes', label: msg('Quotes'), icon: <ScrollText /> },
+      { to: '/proformas', label: msg('Proforma invoices'), icon: <FileClock /> },
+      { to: '/sales-orders', label: msg('Sales orders'), icon: <ClipboardList /> },
+      { to: '/delivery-notes', label: msg('Delivery notes'), icon: <PackageCheck /> },
       { to: '/credits', label: msg('Credit notes'), icon: <FileMinus /> },
       { to: '/recurring', label: msg('Recurring'), icon: <Repeat /> },
       { to: '/payments', label: msg('Payments received'), icon: <ArrowDownLeft /> },
@@ -84,6 +91,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
     title: msg('Purchases'),
     items: [
       { to: '/vendors', label: msg('Vendors'), icon: <Truck /> },
+      { to: '/purchase-orders', label: msg('Purchase orders'), icon: <ShoppingCart /> },
       { to: '/bills', label: msg('Bills'), icon: <Receipt /> },
       { to: '/expenses', label: msg('Expenses'), icon: <Wallet /> },
       { to: '/payments-made', label: msg('Payments made'), icon: <ArrowUpRight /> },
@@ -271,6 +279,15 @@ function NewMenu() {
         <DropdownItem icon={<ScrollText />} onSelect={() => navigate('/quotes/new')}>
           {t('Quote')}
         </DropdownItem>
+        <DropdownItem icon={<FileClock />} onSelect={() => navigate('/proformas/new')}>
+          {t('Proforma invoice')}
+        </DropdownItem>
+        <DropdownItem icon={<ClipboardList />} onSelect={() => navigate('/sales-orders/new')}>
+          {t('Sales order')}
+        </DropdownItem>
+        <DropdownItem icon={<PackageCheck />} onSelect={() => navigate('/delivery-notes/new')}>
+          {t('Delivery note')}
+        </DropdownItem>
         <DropdownItem icon={<FileMinus />} onSelect={() => navigate('/credits/new')}>
           {t('Credit note')}
         </DropdownItem>
@@ -282,6 +299,9 @@ function NewMenu() {
         </DropdownItem>
         <DropdownSeparator />
         <DropdownLabel>{t('Purchases')}</DropdownLabel>
+        <DropdownItem icon={<ShoppingCart />} onSelect={() => navigate('/purchase-orders/new')}>
+          {t('Purchase order')}
+        </DropdownItem>
         <DropdownItem icon={<Receipt />} onSelect={() => navigate('/bills/new')}>
           {t('Bill')}
         </DropdownItem>
@@ -340,7 +360,9 @@ export function AppLayout() {
   // Full-width pages (the document editor) manage their own layout.
   const wide =
     /\/(new|edit)$/.test(location.pathname) ||
-    /^\/(invoices|quotes|credits)\/[^/]+$/.test(location.pathname);
+    /^\/(invoices|quotes|credits|proformas|sales-orders|delivery-notes)\/[^/]+$/.test(
+      location.pathname,
+    );
 
   return (
     <div className="min-h-dvh">

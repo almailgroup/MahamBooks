@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -6,22 +6,37 @@ import {
   CheckCircle2,
   Copy,
   CreditCard,
+  Download,
   FileMinus,
   MoreHorizontal,
   Pencil,
+  Printer,
+  Receipt,
+  RotateCcw,
   Trash2,
   Undo2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteDocument, duplicateDocument, markSent, setDocumentStatus } from '@/db/documents';
+import { progressOf } from '@/db/orders';
+import { activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
 import { addAttachment, removeAttachment } from '@/db/purchases';
-import type { InvoiceDocument, PurchaseDocumentType } from '@/db/types';
-import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
+import type { Client, DocumentStatus, InvoiceDocument, PurchaseDocumentType } from '@/db/types';
+import {
+  DOCUMENT_LABELS,
+  DOCUMENT_ROUTES,
+  documentNoun,
+  useCompany,
+  useFormat,
+} from '@/app/company';
 import { computeDocument } from '@/lib/document-calc';
 import { displayStatus } from '@/lib/status';
 import { daysBetween, today } from '@/lib/dates';
+import { t, tp } from '@/i18n';
+import { tr } from '@/i18n/provider';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner, StatusBadge } from '@/components/ui/misc';
 import {
@@ -32,11 +47,15 @@ import {
   DropdownTrigger,
   useConfirm,
 } from '@/components/ui/overlay';
+import { PdfPreview } from '@/components/pdf/pdf-preview';
+import { generatePdf, useLivePdf } from '@/components/pdf/use-pdf';
+import { downloadBlob, pdfFileName, printBlob } from '@/pdf/client';
 import { ApplyCreditDialog, RecordPaymentDialog } from '@/features/documents/payment-dialogs';
 import { AttachmentList } from '@/features/purchases/attachments';
 import { useAccounts } from '@/features/accounting/account-pickers';
 import { PaymentStatusBadge } from '@/features/payments/status-badge';
-import { t } from '@/i18n';
+import { PartDialog } from '@/features/orders/part-dialog';
+import { RelatedDocuments } from '@/features/orders/related';
 
 function SummaryRow({
   label,
@@ -44,19 +63,19 @@ function SummaryRow({
   tone,
 }: {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
   tone?: 'danger' | 'strong';
 }) {
   return (
-    <div className="flex items-center justify-between py-1.5 text-sm">
+    <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
       <span className="text-slate-500">{label}</span>
       <span
         className={
           tone === 'danger'
-            ? 'tabular font-semibold text-red-600'
+            ? 'tabular text-end font-semibold text-red-600'
             : tone === 'strong'
-              ? 'tabular font-semibold text-slate-900'
-              : 'tabular text-slate-700'
+              ? 'tabular text-end font-semibold text-slate-900'
+              : 'tabular text-end text-slate-700'
         }
       >
         {value}
@@ -65,7 +84,7 @@ function SummaryRow({
   );
 }
 
-function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
       <dt className="text-xs font-medium tracking-wide text-slate-500 uppercase">{label}</dt>
@@ -74,7 +93,33 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
-/** A bill or vendor credit: what was bought, what is owed and what was paid. */
+/** The PDF of a purchase order (bills and vendor credits are the vendor's documents). */
+function usePurchaseOrderPdf(
+  doc: InvoiceDocument | null | undefined,
+  vendor: Client | null | undefined,
+) {
+  const company = useCompany();
+  const printed = doc && doc.type === 'purchase_order' && vendor !== undefined ? doc : null;
+  const pdf = useLivePdf(
+    printed,
+    company,
+    vendor ?? null,
+    doc?.templateId ?? company.branding.templateId,
+    { delay: 0 },
+  );
+  const fileName = useMemo(
+    () =>
+      doc
+        ? pdfFileName(`${DOCUMENT_LABELS[doc.type].singular} ${doc.number}`, vendor?.name ?? '')
+        : 'document.pdf',
+    [doc, vendor],
+  );
+  const getPdf = async () =>
+    pdf.blob ?? (doc ? (await generatePdf(doc, company, vendor ?? null)).blob : null);
+  return { pdf, fileName, getPdf };
+}
+
+/** A bill, vendor credit or purchase order: what was bought, what is owed and what was paid. */
 export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -83,7 +128,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
   const confirm = useConfirm();
   const labels = DOCUMENT_LABELS[type];
   const base = DOCUMENT_ROUTES[type];
-  const noun = labels.singular.toLowerCase();
+  const order = type === 'purchase_order';
 
   const doc = useLiveQuery(() => db.documents.get(id), [id]);
   const vendor = useLiveQuery(
@@ -91,7 +136,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
     [doc?.clientId],
   );
   const payments = useLiveQuery(async () => {
-    if (!doc) return [];
+    if (!doc || order) return [];
     const list =
       doc.type === 'vendor_credit'
         ? await db.payments.where('creditId').equals(doc.id).toArray()
@@ -106,33 +151,23 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
     () => db.activities.where('documentId').equals(id).reverse().sortBy('at'),
     [id],
   );
-  const related = useLiveQuery(async () => {
-    if (!doc) return [];
-    const ids = [doc.sourceId].filter((x): x is string => Boolean(x));
-    const fromThis = await db.documents
-      .where('companyId')
-      .equals(doc.companyId)
-      .filter((d) => d.sourceId === doc.id)
-      .toArray();
-    const sources = (await db.documents.bulkGet(ids)).filter((d): d is InvoiceDocument =>
-      Boolean(d),
-    );
-    return [...sources, ...fromThis];
-  }, [doc?.id, doc?.sourceId, doc?.companyId]);
+  const progress = useLiveQuery(async () => (doc && order ? progressOf(doc) : null), [doc, order]);
   const accounts = useAccounts();
+  const printing = usePurchaseOrderPdf(doc, vendor);
 
   const [recordPayment, setRecordPayment] = useState(false);
   const [applyCredit, setApplyCredit] = useState(false);
+  const [convert, setConvert] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   if (doc === undefined || vendor === undefined || !accounts)
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
   if (!doc || doc.companyId !== company.id || doc.type !== type) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {noun} could not be found.</p>
+        <p className="text-slate-600">{t('This document could not be found.')}</p>
         <Link to={base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {labels.plural.toLowerCase()}
+          {t('Back to {list}', { list: t(labels.plural).toLowerCase() })}
         </Link>
       </Card>
     );
@@ -144,60 +179,104 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
   const result = computeDocument(doc, { paid: doc.totals.paid, taxExempt: vendor?.taxExempt });
   const accountName = (accountId?: string | null) => {
     const account = accounts.find((a) => a.id === accountId);
-    return account ? `${account.code} ${account.name}` : 'General expenses';
+    return account ? `${account.code} ${localName(account)}` : t('General expenses');
   };
   const open = doc.status === 'sent' || doc.status === 'partial';
   const isBill = type === 'bill';
+  const billed = new Map(progress?.map((p) => [p.line.id, p.invoiced]) ?? []);
+  const canBill =
+    order &&
+    (doc.status === 'issued' || doc.status === 'partially_billed') &&
+    (progress?.some((p) => p.toInvoice > 0) ?? false);
 
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     try {
       await action();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong.');
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     } finally {
       setBusy(null);
     }
   };
 
+  const opened = (created: InvoiceDocument, edit = false) => {
+    toast.success(
+      t('{document} {number} created', {
+        document: t(DOCUMENT_LABELS[created.type].singular),
+        number: created.number,
+      }),
+    );
+    navigate(`${DOCUMENT_ROUTES[created.type]}/${created.id}${edit ? '/edit' : ''}`);
+  };
+
+  const setStatus = (next: DocumentStatus) => run(next, () => setDocumentStatus(doc.id, next));
+
   const remove = async () => {
     const ok = await confirm({
-      title: `Delete ${noun} ${doc.number}?`,
+      title: t('Delete {document} {number}?', { document: documentNoun(type), number: doc.number }),
       description:
         isBill && doc.totals.paid > 0
-          ? 'Payments made against it will be kept as an unapplied advance to the vendor.'
-          : 'This cannot be undone.',
-      confirmLabel: 'Delete',
+          ? t('Payments made against it will be kept as an unapplied advance to the vendor.')
+          : t('This cannot be undone.'),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
     await run('delete', async () => {
       await deleteDocument(doc.id);
-      toast.success(`${labels.singular} deleted`);
+      toast.success(t('{document} deleted', { document: t(labels.singular) }));
       navigate(base);
     });
   };
 
   const voidDoc = async () => {
     const ok = await confirm({
-      title: `Void ${doc.number}?`,
-      description: 'A void document stays in your records for reference but leaves the books.',
-      confirmLabel: 'Void',
+      title: t('Void {number}?', { number: doc.number }),
+      description: t('A void document stays in your records for reference but leaves the books.'),
+      confirmLabel: t('Void'),
       danger: true,
     });
     if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
   };
 
+  const cancelOrder = async () => {
+    const ok = await confirm({
+      title: t('Cancel {number}?', { number: doc.number }),
+      description: t(
+        'A cancelled document stays in your records for reference. Bills already made from it are not changed.',
+      ),
+      confirmLabel: t('Cancel order'),
+      danger: true,
+    });
+    if (ok) await setStatus('cancelled');
+  };
+
+  const download = () =>
+    run('download', async () => {
+      const blob = await printing.getPdf();
+      if (blob) downloadBlob(blob, printing.fileName);
+    });
+  const print = () =>
+    run('print', async () => {
+      const blob = await printing.getPdf();
+      if (blob) printBlob(blob);
+    });
+
   const primaryAction =
     doc.status === 'draft' ? (
       <Button loading={busy === 'open'} onClick={() => void run('open', () => markSent(doc.id))}>
-        <CheckCircle2 /> Mark as open
+        <CheckCircle2 /> {order ? t('Mark as issued') : t('Mark as open')}
+      </Button>
+    ) : canBill ? (
+      <Button onClick={() => setConvert(true)}>
+        <Receipt /> {t('Convert to bill')}
       </Button>
     ) : isBill && open ? (
       <Button onClick={() => setRecordPayment(true)}>
         <CreditCard /> {t('Record payment')}
       </Button>
-    ) : !isBill && open && doc.totals.balance > 0 ? (
+    ) : type === 'vendor_credit' && open && doc.totals.balance > 0 ? (
       <Button onClick={() => setApplyCredit(true)}>
         <CreditCard /> {t('Apply to bill')}
       </Button>
@@ -209,36 +288,57 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
         <div className="min-w-0">
           <p className="mb-1 text-sm text-slate-500">
             <Link to={base} className="hover:text-slate-700">
-              {labels.plural}
+              {t(labels.plural)}
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              {labels.singular} {doc.number}
+              {t(labels.singular)} {doc.number}
             </h1>
             <StatusBadge status={status} />
           </div>
           {vendor ? (
             <p className="mt-1 text-sm text-slate-500">
-              from{' '}
-              <Link
-                to={`/vendors/${vendor.id}`}
-                className="hover:text-primary-700 font-medium text-slate-700"
-              >
-                {vendor.name}
-              </Link>
-              {doc.vendorReference ? ` · their ref. ${doc.vendorReference}` : ''}
+              {tr(order ? 'to {vendor}' : 'from {vendor}', {
+                vendor: (
+                  <Link
+                    to={`/vendors/${vendor.id}`}
+                    className="hover:text-primary-700 font-medium text-slate-700"
+                  >
+                    {localName(vendor)}
+                  </Link>
+                ),
+              })}
+              {doc.vendorReference && !order
+                ? ` · ${t('their ref. {reference}', { reference: doc.vendorReference })}`
+                : ''}
             </p>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {order ? (
+            <>
+              <Button variant="outline" onClick={download} loading={busy === 'download'}>
+                <Download /> {t('Download PDF')}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={print}
+                loading={busy === 'print'}
+                aria-label={t('Print')}
+              >
+                <Printer />
+              </Button>
+            </>
+          ) : null}
           <Button variant="outline" onClick={() => navigate(`${base}/${doc.id}/edit`)}>
-            <Pencil /> Edit
+            <Pencil /> {t('Edit')}
           </Button>
           {primaryAction}
           <DropdownMenu>
             <DropdownTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="More actions">
+              <Button variant="outline" size="icon" aria-label={t('More actions')}>
                 <MoreHorizontal />
               </Button>
             </DropdownTrigger>
@@ -247,48 +347,55 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                 <DropdownItem
                   icon={<FileMinus />}
                   onSelect={() =>
-                    void run('credit', async () => {
-                      const credit = await duplicateDocument(doc.id, 'vendor_credit', {
-                        sourceId: doc.id,
-                        vendorReference: '',
-                      });
-                      toast.success(`Vendor credit ${credit.number} created`);
-                      navigate(`/vendor-credits/${credit.id}/edit`);
-                    })
+                    void run('credit', async () =>
+                      opened(
+                        await duplicateDocument(doc.id, 'vendor_credit', {
+                          sourceId: doc.id,
+                          vendorReference: '',
+                        }),
+                        true,
+                      ),
+                    )
                   }
                 >
-                  Create vendor credit
+                  {t('Create vendor credit')}
                 </DropdownItem>
               ) : null}
               <DropdownItem
                 icon={<Copy />}
                 onSelect={() =>
-                  void run('duplicate', async () => {
-                    const copy = await duplicateDocument(doc.id, undefined, {
-                      vendorReference: '',
-                    });
-                    toast.success(`${labels.singular} ${copy.number} created`);
-                    navigate(`${base}/${copy.id}/edit`);
-                  })
+                  void run('duplicate', async () =>
+                    opened(
+                      await duplicateDocument(doc.id, undefined, { vendorReference: '' }),
+                      true,
+                    ),
+                  )
                 }
               >
-                Duplicate
+                {t('Duplicate')}
               </DropdownItem>
-              {doc.status === 'void' ? (
-                <DropdownItem
-                  icon={<Undo2 />}
-                  onSelect={() => void run('unvoid', () => setDocumentStatus(doc.id, 'sent'))}
-                >
-                  Restore (un-void)
+              {order ? (
+                doc.status === 'cancelled' ? (
+                  <DropdownItem icon={<RotateCcw />} onSelect={() => void setStatus('issued')}>
+                    {t('Reopen')}
+                  </DropdownItem>
+                ) : doc.status !== 'draft' ? (
+                  <DropdownItem icon={<Ban />} onSelect={() => void cancelOrder()}>
+                    {t('Cancel order')}
+                  </DropdownItem>
+                ) : null
+              ) : doc.status === 'void' ? (
+                <DropdownItem icon={<Undo2 />} onSelect={() => void setStatus('sent')}>
+                  {t('Restore (un-void)')}
                 </DropdownItem>
               ) : doc.status !== 'draft' ? (
                 <DropdownItem icon={<Ban />} onSelect={() => void voidDoc()}>
-                  Void
+                  {t('Void')}
                 </DropdownItem>
               ) : null}
               <DropdownSeparator />
               <DropdownItem icon={<Trash2 />} danger onSelect={() => void remove()}>
-                Delete
+                {t('Delete')}
               </DropdownItem>
             </DropdownContent>
           </DropdownMenu>
@@ -300,26 +407,39 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
           <Card>
             <CardBody>
               <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                <Detail label={isBill ? 'Bill date' : 'Date'}>{fmt.date(doc.issueDate)}</Detail>
+                <Detail label={isBill ? t('Bill date') : order ? t('Order date') : t('Date')}>
+                  {fmt.date(doc.issueDate)}
+                </Detail>
                 {isBill ? (
-                  <Detail label="Due date">
+                  <Detail label={t('Due date')}>
                     {doc.dueDate ? (
                       <span className={overdueDays > 0 ? 'font-medium text-red-600' : undefined}>
                         {fmt.date(doc.dueDate)}
-                        {overdueDays > 0 ? ` · ${overdueDays}d late` : ''}
+                        {overdueDays > 0
+                          ? ` · ${tp(overdueDays, '{count} day late', '{count} days late')}`
+                          : ''}
                       </span>
                     ) : (
                       '—'
                     )}
                   </Detail>
                 ) : null}
-                <Detail label="Vendor reference">{doc.vendorReference || '—'}</Detail>
-                <Detail label="PO / reference">{doc.poNumber || '—'}</Detail>
-                {doc.currency !== company.currency ? (
-                  <Detail label="Exchange rate">
+                <Detail label={order ? t("Vendor's quote number") : t('Vendor reference')}>
+                  {doc.vendorReference || '—'}
+                </Detail>
+                {order ? (
+                  <>
+                    <Detail label={t('Delivery date')}>{fmt.date(doc.deliveryDate) || '—'}</Detail>
+                    <Detail label={t('Deliver to')}>{doc.deliveryPlace || '—'}</Detail>
+                  </>
+                ) : (
+                  <Detail label={t('PO / reference')}>{doc.poNumber || '—'}</Detail>
+                )}
+                {doc.currency !== company.currency && !order ? (
+                  <Detail label={t('Exchange rate')}>
                     {doc.exchangeRate
                       ? `1 ${doc.currency} = ${doc.exchangeRate} ${company.currency}`
-                      : 'Not set'}
+                      : t('Not set')}
                   </Detail>
                 ) : null}
               </dl>
@@ -328,11 +448,14 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="border-b border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
                   <tr>
-                    <th className="px-5 py-2.5 text-start font-medium">Description</th>
-                    <th className="px-3 py-2.5 text-start font-medium">Category</th>
-                    <th className="px-3 py-2.5 text-end font-medium">Qty</th>
-                    <th className="px-3 py-2.5 text-end font-medium">Rate</th>
-                    <th className="px-5 py-2.5 text-end font-medium">Amount</th>
+                    <th className="px-5 py-2.5 text-start font-medium">{t('Description')}</th>
+                    <th className="px-3 py-2.5 text-start font-medium">{t('Category')}</th>
+                    <th className="px-3 py-2.5 text-end font-medium">{t('Qty')}</th>
+                    {order ? (
+                      <th className="px-3 py-2.5 text-end font-medium">{t('Billed')}</th>
+                    ) : null}
+                    <th className="px-3 py-2.5 text-end font-medium">{t('Rate')}</th>
+                    <th className="px-5 py-2.5 text-end font-medium">{t('Amount')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -341,9 +464,16 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                       <tr key={item.id}>
                         <td className="px-5 py-2.5 text-slate-800">
                           {item.name || <span className="text-slate-400">—</span>}
+                          {item.nameAr ? (
+                            <span className="block text-xs text-slate-500" dir="rtl" lang="ar">
+                              {item.nameAr}
+                            </span>
+                          ) : null}
                           {item.taxes.length ? (
                             <span className="block text-xs text-slate-500">
-                              {item.taxes.map((t) => `${t.name} ${fmt.percent(t.rate)}`).join(', ')}
+                              {item.taxes
+                                .map((tax) => `${tax.name} ${fmt.percent(tax.rate)}`)
+                                .join(', ')}
                             </span>
                           ) : null}
                         </td>
@@ -353,6 +483,17 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                         <td className="tabular px-3 py-2.5 text-end text-slate-600">
                           {fmt.quantity(item.quantity)}
                         </td>
+                        {order ? (
+                          <td
+                            className={
+                              (billed.get(item.id) ?? 0) >= item.quantity && item.quantity > 0
+                                ? 'tabular px-3 py-2.5 text-end font-medium text-emerald-700'
+                                : 'tabular px-3 py-2.5 text-end text-slate-600'
+                            }
+                          >
+                            {fmt.quantity(billed.get(item.id) ?? 0)}
+                          </td>
+                        ) : null}
                         <td className="tabular px-3 py-2.5 text-end text-slate-600">
                           {money(item.unitPrice)}
                         </td>
@@ -367,47 +508,77 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
             </div>
             <div className="flex justify-end border-t border-slate-100 px-5 py-4">
               <div className="w-full max-w-xs">
-                <SummaryRow label="Subtotal" value={money(result.subtotal)} />
+                <SummaryRow label={t('Subtotal')} value={money(result.subtotal)} />
                 {result.discount ? (
-                  <SummaryRow label="Discount" value={money(-result.discount)} />
+                  <SummaryRow label={t('Discount')} value={money(-result.discount)} />
                 ) : null}
                 {doc.charges.map((c) => (
-                  <SummaryRow key={c.id} label={c.label || 'Charge'} value={money(c.amount)} />
+                  <SummaryRow key={c.id} label={c.label || t('Charge')} value={money(c.amount)} />
                 ))}
                 {result.taxes
-                  .filter((t) => t.kind !== 'reverse_charge')
-                  .map((t) => (
+                  .filter((tax) => tax.kind !== 'reverse_charge')
+                  .map((tax) => (
                     <SummaryRow
-                      key={t.key}
-                      label={`${doc.pricesIncludeTax ? 'Includes ' : ''}${t.name} ${fmt.percent(t.rate)}`}
-                      value={money(t.amount)}
+                      key={tax.key}
+                      label={
+                        doc.pricesIncludeTax
+                          ? t('Includes {tax}', { tax: `${tax.name} ${fmt.percent(tax.rate)}` })
+                          : `${tax.name} ${fmt.percent(tax.rate)}`
+                      }
+                      value={money(tax.amount)}
                     />
                   ))}
-                <SummaryRow label="Total" value={money(result.total)} tone="strong" />
+                <SummaryRow label={t('Total')} value={money(result.total)} tone="strong" />
                 {result.taxes
-                  .filter((t) => t.kind === 'reverse_charge')
-                  .map((t) => (
+                  .filter((tax) => tax.kind === 'reverse_charge')
+                  .map((tax) => (
                     <SummaryRow
-                      key={t.key}
-                      label={`Reverse charge ${t.name} ${fmt.percent(t.rate)}`}
-                      value={money(t.amount)}
+                      key={tax.key}
+                      label={t('Reverse charge {tax}', {
+                        tax: `${tax.name} ${fmt.percent(tax.rate)}`,
+                      })}
+                      value={money(tax.amount)}
                     />
                   ))}
               </div>
             </div>
           </Card>
 
+          {order ? (
+            <Card>
+              <CardHeader
+                title={t('What the supplier receives')}
+                description={t('The purchase order as it prints and downloads.')}
+              />
+              <div className="rounded-b-xl bg-slate-200/60 p-3 sm:p-6">
+                <div className="mx-auto max-w-[820px]">
+                  <PdfPreview
+                    blob={printing.pdf.blob}
+                    loading={printing.pdf.loading}
+                    error={printing.pdf.error}
+                  />
+                </div>
+              </div>
+            </Card>
+          ) : null}
+
           <Card>
             <CardHeader
-              title="Attachments"
-              description={`The ${isBill ? 'bill' : 'credit note'} as you received it.`}
+              title={t('Attachments')}
+              description={
+                isBill
+                  ? t('The bill as you received it.')
+                  : order
+                    ? t('Quotes or other files for this order.')
+                    : t('The credit note as you received it.')
+              }
             />
             <CardBody>
               <AttachmentList
                 files={attachments ?? []}
                 onAdd={(file) => addAttachment(company.id, doc.id, file)}
                 onRemove={(fileId) => removeAttachment(fileId)}
-                emptyText="No files attached."
+                emptyText={t('No files attached.')}
               />
             </CardBody>
           </Card>
@@ -415,29 +586,23 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
 
         <aside className="space-y-6">
           <Card>
-            <CardHeader title="Summary" />
+            <CardHeader title={t('Summary')} />
             <CardBody className="py-3">
-              <SummaryRow label="Total" value={money(doc.totals.total)} tone="strong" />
-              <SummaryRow label={isBill ? 'Paid' : 'Applied'} value={money(doc.totals.paid)} />
-              <SummaryRow
-                label={isBill ? 'Balance due' : 'Remaining'}
-                value={money(doc.status === 'void' ? 0 : doc.totals.balance)}
-                tone={status === 'overdue' ? 'danger' : 'strong'}
-              />
-              {related && related.length > 0 ? (
-                <div className="mt-2 border-t border-slate-100 pt-2">
-                  {related.map((r) => (
-                    <Link
-                      key={r.id}
-                      to={`${DOCUMENT_ROUTES[r.type]}/${r.id}`}
-                      className="text-primary-700 block py-1 text-sm font-medium hover:underline"
-                    >
-                      {r.id === doc.sourceId ? 'Created from' : 'Credited by'}{' '}
-                      {DOCUMENT_LABELS[r.type].singular.toLowerCase()} {r.number}
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
+              <SummaryRow label={t('Total')} value={money(doc.totals.total)} tone="strong" />
+              {order ? null : (
+                <>
+                  <SummaryRow
+                    label={isBill ? t('Paid') : t('Applied')}
+                    value={money(doc.totals.paid)}
+                  />
+                  <SummaryRow
+                    label={isBill ? t('Balance due') : t('Remaining')}
+                    value={money(doc.status === 'void' ? 0 : doc.totals.balance)}
+                    tone={status === 'overdue' ? 'danger' : 'strong'}
+                  />
+                </>
+              )}
+              <RelatedDocuments doc={doc} />
               {doc.privateNotes ? (
                 <p className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
                   {doc.privateNotes}
@@ -446,83 +611,85 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader
-              title={isBill ? t('Payments') : t('Applied to')}
-              actions={
-                isBill && open ? (
-                  <Button variant="ghost" size="sm" onClick={() => setRecordPayment(true)}>
-                    {t('Add')}
-                  </Button>
-                ) : null
-              }
-            />
-            <CardBody className="py-2">
-              {payments && payments.length > 0 ? (
-                <ul className="divide-y divide-slate-100">
-                  {payments.map((p) => {
-                    const amount = isBill
-                      ? p.allocations
-                          .filter((a) => a.documentId === doc.id)
-                          .reduce((s, a) => s + a.amount, 0)
-                      : p.amount;
-                    return (
-                      <li key={p.id}>
-                        <Link
-                          to={`/payments-made/${p.id}`}
-                          className="hover:text-primary-700 flex items-center justify-between gap-3 py-2.5 text-sm"
-                        >
-                          <span className="min-w-0">
-                            <span className="flex flex-wrap items-center gap-1.5 font-medium text-slate-800">
-                              {fmt.date(p.date)}
-                              <PaymentStatusBadge payment={p} />
-                            </span>
-                            <span className="text-xs text-slate-500">
-                              {paymentMethodLabel(p.method)}
-                              {p.cheque?.number
-                                ? ` · ${t('Cheque {number}', { number: p.cheque.number })}`
-                                : p.reference
-                                  ? ` · ${p.reference}`
-                                  : ''}
-                            </span>
-                          </span>
-                          <span
-                            className={
-                              p.voided
-                                ? 'tabular text-slate-400 line-through'
-                                : 'tabular font-medium'
-                            }
+          {order ? null : (
+            <Card>
+              <CardHeader
+                title={isBill ? t('Payments') : t('Applied to')}
+                actions={
+                  isBill && open ? (
+                    <Button variant="ghost" size="sm" onClick={() => setRecordPayment(true)}>
+                      {t('Add')}
+                    </Button>
+                  ) : null
+                }
+              />
+              <CardBody className="py-2">
+                {payments && payments.length > 0 ? (
+                  <ul className="divide-y divide-slate-100">
+                    {payments.map((p) => {
+                      const amount = isBill
+                        ? p.allocations
+                            .filter((a) => a.documentId === doc.id)
+                            .reduce((s, a) => s + a.amount, 0)
+                        : p.amount;
+                      return (
+                        <li key={p.id}>
+                          <Link
+                            to={`/payments-made/${p.id}`}
+                            className="hover:text-primary-700 flex items-center justify-between gap-3 py-2.5 text-sm"
                           >
-                            {money(amount)}
-                          </span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="py-3 text-sm text-slate-500">
-                  {isBill ? t('No payments recorded yet.') : t('Not applied to any bill yet.')}
-                </p>
-              )}
-            </CardBody>
-          </Card>
+                            <span className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-1.5 font-medium text-slate-800">
+                                {fmt.date(p.date)}
+                                <PaymentStatusBadge payment={p} />
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {paymentMethodLabel(p.method)}
+                                {p.cheque?.number
+                                  ? ` · ${t('Cheque {number}', { number: p.cheque.number })}`
+                                  : p.reference
+                                    ? ` · ${p.reference}`
+                                    : ''}
+                              </span>
+                            </span>
+                            <span
+                              className={
+                                p.voided
+                                  ? 'tabular text-slate-400 line-through'
+                                  : 'tabular font-medium'
+                              }
+                            >
+                              {money(amount)}
+                            </span>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="py-3 text-sm text-slate-500">
+                    {isBill ? t('No payments recorded yet.') : t('Not applied to any bill yet.')}
+                  </p>
+                )}
+              </CardBody>
+            </Card>
+          )}
 
           <Card>
-            <CardHeader title="Activity" />
+            <CardHeader title={t('Activity')} />
             <CardBody className="py-3">
               {activity && activity.length > 0 ? (
                 <ol className="relative space-y-4 border-s border-slate-200 ps-4">
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
-                      <p className="text-sm text-slate-700">{a.message}</p>
+                      <p className="text-sm text-slate-700">{activityText(a)}</p>
                       <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}
                 </ol>
               ) : (
-                <p className="text-sm text-slate-500">No activity yet.</p>
+                <p className="text-sm text-slate-500">{t('No activity yet.')}</p>
               )}
             </CardBody>
           </Card>
@@ -534,6 +701,18 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
       ) : null}
       {applyCredit ? (
         <ApplyCreditDialog open onOpenChange={setApplyCredit} credit={doc} company={company} />
+      ) : null}
+      {convert ? (
+        <PartDialog
+          open
+          onOpenChange={setConvert}
+          doc={doc}
+          target="bill"
+          onCreated={(created) => {
+            setConvert(false);
+            opened(created);
+          }}
+        />
       ) : null}
     </div>
   );

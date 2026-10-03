@@ -32,15 +32,52 @@ export interface Address {
   paci?: string;
 }
 
-/** Sales documents (invoice, quote, credit) and purchase documents (bill, vendor credit). */
-export type DocumentType = 'invoice' | 'quote' | 'credit' | 'bill' | 'vendor_credit';
+/**
+ * Sales documents (invoice, quote, credit note, proforma invoice, sales order,
+ * delivery note) and purchase documents (bill, vendor credit, purchase order).
+ * Only invoices, credit notes, bills and vendor credits are part of the books;
+ * quotes, proformas, orders and delivery notes never post to the ledger.
+ */
+export type DocumentType =
+  | 'invoice'
+  | 'quote'
+  | 'credit'
+  | 'bill'
+  | 'vendor_credit'
+  | 'proforma'
+  | 'sales_order'
+  | 'purchase_order'
+  | 'delivery_note';
+/** Sales documents that have an email template of their own. */
 export type SalesDocumentType = 'invoice' | 'quote' | 'credit';
-export type PurchaseDocumentType = 'bill' | 'vendor_credit';
+/** Documents entered with the bill editor (vendor, category accounts). */
+export type PurchaseDocumentType = 'bill' | 'vendor_credit' | 'purchase_order';
+/** Documents that never post to the ledger and never count in sales or purchases. */
+export type OrderDocumentType = 'proforma' | 'sales_order' | 'purchase_order' | 'delivery_note';
 
 export type InvoiceStatus = 'draft' | 'sent' | 'partial' | 'paid' | 'void';
-export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'invoiced';
+/** "converted": turned into a proforma invoice or a sales order. */
+export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'invoiced' | 'converted';
 export type CreditStatus = 'draft' | 'sent' | 'partial' | 'applied' | 'void';
-export type DocumentStatus = InvoiceStatus | QuoteStatus | CreditStatus;
+/** "Expired" is shown for sent proformas past their valid-until date. */
+export type ProformaStatus = 'draft' | 'sent' | 'accepted' | 'converted';
+/** Invoicing progress is derived from the invoices created from the order. */
+export type SalesOrderStatus =
+  'draft' | 'confirmed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
+/** Billing progress is derived from the bills created from the order. */
+export type PurchaseOrderStatus = 'draft' | 'issued' | 'partially_billed' | 'billed' | 'cancelled';
+export type DeliveryNoteStatus = 'draft' | 'delivered' | 'cancelled';
+export type DocumentStatus =
+  | InvoiceStatus
+  | QuoteStatus
+  | CreditStatus
+  | ProformaStatus
+  | SalesOrderStatus
+  | PurchaseOrderStatus
+  | DeliveryNoteStatus;
+
+/** How much of a sales order has been delivered (signed delivery notes). */
+export type DeliveryStatus = 'not_delivered' | 'partially_delivered' | 'delivered';
 
 export type NumberedEntity =
   DocumentType | 'payment' | 'payment_made' | 'client' | 'journal' | 'expense' | 'employee';
@@ -560,6 +597,11 @@ export interface LineItem {
   condition?: ItemCondition | null;
   /** Serial or IMEI number of the item sold. */
   serialNumber?: string;
+  /**
+   * Line of the sales order, purchase order or invoice this line was copied
+   * from; drives what is left to invoice, bill or deliver.
+   */
+  sourceLineId?: ID;
 }
 
 export type ItemCondition = 'new' | 'used';
@@ -617,9 +659,14 @@ export interface InvoiceDocument {
   totals: DocumentTotals;
   sentAt: Timestamp | null;
   paidAt: Timestamp | null;
-  /** Quote this invoice was created from, or invoice a credit note refers to. */
+  /**
+   * Document this one was created from: the quote or proforma of an invoice,
+   * the order of an invoice, bill or delivery note, the invoice a credit note
+   * or delivery note refers to. An order finds its invoices, bills and
+   * delivery notes through this field (it is indexed).
+   */
   sourceId: ID | null;
-  /** Invoice created from this quote. */
+  /** The one document a quote or proforma was converted into. */
   convertedToId: ID | null;
   /** Recurring profile that generated this invoice. */
   recurringId: ID | null;
@@ -629,6 +676,12 @@ export interface InvoiceDocument {
   deliveryDate?: ISODate | null;
   /** Where the goods are delivered, e.g. a site or warehouse. */
   deliveryPlace?: string;
+  /** Sales orders: how much has been delivered (kept up to date from the delivery notes). */
+  deliveryStatus?: DeliveryStatus;
+  /** Delivery notes: who signed for the goods. */
+  receiverName?: string;
+  /** Delivery notes: Civil ID number of the person who signed (optional). */
+  receiverCivilId?: string;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -840,11 +893,7 @@ export interface RecurringProfile {
 }
 
 export type ActivityEntity =
-  | 'invoice'
-  | 'quote'
-  | 'credit'
-  | 'bill'
-  | 'vendor_credit'
+  | DocumentType
   | 'expense'
   | 'payment'
   | 'client'

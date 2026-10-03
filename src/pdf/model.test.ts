@@ -262,3 +262,74 @@ describe('buildRenderModel: Kuwaiti invoice details', () => {
     expect(m.amountDue).toMatchObject({ label: 'الرصيد المستحق', value: kd('0.000') });
   });
 });
+
+describe('buildRenderModel: orders and delivery notes', () => {
+  it('titles each document in Arabic with English beside it', () => {
+    const titles = (['proforma', 'sales_order', 'purchase_order', 'delivery_note'] as const).map(
+      (type) => {
+        const m = model('ar-en', { type, number: 'X-1' });
+        return [m.title, m.titleSecondary, m.numberLabel, m.numberLabelSecondary];
+      },
+    );
+    expect(titles).toEqual([
+      ['فاتورة مبدئية', 'Proforma Invoice', 'رقم الفاتورة المبدئية', 'Proforma no.'],
+      ['أمر بيع', 'Sales Order', 'رقم أمر البيع', 'Order no.'],
+      ['أمر شراء', 'Purchase Order', 'رقم أمر الشراء', 'PO no.'],
+      ['إذن تسليم', 'Delivery Note', 'رقم إذن التسليم', 'Delivery note no.'],
+    ]);
+    expect(model('en', { type: 'delivery_note' }).documentTitle).toMatch(/^Delivery Note /);
+  });
+
+  it('prints no prices, totals or payment details on delivery notes', () => {
+    const m = model('ar-en', {
+      type: 'delivery_note',
+      items: sampleGoods(),
+      deliveryDate: '2026-10-03',
+      deliveryPlace: 'Warehouse 4\nShuwaikh Industrial',
+    });
+    expect(m.columns).toMatchObject({ prices: false, unit: true, serial: true, tax: false });
+    expect(m.totals).toEqual([]);
+    expect(m.amountInWords).toEqual([]);
+    expect(m.payment).toBeNull();
+    expect(m.deposit).toBeNull();
+    expect(m.amountDue.label).toBe('تاريخ التسليم');
+    expect(m.recipientLabel).toBe('تم التسليم إلى');
+    expect(m.recipientLabelSecondary).toBe('Delivered to');
+    expect(m.client.addressLines).toEqual(['Warehouse 4', 'Shuwaikh Industrial']);
+    expect(m.shipTo).toBeNull();
+    expect(m.items[0].serialNo).not.toBe('');
+    // Signed and stamped by both sides, with blank lines until it is delivered.
+    expect(m.signatures?.receivedBy).toBe(true);
+    expect(m.receipt).toEqual({ name: '', civilId: '', date: '' });
+  });
+
+  it('fills in who received the goods once delivered', () => {
+    const m = model('en', {
+      type: 'delivery_note',
+      status: 'delivered',
+      deliveryDate: '2026-10-03',
+      receiverName: 'Ahmad Al-Mutairi',
+      receiverCivilId: '287010112349',
+    });
+    expect(m.receipt).toMatchObject({ name: 'Ahmad Al-Mutairi', civilId: '287010112349' });
+    expect(m.receipt?.date).not.toBe('');
+    expect(m.stamp?.text).toBe('Delivered');
+  });
+
+  it('prints the supplier on purchase orders and the deposit on proformas', () => {
+    const po = model('en', { type: 'purchase_order', poNumber: 'ignored' });
+    expect(po.recipientLabel).toBe('Supplier');
+    expect(po.meta.map((r) => r.label)).not.toContain('PO number');
+    expect(po.amountDue.label).toBe('Total');
+    expect(po.payment).toBeNull();
+
+    const proforma = model('en', { type: 'proforma', deposit: 500, depositDueDate: '2026-10-15' });
+    expect(proforma.recipientLabel).toBe('Bill to');
+    expect(proforma.deposit?.value).toBe(kd('500.000'));
+    expect(proforma.meta.map((r) => r.label)).toContain('Valid until');
+  });
+
+  it('refuses to print bills, which are the vendor’s documents', () => {
+    expect(() => model('en', { type: 'bill' })).toThrow();
+  });
+});

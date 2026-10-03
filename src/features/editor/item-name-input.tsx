@@ -3,6 +3,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { Package } from 'lucide-react';
 import type { Product } from '@/db/types';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 
 /**
  * Text input for an item name that suggests matching products while typing.
@@ -14,7 +15,7 @@ export function ItemNameInput({
   products,
   onPick,
   formatPrice,
-  placeholder = 'Item name or search products…',
+  placeholder,
   id,
   ariaLabel,
 }: {
@@ -56,7 +57,7 @@ export function ItemNameInput({
           id={id}
           aria-label={ariaLabel}
           value={value}
-          placeholder={placeholder}
+          placeholder={placeholder ?? t('Item name or search products…')}
           autoComplete="off"
           onChange={(e) => {
             onChange(e.target.value);
@@ -92,7 +93,7 @@ export function ItemNameInput({
           className="z-50 w-[var(--radix-popover-trigger-width)] min-w-72 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
         >
           <p className="px-2.5 pt-1.5 pb-1 text-xs font-medium text-slate-500">
-            Products & services
+            {t('Products & services')}
           </p>
           {matches.map((p, i) => (
             <button

@@ -2,7 +2,6 @@ import type {
   Client,
   Company,
   DocumentLanguage,
-  SalesDocumentType,
   InvoiceDocument,
   ISODate,
   PageSize,
@@ -23,7 +22,7 @@ import { isISODate, today } from '@/lib/dates';
 import type { FontId } from './fonts';
 import { documentLabels, isRtlLanguage, type LabelKey, type Labels } from './labels';
 import { ltr } from './bidi';
-import { salesType } from '@/lib/document-types';
+import { hasPrices, isPrintable, type PrintableDocumentType } from '@/lib/document-types';
 
 export interface RenderItem {
   kind: 'item' | 'heading';
@@ -35,6 +34,8 @@ export interface RenderItem {
   detail: string;
   /** e.g. "Serial no.: SN-0042"; empty when not set. */
   serial: string;
+  /** The serial number alone, for the serial number column of delivery notes. */
+  serialNo: string;
   /** "New" or "Used" in the document language; empty when not set. */
   condition: string;
   quantity: string;
@@ -95,7 +96,7 @@ export interface RenderClient {
 }
 
 export interface RenderModel {
-  type: SalesDocumentType;
+  type: PrintableDocumentType;
   language: DocumentLanguage;
   /** Right to left for Arabic and bilingual documents. */
   dir: 'ltr' | 'rtl';
@@ -113,14 +114,25 @@ export interface RenderModel {
   meta: RenderMeta[];
   issueDate: string;
   dueDate: string;
-  /** "Bill to" for invoices, "Prepared for" for quotes. */
+  /** "Bill to" for invoices, "Prepared for" for quotes, "Supplier", "Delivered to". */
   recipientLabel: string;
   recipientLabelSecondary: string;
   company: RenderCompany;
   client: RenderClient;
   shipTo: { name: string; lines: string[] } | null;
   items: RenderItem[];
-  columns: { discount: boolean; tax: boolean; condition: boolean };
+  /**
+   * Columns of the items table. Delivery notes have no prices: quantity,
+   * unit and serial number columns instead.
+   */
+  columns: {
+    prices: boolean;
+    discount: boolean;
+    tax: boolean;
+    condition: boolean;
+    unit: boolean;
+    serial: boolean;
+  };
   totals: RenderTotal[];
   grandTotal: RenderTotal;
   amountDue: { label: string; secondary?: string; value: string; caption: string };
@@ -130,6 +142,11 @@ export interface RenderModel {
   stamp: { text: string; secondary?: string; tone: 'green' | 'red' | 'gray' } | null;
   /** Signature, company stamp and "received by" boxes; null when not printed. */
   signatures: { signature: string | null; stamp: string | null; receivedBy: boolean } | null;
+  /**
+   * Delivery notes: both sides sign and stamp, with who received the goods
+   * (blank lines to fill in by hand until it is marked as delivered).
+   */
+  receipt: { name: string; civilId: string; date: string } | null;
   notes: string;
   terms: string;
   footer: string;
@@ -165,7 +182,39 @@ export type RenderableDocument = Pick<
   | 'paymentLink'
   | 'deliveryDate'
   | 'deliveryPlace'
+  | 'receiverName'
+  | 'receiverCivilId'
 > & { totals: Pick<InvoiceDocument['totals'], 'paid'> };
+
+const TITLE_KEYS: Record<PrintableDocumentType, LabelKey> = {
+  invoice: 'invoice',
+  quote: 'quote',
+  credit: 'credit',
+  proforma: 'proforma',
+  sales_order: 'salesOrder',
+  purchase_order: 'purchaseOrder',
+  delivery_note: 'deliveryNote',
+};
+
+const NUMBER_KEYS: Record<PrintableDocumentType, LabelKey> = {
+  invoice: 'invoiceNumber',
+  quote: 'quoteNumber',
+  credit: 'creditNumber',
+  proforma: 'proformaNumber',
+  sales_order: 'salesOrderNumber',
+  purchase_order: 'purchaseOrderNumber',
+  delivery_note: 'deliveryNoteNumber',
+};
+
+const RECIPIENT_KEYS: Record<PrintableDocumentType, LabelKey> = {
+  invoice: 'billTo',
+  quote: 'quoteTo',
+  credit: 'billTo',
+  proforma: 'billTo',
+  sales_order: 'billTo',
+  purchase_order: 'supplier',
+  delivery_note: 'deliveredTo',
+};
 
 export interface BuildModelOptions {
   /** Data URL of the payment-link QR code, if any. */
@@ -304,13 +353,13 @@ export function buildRenderModel(
 
   const result = computeDocument(doc, { paid: doc.totals.paid, taxExempt: client?.taxExempt });
 
-  const type = salesType(doc.type);
-  const numberKey: LabelKey =
-    doc.type === 'invoice'
-      ? 'invoiceNumber'
-      : doc.type === 'quote'
-        ? 'quoteNumber'
-        : 'creditNumber';
+  if (!isPrintable(doc.type)) throw new Error(`${doc.type} documents are not printed`);
+  const type = doc.type;
+  const numberKey = NUMBER_KEYS[type];
+  const priced = hasPrices(type);
+  const note = type === 'delivery_note';
+  // Quotes and proformas are valid until a date; invoices are due on one.
+  const validity = type === 'quote' || type === 'proforma';
   const row = (key: LabelKey, value: string): RenderMeta => ({
     label: labels[key],
     secondary: en(key),
@@ -321,11 +370,16 @@ export function buildRenderModel(
   if (company.defaults.showHijriDate && isISODate(doc.issueDate)) {
     meta.push(row('hijriDate', formatHijri(doc.issueDate, rtl ? 'ar' : 'en')));
   }
-  if (doc.dueDate)
-    meta.push(row(doc.type === 'quote' ? 'validUntil' : 'dueDate', date(doc.dueDate)));
-  if (clean(doc.poNumber)) meta.push(row('poNumber', clean(doc.poNumber)));
-  if (doc.deliveryDate) meta.push(row('deliveryDate', date(doc.deliveryDate)));
-  if (clean(doc.deliveryPlace)) meta.push(row('deliveryPlace', clean(doc.deliveryPlace)));
+  if (doc.dueDate) meta.push(row(validity ? 'validUntil' : 'dueDate', date(doc.dueDate)));
+  // A purchase order's own number is its PO number.
+  if (clean(doc.poNumber) && type !== 'purchase_order') {
+    meta.push(row('poNumber', clean(doc.poNumber)));
+  }
+  // Delivery notes show the date large and the place as the "delivered to" address.
+  if (doc.deliveryDate && !note) meta.push(row('deliveryDate', date(doc.deliveryDate)));
+  if (clean(doc.deliveryPlace) && !note) {
+    meta.push(row('deliveryPlace', clean(doc.deliveryPlace)));
+  }
 
   const items: RenderItem[] = doc.items.map((item, i) => {
     const named = names(clean(item.name), item.nameAr, language);
@@ -340,6 +394,7 @@ export function buildRenderModel(
         kind: 'heading',
         ...base,
         serial: '',
+        serialNo: '',
         condition: '',
         quantity: '',
         unit: '',
@@ -360,6 +415,7 @@ export function buildRenderModel(
       kind: 'item',
       ...base,
       serial: serial ? `${both('serialNumber')}: ${rtl ? ltr(serial) : serial}` : '',
+      serialNo: serial ? (rtl ? ltr(serial) : serial) : '',
       condition: condition ? both(condition === 'new' ? 'conditionNew' : 'conditionUsed') : '',
       quantity,
       unit,
@@ -426,12 +482,21 @@ export function buildRenderModel(
 
   const isVoid = doc.status === 'void';
   let amountDue: RenderModel['amountDue'];
-  if (doc.type === 'quote') {
+  if (note) {
+    // No money on a delivery note: the delivery date takes the place of the amount.
+    totals.length = 0;
+    amountDue = {
+      label: labels.deliveryDate,
+      secondary: en('deliveryDate'),
+      value: date(doc.deliveryDate || doc.issueDate),
+      caption: '',
+    };
+  } else if (type !== 'invoice' && type !== 'credit') {
     amountDue = {
       label: labels.total,
       secondary: en('total'),
       value: money(result.total),
-      caption: doc.dueDate ? `${labels.validUntil} ${date(doc.dueDate)}` : '',
+      caption: validity && doc.dueDate ? `${labels.validUntil} ${date(doc.dueDate)}` : '',
     };
   } else {
     const balanceKey: LabelKey = doc.type === 'credit' ? 'creditRemaining' : 'balanceDue';
@@ -451,7 +516,7 @@ export function buildRenderModel(
   }
 
   const deposit =
-    doc.type === 'invoice' && result.depositDue > 0 && !isVoid
+    (type === 'invoice' || type === 'proforma') && result.depositDue > 0 && !isVoid
       ? {
           label: labels.depositDue,
           secondary: en('depositDue'),
@@ -461,7 +526,7 @@ export function buildRenderModel(
       : null;
 
   const words: string[] = [];
-  if (showsAmountInWords(company) && result.total !== 0) {
+  if (showsAmountInWords(company) && result.total !== 0 && priced) {
     if (rtl) words.push(amountInWords(result.total, currency, 'ar'));
     if (language !== 'ar') words.push(amountInWords(result.total, currency, 'en'));
   }
@@ -476,21 +541,37 @@ export function buildRenderModel(
     if (doc.status === 'paid') stamp = of('paidStamp', 'green');
     else if (doc.status === 'void') stamp = of('voidStamp', 'gray');
     else if (doc.status === 'accepted') stamp = of('acceptedStamp', 'green');
+    else if (doc.status === 'delivered') stamp = of('deliveredStamp', 'green');
+    else if (doc.status === 'cancelled') stamp = of('cancelledStamp', 'gray');
   }
 
   const signatureImage = company.branding.signature ?? null;
   const stampImage = company.branding.stamp ?? null;
   // Kuwaiti invoices carry the supplier's signature and stamp, so Arabic and
   // bilingual documents always leave room for them.
+  // Delivery notes are always signed and stamped by both sides.
   const signatures =
-    rtl || signatureImage || stampImage
-      ? { signature: signatureImage, stamp: stampImage, receivedBy: doc.type !== 'quote' }
+    rtl || signatureImage || stampImage || note
+      ? {
+          signature: signatureImage,
+          stamp: stampImage,
+          receivedBy: type === 'invoice' || type === 'credit' || note,
+        }
       : null;
+  const delivered = note && doc.status === 'delivered';
+  const receipt = note
+    ? {
+        name: delivered ? clean(doc.receiverName) : '',
+        civilId: delivered ? clean(doc.receiverCivilId) : '',
+        date: delivered ? date(doc.deliveryDate) : '',
+      }
+    : null;
 
   const pay = company.payment;
   const link = paymentLinkOf(doc, company);
-  // Payment instructions only make sense while something is still owed.
-  const showPayment = doc.type === 'invoice' && !isVoid && result.balance > 0;
+  // Payment instructions only make sense while something is still owed (or, on
+  // a proforma, asked for in advance).
+  const showPayment = (type === 'invoice' || type === 'proforma') && !isVoid && result.balance > 0;
   const details = paymentDetails(
     clean(pay.bankDetails),
     labels,
@@ -517,10 +598,25 @@ export function buildRenderModel(
 
   const shipping = client?.shippingAddress;
   const clientNames = names(clean(client?.name), client?.nameAr, language);
+  const hasShipping = Boolean(client && shipping && !isAddressEmpty(shipping));
+  // A supplier is never shipped to; a delivery note names where the goods went.
   const shipTo =
-    client && shipping && !isAddressEmpty(shipping)
+    client && shipping && hasShipping && type !== 'purchase_order' && !note
       ? { name: clientNames.name, lines: formatAddressLines(shipping, addressLocale) }
       : null;
+  // The country is left out for domestic clients.
+  const foreign = !client || client.address.country !== company.address.country;
+  const clientAddress =
+    note && clean(doc.deliveryPlace)
+      ? clean(doc.deliveryPlace)
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+      : formatAddressLines(
+          note && hasShipping ? shipping : client?.address,
+          addressLocale,
+          foreign,
+        );
 
   const primaryContact = client?.contacts.find((c) => c.primary) ?? client?.contacts[0];
   const companyNames = names(
@@ -528,8 +624,9 @@ export function buildRenderModel(
     company.nameAr,
     language,
   );
-  const title = labels[type];
-  const titleSecondary = en(type);
+  const titleKey = TITLE_KEYS[type];
+  const title = labels[titleKey];
+  const titleSecondary = en(titleKey);
 
   return {
     type,
@@ -545,8 +642,8 @@ export function buildRenderModel(
     meta,
     issueDate: date(doc.issueDate),
     dueDate: date(doc.dueDate),
-    recipientLabel: doc.type === 'quote' ? labels.quoteTo : labels.billTo,
-    recipientLabelSecondary: doc.type === 'quote' ? en('quoteTo') : en('billTo'),
+    recipientLabel: labels[RECIPIENT_KEYS[type]],
+    recipientLabelSecondary: en(RECIPIENT_KEYS[type]),
     company: {
       ...companyNames,
       logo: company.branding.logo,
@@ -565,12 +662,7 @@ export function buildRenderModel(
       ...clientNames,
       contactName:
         clean(primaryContact?.name) !== clean(client?.name) ? clean(primaryContact?.name) : '',
-      // The country is left out for domestic clients.
-      addressLines: formatAddressLines(
-        client?.address,
-        addressLocale,
-        !client || client.address.country !== company.address.country,
-      ),
+      addressLines: clientAddress,
       email: clean(primaryContact?.email) || clean(client?.email),
       phone: unbreakable(clean(client?.phone) || clean(primaryContact?.phone)),
       taxLine: idLine(taxIdLabel, client?.taxId ?? ''),
@@ -578,9 +670,12 @@ export function buildRenderModel(
     shipTo,
     items,
     columns: {
-      discount: items.some((i) => i.discount !== ''),
-      tax: items.some((i) => i.tax !== ''),
+      prices: priced,
+      discount: priced && items.some((i) => i.discount !== ''),
+      tax: priced && items.some((i) => i.tax !== ''),
       condition: items.some((i) => i.condition !== ''),
+      unit: !priced && items.some((i) => i.unit !== ''),
+      serial: !priced && items.some((i) => i.serialNo !== ''),
     },
     totals,
     grandTotal,
@@ -589,10 +684,11 @@ export function buildRenderModel(
     amountInWords: [...new Set(words)],
     stamp,
     signatures,
+    receipt,
     notes: clean(doc.notes),
     terms: clean(doc.terms),
     footer: clean(doc.footer),
-    payment,
+    payment: priced ? payment : null,
     currency,
     pageSize: company.defaults.pageSize,
     accent: normalizeHex(options.accent ?? company.branding.accentColor),

@@ -1,19 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Ban,
   BellRing,
   CheckCircle2,
+  ClipboardList,
   Copy,
   CreditCard,
   Download,
+  FileClock,
   FileMinus,
   FileText,
   MessageCircle,
   MoreHorizontal,
+  PackageCheck,
   Pencil,
   Printer,
+  RotateCcw,
   Send,
   ThumbsDown,
   ThumbsUp,
@@ -23,19 +27,31 @@ import {
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import {
-  convertQuoteToInvoice,
+  convertDocument,
   deleteDocument,
   duplicateDocument,
   markSent,
   setDocumentStatus,
 } from '@/db/documents';
+import { progressOf, type PartTarget } from '@/db/orders';
+import { activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
-import type { DocumentType, InvoiceDocument } from '@/db/types';
-import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
-import { displayStatus } from '@/lib/status';
+import type { DocumentStatus, DocumentType, InvoiceDocument } from '@/db/types';
+import {
+  DOCUMENT_LABELS,
+  DOCUMENT_ROUTES,
+  documentNoun,
+  useCompany,
+  useFormat,
+} from '@/app/company';
+import { DELIVERY_STATUS_META, displayStatus } from '@/lib/status';
+import { hasPrices, postsToLedger } from '@/lib/document-types';
 import { daysBetween, today } from '@/lib/dates';
+import { t, tp } from '@/i18n';
+import { tr } from '@/i18n/provider';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
-import { Card, CardBody, CardHeader, Spinner, StatusBadge } from '@/components/ui/misc';
+import { Badge, Card, CardBody, CardHeader, Spinner, StatusBadge } from '@/components/ui/misc';
 import {
   DropdownContent,
   DropdownItem,
@@ -51,7 +67,9 @@ import { SendDialog, WhatsAppDialog, type EmailKind } from '@/features/documents
 import { ApplyCreditDialog, RecordPaymentDialog } from '@/features/documents/payment-dialogs';
 import { PaymentLinkCard } from '@/features/payments/payment-link';
 import { PaymentStatusBadge } from '@/features/payments/status-badge';
-import { t } from '@/i18n';
+import { PartDialog } from '@/features/orders/part-dialog';
+import { DeliverDialog } from '@/features/orders/deliver-dialog';
+import { OrderProgressCard, RelatedDocuments } from '@/features/orders/related';
 
 function SummaryRow({
   label,
@@ -59,19 +77,19 @@ function SummaryRow({
   tone,
 }: {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
   tone?: 'danger' | 'strong';
 }) {
   return (
-    <div className="flex items-center justify-between py-1.5 text-sm">
+    <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
       <span className="text-slate-500">{label}</span>
       <span
         className={
           tone === 'danger'
-            ? 'tabular font-semibold text-red-600'
+            ? 'tabular text-end font-semibold text-red-600'
             : tone === 'strong'
-              ? 'tabular font-semibold text-slate-900'
-              : 'tabular text-slate-700'
+              ? 'tabular text-end font-semibold text-slate-900'
+              : 'tabular text-end text-slate-700'
         }
       >
         {value}
@@ -79,6 +97,9 @@ function SummaryRow({
     </div>
   );
 }
+
+/** Documents that are emailed and shared with the app's own templates. */
+const EMAILED: DocumentType[] = ['invoice', 'quote', 'credit'];
 
 export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const { id = '' } = useParams();
@@ -96,7 +117,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     [doc?.clientId],
   );
   const payments = useLiveQuery(async () => {
-    if (!doc) return [];
+    if (!doc || !postsToLedger(doc.type)) return [];
     const list =
       doc.type === 'credit'
         ? await db.payments.where('creditId').equals(doc.id).toArray()
@@ -107,16 +128,18 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     () => db.activities.where('documentId').equals(id).reverse().sortBy('at'),
     [id],
   );
-  const related = useLiveQuery(async () => {
-    if (!doc) return [];
-    const ids = [doc.sourceId, doc.convertedToId].filter((x): x is string => Boolean(x));
-    return (await db.documents.bulkGet(ids)).filter((d): d is InvoiceDocument => Boolean(d));
-  }, [doc?.sourceId, doc?.convertedToId]);
+  // Invoices and delivery notes made from a sales order, delivery notes of an invoice.
+  const progress = useLiveQuery(
+    async () => (doc && (type === 'sales_order' || type === 'invoice') ? progressOf(doc) : null),
+    [doc, type],
+  );
 
   const [send, setSend] = useState<EmailKind | null>(null);
   const [whatsApp, setWhatsApp] = useState(false);
   const [recordPayment, setRecordPayment] = useState(false);
   const [applyCredit, setApplyCredit] = useState(false);
+  const [part, setPart] = useState<PartTarget | null>(null);
+  const [deliver, setDeliver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const ready = doc && client !== undefined;
@@ -142,13 +165,13 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     }
   }, [pdf.blob, fileName]);
 
-  if (doc === undefined) return <Spinner className="py-24" label="Loading…" />;
+  if (doc === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
   if (!doc || doc.companyId !== company.id || doc.type !== type) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {labels.singular.toLowerCase()} could not be found.</p>
+        <p className="text-slate-600">{t('This document could not be found.')}</p>
         <Link to={base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {labels.plural.toLowerCase()}
+          {t('Back to {list}', { list: t(labels.plural).toLowerCase() })}
         </Link>
       </Card>
     );
@@ -157,6 +180,19 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const status = displayStatus(doc, today());
   const money = (n: number) => fmt.money(n, doc.currency);
   const overdueDays = status === 'overdue' && doc.dueDate ? daysBetween(doc.dueDate, today()) : 0;
+  const emailed = EMAILED.includes(type);
+  const booked = postsToLedger(type);
+  const priced = hasPrices(type);
+  const left = (key: 'toInvoice' | 'toDeliver') => progress?.some((p) => p[key] > 0) ?? false;
+  const canInvoice =
+    type === 'sales_order' &&
+    (doc.status === 'confirmed' || doc.status === 'partially_invoiced') &&
+    left('toInvoice');
+  const canDeliver =
+    ((type === 'sales_order' && doc.status !== 'draft' && doc.status !== 'cancelled') ||
+      (type === 'invoice' && doc.status !== 'void')) &&
+    left('toDeliver');
+  const settled = doc.status === 'invoiced' || doc.status === 'converted';
 
   const getPdf = async () => pdf.blob ?? (await generatePdf(doc, company, client ?? null)).blob;
 
@@ -165,7 +201,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     try {
       await action();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong.');
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     } finally {
       setBusy(null);
     }
@@ -174,67 +210,233 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const download = () =>
     run('download', async () => {
       downloadBlob(await getPdf(), fileName);
-      if (doc.status === 'draft') toast('Tip: mark the document as sent once you have shared it.');
+      if (doc.status === 'draft' && (emailed || type === 'proforma')) {
+        toast(t('Tip: mark the document as sent once you have shared it.'));
+      }
     });
 
   const print = () => run('print', async () => printBlob(await getPdf()));
 
+  const opened = (created: InvoiceDocument, edit = false) => {
+    toast.success(
+      t('{document} {number} created', {
+        document: t(DOCUMENT_LABELS[created.type].singular),
+        number: created.number,
+      }),
+    );
+    navigate(`${DOCUMENT_ROUTES[created.type]}/${created.id}${edit ? '/edit' : ''}`);
+  };
+
+  const convert = (to: 'invoice' | 'proforma' | 'sales_order') =>
+    run(`convert-${to}`, async () => opened(await convertDocument(doc.id, to)));
+
+  const setStatus = (status: DocumentStatus) =>
+    run(status, () => setDocumentStatus(doc.id, status));
+
   const remove = async () => {
     const ok = await confirm({
-      title: `Delete ${labels.singular.toLowerCase()} ${doc.number}?`,
+      title: t('Delete {document} {number}?', { document: documentNoun(type), number: doc.number }),
       description:
         doc.type === 'invoice' && doc.totals.paid > 0
-          ? 'Payments recorded against it will be kept as unapplied client credit.'
-          : 'This cannot be undone.',
-      confirmLabel: 'Delete',
+          ? t('Payments recorded against it will be kept as unapplied client credit.')
+          : t('This cannot be undone.'),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
     await deleteDocument(doc.id);
-    toast.success(`${labels.singular} deleted`);
+    toast.success(t('{document} deleted', { document: t(labels.singular) }));
     navigate(base);
   };
 
   const voidDoc = async () => {
     const ok = await confirm({
-      title: `Void ${doc.number}?`,
-      description:
+      title: t('Void {number}?', { number: doc.number }),
+      description: t(
         'A void document stays in your records for reference but no longer counts as owed.',
-      confirmLabel: 'Void',
+      ),
+      confirmLabel: t('Void'),
       danger: true,
     });
     if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
   };
 
-  const primaryAction =
-    type === 'invoice' && (doc.status === 'sent' || doc.status === 'partial') ? (
-      <Button onClick={() => setRecordPayment(true)}>
-        <CreditCard /> {t('Record payment')}
-      </Button>
-    ) : type === 'quote' && (doc.status === 'accepted' || doc.status === 'sent') ? (
-      <Button
-        loading={busy === 'convert'}
-        onClick={() =>
-          run('convert', async () => {
-            const invoice = await convertQuoteToInvoice(doc.id);
-            toast.success(`Invoice ${invoice.number} created`);
-            navigate(`/invoices/${invoice.id}`);
-          })
-        }
-      >
-        <FileText /> Convert to invoice
-      </Button>
-    ) : type === 'credit' &&
-      (doc.status === 'sent' || doc.status === 'partial') &&
-      doc.totals.balance > 0 ? (
-      <Button onClick={() => setApplyCredit(true)}>
-        <CreditCard /> {t('Apply to invoice')}
-      </Button>
-    ) : doc.status === 'draft' ? (
-      <Button onClick={() => setSend('document')}>
-        <Send /> Send
-      </Button>
-    ) : null;
+  const cancelLabel = type === 'sales_order' ? t('Cancel order') : t('Cancel delivery note');
+  const cancelDoc = async () => {
+    const ok = await confirm({
+      title: t('Cancel {number}?', { number: doc.number }),
+      description: t(
+        'A cancelled document stays in your records for reference. Invoices and delivery notes already made from it are not changed.',
+      ),
+      confirmLabel: cancelLabel,
+      danger: true,
+    });
+    if (ok) await setStatus('cancelled');
+  };
+
+  // The main next step; everything else is in the "More actions" menu.
+  let primary: string | null = null;
+  if (type === 'invoice' && (doc.status === 'sent' || doc.status === 'partial')) primary = 'pay';
+  else if (
+    (type === 'quote' || type === 'proforma') &&
+    (doc.status === 'accepted' || doc.status === 'sent')
+  )
+    primary = 'to-invoice';
+  else if (
+    type === 'credit' &&
+    (doc.status === 'sent' || doc.status === 'partial') &&
+    doc.totals.balance > 0
+  )
+    primary = 'apply';
+  else if (type === 'sales_order' && doc.status === 'draft') primary = 'confirm';
+  else if (canInvoice) primary = 'invoice';
+  else if (type === 'sales_order' && canDeliver) primary = 'deliver';
+  else if (type === 'delivery_note' && doc.status === 'draft') primary = 'delivered';
+  else if (type === 'proforma' && doc.status === 'draft') primary = 'sent';
+  else if (emailed && doc.status === 'draft') primary = 'send';
+
+  const primaryAction: ReactNode =
+    {
+      pay: (
+        <Button onClick={() => setRecordPayment(true)}>
+          <CreditCard /> {t('Record payment')}
+        </Button>
+      ),
+      'to-invoice': (
+        <Button loading={busy === 'convert-invoice'} onClick={() => void convert('invoice')}>
+          <FileText /> {t('Convert to invoice')}
+        </Button>
+      ),
+      apply: (
+        <Button onClick={() => setApplyCredit(true)}>
+          <CreditCard /> {t('Apply to invoice')}
+        </Button>
+      ),
+      confirm: (
+        <Button
+          loading={busy === 'confirm'}
+          onClick={() => void run('confirm', () => markSent(doc.id))}
+        >
+          <CheckCircle2 /> {t('Confirm order')}
+        </Button>
+      ),
+      invoice: (
+        <Button onClick={() => setPart('invoice')}>
+          <FileText /> {t('Create invoice')}
+        </Button>
+      ),
+      deliver: (
+        <Button onClick={() => setPart('delivery_note')}>
+          <PackageCheck /> {t('Create delivery note')}
+        </Button>
+      ),
+      delivered: (
+        <Button onClick={() => setDeliver(true)}>
+          <PackageCheck /> {t('Mark as delivered')}
+        </Button>
+      ),
+      sent: (
+        <Button loading={busy === 'sent'} onClick={() => void run('sent', () => markSent(doc.id))}>
+          <CheckCircle2 /> {t('Mark as sent')}
+        </Button>
+      ),
+      send: (
+        <Button onClick={() => setSend('document')}>
+          <Send /> {t('Send')}
+        </Button>
+      ),
+    }[primary ?? ''] ?? null;
+
+  const menu: ReactNode[] = [];
+  const item = (key: string, icon: ReactNode, label: string, onSelect: () => void) =>
+    menu.push(
+      <DropdownItem key={key} icon={icon} onSelect={onSelect}>
+        {label}
+      </DropdownItem>,
+    );
+  if (emailed && (doc.status !== 'draft' || !primaryAction)) {
+    item('email', <Send />, t('Send by email'), () => setSend('document'));
+  }
+  if (
+    type === 'invoice' &&
+    (status === 'overdue' || doc.status === 'partial' || doc.status === 'sent')
+  ) {
+    item('reminder', <BellRing />, t('Send reminder'), () => setSend('reminder'));
+  }
+  if (emailed && doc.status === 'draft') {
+    item(
+      'sent',
+      <CheckCircle2 />,
+      t('Mark as sent'),
+      () => void run('sent', () => markSent(doc.id)),
+    );
+  }
+  if ((type === 'quote' || type === 'proforma') && !settled && doc.status !== 'accepted') {
+    item('accept', <ThumbsUp />, t('Mark as accepted'), () => void setStatus('accepted'));
+  }
+  if (type === 'quote' && !settled && doc.status !== 'declined') {
+    item('decline', <ThumbsDown />, t('Mark as declined'), () => void setStatus('declined'));
+  }
+  if (type === 'quote' && !settled && doc.status !== 'declined') {
+    item(
+      'to-proforma',
+      <FileClock />,
+      t('Convert to proforma invoice'),
+      () => void convert('proforma'),
+    );
+    item(
+      'to-order',
+      <ClipboardList />,
+      t('Convert to sales order'),
+      () => void convert('sales_order'),
+    );
+  }
+  if (type === 'proforma' && doc.status === 'draft') {
+    item('to-invoice', <FileText />, t('Convert to invoice'), () => void convert('invoice'));
+  }
+  if (canDeliver && primary !== 'deliver') {
+    item('deliver', <PackageCheck />, t('Create delivery note'), () => setPart('delivery_note'));
+  }
+  if (type === 'invoice' && doc.status !== 'draft' && doc.status !== 'void') {
+    item(
+      'credit',
+      <FileMinus />,
+      t('Create credit note'),
+      () =>
+        void run('credit', async () =>
+          opened(await duplicateDocument(doc.id, 'credit', { sourceId: doc.id }), true),
+        ),
+    );
+  }
+  if (type === 'delivery_note' && doc.status === 'delivered') {
+    item('undeliver', <Undo2 />, t('Mark as not delivered'), () => void setStatus('draft'));
+  }
+  item(
+    'duplicate',
+    <Copy />,
+    t('Duplicate'),
+    () => void run('duplicate', async () => opened(await duplicateDocument(doc.id), true)),
+  );
+  if (doc.status === 'void' && booked) {
+    item('unvoid', <Undo2 />, t('Restore (un-void)'), () => void setStatus('sent'));
+  } else if (booked && doc.status !== 'draft') {
+    item('void', <Ban />, t('Void'), () => void voidDoc());
+  }
+  if (doc.status === 'cancelled') {
+    item(
+      'reopen',
+      <RotateCcw />,
+      t('Reopen'),
+      () => void setStatus(type === 'sales_order' ? 'confirmed' : 'draft'),
+    );
+  } else if (type === 'sales_order' || type === 'delivery_note') {
+    item('cancel', <Ban />, cancelLabel, () => void cancelDoc());
+  }
+
+  const deliveryMeta =
+    type === 'sales_order' && doc.status !== 'draft' && doc.status !== 'cancelled'
+      ? DELIVERY_STATUS_META[doc.deliveryStatus ?? 'not_delivered']
+      : null;
 
   return (
     <div>
@@ -242,42 +444,46 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         <div className="min-w-0">
           <p className="mb-1 text-sm text-slate-500">
             <Link to={base} className="hover:text-slate-700">
-              {labels.plural}
+              {t(labels.plural)}
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              {labels.singular} {doc.number}
+              {t(labels.singular)} {doc.number}
             </h1>
             <StatusBadge status={status} />
+            {deliveryMeta ? <Badge tone={deliveryMeta.tone}>{t(deliveryMeta.label)}</Badge> : null}
           </div>
           {client ? (
             <p className="mt-1 text-sm text-slate-500">
-              for{' '}
-              <Link
-                to={`/clients/${client.id}`}
-                className="hover:text-primary-700 font-medium text-slate-700"
-              >
-                {client.name}
-              </Link>
+              {tr('for {client}', {
+                client: (
+                  <Link
+                    to={`/clients/${client.id}`}
+                    className="hover:text-primary-700 font-medium text-slate-700"
+                  >
+                    {localName(client)}
+                  </Link>
+                ),
+              })}
             </p>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={download} loading={busy === 'download'}>
-            <Download /> Download PDF
+            <Download /> {t('Download PDF')}
           </Button>
           <Button
             variant="outline"
             size="icon"
             onClick={print}
             loading={busy === 'print'}
-            aria-label="Print"
+            aria-label={t('Print')}
           >
             <Printer />
           </Button>
           <Button variant="outline" onClick={() => navigate(`${base}/${doc.id}/edit`)}>
-            <Pencil /> Edit
+            <Pencil /> {t('Edit')}
           </Button>
           {type === 'invoice' || type === 'quote' ? (
             <Button
@@ -291,89 +497,15 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           {primaryAction}
           <DropdownMenu>
             <DropdownTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="More actions">
+              <Button variant="outline" size="icon" aria-label={t('More actions')}>
                 <MoreHorizontal />
               </Button>
             </DropdownTrigger>
             <DropdownContent>
-              {doc.status !== 'draft' || !primaryAction ? (
-                <DropdownItem icon={<Send />} onSelect={() => setSend('document')}>
-                  Send by email
-                </DropdownItem>
-              ) : null}
-              {type === 'invoice' &&
-              (status === 'overdue' || doc.status === 'partial' || doc.status === 'sent') ? (
-                <DropdownItem icon={<BellRing />} onSelect={() => setSend('reminder')}>
-                  Send reminder
-                </DropdownItem>
-              ) : null}
-              {doc.status === 'draft' ? (
-                <DropdownItem
-                  icon={<CheckCircle2 />}
-                  onSelect={() => void run('sent', () => markSent(doc.id))}
-                >
-                  Mark as sent
-                </DropdownItem>
-              ) : null}
-              {type === 'quote' && doc.status !== 'accepted' && doc.status !== 'invoiced' ? (
-                <DropdownItem
-                  icon={<ThumbsUp />}
-                  onSelect={() => void run('accept', () => setDocumentStatus(doc.id, 'accepted'))}
-                >
-                  Mark as accepted
-                </DropdownItem>
-              ) : null}
-              {type === 'quote' && doc.status !== 'declined' && doc.status !== 'invoiced' ? (
-                <DropdownItem
-                  icon={<ThumbsDown />}
-                  onSelect={() => void run('decline', () => setDocumentStatus(doc.id, 'declined'))}
-                >
-                  Mark as declined
-                </DropdownItem>
-              ) : null}
-              {type === 'invoice' && doc.status !== 'draft' && doc.status !== 'void' ? (
-                <DropdownItem
-                  icon={<FileMinus />}
-                  onSelect={() =>
-                    void run('credit', async () => {
-                      const credit = await duplicateDocument(doc.id, 'credit', {
-                        sourceId: doc.id,
-                      });
-                      toast.success(`Credit note ${credit.number} created`);
-                      navigate(`/credits/${credit.id}/edit`);
-                    })
-                  }
-                >
-                  Create credit note
-                </DropdownItem>
-              ) : null}
-              <DropdownItem
-                icon={<Copy />}
-                onSelect={() =>
-                  void run('duplicate', async () => {
-                    const copy = await duplicateDocument(doc.id);
-                    toast.success(`${labels.singular} ${copy.number} created`);
-                    navigate(`${base}/${copy.id}/edit`);
-                  })
-                }
-              >
-                Duplicate
-              </DropdownItem>
-              {doc.status === 'void' ? (
-                <DropdownItem
-                  icon={<Undo2 />}
-                  onSelect={() => void run('unvoid', () => setDocumentStatus(doc.id, 'sent'))}
-                >
-                  Restore (un-void)
-                </DropdownItem>
-              ) : type !== 'quote' && doc.status !== 'draft' ? (
-                <DropdownItem icon={<Ban />} onSelect={() => void voidDoc()}>
-                  Void
-                </DropdownItem>
-              ) : null}
+              {menu}
               <DropdownSeparator />
               <DropdownItem icon={<Trash2 />} danger onSelect={() => void remove()}>
-                Delete
+                {t('Delete')}
               </DropdownItem>
             </DropdownContent>
           </DropdownMenu>
@@ -389,49 +521,67 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
 
         <aside className="space-y-6">
           <Card>
-            <CardHeader title="Summary" />
+            <CardHeader title={t('Summary')} />
             <CardBody className="py-3">
-              <SummaryRow label="Issued" value={fmt.date(doc.issueDate)} />
+              <SummaryRow label={t('Issue date')} value={fmt.date(doc.issueDate)} />
               {doc.dueDate ? (
                 <SummaryRow
-                  label={type === 'quote' ? 'Valid until' : 'Due'}
+                  label={type === 'quote' || type === 'proforma' ? t('Valid until') : t('Due')}
                   value={
                     overdueDays > 0
-                      ? `${fmt.date(doc.dueDate)} · ${overdueDays}d late`
+                      ? `${fmt.date(doc.dueDate)} · ${tp(overdueDays, '{count} day late', '{count} days late')}`
                       : fmt.date(doc.dueDate)
                   }
                   tone={overdueDays > 0 ? 'danger' : undefined}
                 />
               ) : null}
-              <SummaryRow label="Total" value={money(doc.totals.total)} tone="strong" />
-              {type !== 'quote' ? (
+              {doc.deliveryDate ? (
+                <SummaryRow label={t('Delivery date')} value={fmt.date(doc.deliveryDate)} />
+              ) : null}
+              {type === 'delivery_note' && doc.deliveryPlace ? (
+                <SummaryRow label={t('Deliver to')} value={doc.deliveryPlace} />
+              ) : null}
+              {type === 'delivery_note' && doc.status === 'delivered' && doc.receiverName ? (
+                <SummaryRow
+                  label={t('Received by')}
+                  value={
+                    <>
+                      {doc.receiverName}
+                      {doc.receiverCivilId ? (
+                        <span className="block text-xs text-slate-500" dir="ltr">
+                          {doc.receiverCivilId}
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                />
+              ) : null}
+              {priced ? (
+                <SummaryRow label={t('Total')} value={money(doc.totals.total)} tone="strong" />
+              ) : null}
+              {(type === 'proforma' || type === 'invoice') && doc.deposit > 0 ? (
+                <SummaryRow label={t('Deposit requested')} value={money(doc.deposit)} />
+              ) : null}
+              {booked ? (
                 <>
                   <SummaryRow
-                    label={type === 'credit' ? 'Applied' : 'Paid'}
+                    label={type === 'credit' ? t('Applied') : t('Paid')}
                     value={money(doc.totals.paid)}
                   />
                   <SummaryRow
-                    label={type === 'credit' ? 'Remaining' : 'Balance'}
+                    label={type === 'credit' ? t('Remaining') : t('Balance')}
                     value={money(doc.status === 'void' ? 0 : doc.totals.balance)}
                     tone={status === 'overdue' ? 'danger' : 'strong'}
                   />
                 </>
               ) : null}
-              {doc.sentAt ? <SummaryRow label="Sent" value={fmt.dateTime(doc.sentAt)} /> : null}
-              {related && related.length > 0 ? (
-                <div className="mt-2 border-t border-slate-100 pt-2">
-                  {related.map((r) => (
-                    <Link
-                      key={r.id}
-                      to={`${DOCUMENT_ROUTES[r.type]}/${r.id}`}
-                      className="text-primary-700 block py-1 text-sm font-medium hover:underline"
-                    >
-                      {r.id === doc.sourceId ? 'Created from' : 'Converted to'}{' '}
-                      {DOCUMENT_LABELS[r.type].singular.toLowerCase()} {r.number}
-                    </Link>
-                  ))}
-                </div>
+              {doc.sentAt && type !== 'delivery_note' ? (
+                <SummaryRow
+                  label={type === 'sales_order' ? t('Confirmed') : t('Sent')}
+                  value={fmt.dateTime(doc.sentAt)}
+                />
               ) : null}
+              <RelatedDocuments doc={doc} />
               {doc.privateNotes ? (
                 <p className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
                   {doc.privateNotes}
@@ -442,7 +592,13 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
 
           {type === 'invoice' ? <PaymentLinkCard doc={doc} /> : null}
 
-          {type !== 'quote' ? (
+          {progress &&
+          progress.length > 0 &&
+          (type === 'sales_order' || progress.some((p) => p.delivered || p.inDelivery)) ? (
+            <OrderProgressCard doc={doc} progress={progress} />
+          ) : null}
+
+          {booked ? (
             <Card>
               <CardHeader
                 title={type === 'credit' ? t('Applied to') : t('Payments')}
@@ -510,20 +666,20 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           ) : null}
 
           <Card>
-            <CardHeader title="Activity" />
+            <CardHeader title={t('Activity')} />
             <CardBody className="py-3">
               {activity && activity.length > 0 ? (
                 <ol className="relative space-y-4 border-s border-slate-200 ps-4">
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
-                      <p className="text-sm text-slate-700">{a.message}</p>
+                      <p className="text-sm text-slate-700">{activityText(a)}</p>
                       <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}
                 </ol>
               ) : (
-                <p className="text-sm text-slate-500">No activity yet.</p>
+                <p className="text-sm text-slate-500">{t('No activity yet.')}</p>
               )}
             </CardBody>
           </Card>
@@ -559,6 +715,19 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
       {applyCredit ? (
         <ApplyCreditDialog open onOpenChange={setApplyCredit} credit={doc} company={company} />
       ) : null}
+      {part ? (
+        <PartDialog
+          open
+          onOpenChange={(open) => !open && setPart(null)}
+          doc={doc}
+          target={part}
+          onCreated={(created) => {
+            setPart(null);
+            opened(created);
+          }}
+        />
+      ) : null}
+      {deliver ? <DeliverDialog open onOpenChange={setDeliver} doc={doc} /> : null}
     </div>
   );
 }

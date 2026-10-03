@@ -1,6 +1,6 @@
 import { db } from './db';
 import { createDocument, defaultNumbering, emptyTotals, nowStamp } from './defaults';
-import { logActivity } from './activity';
+import { logActivity, type ActivityMessage } from './activity';
 import type {
   Client,
   Company,
@@ -8,26 +8,91 @@ import type {
   DocumentType,
   ID,
   InvoiceDocument,
-  SalesDocumentType,
   TaxLine,
 } from './types';
 import { computeDocument } from '@/lib/document-calc';
 import { taxLineOf } from '@/lib/calc';
 import { allocateNumber } from '@/lib/numbering';
-import { settledStatus } from '@/lib/status';
+import { issuedStatus, settledStatus } from '@/lib/status';
 import { addDaysISO, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
 import { isPosted } from '@/lib/accounting/ledger';
-import { isPurchaseType } from '@/lib/document-types';
+import { isPurchaseType, postsToLedger } from '@/lib/document-types';
+import { deliveryStatusOf, lineProgress, orderStatus } from '@/lib/orders';
+import { msg, t } from '@/i18n';
 import { assertUnlocked } from './accounting';
 
-export const DOCUMENT_NOUN: Record<DocumentType, string> = {
-  invoice: 'Invoice',
-  quote: 'Quote',
-  credit: 'Credit note',
-  bill: 'Bill',
-  vendor_credit: 'Vendor credit',
+/** Activity log messages of each type (English keys, shown in the reader's language). */
+const LOG: Record<DocumentType, { created: string; updated: string; deleted: string }> = {
+  invoice: {
+    created: msg('Invoice {number} created'),
+    updated: msg('Invoice {number} updated'),
+    deleted: msg('Invoice {number} deleted'),
+  },
+  quote: {
+    created: msg('Quote {number} created'),
+    updated: msg('Quote {number} updated'),
+    deleted: msg('Quote {number} deleted'),
+  },
+  credit: {
+    created: msg('Credit note {number} created'),
+    updated: msg('Credit note {number} updated'),
+    deleted: msg('Credit note {number} deleted'),
+  },
+  bill: {
+    created: msg('Bill {number} created'),
+    updated: msg('Bill {number} updated'),
+    deleted: msg('Bill {number} deleted'),
+  },
+  vendor_credit: {
+    created: msg('Vendor credit {number} created'),
+    updated: msg('Vendor credit {number} updated'),
+    deleted: msg('Vendor credit {number} deleted'),
+  },
+  proforma: {
+    created: msg('Proforma invoice {number} created'),
+    updated: msg('Proforma invoice {number} updated'),
+    deleted: msg('Proforma invoice {number} deleted'),
+  },
+  sales_order: {
+    created: msg('Sales order {number} created'),
+    updated: msg('Sales order {number} updated'),
+    deleted: msg('Sales order {number} deleted'),
+  },
+  purchase_order: {
+    created: msg('Purchase order {number} created'),
+    updated: msg('Purchase order {number} updated'),
+    deleted: msg('Purchase order {number} deleted'),
+  },
+  delivery_note: {
+    created: msg('Delivery note {number} created'),
+    updated: msg('Delivery note {number} updated'),
+    deleted: msg('Delivery note {number} deleted'),
+  },
 };
+
+const STATUS_LOG: Partial<Record<DocumentStatus, string>> = {
+  sent: msg('{number} marked as sent'),
+  accepted: msg('{number} marked as accepted'),
+  declined: msg('{number} marked as declined'),
+  void: msg('{number} voided'),
+  confirmed: msg('{number} confirmed'),
+  issued: msg('{number} issued'),
+  delivered: msg('{number} marked as delivered'),
+  cancelled: msg('{number} cancelled'),
+  draft: msg('{number} moved back to draft'),
+};
+
+function statusMessage(doc: InvoiceDocument, status: DocumentStatus): ActivityMessage {
+  const vars = { number: doc.number };
+  if (doc.status === 'void' || doc.status === 'cancelled') {
+    return { text: msg('{number} restored'), vars };
+  }
+  if (status === 'sent' && (doc.type === 'bill' || doc.type === 'vendor_credit')) {
+    return { text: msg('{number} marked as open'), vars };
+  }
+  return { text: STATUS_LOG[status] ?? msg('{number} updated'), vars };
+}
 
 /** Tax rates applied by default to new lines / documents. */
 export async function defaultTaxes(company: Company): Promise<TaxLine[]> {
@@ -35,6 +100,18 @@ export async function defaultTaxes(company: Company): Promise<TaxLine[]> {
   if (ids.length === 0) return [];
   const rates = await db.taxRates.bulkGet(ids);
   return rates.filter((r): r is NonNullable<typeof r> => Boolean(r && !r.archived)).map(taxLineOf);
+}
+
+/** The company's default notes and terms of a type (empty when it has none). */
+export function defaultWording(
+  company: Company,
+  type: DocumentType,
+): { notes: string; terms: string } {
+  const d = company.defaults;
+  if (type === 'invoice') return { notes: d.invoiceNotes, terms: d.invoiceTerms };
+  if (type === 'quote') return { notes: d.quoteNotes, terms: d.quoteTerms };
+  if (type === 'credit') return { notes: d.creditNotes, terms: d.creditTerms };
+  return { notes: '', terms: '' };
 }
 
 /** A new, unsaved document pre-filled from company (and client) defaults. */
@@ -47,29 +124,25 @@ export async function draftDocument(
   const d = company.defaults;
   const terms = client?.paymentTermsDays ?? d.paymentTermsDays;
   const taxes = await defaultTaxes(company);
-  const notes =
-    { invoice: d.invoiceNotes, quote: d.quoteNotes, credit: d.creditNotes }[
-      type as SalesDocumentType
-    ] ?? '';
-  const docTerms =
-    { invoice: d.invoiceTerms, quote: d.quoteTerms, credit: d.creditTerms }[
-      type as SalesDocumentType
-    ] ?? '';
+  const wording = defaultWording(company, type);
+  const priced = type !== 'delivery_note';
   return createDocument(company.id, type, {
     clientId: client?.id ?? '',
     issueDate,
     dueDate:
       type === 'invoice' || type === 'bill'
         ? addDaysISO(issueDate, terms)
-        : type === 'quote'
+        : type === 'quote' || type === 'proforma'
           ? addDaysISO(issueDate, d.quoteValidDays)
           : null,
+    // A delivery note is usually written on the day the goods go out.
+    deliveryDate: type === 'delivery_note' ? issueDate : null,
     currency: client?.currency || company.currency,
-    taxes: d.documentTaxes ? taxes : [],
-    notes,
-    terms: docTerms,
+    taxes: d.documentTaxes && priced ? taxes : [],
+    notes: wording.notes,
+    terms: wording.terms,
     // Bills are the vendor's documents: nothing of ours is printed on them.
-    footer: isPurchaseType(type) ? '' : d.footer,
+    footer: type === 'bill' || type === 'vendor_credit' ? '' : d.footer,
     pricesIncludeTax: isPurchaseType(type) ? false : d.pricesIncludeTax,
     items: [
       {
@@ -83,7 +156,7 @@ export async function draftDocument(
         unitPrice: 0,
         discount: 0,
         discountType: 'percent',
-        taxes: d.lineTaxes ? taxes : [],
+        taxes: d.lineTaxes && priced ? taxes : [],
       },
     ],
   });
@@ -133,8 +206,9 @@ export function applyTotals(
     paid: result.paid,
     balance: result.balance,
   };
+  // Only documents that take payments move between sent, partially paid and paid.
   let status: DocumentStatus = doc.status;
-  if (doc.type !== 'quote' && doc.status !== 'void') {
+  if (postsToLedger(doc.type) && doc.status !== 'void') {
     status = settledStatus(doc, result.total, result.paid);
   }
   const settled = status === 'paid' || status === 'applied';
@@ -154,6 +228,58 @@ export async function recalculateDocuments(ids: Iterable<ID>): Promise<void> {
     const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
     const updated = applyTotals(doc, await paidAmount(doc), client ?? null);
     await db.documents.put({ ...updated, updatedAt: doc.updatedAt });
+  }
+}
+
+/** Documents created from `id`: invoices, bills and delivery notes of an order, credit notes… */
+export async function documentsCreatedFrom(id: ID): Promise<InvoiceDocument[]> {
+  return db.documents.where('sourceId').equals(id).toArray();
+}
+
+/**
+ * What an order's (or invoice's) progress is worked out from: the documents
+ * created from it and, for a sales order, the delivery notes of its invoices.
+ */
+export async function relatedForProgress(
+  doc: Pick<InvoiceDocument, 'id' | 'type'>,
+): Promise<InvoiceDocument[]> {
+  const direct = await documentsCreatedFrom(doc.id);
+  if (doc.type !== 'sales_order') return direct;
+  const invoiceIds = direct.filter((d) => d.type === 'invoice').map((d) => d.id);
+  if (invoiceIds.length === 0) return direct;
+  const notes = await db.documents
+    .where('sourceId')
+    .anyOf(invoiceIds)
+    .filter((d) => d.type === 'delivery_note')
+    .toArray();
+  return [...direct, ...notes];
+}
+
+/** Brings a sales or purchase order's stored status and delivery progress up to date. */
+async function refreshOrder(id: ID | null | undefined): Promise<void> {
+  if (!id) return;
+  const order = await db.documents.get(id);
+  if (!order || (order.type !== 'sales_order' && order.type !== 'purchase_order')) return;
+  const progress = lineProgress(order, await relatedForProgress(order));
+  const next: InvoiceDocument = { ...order, status: orderStatus(order, progress) };
+  if (order.type === 'sales_order') next.deliveryStatus = deliveryStatusOf(progress);
+  if (next.status !== order.status || next.deliveryStatus !== order.deliveryStatus) {
+    await db.documents.put(next);
+  }
+}
+
+/**
+ * Updates the orders whose progress depends on `doc`: the order itself, the
+ * order it was created from and, for a delivery note of an invoice, the
+ * invoice's order.
+ */
+async function refreshOrdersOf(doc: Pick<InvoiceDocument, 'id' | 'type' | 'sourceId'>) {
+  await refreshOrder(doc.id);
+  if (!doc.sourceId) return;
+  await refreshOrder(doc.sourceId);
+  if (doc.type === 'delivery_note') {
+    const source = await db.documents.get(doc.sourceId);
+    if (source?.type === 'invoice') await refreshOrder(source.sourceId);
   }
 }
 
@@ -194,13 +320,14 @@ export async function suggestNumber(
 
 export class DuplicateNumberError extends Error {
   constructor(number: string) {
-    super(`The number ${number} is already used by another document.`);
+    super(t('The number {number} is already used by another document.', { number }));
   }
 }
 
 /**
  * Saves a document: assigns a number when it has none, recomputes totals and
- * advances the company's counter. Returns the stored document.
+ * advances the company's counter. Orders it belongs to are brought up to
+ * date. Returns the stored document.
  */
 export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocument> {
   return db.transaction(
@@ -218,7 +345,7 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
 
       const taken = await takenNumbers(company.id, doc.type, doc.id);
       if (!doc.number) {
-        // Companies created before bills existed have no rule for them yet.
+        // Companies created before a document type existed have no rule for it yet.
         const rule = company.numbering[doc.type] ?? defaultNumbering()[doc.type];
         const allocated = allocateNumber(
           rule,
@@ -240,24 +367,29 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.documents.put(doc);
 
-      const noun = DOCUMENT_NOUN[doc.type];
       await logActivity(
         company.id,
         doc.type,
         doc.id,
         existing ? 'updated' : 'created',
-        `${noun} ${doc.number} ${existing ? 'updated' : 'created'}`,
+        { text: LOG[doc.type][existing ? 'updated' : 'created'], vars: { number: doc.number } },
         { clientId: doc.clientId || null, documentId: doc.id },
       );
-      return doc;
+      await refreshOrdersOf(doc);
+      return (await db.documents.get(doc.id)) ?? doc;
     },
   );
 }
 
+/**
+ * Changes a document's status. `patch` is stored with it (for example who
+ * signed a delivery note).
+ */
 export async function setDocumentStatus(
   id: ID,
   status: DocumentStatus,
-  message?: string,
+  message?: ActivityMessage,
+  patch: Partial<InvoiceDocument> = {},
 ): Promise<void> {
   await db.transaction(
     'rw',
@@ -269,9 +401,9 @@ export async function setDocumentStatus(
       if (company && isPosted(doc) !== isPosted({ type: doc.type, status })) {
         assertUnlocked(company, doc.issueDate);
       }
-      let next: InvoiceDocument = { ...doc, status, updatedAt: nowStamp() };
-      if (status === 'sent' && !doc.sentAt) next.sentAt = nowStamp();
-      if (doc.type !== 'quote' && status !== 'void' && status !== 'draft') {
+      let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
+      if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
+      if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
         // Let payments decide between sent / partial / paid.
         const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
         next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
@@ -282,17 +414,24 @@ export async function setDocumentStatus(
         doc.type,
         doc.id,
         `status:${status}`,
-        message ?? `${DOCUMENT_NOUN[doc.type]} ${doc.number} marked as ${status}`,
+        message ?? statusMessage(doc, status),
         { clientId: doc.clientId || null, documentId: doc.id },
       );
+      // A confirmed order picks up the invoices already made from it.
+      await refreshOrdersOf(next);
     },
   );
 }
 
+/**
+ * Takes a draft out of the office: sent (invoices, quotes, proformas, credit
+ * notes), open (bills), confirmed (sales orders) or issued (purchase orders).
+ */
 export async function markSent(id: ID): Promise<void> {
   const doc = await db.documents.get(id);
   if (!doc || doc.status !== 'draft') return;
-  await setDocumentStatus(id, 'sent', `${DOCUMENT_NOUN[doc.type]} ${doc.number} marked as sent`);
+  const status = issuedStatus(doc.type);
+  if (status) await setDocumentStatus(id, status);
 }
 
 /** Deletes a document. Payments that referenced it keep their money as unapplied credit. */
@@ -321,13 +460,19 @@ export async function deleteDocument(id: ID): Promise<void> {
         await db.payments.bulkDelete(uses.map((p) => p.id));
         await recalculateDocuments(touched);
       }
-      if (doc.type === 'quote') {
-        const fromQuote = await db.documents
-          .where('companyId')
-          .equals(doc.companyId)
-          .filter((d) => d.sourceId === id)
-          .toArray();
-        for (const d of fromQuote) await db.documents.put({ ...d, sourceId: null });
+      // Documents created from this one lose the link.
+      for (const d of await documentsCreatedFrom(id)) {
+        await db.documents.put({ ...d, sourceId: null });
+      }
+      // A quote or proforma converted into this document can be converted again.
+      const source = doc.sourceId ? await db.documents.get(doc.sourceId) : undefined;
+      if (source && source.convertedToId === doc.id) {
+        const reopened = source.status === 'invoiced' || source.status === 'converted';
+        await db.documents.put({
+          ...source,
+          convertedToId: null,
+          status: reopened ? 'accepted' : source.status,
+        });
       }
       await db.documents.delete(id);
       await logActivity(
@@ -335,11 +480,10 @@ export async function deleteDocument(id: ID): Promise<void> {
         doc.type,
         doc.id,
         'deleted',
-        `${DOCUMENT_NOUN[doc.type]} ${doc.number} deleted`,
-        {
-          clientId: doc.clientId || null,
-        },
+        { text: LOG[doc.type].deleted, vars: { number: doc.number } },
+        { clientId: doc.clientId || null },
       );
+      await refreshOrdersOf(doc);
     },
   );
 }
@@ -362,7 +506,8 @@ export async function duplicateDocument(
     clientId: source.clientId,
     currency: source.currency,
     poNumber: source.poNumber,
-    items: source.items.map((i) => ({ ...i, id: shortId() })),
+    // A copy is a document of its own: it does not count towards an order.
+    items: source.items.map((i) => ({ ...i, id: shortId(), sourceLineId: undefined })),
     discount: source.discount,
     discountType: source.discountType,
     taxes: source.taxes,
@@ -373,34 +518,90 @@ export async function duplicateDocument(
     footer: source.footer,
     privateNotes: source.privateNotes,
     templateId: source.templateId,
+    // Credit notes don't print where the goods went.
+    deliveryPlace:
+      type === 'credit' || type === 'vendor_credit' ? '' : (source.deliveryPlace ?? ''),
     totals: emptyTotals(),
     ...overrides,
   };
   return saveDocument(copy);
 }
 
-/** Creates an invoice from a quote and marks the quote as invoiced. */
-export async function convertQuoteToInvoice(quoteId: ID): Promise<InvoiceDocument> {
-  const quote = await db.documents.get(quoteId);
-  if (!quote || quote.type !== 'quote') throw new Error('Quote not found');
-  const linked = await duplicateDocument(quoteId, 'invoice', { sourceId: quote.id });
-  await db.documents.update(quote.id, {
-    status: 'invoiced',
+/**
+ * Notes and terms written for a document carry over to the one made from it;
+ * the company's default wording of the old type is replaced by the new type's.
+ */
+export function carriedWording(
+  company: Company,
+  source: Pick<InvoiceDocument, 'type' | 'notes' | 'terms'>,
+  type: DocumentType,
+): { notes: string; terms: string } {
+  const before = defaultWording(company, source.type);
+  const after = defaultWording(company, type);
+  const keep = (value: string, standard: string, fallback: string) =>
+    value.trim() && value.trim() !== standard.trim() ? value : fallback;
+  return {
+    notes: keep(source.notes, before.notes, after.notes),
+    terms: keep(source.terms, before.terms, after.terms),
+  };
+}
+
+/** One-to-one conversions: what each type can be turned into. */
+export const CONVERSIONS: Partial<
+  Record<DocumentType, ('invoice' | 'proforma' | 'sales_order')[]>
+> = {
+  quote: ['invoice', 'proforma', 'sales_order'],
+  proforma: ['invoice'],
+};
+
+const CONVERTED_LOG: Record<'invoice' | 'proforma' | 'sales_order', string> = {
+  invoice: msg('{number} converted to invoice {target}'),
+  proforma: msg('{number} converted to proforma invoice {target}'),
+  sales_order: msg('{number} converted to sales order {target}'),
+};
+
+/**
+ * Turns a quote into an invoice, proforma invoice or sales order, or a
+ * proforma into an invoice: lines (with their Arabic names), customer,
+ * currency, PO number, notes and the deposit asked for are copied, and both
+ * documents point at each other.
+ */
+export async function convertDocument(
+  sourceId: ID,
+  to: 'invoice' | 'proforma' | 'sales_order',
+): Promise<InvoiceDocument> {
+  const source = await db.documents.get(sourceId);
+  if (!source || !CONVERSIONS[source.type]?.includes(to)) throw new Error('Document not found');
+  const company = await db.companies.get(source.companyId);
+  if (!company) throw new Error('Company not found');
+  const deposit = to === 'invoice' || to === 'proforma';
+  const linked = await duplicateDocument(sourceId, to, {
+    sourceId: source.id,
+    ...carriedWording(company, source, to),
+    exchangeRate: source.exchangeRate,
+    deposit: deposit ? source.deposit : 0,
+    depositDueDate: deposit ? source.depositDueDate : null,
+    deliveryDate: source.deliveryDate ?? null,
+  });
+  await db.documents.update(source.id, {
+    status: source.type === 'quote' && to === 'invoice' ? 'invoiced' : 'converted',
     convertedToId: linked.id,
     updatedAt: nowStamp(),
   });
   await logActivity(
-    quote.companyId,
-    'quote',
-    quote.id,
+    source.companyId,
+    source.type,
+    source.id,
     'converted',
-    `Quote ${quote.number} converted to invoice ${linked.number}`,
-    {
-      clientId: quote.clientId || null,
-      documentId: quote.id,
-    },
+    { text: CONVERTED_LOG[to], vars: { number: source.number, target: linked.number } },
+    { clientId: source.clientId || null, documentId: source.id },
   );
   return linked;
+}
+
+/** Creates an invoice from a quote and marks the quote as invoiced. */
+export function convertQuoteToInvoice(quoteId: ID): Promise<InvoiceDocument> {
+  return convertDocument(quoteId, 'invoice');
 }
 
 export function newLineItem(taxes: TaxLine[] = []) {

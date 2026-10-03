@@ -36,6 +36,7 @@ import {
   StatusBadge,
 } from '@/components/ui/misc';
 import { ColumnChart } from '@/components/charts/column-chart';
+import { isPosted } from '@/lib/accounting/ledger';
 
 // Validated categorical slots 1 and 2 (dataviz reference palette, light surface).
 const SERIES_INVOICED = '#2a78d6';
@@ -224,7 +225,7 @@ export default function DashboardPage() {
         if (vatFiled.some((r) => r.periodStart === period.start)) return null;
         // Only once there are transactions in or before that period.
         const active =
-          docs.some((d) => d.status !== 'draft' && d.issueDate <= period.end) ||
+          docs.some((d) => isPosted(d) && d.issueDate <= period.end) ||
           expenses.some((e) => e.date <= period.end);
         if (!active) return null;
         return { period, due: vatDueDate(period, vat.format) };
