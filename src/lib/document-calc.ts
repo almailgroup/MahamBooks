@@ -20,7 +20,7 @@ export function documentCalcInput(
 ): CalcInput {
   const exempt = Boolean(options.taxExempt);
   return {
-    precision: currencyPrecision(doc.currency || 'USD'),
+    precision: currencyPrecision(doc.currency || 'KWD'),
     items: doc.items.map((item) => ({
       kind: item.kind,
       quantity: item.quantity,

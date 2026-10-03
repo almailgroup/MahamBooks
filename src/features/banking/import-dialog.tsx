@@ -270,12 +270,12 @@ export function ImportStatementDialog({
               </p>
               <div className="max-h-56 overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
+                  <thead className="sticky top-0 bg-slate-50 text-start text-slate-500">
                     <tr>
                       <th className="px-3 py-2 font-medium">Date</th>
                       <th className="px-3 py-2 font-medium">Description</th>
-                      <th className="px-3 py-2 text-right font-medium">Amount</th>
-                      <th className="px-3 py-2 text-right font-medium">Balance</th>
+                      <th className="px-3 py-2 text-end font-medium">Amount</th>
+                      <th className="px-3 py-2 text-end font-medium">Balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -285,13 +285,13 @@ export function ImportStatementDialog({
                         <td className="max-w-80 truncate px-3 py-1.5">{l.description}</td>
                         <td
                           className={cn(
-                            'tabular px-3 py-1.5 text-right whitespace-nowrap',
+                            'tabular px-3 py-1.5 text-end whitespace-nowrap',
                             l.amount < 0 ? 'text-slate-800' : 'text-emerald-700',
                           )}
                         >
                           {fmt.money(l.amount)}
                         </td>
-                        <td className="tabular px-3 py-1.5 text-right whitespace-nowrap text-slate-500">
+                        <td className="tabular px-3 py-1.5 text-end whitespace-nowrap text-slate-500">
                           {l.balance === null ? '' : fmt.money(l.balance)}
                         </td>
                       </tr>

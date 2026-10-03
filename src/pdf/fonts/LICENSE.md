@@ -15,6 +15,7 @@ The full license text and copyright notices are in [OFL.txt](./OFL.txt).
 | JetBrains Mono     | The JetBrains Mono Project Authors           | Subset, without coding ligatures     |
 | DM Serif Display   | Adobe; Google LLC                            | Subset                               |
 | IBM Plex Sans      | IBM Corp. (Reserved Font Name "Plex")        | Unmodified                           |
+| IBM Plex Sans Arabic | IBM Corp. (Reserved Font Name "Plex")      | Unmodified                           |
 | Playfair Display   | The Playfair Display Project Authors (RFN)   | Unmodified                           |
 | Lora               | The Lora Project Authors (RFN)               | Unmodified                           |
 

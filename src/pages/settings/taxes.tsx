@@ -44,9 +44,9 @@ function TaxRow({
           onValueChange={setValue}
           onBlur={() => value !== rate.rate && void commit({ rate: value })}
           allowNegative={false}
-          className="pr-7"
+          className="pe-7"
         />
-        <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-slate-400">
+        <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
           %
         </span>
       </div>

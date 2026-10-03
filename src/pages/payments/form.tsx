@@ -421,11 +421,11 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+                <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                   <th className="px-5 py-3">{direction === 'out' ? 'Bill' : 'Invoice'}</th>
                   <th className="px-3 py-3">Due</th>
-                  <th className="px-3 py-3 text-right">Open balance</th>
-                  <th className="w-40 px-5 py-3 text-right">Apply</th>
+                  <th className="px-3 py-3 text-end">Open balance</th>
+                  <th className="w-40 px-5 py-3 text-end">Apply</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -439,11 +439,11 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                         {doc.number}
                       </Link>
                       {doc.status === 'draft' ? (
-                        <span className="ml-2 text-xs text-slate-400">(draft)</span>
+                        <span className="ms-2 text-xs text-slate-400">(draft)</span>
                       ) : null}
                     </td>
                     <td className="px-3 py-2.5 text-slate-600">{fmt.date(doc.dueDate) || '—'}</td>
-                    <td className="tabular px-3 py-2.5 text-right text-slate-700">
+                    <td className="tabular px-3 py-2.5 text-end text-slate-700">
                       {fmt.money(available, doc.currency)}
                     </td>
                     <td className="px-5 py-2.5">

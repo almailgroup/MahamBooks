@@ -50,11 +50,26 @@ export function currencyPrecision(currency: string): number {
   return digits;
 }
 
+/**
+ * Turns Arabic-Indic (٠-٩) and Persian (۰-۹) digits into 0-9 and the Arabic
+ * decimal and thousands separators into "." and ",", so amounts typed on an
+ * Arabic keyboard are understood.
+ */
+export function normalizeDigits(input: string): string {
+  return input
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/\u066B/g, '.')
+    .replace(/[\u066C\u060C]/g, ',');
+}
+
 /** Parses user input such as "1,234.50" or "12.5%" into a number (0 when invalid). */
 export function parseAmount(input: string | number | null | undefined): number {
   if (typeof input === 'number') return Number.isFinite(input) ? input : 0;
   if (!input) return 0;
-  const cleaned = input.replace(/[\s,%]/g, '').replace(/[^\d.+-]/g, '');
+  const cleaned = normalizeDigits(input)
+    .replace(/[\s,%]/g, '')
+    .replace(/[^\d.+-]/g, '');
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
@@ -75,4 +90,10 @@ export function toMinor(value: Numeric, places: number): number {
 export function fromMinor(minor: number, places: number): number {
   const n = new Decimal(minor).dividedBy(new Decimal(10).pow(places)).toNumber();
   return Object.is(n, -0) ? 0 : n;
+}
+
+/** True when two amounts are equal to the currency's smallest unit (fils, cents). */
+export function sameAmount(a: Numeric, b: Numeric, currency: string): boolean {
+  const places = currencyPrecision(currency);
+  return toMinor(a, places) === toMinor(b, places);
 }

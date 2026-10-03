@@ -26,11 +26,11 @@ import {
 
 export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) {
   const navigate = useNavigate();
-  const initial = regionDefaults('US');
+  const initial = regionDefaults('KW');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState<Address>(emptyAddress(''));
+  const [address, setAddress] = useState<Address>(emptyAddress('KW'));
   const [currency, setCurrency] = useState(initial.currency);
   const [locale, setLocale] = useState(initial.locale);
   const [dateFormat, setDateFormat] = useState<DateFormat>(initial.dateFormat);

@@ -35,7 +35,7 @@ export function createPayment(companyId: ID, overrides: Partial<Payment> = {}): 
     number: '',
     date: today(),
     amount: 0,
-    currency: 'USD',
+    currency: 'KWD',
     method: 'bank_transfer',
     reference: '',
     notes: '',

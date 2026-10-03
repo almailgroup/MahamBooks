@@ -49,12 +49,39 @@ export interface MatchCandidate {
   score: number;
 }
 
+// Words that appear in most business names and say nothing about who paid.
+const COMMON_WORDS = new Set([
+  'company',
+  'trading',
+  'general',
+  'contracting',
+  'w.l.l',
+  'wll',
+  'the',
+  'and',
+  'شركه',
+  'مؤسسه',
+  'للتجاره',
+  'التجاره',
+  'العامه',
+  'والمقاولات',
+  'المقاولات',
+]);
+
+/** Folds Arabic spelling variants (أ/إ/آ → ا, ى → ي, ة → ه) and drops diacritics. */
+function normalizeArabic(text: string): string {
+  return text
+    .replace(/[\u064B-\u0652\u0640]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه');
+}
+
 const words = (text: string) =>
   new Set(
-    text
-      .toLowerCase()
-      .split(/[^a-z0-9-]+/)
-      .filter((w) => w.length > 2),
+    normalizeArabic(text.toLowerCase())
+      .split(/[^\p{L}\p{N}.-]+/u)
+      .filter((w) => w.length > 2 && !COMMON_WORDS.has(w)),
   );
 
 /**

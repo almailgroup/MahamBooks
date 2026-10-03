@@ -3,6 +3,8 @@ import type { AccountRole, AccountType, ChartTemplateId } from '@/db/types';
 export interface ChartAccount {
   code: string;
   name: string;
+  /** Arabic name, shown when the interface or a report is in Arabic. */
+  nameAr?: string;
   type: AccountType;
   role?: AccountRole;
 }
@@ -190,15 +192,141 @@ const UAE = rows([
   ['7200', 'Corporate tax', 'expense_other'],
 ]);
 
+type BilingualRow = [
+  code: string,
+  name: string,
+  nameAr: string,
+  type: AccountType,
+  role?: AccountRole,
+];
+
+const bilingual = (list: BilingualRow[]): ChartAccount[] =>
+  list.map(([code, name, nameAr, type, role]) => ({
+    code,
+    name,
+    nameAr,
+    type,
+    ...(role ? { role } : {}),
+  }));
+
+/**
+ * Kuwait: IFRS layout with English and Arabic names. Includes the accounts
+ * Kuwaiti businesses use every day: KNET settlements, post-dated cheques, 5%
+ * contract retentions, PIFSS, end-of-service indemnity, the statutory reserve
+ * and the KFAS, Zakat and NLST levies of shareholding companies. There is no
+ * VAT in Kuwait; the tax accounts stay unused unless taxes are switched on.
+ */
+const KUWAIT = bilingual([
+  ['1000', 'Bank – current account', 'البنك – الحساب الجاري', 'asset_cash', 'bank'],
+  ['1010', 'Petty cash', 'العهدة النقدية', 'asset_cash', 'cash'],
+  ['1020', 'KNET and card settlements', 'تسويات كي نت والبطاقات', 'asset_current'],
+  ['1030', 'Cheques under collection', 'شيكات تحت التحصيل', 'asset_current'],
+  ['1100', 'Accounts receivable', 'الذمم المدينة', 'asset_receivable', 'receivable'],
+  ['1110', 'Retentions receivable', 'محتجزات مدينة', 'asset_current'],
+  ['1150', 'Post-dated cheques received', 'شيكات آجلة مستلمة', 'asset_current'],
+  ['1200', 'Inventory', 'المخزون', 'asset_current'],
+  ['1300', 'Prepaid expenses', 'مصروفات مدفوعة مقدماً', 'asset_prepayments'],
+  ['1310', 'Refundable deposits', 'تأمينات مستردة', 'asset_current'],
+  ['1320', 'Staff advances', 'سلف الموظفين', 'asset_current'],
+  ['1350', 'Input tax recoverable', 'ضريبة مدخلات قابلة للاسترداد', 'asset_current', 'input_tax'],
+  ['1500', 'Furniture and fixtures', 'الأثاث والتجهيزات', 'asset_fixed'],
+  ['1510', 'Accumulated depreciation – furniture', 'مجمع إهلاك الأثاث والتجهيزات', 'asset_fixed'],
+  ['1520', 'Office equipment and computers', 'المعدات المكتبية والحاسب الآلي', 'asset_fixed'],
+  ['1530', 'Accumulated depreciation – equipment', 'مجمع إهلاك المعدات', 'asset_fixed'],
+  ['1540', 'Vehicles', 'السيارات', 'asset_fixed'],
+  ['1550', 'Accumulated depreciation – vehicles', 'مجمع إهلاك السيارات', 'asset_fixed'],
+  ['1560', 'Leasehold improvements', 'تحسينات على عقارات مستأجرة', 'asset_fixed'],
+  ['1570', 'Accumulated depreciation – improvements', 'مجمع إهلاك التحسينات', 'asset_fixed'],
+  ['1600', 'Right-of-use assets', 'أصول حق الاستخدام', 'asset_non_current'],
+  ['1700', 'Intangible assets', 'الأصول غير الملموسة', 'asset_non_current'],
+  ['2000', 'Accounts payable', 'الذمم الدائنة', 'liability_payable', 'payable'],
+  ['2010', 'Retentions payable', 'محتجزات دائنة', 'liability_current'],
+  ['2050', 'Company credit card', 'بطاقة ائتمان الشركة', 'liability_credit_card', 'credit_card'],
+  ['2100', 'Output tax', 'ضريبة المخرجات', 'liability_current', 'output_tax'],
+  ['2110', 'Tax payable', 'الضريبة المستحقة', 'liability_current', 'tax_settlement'],
+  ['2150', 'Post-dated cheques issued', 'شيكات آجلة صادرة', 'liability_current'],
+  ['2200', 'Accrued expenses', 'مصروفات مستحقة', 'liability_current'],
+  ['2300', 'Salaries payable', 'رواتب مستحقة', 'liability_current'],
+  ['2310', 'PIFSS payable', 'التأمينات الاجتماعية المستحقة', 'liability_current'],
+  ['2320', 'Leave salary provision', 'مخصص الإجازات', 'liability_current'],
+  ['2400', 'Customer advances', 'دفعات مقدمة من العملاء', 'liability_current'],
+  ['2500', 'KFAS payable', 'حصة مؤسسة الكويت للتقدم العلمي المستحقة', 'liability_current'],
+  ['2510', 'Zakat payable', 'الزكاة المستحقة', 'liability_current'],
+  ['2520', 'NLST payable', 'ضريبة دعم العمالة الوطنية المستحقة', 'liability_current'],
+  ['2530', 'Income tax payable', 'ضريبة الدخل المستحقة', 'liability_current'],
+  ['2550', 'Due to partners', 'مستحق للشركاء', 'liability_current'],
+  ['2600', 'Lease liabilities', 'التزامات عقود الإيجار', 'liability_non_current'],
+  [
+    '2700',
+    'End-of-service indemnity provision',
+    'مخصص مكافأة نهاية الخدمة',
+    'liability_non_current',
+  ],
+  ['2800', 'Bank loans and financing', 'قروض وتمويلات بنكية', 'liability_non_current'],
+  ['3000', 'Capital', 'رأس المال', 'equity', 'capital'],
+  ['3100', "Partners' current accounts", 'الحسابات الجارية للشركاء', 'equity', 'drawings'],
+  ['3200', 'Statutory reserve', 'الاحتياطي الإجباري', 'equity'],
+  ['3210', 'Voluntary reserve', 'الاحتياطي الاختياري', 'equity'],
+  ['3300', 'Retained earnings', 'الأرباح المرحلة', 'equity', 'retained_earnings'],
+  ['3900', 'Opening balance equity', 'أرصدة افتتاحية', 'equity', 'opening_balance'],
+  ['4000', 'Sales', 'المبيعات', 'income', 'sales'],
+  ['4100', 'Service revenue', 'إيرادات الخدمات', 'income'],
+  ['4150', 'Contract revenue', 'إيرادات العقود', 'income'],
+  ['4200', 'Delivery charges income', 'إيرادات التوصيل', 'income', 'charges'],
+  ['4500', 'Other income', 'إيرادات أخرى', 'income_other'],
+  ['5000', 'Cost of sales', 'تكلفة المبيعات', 'expense_direct_cost', 'cost_of_sales'],
+  ['5100', 'Subcontractor costs', 'تكاليف مقاولي الباطن', 'expense_direct_cost'],
+  ['5200', 'Customs duty and freight', 'الرسوم الجمركية والشحن', 'expense_direct_cost'],
+  ['6000', 'General and administrative expenses', 'مصروفات عمومية وإدارية', 'expense', 'expense'],
+  ['6010', 'Salaries and wages', 'الرواتب والأجور', 'expense'],
+  ['6020', 'Allowances', 'البدلات', 'expense'],
+  ['6030', 'PIFSS – employer share', 'حصة صاحب العمل في التأمينات الاجتماعية', 'expense'],
+  ['6040', 'End-of-service indemnity', 'مكافأة نهاية الخدمة', 'expense'],
+  ['6050', 'Leave salary', 'رواتب الإجازات', 'expense'],
+  ['6060', 'Rent', 'الإيجار', 'expense'],
+  ['6070', 'Electricity and water', 'الكهرباء والماء', 'expense'],
+  ['6080', 'Telephone and internet', 'الهاتف والإنترنت', 'expense'],
+  [
+    '6090',
+    'Government fees, visas and residency',
+    'الرسوم الحكومية والتأشيرات والإقامات',
+    'expense',
+  ],
+  ['6100', 'Commercial licence and chamber fees', 'رسوم الرخصة التجارية والغرفة', 'expense'],
+  ['6110', 'Marketing and advertising', 'الدعاية والإعلان', 'expense'],
+  ['6120', 'Professional and audit fees', 'الأتعاب المهنية ورسوم التدقيق', 'expense'],
+  ['6130', 'Travel', 'السفر', 'expense'],
+  ['6140', 'Stationery and printing', 'القرطاسية والمطبوعات', 'expense'],
+  ['6150', 'Repairs and maintenance', 'الإصلاح والصيانة', 'expense'],
+  ['6160', 'Insurance', 'التأمين', 'expense'],
+  ['6170', 'Bank charges', 'العمولات والمصاريف البنكية', 'expense', 'bank_fees'],
+  ['6180', 'KNET and card fees', 'عمولات كي نت والبطاقات', 'expense'],
+  ['6190', 'Software and subscriptions', 'البرامج والاشتراكات', 'expense'],
+  ['6200', 'Vehicle expenses', 'مصروفات السيارات', 'expense'],
+  ['6210', 'Postage and courier', 'البريد والتوصيل', 'expense'],
+  ['6220', 'Hospitality', 'الضيافة', 'expense'],
+  ['6230', 'Bad debts', 'الديون المعدومة', 'expense'],
+  ['6900', 'Depreciation', 'الإهلاك', 'expense_depreciation'],
+  ['7000', 'Exchange gain or loss', 'أرباح وخسائر فروق العملة', 'expense_other', 'fx'],
+  ['7100', 'Finance costs', 'تكاليف التمويل', 'expense_other'],
+  ['7200', 'KFAS contribution', 'حصة مؤسسة الكويت للتقدم العلمي', 'expense_other'],
+  ['7210', 'Zakat', 'الزكاة', 'expense_other'],
+  ['7220', 'National Labour Support Tax', 'ضريبة دعم العمالة الوطنية', 'expense_other'],
+  ['7230', 'Income tax', 'ضريبة الدخل', 'expense_other'],
+]);
+
 export const CHART_TEMPLATES: Record<ChartTemplateId, { name: string; accounts: ChartAccount[] }> =
   {
+    kw: { name: 'Kuwait', accounts: KUWAIT },
     generic: { name: 'Standard', accounts: GENERIC },
     uk: { name: 'United Kingdom', accounts: UK },
     ae: { name: 'United Arab Emirates', accounts: UAE },
   };
 
+/** Kuwait is the default; the others remain for companies created before. */
 export function chartTemplateFor(country: string): ChartTemplateId {
   if (country === 'GB') return 'uk';
   if (country === 'AE') return 'ae';
+  if (country === 'KW' || !country) return 'kw';
   return 'generic';
 }

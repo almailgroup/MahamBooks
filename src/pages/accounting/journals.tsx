@@ -50,11 +50,11 @@ export default function JournalsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Number</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Reference</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Amount</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Status</th>
+                  <th className="px-4 py-2.5 text-start font-medium">Date</th>
+                  <th className="px-3 py-2.5 text-start font-medium">Number</th>
+                  <th className="px-3 py-2.5 text-start font-medium">Reference</th>
+                  <th className="px-3 py-2.5 text-end font-medium">Amount</th>
+                  <th className="px-4 py-2.5 text-start font-medium">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -73,7 +73,7 @@ export default function JournalsPage() {
                     <td className="px-3 py-2.5 text-slate-700">
                       {j.reference || <span className="text-slate-400">—</span>}
                     </td>
-                    <td className="tabular px-3 py-2.5 text-right text-slate-900">
+                    <td className="tabular px-3 py-2.5 text-end text-slate-900">
                       {fmt.money(journalTotals(j.lines, p).debit)}
                     </td>
                     <td className="px-4 py-2.5">
@@ -81,12 +81,12 @@ export default function JournalsPage() {
                         {j.status === 'posted' ? 'Posted' : 'Draft'}
                       </Badge>
                       {j.vatReturnId ? (
-                        <Badge tone="blue" className="ml-2">
+                        <Badge tone="blue" className="ms-2">
                           VAT return
                         </Badge>
                       ) : null}
                       {j.kind === 'transfer' ? (
-                        <Badge tone="violet" className="ml-2">
+                        <Badge tone="violet" className="ms-2">
                           Transfer
                         </Badge>
                       ) : null}

@@ -10,6 +10,7 @@ import {
   formatPercent,
   formatQuantity,
 } from '@/lib/format';
+import { interfaceLocale } from '@/i18n';
 
 interface CompanyContextValue {
   company: Company;
@@ -60,16 +61,19 @@ export function useCompany(): Company {
   return useCompanyContext().company;
 }
 
-/** Formatting helpers bound to the active company's locale and currency. */
+/**
+ * Formatting helpers bound to the active company's currency and the
+ * interface language (Arabic shows amounts as "1,234.500 د.ك.").
+ */
 export function useFormat() {
   const company = useCompany();
   return useMemo(() => {
-    const locale = company.locale || 'en-US';
+    const locale = interfaceLocale(company.locale);
     return {
       locale,
       currency: company.currency,
       money: (amount: number, currency: string = company.currency) =>
-        formatMoney(amount, currency, locale),
+        formatMoney(amount, currency, locale, company.currencyDisplay ?? 'local'),
       date: (value: ISODate | null | undefined) => formatDate(value, company.dateFormat, locale),
       dateTime: (value: string | null | undefined) => formatDateTime(value, locale),
       quantity: (value: number) => formatQuantity(value, locale),

@@ -242,7 +242,7 @@ export default function AccountingSettings() {
                 <span className="font-medium text-slate-900">
                   {account ? (
                     <>
-                      <span className="tabular mr-2 text-slate-400">{account.code}</span>
+                      <span className="tabular me-2 text-slate-400">{account.code}</span>
                       {account.name}
                     </>
                   ) : (

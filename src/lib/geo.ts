@@ -1,4 +1,5 @@
 import type { Address } from '@/db/types';
+import { placeName } from './kuwait';
 
 const COUNTRY_CODES = (
   'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
@@ -97,6 +98,8 @@ export function currencyOptions(locale = 'en'): { value: string; label: string }
 }
 
 export const LOCALE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'en-KW', label: 'English (Kuwait)' },
+  { value: 'ar-KW', label: 'العربية (الكويت)' },
   { value: 'en-US', label: 'English (United States)' },
   { value: 'en-GB', label: 'English (United Kingdom)' },
   { value: 'en-AE', label: 'English (United Arab Emirates)' },
@@ -149,11 +152,72 @@ export function emptyAddress(country = ''): Address {
   return { line1: '', line2: '', city: '', state: '', postalCode: '', country };
 }
 
+const KUWAIT_PARTS = ['block', 'street', 'avenue', 'building', 'floor', 'unit', 'paci'] as const;
+
 export function isAddressEmpty(address: Address | null | undefined): boolean {
   if (!address) return true;
-  return ![address.line1, address.line2, address.city, address.state, address.postalCode].some(
-    (v) => v && v.trim() !== '',
-  );
+  return ![
+    address.line1,
+    address.line2,
+    address.city,
+    address.state,
+    address.postalCode,
+    ...KUWAIT_PARTS.map((k) => address[k]),
+  ].some((v) => v && v.trim() !== '');
+}
+
+const KUWAIT_WORDS = {
+  en: {
+    block: 'Block',
+    street: 'Street',
+    avenue: 'Avenue',
+    building: 'Building',
+    floor: 'Floor',
+    unit: 'Unit',
+    paci: 'PACI no.',
+    country: 'Kuwait',
+    comma: ', ',
+  },
+  ar: {
+    block: 'قطعة',
+    street: 'شارع',
+    avenue: 'جادة',
+    building: 'مبنى',
+    floor: 'الدور',
+    unit: 'وحدة',
+    paci: 'الرقم الآلي',
+    country: 'الكويت',
+    comma: '، ',
+  },
+};
+
+/**
+ * A Kuwaiti address the way it is written locally:
+ * "Block 3, Street 12, Avenue 4, Building 15, Floor 2, Unit 5",
+ * "Salmiya, Hawalli 22001", "PACI no. 12345678".
+ */
+function kuwaitAddressLines(address: Address, language: 'en' | 'ar', includeCountry: boolean) {
+  const w = KUWAIT_WORDS[language];
+  const part = (key: (typeof KUWAIT_PARTS)[number]) => {
+    const value = address[key]?.trim();
+    return value ? `${w[key]} ${value}` : '';
+  };
+  const place = [address.city, address.state]
+    .map((v) => placeName(v?.trim() ?? '', language))
+    .filter(Boolean)
+    .join(w.comma);
+  const lines = [
+    KUWAIT_PARTS.filter((k) => k !== 'paci')
+      .map(part)
+      .filter(Boolean)
+      .join(w.comma),
+    address.line1?.trim() ?? '',
+    address.line2?.trim() ?? '',
+    [place, address.postalCode?.trim() ?? ''].filter(Boolean).join(' '),
+    part('paci'),
+  ];
+  if (includeCountry && !isAddressEmpty(address)) lines.push(w.country);
+  return lines.filter((l) => l !== '');
 }
 
 /**
@@ -166,6 +230,9 @@ export function formatAddressLines(
   includeCountry = true,
 ): string[] {
   if (!address) return [];
+  if (address.country?.trim().toUpperCase() === 'KW') {
+    return kuwaitAddressLines(address, locale.startsWith('ar') ? 'ar' : 'en', includeCountry);
+  }
   const a = {
     line1: address.line1?.trim() ?? '',
     line2: address.line2?.trim() ?? '',

@@ -157,3 +157,35 @@ describe('duplicates', () => {
     expect(fingerprints('bank', [line, line])).toEqual(first);
   });
 });
+
+describe('Kuwaiti and Arabic statements', () => {
+  it('reads dinar amounts written with Arabic signs and digits', () => {
+    expect(parseAmount('125.500 د.ك')).toBe(125.5);
+    expect(parseAmount('د.ك. 1,250.750')).toBe(1250.75);
+    expect(parseAmount('K.D. 3.250')).toBe(3.25);
+    expect(parseAmount('١٢٥٫٥٠٠')).toBe(125.5);
+    expect(parseAmount('١٬٢٥٠٫٧٥٠')).toBe(1250.75);
+    expect(parseAmount('0,250')).toBe(0.25);
+    expect(parseAmount('12,500')).toBe(12500);
+    expect(parseAmount('45.600 مدين')).toBe(-45.6);
+    expect(parseAmount('45.600 دائن')).toBe(45.6);
+  });
+
+  it('reads Arabic dates and headers', () => {
+    expect(parseStatementDate('٠٣/١٠/٢٠٢٦', 'dd/MM/yyyy')).toBe('2026-10-03');
+    expect(parseStatementDate('3 أكتوبر 2026', 'd MMM yyyy')).toBe('2026-10-03');
+    const rows = parseCsvRows(
+      'التاريخ,البيان,مدين,دائن,الرصيد\n03/10/2026,سحب نقدي,20.000,,980.000\n04/10/2026,تحويل وارد,,150.250,"1,130.250"\n',
+    );
+    const mapping = guessMapping(rows);
+    expect(mapping).toMatchObject({
+      header: true,
+      date: 0,
+      description: 1,
+      moneyOut: 2,
+      moneyIn: 3,
+      balance: 4,
+    });
+    expect(csvStatement(rows, mapping).lines.map((l) => l.amount)).toEqual([-20, 150.25]);
+  });
+});

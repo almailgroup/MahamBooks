@@ -66,7 +66,9 @@ export function ColumnChart({
     return list;
   }, [top, step]);
 
-  const margin = { top: 12, right: 8, bottom: 26, left: 56 };
+  // Room for the longest tick label (about 6.5px a character at 11px).
+  const labelWidth = Math.max(...ticks.map((t) => formatTick(t).length)) * 6.5;
+  const margin = { top: 12, right: 8, bottom: 26, left: Math.max(40, Math.ceil(labelWidth) + 12) };
   const plotW = Math.max(0, width - margin.left - margin.right);
   const plotH = height - margin.top - margin.bottom;
   const band = labels.length ? plotW / labels.length : 0;
@@ -114,10 +116,10 @@ export function ColumnChart({
           <table className="w-full text-sm">
             <caption className="sr-only">{title}</caption>
             <thead>
-              <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                <th className="py-2 pr-3 font-medium">Month</th>
+              <tr className="border-b border-slate-100 text-start text-xs text-slate-500">
+                <th className="py-2 pe-3 font-medium">Month</th>
                 {series.map((s) => (
-                  <th key={s.key} className="py-2 pl-3 text-right font-medium">
+                  <th key={s.key} className="py-2 ps-3 text-end font-medium">
                     {s.label}
                   </th>
                 ))}
@@ -126,9 +128,9 @@ export function ColumnChart({
             <tbody className="tabular divide-y divide-slate-50">
               {labels.map((label, i) => (
                 <tr key={label}>
-                  <td className="py-1.5 pr-3 text-slate-600">{label}</td>
+                  <td className="py-1.5 pe-3 text-slate-600">{label}</td>
                   {series.map((s) => (
-                    <td key={s.key} className="py-1.5 pl-3 text-right text-slate-900">
+                    <td key={s.key} className="py-1.5 ps-3 text-end text-slate-900">
                       {formatValue(s.values[i] ?? 0)}
                     </td>
                   ))}
@@ -138,7 +140,7 @@ export function ColumnChart({
           </table>
         </div>
       ) : (
-        <div ref={wrapper} className="relative" onPointerLeave={() => setActive(null)}>
+        <div ref={wrapper} className="relative" dir="ltr" onPointerLeave={() => setActive(null)}>
           {width > 0 ? (
             <svg
               width={width}

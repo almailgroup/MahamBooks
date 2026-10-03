@@ -100,7 +100,7 @@ export function ItemNameInput({
               onMouseEnter={() => setActive(i)}
               onClick={() => pick(p)}
               className={cn(
-                'flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left',
+                'flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-start',
                 i === active ? 'bg-slate-100' : '',
               )}
             >

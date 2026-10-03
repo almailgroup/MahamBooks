@@ -248,14 +248,14 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
               options={FILTERS[type].map((f) => ({ ...f, count: counts[f.value] }))}
             />
             <div className="relative lg:w-72">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={
                   purchase ? 'Search number, vendor, reference…' : 'Search number, client, PO…'
                 }
-                className="pl-9"
+                className="ps-9"
                 aria-label={`Search ${labels.plural.toLowerCase()}`}
               />
             </div>
@@ -270,18 +270,18 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
               <div className="hidden md:block">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+                    <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                       <th className="px-5 py-3">Number</th>
                       <th className="px-3 py-3">{party}</th>
                       <th className="px-3 py-3">Date</th>
                       <th className="px-3 py-3">{type === 'quote' ? 'Valid until' : 'Due'}</th>
-                      <th className="px-3 py-3 text-right">Total</th>
+                      <th className="px-3 py-3 text-end">Total</th>
                       {type !== 'quote' ? (
-                        <th className="px-3 py-3 text-right">
+                        <th className="px-3 py-3 text-end">
                           {type === 'credit' || type === 'vendor_credit' ? 'Remaining' : 'Balance'}
                         </th>
                       ) : null}
-                      <th className="px-5 py-3 text-right">Status</th>
+                      <th className="px-5 py-3 text-end">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -316,17 +316,17 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                         >
                           {fmt.date(doc.dueDate) || '—'}
                         </td>
-                        <td className="tabular px-3 py-3 text-right font-medium whitespace-nowrap text-slate-900">
+                        <td className="tabular px-3 py-3 text-end font-medium whitespace-nowrap text-slate-900">
                           {fmt.money(doc.totals.total, doc.currency)}
                         </td>
                         {type !== 'quote' ? (
-                          <td className="tabular px-3 py-3 text-right whitespace-nowrap text-slate-600">
+                          <td className="tabular px-3 py-3 text-end whitespace-nowrap text-slate-600">
                             {status === 'void' || status === 'draft'
                               ? '—'
                               : fmt.money(doc.totals.balance, doc.currency)}
                           </td>
                         ) : null}
-                        <td className="px-5 py-3 text-right">
+                        <td className="px-5 py-3 text-end">
                           <StatusBadge status={status} />
                         </td>
                       </tr>

@@ -280,13 +280,13 @@ export default function ChartOfAccountsPage() {
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div className="relative w-full max-w-xs">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search accounts…"
               aria-label="Search accounts"
-              className="pl-9"
+              className="ps-9"
             />
           </div>
           <Checkbox
@@ -299,10 +299,10 @@ export default function ChartOfAccountsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
               <tr>
-                <th className="w-24 px-4 py-2.5 text-left font-medium">Code</th>
-                <th className="px-3 py-2.5 text-left font-medium">Name</th>
-                <th className="hidden px-3 py-2.5 text-left font-medium md:table-cell">Type</th>
-                <th className="px-3 py-2.5 text-right font-medium">Balance</th>
+                <th className="w-24 px-4 py-2.5 text-start font-medium">Code</th>
+                <th className="px-3 py-2.5 text-start font-medium">Name</th>
+                <th className="hidden px-3 py-2.5 text-start font-medium md:table-cell">Type</th>
+                <th className="px-3 py-2.5 text-end font-medium">Balance</th>
                 <th className="w-12" />
               </tr>
             </thead>
@@ -339,12 +339,12 @@ export default function ChartOfAccountsPage() {
                             {a.name}
                           </Link>
                           {a.role ? (
-                            <Badge tone="gray" className="ml-2 align-middle">
+                            <Badge tone="gray" className="ms-2 align-middle">
                               System
                             </Badge>
                           ) : null}
                           {a.archived ? (
-                            <Badge tone="gray" className="ml-2 align-middle">
+                            <Badge tone="gray" className="ms-2 align-middle">
                               <Archive className="size-3" /> Archived
                             </Badge>
                           ) : null}
@@ -352,14 +352,14 @@ export default function ChartOfAccountsPage() {
                         <td className="hidden px-3 py-2 text-slate-500 md:table-cell">
                           {ACCOUNT_TYPES[a.type].label}
                         </td>
-                        <td className="tabular px-3 py-2 text-right text-slate-700">
+                        <td className="tabular px-3 py-2 text-end text-slate-700">
                           {raw === 0 ? (
                             <span className="text-slate-300">—</span>
                           ) : (
                             fmt.money(fromMinor(shown, p))
                           )}
                         </td>
-                        <td className="px-2 py-1 text-right">
+                        <td className="px-2 py-1 text-end">
                           <Button
                             variant="ghost"
                             size="icon-sm"

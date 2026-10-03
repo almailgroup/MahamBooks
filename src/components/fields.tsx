@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Address } from '@/db/types';
@@ -7,6 +7,8 @@ import { DATE_FORMATS } from '@/lib/format';
 import { logoFromFile } from '@/lib/image';
 import { isHexColor, normalizeHex } from '@/lib/color';
 import { cn } from '@/lib/cn';
+import { GOVERNORATES, findGovernorate } from '@/lib/kuwait';
+import { currentLanguage, t } from '@/i18n';
 import { Button } from './ui/button';
 import { Field, Input, Select } from './ui/form';
 import { Combobox } from './ui/combobox';
@@ -15,25 +17,37 @@ export function CountrySelect({
   value,
   onChange,
   id,
-  placeholder = 'Select a country',
+  placeholder,
 }: {
   value: string;
   onChange: (code: string) => void;
   id?: string;
   placeholder?: string;
 }) {
-  const options = useMemo(
-    () => countryOptions().map((o) => ({ value: o.value, label: o.label, keywords: o.value })),
-    [],
-  );
+  const options = useMemo(() => {
+    const language = currentLanguage();
+    // Kuwait first, then the other GCC countries, then the rest.
+    const first = ['KW', 'SA', 'AE', 'BH', 'QA', 'OM'];
+    const english = new Map(countryOptions('en').map((o) => [o.value, o.label]));
+    const all = countryOptions(language).map((o) => ({
+      value: o.value,
+      label: o.label,
+      // Arabic names can be searched in English too.
+      keywords: `${o.value} ${english.get(o.value)}`,
+    }));
+    return [
+      ...first.map((code) => all.find((o) => o.value === code)!).filter(Boolean),
+      ...all.filter((o) => !first.includes(o.value)),
+    ];
+  }, []);
   return (
     <Combobox
       id={id}
       value={value || null}
       onChange={onChange}
       options={options}
-      placeholder={placeholder}
-      searchPlaceholder="Search countries…"
+      placeholder={placeholder ?? t('Select a country')}
+      searchPlaceholder={t('Search countries…')}
     />
   );
 }
@@ -48,7 +62,7 @@ export function CurrencySelect({
   id?: string;
 }) {
   const options = useMemo(
-    () => currencyOptions().map((o) => ({ value: o.value, label: o.label })),
+    () => currencyOptions(currentLanguage()).map((o) => ({ value: o.value, label: o.label })),
     [],
   );
   return (
@@ -57,7 +71,7 @@ export function CurrencySelect({
       value={value}
       onChange={onChange}
       options={options}
-      searchPlaceholder="Search currencies…"
+      searchPlaceholder={t('Search currencies…')}
       renderValue={(o) => o.label}
     />
   );
@@ -102,7 +116,7 @@ export function DateFormatSelect({
     >
       {DATE_FORMATS.map((o) => (
         <option key={o.value} value={o.value}>
-          {o.label}
+          {o.value === 'locale' ? t(o.label) : o.label}
         </option>
       ))}
     </Select>
@@ -117,9 +131,12 @@ export function AddressFields({
   onChange: (address: Address) => void;
 }) {
   const set = (patch: Partial<Address>) => onChange({ ...value, ...patch });
+  if ((value.country || 'KW').toUpperCase() === 'KW') {
+    return <KuwaitAddressFields value={value} set={set} />;
+  }
   return (
     <div className="grid gap-4 sm:grid-cols-6">
-      <Field label="Address line 1" className="sm:col-span-6">
+      <Field label={t('Address line 1')} className="sm:col-span-6">
         {(id) => (
           <Input
             id={id}
@@ -129,7 +146,7 @@ export function AddressFields({
           />
         )}
       </Field>
-      <Field label="Address line 2" className="sm:col-span-6" optional>
+      <Field label={t('Address line 2')} className="sm:col-span-6" optional>
         {(id) => (
           <Input
             id={id}
@@ -139,7 +156,7 @@ export function AddressFields({
           />
         )}
       </Field>
-      <Field label="City" className="sm:col-span-3">
+      <Field label={t('City')} className="sm:col-span-3">
         {(id) => (
           <Input
             id={id}
@@ -149,7 +166,7 @@ export function AddressFields({
           />
         )}
       </Field>
-      <Field label="State / region" className="sm:col-span-3" optional>
+      <Field label={t('State / region')} className="sm:col-span-3" optional>
         {(id) => (
           <Input
             id={id}
@@ -159,7 +176,7 @@ export function AddressFields({
           />
         )}
       </Field>
-      <Field label="Postal code" className="sm:col-span-2">
+      <Field label={t('Postal code')} className="sm:col-span-2">
         {(id) => (
           <Input
             id={id}
@@ -169,9 +186,130 @@ export function AddressFields({
           />
         )}
       </Field>
-      <Field label="Country" className="sm:col-span-4">
+      <Field label={t('Country')} className="sm:col-span-4">
         {(id) => (
           <CountrySelect id={id} value={value.country} onChange={(country) => set({ country })} />
+        )}
+      </Field>
+    </div>
+  );
+}
+
+/** Kuwait: governorate, area, block, street, avenue, building, floor, unit, PACI. */
+function KuwaitAddressFields({
+  value,
+  set,
+}: {
+  value: Address;
+  set: (patch: Partial<Address>) => void;
+}) {
+  const language = currentLanguage();
+  const governorate = findGovernorate(value.state);
+  const areas = governorate ? governorate.areas : GOVERNORATES.flatMap((g) => g.areas);
+  const listId = useId();
+  const short = (
+    key: 'block' | 'street' | 'avenue' | 'building' | 'floor' | 'unit',
+    label: string,
+    optional = false,
+  ) => (
+    <Field label={label} className="sm:col-span-2" optional={optional}>
+      {(id) => (
+        <Input id={id} value={value[key] ?? ''} onChange={(e) => set({ [key]: e.target.value })} />
+      )}
+    </Field>
+  );
+  return (
+    <div className="grid gap-4 sm:grid-cols-6">
+      <Field label={t('Governorate')} className="sm:col-span-3">
+        {(id) => (
+          <Select
+            id={id}
+            value={governorate?.name.en ?? value.state}
+            onChange={(e) => set({ state: e.target.value })}
+          >
+            <option value="">{t('Select…')}</option>
+            {!governorate && value.state ? (
+              <option value={value.state}>{value.state}</option>
+            ) : null}
+            {GOVERNORATES.map((g) => (
+              <option key={g.code} value={g.name.en}>
+                {g.name[language]}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
+      <Field label={t('Area')} className="sm:col-span-3">
+        {(id) => (
+          <>
+            <Input
+              id={id}
+              value={value.city}
+              onChange={(e) => {
+                const typed = e.target.value;
+                const known = areas.find((a) => a.ar === typed || a.en === typed);
+                set({ city: known ? known.en : typed });
+              }}
+              list={listId}
+              autoComplete="address-level2"
+            />
+            <datalist id={listId}>
+              {areas.map((a) => (
+                <option key={a.en} value={a[language]} />
+              ))}
+            </datalist>
+          </>
+        )}
+      </Field>
+      {short('block', t('Block'))}
+      {short('street', t('Street'))}
+      {short('avenue', t('Avenue'), true)}
+      {short('building', t('Building'))}
+      {short('floor', t('Floor'), true)}
+      {short('unit', t('Office / flat'), true)}
+      <Field label={t('Building name or landmark')} className="sm:col-span-4" optional>
+        {(id) => (
+          <Input id={id} value={value.line1} onChange={(e) => set({ line1: e.target.value })} />
+        )}
+      </Field>
+      <Field
+        label={t('PACI number')}
+        className="sm:col-span-2"
+        optional
+        hint={t('On the Civil ID address sticker')}
+      >
+        {(id) => (
+          <Input
+            id={id}
+            value={value.paci ?? ''}
+            inputMode="numeric"
+            onChange={(e) => set({ paci: e.target.value })}
+          />
+        )}
+      </Field>
+      <Field label={t('P.O. Box')} className="sm:col-span-2" optional>
+        {(id) => (
+          <Input id={id} value={value.line2} onChange={(e) => set({ line2: e.target.value })} />
+        )}
+      </Field>
+      <Field label={t('Postal code')} className="sm:col-span-2" optional>
+        {(id) => (
+          <Input
+            id={id}
+            value={value.postalCode}
+            inputMode="numeric"
+            onChange={(e) => set({ postalCode: e.target.value })}
+            autoComplete="postal-code"
+          />
+        )}
+      </Field>
+      <Field label={t('Country')} className="sm:col-span-2">
+        {(id) => (
+          <CountrySelect
+            id={id}
+            value={value.country || 'KW'}
+            onChange={(country) => set({ country })}
+          />
         )}
       </Field>
     </div>
@@ -195,7 +333,7 @@ export function LogoUpload({
     try {
       onChange(await logoFromFile(file));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not use this image.');
+      toast.error(error instanceof Error ? error.message : t('Could not use this image.'));
     } finally {
       setBusy(false);
     }
@@ -220,26 +358,26 @@ export function LogoUpload({
           'flex h-20 w-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border-2 border-dashed bg-white p-2 transition-colors',
           dragging ? 'border-primary-500 bg-primary-50' : 'border-slate-300 hover:border-slate-400',
         )}
-        aria-label={value ? 'Replace logo' : 'Upload logo'}
+        aria-label={value ? t('Replace logo') : t('Upload logo')}
       >
         {value ? (
-          <img src={value} alt="Logo" className="max-h-full max-w-full object-contain" />
+          <img src={value} alt={t('Logo')} className="max-h-full max-w-full object-contain" />
         ) : (
           <span className="flex flex-col items-center gap-1 text-xs text-slate-500">
             <ImagePlus className="size-5 text-slate-400" />
-            {busy ? 'Processing…' : 'Upload logo'}
+            {busy ? t('Processing…') : t('Upload logo')}
           </span>
         )}
       </button>
       <div className="space-y-2 text-sm text-slate-500">
-        <p>PNG, JPG, SVG or WebP. A wide logo on a transparent background looks best.</p>
+        <p>{t('PNG, JPG, SVG or WebP. A wide logo on a transparent background looks best.')}</p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => input.current?.click()} loading={busy}>
-            {value ? 'Replace' : 'Choose file'}
+            {value ? t('Replace') : t('Choose file')}
           </Button>
           {value ? (
             <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
-              <Trash2 /> Remove
+              <Trash2 /> {t('Remove')}
             </Button>
           ) : null}
         </div>
@@ -295,7 +433,7 @@ export function ColorField({
             value={normalizeHex(value)}
             onChange={(e) => onChange(e.target.value)}
             className="absolute inset-0 cursor-pointer opacity-0"
-            aria-label="Pick a colour"
+            aria-label={t('Pick a colour')}
           />
         </label>
         <Input
@@ -323,7 +461,7 @@ export function ColorField({
                 : 'hover:ring-2 hover:ring-slate-300',
             )}
             style={{ backgroundColor: c }}
-            aria-label={`Use colour ${c}`}
+            aria-label={t('Use colour {color}', { color: c })}
           />
         ))}
       </div>

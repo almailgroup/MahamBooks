@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Check, ChevronsUpDown, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 
 export interface ComboOption {
   value: string;
@@ -20,11 +21,11 @@ export function Combobox({
   value,
   onChange,
   options,
-  placeholder = 'Select…',
-  searchPlaceholder = 'Search…',
-  emptyText = 'No matches',
+  placeholder,
+  searchPlaceholder,
+  emptyText,
   onCreate,
-  createLabel = 'Create',
+  createLabel,
   className,
   id,
   disabled,
@@ -90,12 +91,16 @@ export function Combobox({
           type="button"
           aria-label={ariaLabel}
           className={cn(
-            'focus-visible:border-primary-500 flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm shadow-xs transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50',
+            'focus-visible:border-primary-500 flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-start text-sm shadow-xs transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50',
             className,
           )}
         >
           <span className={cn('min-w-0 truncate', !selected && 'text-slate-400')}>
-            {selected ? (renderValue ? renderValue(selected) : selected.label) : placeholder}
+            {selected
+              ? renderValue
+                ? renderValue(selected)
+                : selected.label
+              : (placeholder ?? t('Select…'))}
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-slate-400" aria-hidden />
         </button>
@@ -112,7 +117,7 @@ export function Combobox({
             <input
               autoFocus
               value={query}
-              placeholder={searchPlaceholder}
+              placeholder={searchPlaceholder ?? t('Search…')}
               onChange={(e) => {
                 setQuery(e.target.value);
                 setActive(0);
@@ -134,7 +139,9 @@ export function Combobox({
           </div>
           <div ref={listRef} role="listbox" className="max-h-72 overflow-y-auto p-1">
             {filtered.length === 0 && !showCreate ? (
-              <p className="px-3 py-6 text-center text-sm text-slate-500">{emptyText}</p>
+              <p className="px-3 py-6 text-center text-sm text-slate-500">
+                {emptyText ?? t('No matches')}
+              </p>
             ) : null}
             {filtered.map((o, i) => (
               <button
@@ -145,7 +152,7 @@ export function Combobox({
                 onMouseEnter={() => setActive(i)}
                 onClick={() => choose(i)}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm',
+                  'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-start text-sm',
                   active === i ? 'bg-slate-100' : '',
                 )}
               >
@@ -170,12 +177,17 @@ export function Combobox({
                 onMouseEnter={() => setActive(filtered.length)}
                 onClick={() => choose(filtered.length)}
                 className={cn(
-                  'text-primary-700 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm font-medium',
+                  'text-primary-700 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-start text-sm font-medium',
                   active === filtered.length ? 'bg-primary-50' : '',
                 )}
               >
                 <Plus className="size-4" aria-hidden />
-                {query.trim() ? `${createLabel} “${query.trim()}”` : createLabel}
+                {query.trim()
+                  ? t('{action} “{text}”', {
+                      action: createLabel ?? t('Create'),
+                      text: query.trim(),
+                    })
+                  : (createLabel ?? t('Create'))}
               </button>
             ) : null}
           </div>

@@ -270,7 +270,7 @@ export function ExpenseDialog({
             {!isNew ? (
               <Button
                 variant="ghost"
-                className="mr-auto text-red-600 hover:bg-red-50"
+                className="me-auto text-red-600 hover:bg-red-50"
                 onClick={() => void remove()}
               >
                 <Trash2 /> Delete

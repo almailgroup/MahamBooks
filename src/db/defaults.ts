@@ -89,7 +89,7 @@ export function defaultEmailTemplates(): EmailTemplates {
 
 export function createCompany(overrides: Partial<Company> = {}): Company {
   const stamp = nowStamp();
-  const locale = overrides.locale ?? 'en-US';
+  const locale = overrides.locale ?? 'en-KW';
   const usLetter = /-(US|CA)$/.test(locale);
   return {
     id: newId(),
@@ -98,14 +98,14 @@ export function createCompany(overrides: Partial<Company> = {}): Company {
     email: '',
     phone: '',
     website: '',
-    taxIdLabel: 'Tax ID',
+    taxIdLabel: 'Tax card no.',
     taxId: '',
-    registrationLabel: 'Company No.',
+    registrationLabel: 'CR No.',
     registrationNumber: '',
-    address: emptyAddress(),
-    currency: 'USD',
+    address: emptyAddress('KW'),
+    currency: 'KWD',
     locale,
-    dateFormat: 'locale',
+    dateFormat: 'dd/MM/yyyy',
     language: 'en',
     branding: {
       accentColor: '#4f46e5',
@@ -218,7 +218,7 @@ export function createDocument(
     issueDate: today(),
     dueDate: null,
     poNumber: '',
-    currency: 'USD',
+    currency: 'KWD',
     items: [],
     discount: 0,
     discountType: 'percent',
@@ -264,7 +264,7 @@ export function createRecurring(
     markSent: false,
     status: 'active',
     template: {
-      currency: 'USD',
+      currency: 'KWD',
       items: [],
       discount: 0,
       discountType: 'percent',

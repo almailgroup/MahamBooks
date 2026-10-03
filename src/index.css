@@ -1,8 +1,16 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
+/* Arabic letters come from IBM Plex Sans Arabic; the browser only downloads it
+   when a page shows Arabic text. */
+@import '@fontsource/ibm-plex-sans-arabic/arabic-400.css';
+@import '@fontsource/ibm-plex-sans-arabic/arabic-500.css';
+@import '@fontsource/ibm-plex-sans-arabic/arabic-600.css';
+@import '@fontsource/ibm-plex-sans-arabic/arabic-700.css';
 
 @theme {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans:
+    'Inter Variable', 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
 
   --color-primary-50: var(--color-indigo-50);
   --color-primary-100: var(--color-indigo-100);
@@ -69,5 +77,32 @@
   textarea:focus-visible,
   select:focus-visible {
     outline: none;
+  }
+
+  /* Letter spacing breaks the joining of Arabic letters. */
+  [dir='rtl'] :is(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
+    letter-spacing: normal;
+  }
+
+  /* Icons that point somewhere face the other way in Arabic. */
+  [dir='rtl']
+    :is(
+      .lucide-arrow-right,
+      .lucide-arrow-left,
+      .lucide-chevron-right,
+      .lucide-chevron-left,
+      .lucide-chevrons-right,
+      .lucide-chevrons-left,
+      .lucide-arrow-up-right,
+      .lucide-arrow-down-left,
+      .lucide-undo-2,
+      .lucide-redo-2,
+      .lucide-corner-down-right,
+      .lucide-log-out,
+      .lucide-log-in,
+      .lucide-send,
+      .lucide-list-indent-increase
+    ) {
+    transform: scaleX(-1);
   }
 }

@@ -2,7 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 // End-to-end tests run against the production build, served from the same
 // sub-path GitHub Pages uses. Build first: `npm run build` (or `npm run test:e2e`).
-const PORT = 4173;
+// E2E_PORT lets several checkouts run their tests side by side.
+const PORT = Number(process.env.E2E_PORT ?? 4173);
 const BASE_PATH = '/AlmailBooks/';
 const CI = Boolean(process.env.CI);
 

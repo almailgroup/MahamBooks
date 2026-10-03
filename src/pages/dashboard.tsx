@@ -285,7 +285,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={dismissChecklist}
-            className="absolute top-3 right-3 rounded-md p-1 text-slate-400 hover:bg-white hover:text-slate-600"
+            className="absolute end-3 top-3 rounded-md p-1 text-slate-400 hover:bg-white hover:text-slate-600"
             aria-label="Dismiss checklist"
           >
             <X className="size-4" />

@@ -160,12 +160,12 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
               </Select>
             </div>
             <div className="relative sm:w-72">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search payments…"
-                className="pl-9"
+                className="ps-9"
                 aria-label="Search payments"
               />
             </div>
@@ -176,12 +176,12 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+                  <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                     <th className="px-5 py-3">Payment</th>
                     <th className="px-3 py-3">{copy.party}</th>
                     <th className="hidden px-3 py-3 md:table-cell">Method</th>
                     <th className="hidden px-3 py-3 lg:table-cell">Applied to</th>
-                    <th className="px-5 py-3 text-right">Amount</th>
+                    <th className="px-5 py-3 text-end">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -217,12 +217,12 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                       <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
                         {r.invoices.join(', ') || '—'}
                         {r.unapplied > 0 ? (
-                          <Badge tone="amber" className="ml-2">
+                          <Badge tone="amber" className="ms-2">
                             {fmt.money(r.unapplied, r.payment.currency)} unapplied
                           </Badge>
                         ) : null}
                       </td>
-                      <td className="tabular px-5 py-3 text-right font-medium text-slate-900">
+                      <td className="tabular px-5 py-3 text-end font-medium text-slate-900">
                         {fmt.money(r.payment.amount, r.payment.currency)}
                       </td>
                     </tr>

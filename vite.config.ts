@@ -26,8 +26,8 @@ export default defineConfig({
         name: 'AlmailBooks',
         short_name: 'AlmailBooks',
         description:
-          'Invoices, quotes, payments and reports for your business, with modern professional templates.',
-        lang: 'en',
+          'Free accounting and invoicing for Kuwaiti businesses, in Arabic and English. محاسبة وفوترة مجانية للأعمال في الكويت.',
+        lang: 'ar',
         start_url: './',
         scope: './',
         display: 'standalone',

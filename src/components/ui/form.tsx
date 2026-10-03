@@ -9,6 +9,8 @@ import {
 } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { normalizeDigits } from '@/lib/money';
+import { t } from '@/i18n';
 
 const control =
   'w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15';
@@ -38,11 +40,11 @@ export function Textarea({
 export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div className="relative">
-      <select className={cn(control, 'h-9 appearance-none pr-9', className)} {...props}>
+      <select className={cn(control, 'h-9 appearance-none pe-9', className)} {...props}>
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-slate-400"
+        className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-slate-400"
         aria-hidden
       />
     </div>
@@ -75,7 +77,9 @@ export function Field({
       {label ? (
         <Label htmlFor={id}>
           {label}
-          {optional ? <span className="ml-1 font-normal text-slate-400">(optional)</span> : null}
+          {optional ? (
+            <span className="ms-1 font-normal text-slate-400">({t('optional')})</span>
+          ) : null}
         </Label>
       ) : null}
       {children(id)}
@@ -151,7 +155,9 @@ export function Switch({
         <span
           className={cn(
             'inline-block size-5 rounded-full bg-white shadow transition-transform',
-            checked ? 'translate-x-5.5' : 'translate-x-0.5',
+            checked
+              ? 'translate-x-5.5 rtl:-translate-x-5.5'
+              : 'translate-x-0.5 rtl:-translate-x-0.5',
           )}
         />
       </button>
@@ -184,7 +190,7 @@ export function NumberInput({
     text ?? (blankZero && value === 0 ? '' : Number.isFinite(value) ? String(value) : '');
 
   const parse = (raw: string): number | null => {
-    let s = raw.trim().replace(/\s/g, '');
+    let s = normalizeDigits(raw).trim().replace(/\s/g, '');
     if (s === '' || s === '-' || s === '.' || s === ',') return 0;
     // "1.234,56" -> "1234.56"; "1,5" -> "1.5"; "1,234.5" -> "1234.5"
     if (s.includes(',') && s.includes('.')) {
@@ -194,7 +200,9 @@ export function NumberInput({
           : s.replace(/,/g, '');
     } else if (s.includes(',')) {
       const parts = s.split(',');
-      s = parts.length === 2 && parts[1].length !== 3 ? s.replace(',', '.') : s.replace(/,/g, '');
+      // "1,5" and "0,250" use a decimal comma; "12,500" is twelve thousand five hundred.
+      const decimalComma = parts.length === 2 && (parts[1].length !== 3 || /^-?0?$/.test(parts[0]));
+      s = decimalComma ? s.replace(',', '.') : s.replace(/,/g, '');
     }
     const n = Number(s);
     if (!Number.isFinite(n)) return null;
@@ -206,7 +214,10 @@ export function NumberInput({
       type="text"
       inputMode="decimal"
       autoComplete="off"
-      className={cn(control, 'tabular h-9 text-right', className)}
+      // Numbers read left to right in Arabic too ("-12.500", not "12.500-");
+      // in the Arabic layout they line up on the left like amount columns.
+      dir="ltr"
+      className={cn(control, 'tabular h-9 text-end rtl:text-left', className)}
       value={display}
       onChange={(e) => {
         setText(e.target.value);

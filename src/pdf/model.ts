@@ -150,8 +150,8 @@ export function buildRenderModel(
 ): RenderModel {
   const language = client?.language ?? company.language ?? 'en';
   const labels = getLabels(language, company.labels);
-  const locale = company.locale || 'en-US';
-  const currency = doc.currency || company.currency || 'USD';
+  const locale = company.locale || 'en-KW';
+  const currency = doc.currency || company.currency || 'KWD';
   const money = (n: number) => formatMoney(n, currency, locale);
   const date = (d: string | null) => formatDate(d, company.dateFormat, locale);
 

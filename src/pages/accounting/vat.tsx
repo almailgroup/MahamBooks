@@ -216,11 +216,11 @@ function VatReturnList() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+              <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                 <th className="px-5 py-3">Period</th>
                 <th className="hidden px-3 py-3 sm:table-cell">Due</th>
                 <th className="px-3 py-3">Status</th>
-                <th className="px-5 py-3 text-right">VAT</th>
+                <th className="px-5 py-3 text-end">VAT</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -261,12 +261,12 @@ function VatReturnList() {
                   <td className="px-3 py-3">
                     <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
                     {r.record ? (
-                      <span className="ml-2 hidden text-xs text-slate-500 md:inline">
+                      <span className="ms-2 hidden text-xs text-slate-500 md:inline">
                         {fmt.date(r.record.filedOn)}
                       </span>
                     ) : null}
                   </td>
-                  <td className="tabular px-5 py-3 text-right whitespace-nowrap">
+                  <td className="tabular px-5 py-3 text-end whitespace-nowrap">
                     <span className="font-medium text-slate-900">{money(Math.abs(r.net))}</span>
                     <span className="block text-xs text-slate-500">
                       {r.net >= 0 ? 'to pay' : 'to reclaim'}
@@ -592,11 +592,11 @@ function VatReturnDetail({ start }: { start: string }) {
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50/60">
-              <tr className="text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+              <tr className="text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                 <th className="w-20 px-5 py-3">Box</th>
                 <th className="px-3 py-3">Description</th>
-                <th className="px-3 py-3 text-right">Amount</th>
-                {hasVat ? <th className="px-5 py-3 text-right">VAT</th> : null}
+                <th className="px-3 py-3 text-end">Amount</th>
+                {hasVat ? <th className="px-5 py-3 text-end">VAT</th> : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -635,15 +635,15 @@ function VatReturnDetail({ start }: { start: string }) {
                             {b.id}
                           </button>
                         ) : (
-                          <span className="pl-[18px]">{b.id}</span>
+                          <span className="ps-[18px]">{b.id}</span>
                         )}
                       </td>
                       <td className="px-3 py-3 text-slate-800">{b.label}</td>
-                      <td className="tabular px-3 py-3 text-right whitespace-nowrap text-slate-900">
+                      <td className="tabular px-3 py-3 text-end whitespace-nowrap text-slate-900">
                         {b.whole ? whole(b.amount) : money(b.amount)}
                       </td>
                       {hasVat ? (
-                        <td className="tabular px-5 py-3 text-right whitespace-nowrap text-slate-900">
+                        <td className="tabular px-5 py-3 text-end whitespace-nowrap text-slate-900">
                           {b.vat === undefined ? '' : money(b.vat)}
                         </td>
                       ) : null}
@@ -731,30 +731,30 @@ function BoxLines({
   return (
     <table className="w-full text-xs">
       <thead>
-        <tr className="text-left text-slate-500">
-          <th className="py-1.5 pr-3 font-medium">Date</th>
-          <th className="py-1.5 pr-3 font-medium">Transaction</th>
-          <th className="hidden py-1.5 pr-3 font-medium sm:table-cell">Contact</th>
-          <th className="py-1.5 pr-3 text-right font-medium">Amount</th>
-          {showVat ? <th className="py-1.5 text-right font-medium">VAT</th> : null}
+        <tr className="text-start text-slate-500">
+          <th className="py-1.5 pe-3 font-medium">Date</th>
+          <th className="py-1.5 pe-3 font-medium">Transaction</th>
+          <th className="hidden py-1.5 pe-3 font-medium sm:table-cell">Contact</th>
+          <th className="py-1.5 pe-3 text-end font-medium">Amount</th>
+          {showVat ? <th className="py-1.5 text-end font-medium">VAT</th> : null}
         </tr>
       </thead>
       <tbody>
         {lines.map(({ line, amount, vat }, i) => (
           <tr key={`${line.sourceId}-${i}`} className="border-t border-slate-100">
-            <td className="py-1.5 pr-3 whitespace-nowrap text-slate-600">{date(line.date)}</td>
-            <td className="py-1.5 pr-3">
+            <td className="py-1.5 pe-3 whitespace-nowrap text-slate-600">{date(line.date)}</td>
+            <td className="py-1.5 pe-3">
               <Link to={sourceLink(line)} className="text-primary-700 font-medium hover:underline">
                 {SOURCE_LABELS[line.source]} {line.number}
               </Link>
               <span className="block text-slate-500">{line.description}</span>
             </td>
-            <td className="hidden py-1.5 pr-3 text-slate-600 sm:table-cell">
+            <td className="hidden py-1.5 pe-3 text-slate-600 sm:table-cell">
               {line.contactId ? (names.get(line.contactId) ?? '—') : '—'}
             </td>
-            <td className="tabular py-1.5 pr-3 text-right text-slate-800">{money(amount)}</td>
+            <td className="tabular py-1.5 pe-3 text-end text-slate-800">{money(amount)}</td>
             {showVat ? (
-              <td className="tabular py-1.5 text-right text-slate-800">{vat ? money(vat) : ''}</td>
+              <td className="tabular py-1.5 text-end text-slate-800">{vat ? money(vat) : ''}</td>
             ) : null}
           </tr>
         ))}

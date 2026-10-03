@@ -327,12 +327,12 @@ export default function ProductsPage() {
               ]}
             />
             <div className="relative sm:w-72">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search…"
-                className="pl-9"
+                className="ps-9"
                 aria-label="Search products"
               />
             </div>
@@ -346,14 +346,14 @@ export default function ProductsPage() {
                   <button
                     type="button"
                     onClick={() => setEditing(p)}
-                    className="min-w-0 flex-1 text-left"
+                    className="min-w-0 flex-1 text-start"
                   >
                     <span className="block truncate font-medium text-slate-900">{p.name}</span>
                     <span className="block truncate text-xs text-slate-500">
                       {[p.sku, p.description, rateLabel(p)].filter(Boolean).join(' · ') || '—'}
                     </span>
                   </button>
-                  <span className="tabular shrink-0 text-right text-sm text-slate-900">
+                  <span className="tabular shrink-0 text-end text-sm text-slate-900">
                     {formatUnitPrice(p.unitPrice, company.currency, fmt.locale)}
                     {p.unit ? <span className="text-slate-500"> / {p.unit}</span> : null}
                   </span>

@@ -484,10 +484,10 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
             <CardHeader title="Activity" />
             <CardBody className="py-3">
               {activity && activity.length > 0 ? (
-                <ol className="relative space-y-4 border-l border-slate-200 pl-4">
+                <ol className="relative space-y-4 border-s border-slate-200 ps-4">
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
-                      <span className="bg-primary-500 absolute top-1.5 -left-[21px] size-2.5 rounded-full border-2 border-white" />
+                      <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
                       <p className="text-sm text-slate-700">{a.message}</p>
                       <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
                     </li>

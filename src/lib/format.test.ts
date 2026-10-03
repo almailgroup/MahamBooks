@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { currencyPrecision, parseAmount, round } from './money';
 import { addDaysISO, daysBetween, isISODate, occurrenceDate } from './dates';
-import { formatDate, formatMoney, formatPercent, formatQuantity, formatUnitPrice } from './format';
+import {
+  currencySymbol,
+  formatDate,
+  formatMoney,
+  formatPercent,
+  formatQuantity,
+  formatUnitPrice,
+} from './format';
 
 describe('money helpers', () => {
   it('rounds half away from zero', () => {
@@ -76,4 +83,29 @@ describe('dates', () => {
     expect(occurrenceDate('2026-01-01', 'biweekly', 2)).toBe('2026-01-29');
     expect(occurrenceDate('2024-02-29', 'yearly', 1)).toBe('2025-02-28');
   });
+});
+
+describe('Kuwaiti dinars', () => {
+  it('always show three decimals (fils)', () => {
+    expect(formatMoney(1234.5, 'KWD', 'en-KW')).toBe('KWD\u00a01,234.500');
+    expect(formatMoney(0.005, 'KWD', 'en-KW')).toBe('KWD\u00a00.005');
+  });
+
+  it('can be written the Kuwaiti way', () => {
+    expect(formatMoney(1234.5, 'KWD', 'en-KW', 'local')).toBe('KD\u00a01,234.500');
+    expect(formatMoney(1234.5, 'KWD', 'ar-KW-u-nu-latn', 'local')).toContain('1,234.500\u00a0د.ك');
+    expect(formatMoney(1234.5, 'KWD', 'ar-KW-u-nu-latn', 'local')).not.toContain('د.ك.');
+    expect(formatMoney(10, 'USD', 'en-KW', 'local')).toBe('$10.00');
+    expect(currencySymbol('KWD', 'en-KW', 'local')).toBe('KD');
+  });
+});
+
+it('writes foreign currencies by code in Arabic', () => {
+  expect(formatMoney(1234.5, 'USD', 'ar-KW-u-nu-latn', 'local')).toContain('1,234.50 USD');
+  expect(formatMoney(1234.5, 'KWD', 'ar-KW-u-nu-latn', 'code')).toContain('1,234.500 KWD');
+});
+
+it('writes month names in Arabic', () => {
+  expect(formatDate('2026-10-03', 'd MMM yyyy', 'ar-KW-u-nu-latn')).toBe('3 أكتوبر 2026');
+  expect(formatDate('2026-10-03', 'dd/MM/yyyy', 'ar-KW-u-nu-latn')).toBe('03/10/2026');
 });

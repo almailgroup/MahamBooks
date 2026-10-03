@@ -51,12 +51,12 @@ export function DiscountInput({
         value={value}
         onValueChange={(v) => onChange(v, type)}
         allowNegative={false}
-        className="rounded-r-none"
+        className="rounded-e-none"
       />
       <button
         type="button"
         onClick={() => onChange(value, type === 'percent' ? 'amount' : 'percent')}
-        className="h-9 min-w-9 rounded-r-lg border border-l-0 border-slate-300 bg-slate-50 px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+        className="h-9 min-w-9 rounded-e-lg border border-s-0 border-slate-300 bg-slate-50 px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
         title={type === 'percent' ? 'Switch to a fixed amount' : 'Switch to a percentage'}
       >
         {type === 'percent' ? '%' : currencySymbol}
@@ -129,10 +129,10 @@ export function LineItemsEditor({
   return (
     <div className="@container">
       <div className="hidden grid-cols-12 gap-3 px-3 pb-2 text-xs font-medium tracking-wide text-slate-500 uppercase @xl:grid">
-        <span className="col-span-6 pl-5">Item</span>
-        <span className="col-span-2 text-right">Qty</span>
-        <span className="col-span-2 text-right">Price</span>
-        <span className="col-span-2 pr-9 text-right">Amount</span>
+        <span className="col-span-6 ps-5">Item</span>
+        <span className="col-span-2 text-end">Qty</span>
+        <span className="col-span-2 text-end">Price</span>
+        <span className="col-span-2 pe-9 text-end">Amount</span>
       </div>
 
       <ol className="space-y-2">
@@ -241,7 +241,7 @@ export function LineItemsEditor({
                   />
                 </div>
                 <div className="col-span-4 flex items-start justify-end gap-1 @xl:col-span-2">
-                  <div className="min-w-0 flex-1 text-right">
+                  <div className="min-w-0 flex-1 text-end">
                     <MiniLabel>Amount</MiniLabel>
                     <p
                       className="tabular truncate pt-2 text-sm font-semibold text-slate-900"
@@ -253,7 +253,7 @@ export function LineItemsEditor({
                   <div className="hidden @xl:block">{menu}</div>
                 </div>
 
-                <div className="col-span-12 @xl:col-span-6 @xl:pl-6">
+                <div className="col-span-12 @xl:col-span-6 @xl:ps-6">
                   <Textarea
                     aria-label={`Item ${index + 1} description`}
                     value={item.description}
@@ -270,7 +270,7 @@ export function LineItemsEditor({
                     value={item.unit}
                     onChange={(e) => update(index, { unit: e.target.value })}
                     placeholder="pcs, hrs…"
-                    className="text-right"
+                    className="text-end"
                   />
                 </div>
                 <div className="col-span-4 @xl:col-span-2">

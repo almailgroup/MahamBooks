@@ -186,12 +186,12 @@ export default function ExpensesPage() {
               </Select>
             </div>
             <div className="relative sm:w-72">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search expenses…"
-                className="pl-9"
+                className="ps-9"
                 aria-label="Search expenses"
               />
             </div>
@@ -202,12 +202,12 @@ export default function ExpensesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+                  <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                     <th className="px-5 py-3">Expense</th>
                     <th className="px-3 py-3">Category</th>
                     <th className="hidden px-3 py-3 md:table-cell">Vendor</th>
                     <th className="hidden px-3 py-3 lg:table-cell">Paid from</th>
-                    <th className="px-5 py-3 text-right">Amount</th>
+                    <th className="px-5 py-3 text-end">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -220,7 +220,7 @@ export default function ExpensesPage() {
                       <td className="px-5 py-3">
                         <button
                           type="button"
-                          className="hover:text-primary-700 text-left font-medium text-slate-900"
+                          className="hover:text-primary-700 text-start font-medium text-slate-900"
                           onClick={(e) => {
                             e.stopPropagation();
                             setParams({ open: r.expense.id }, { replace: true });
@@ -239,10 +239,10 @@ export default function ExpensesPage() {
                       <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
                         {r.paidFrom}
                       </td>
-                      <td className="tabular px-5 py-3 text-right font-medium whitespace-nowrap text-slate-900">
+                      <td className="tabular px-5 py-3 text-end font-medium whitespace-nowrap text-slate-900">
                         {withFiles?.has(r.expense.id) ? (
                           <Paperclip
-                            className="mr-1.5 inline size-3.5 text-slate-400"
+                            className="me-1.5 inline size-3.5 text-slate-400"
                             role="img"
                             aria-label="Receipt attached"
                           />

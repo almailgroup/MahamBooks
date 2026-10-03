@@ -326,11 +326,11 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="border-b border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
                   <tr>
-                    <th className="px-5 py-2.5 text-left font-medium">Description</th>
-                    <th className="px-3 py-2.5 text-left font-medium">Category</th>
-                    <th className="px-3 py-2.5 text-right font-medium">Qty</th>
-                    <th className="px-3 py-2.5 text-right font-medium">Rate</th>
-                    <th className="px-5 py-2.5 text-right font-medium">Amount</th>
+                    <th className="px-5 py-2.5 text-start font-medium">Description</th>
+                    <th className="px-3 py-2.5 text-start font-medium">Category</th>
+                    <th className="px-3 py-2.5 text-end font-medium">Qty</th>
+                    <th className="px-3 py-2.5 text-end font-medium">Rate</th>
+                    <th className="px-5 py-2.5 text-end font-medium">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -348,13 +348,13 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                         <td className="px-3 py-2.5 text-slate-600">
                           {accountName(item.accountId)}
                         </td>
-                        <td className="tabular px-3 py-2.5 text-right text-slate-600">
+                        <td className="tabular px-3 py-2.5 text-end text-slate-600">
                           {fmt.quantity(item.quantity)}
                         </td>
-                        <td className="tabular px-3 py-2.5 text-right text-slate-600">
+                        <td className="tabular px-3 py-2.5 text-end text-slate-600">
                           {money(item.unitPrice)}
                         </td>
-                        <td className="tabular px-5 py-2.5 text-right font-medium text-slate-900">
+                        <td className="tabular px-5 py-2.5 text-end font-medium text-slate-900">
                           {money(result.lines[i]?.net ?? 0)}
                         </td>
                       </tr>
@@ -497,10 +497,10 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
             <CardHeader title="Activity" />
             <CardBody className="py-3">
               {activity && activity.length > 0 ? (
-                <ol className="relative space-y-4 border-l border-slate-200 pl-4">
+                <ol className="relative space-y-4 border-s border-slate-200 ps-4">
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
-                      <span className="bg-primary-500 absolute top-1.5 -left-[21px] size-2.5 rounded-full border-2 border-white" />
+                      <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
                       <p className="text-sm text-slate-700">{a.message}</p>
                       <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
                     </li>

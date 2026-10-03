@@ -21,7 +21,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2 text-sm">
       <span className="text-slate-500">{label}</span>
-      <span className="text-right text-slate-800">{value}</span>
+      <span className="text-end text-slate-800">{value}</span>
     </div>
   );
 }

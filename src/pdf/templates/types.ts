@@ -23,7 +23,8 @@ export interface TemplateTheme {
   faint: string;
   line: string;
   surface: string;
-  fonts: { body: string; heading: string; mono: string };
+  /** Font stacks: the template's font, then the Arabic fallback. */
+  fonts: { body: string[]; heading: string[]; mono: string[] };
   /** Page width in points (A4 595.28, Letter 612). */
   pageWidth: number;
   pageHeight: number;

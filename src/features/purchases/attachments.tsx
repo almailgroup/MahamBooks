@@ -100,7 +100,7 @@ export function AttachmentList({
               <button
                 type="button"
                 onClick={() => openAttachment(f)}
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                className="flex min-w-0 flex-1 items-center gap-3 text-start"
                 title="Open"
               >
                 {f.type.startsWith('image/') ? (

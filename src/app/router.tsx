@@ -59,7 +59,7 @@ function RouteError() {
         <p className="mt-2 text-sm text-slate-600">
           Your data is safe — it is stored in this browser. Try reloading the page.
         </p>
-        <pre className="mt-4 max-h-32 overflow-auto rounded-md bg-slate-50 p-3 text-left text-xs text-slate-500">
+        <pre className="mt-4 max-h-32 overflow-auto rounded-md bg-slate-50 p-3 text-start text-xs text-slate-500">
           {message}
         </pre>
         <div className="mt-6 flex justify-center gap-3">

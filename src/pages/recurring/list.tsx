@@ -131,7 +131,7 @@ export default function RecurringListPage() {
                   </span>
                 </Link>
                 <div className="flex items-center gap-4 sm:justify-end">
-                  <div className="text-right">
+                  <div className="text-end">
                     <span className="tabular block font-semibold text-slate-900">
                       {fmt.money(total, profile.template.currency)}
                     </span>

@@ -44,6 +44,9 @@ import {
 import { Spinner } from '@/components/ui/misc';
 import { toast } from 'sonner';
 import { generateDueInvoices } from '@/db/recurring';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import { msg, t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 interface NavItem {
   to: string;
@@ -55,46 +58,46 @@ interface NavItem {
 const NAV: { title?: string; items: NavItem[] }[] = [
   {
     items: [
-      { to: '/', label: 'Dashboard', icon: <LayoutDashboard />, end: true },
-      { to: '/products', label: 'Products & services', icon: <Package /> },
+      { to: '/', label: msg('Dashboard'), icon: <LayoutDashboard />, end: true },
+      { to: '/products', label: msg('Products & services'), icon: <Package /> },
     ],
   },
   {
-    title: 'Sales',
+    title: msg('Sales'),
     items: [
-      { to: '/clients', label: 'Clients', icon: <Users /> },
-      { to: '/invoices', label: 'Invoices', icon: <FileText /> },
-      { to: '/quotes', label: 'Quotes', icon: <ScrollText /> },
-      { to: '/credits', label: 'Credit notes', icon: <FileMinus /> },
-      { to: '/recurring', label: 'Recurring', icon: <Repeat /> },
-      { to: '/payments', label: 'Payments received', icon: <ArrowDownLeft /> },
+      { to: '/clients', label: msg('Clients'), icon: <Users /> },
+      { to: '/invoices', label: msg('Invoices'), icon: <FileText /> },
+      { to: '/quotes', label: msg('Quotes'), icon: <ScrollText /> },
+      { to: '/credits', label: msg('Credit notes'), icon: <FileMinus /> },
+      { to: '/recurring', label: msg('Recurring'), icon: <Repeat /> },
+      { to: '/payments', label: msg('Payments received'), icon: <ArrowDownLeft /> },
     ],
   },
   {
-    title: 'Purchases',
+    title: msg('Purchases'),
     items: [
-      { to: '/vendors', label: 'Vendors', icon: <Truck /> },
-      { to: '/bills', label: 'Bills', icon: <Receipt /> },
-      { to: '/expenses', label: 'Expenses', icon: <Wallet /> },
-      { to: '/payments-made', label: 'Payments made', icon: <ArrowUpRight /> },
-      { to: '/vendor-credits', label: 'Vendor credits', icon: <ReceiptText /> },
+      { to: '/vendors', label: msg('Vendors'), icon: <Truck /> },
+      { to: '/bills', label: msg('Bills'), icon: <Receipt /> },
+      { to: '/expenses', label: msg('Expenses'), icon: <Wallet /> },
+      { to: '/payments-made', label: msg('Payments made'), icon: <ArrowUpRight /> },
+      { to: '/vendor-credits', label: msg('Vendor credits'), icon: <ReceiptText /> },
     ],
   },
   {
-    title: 'Accounting',
+    title: msg('Accounting'),
     items: [
-      { to: '/banking', label: 'Banking', icon: <Banknote /> },
-      { to: '/reports', label: 'Reports', icon: <BarChart3 /> },
-      { to: '/vat', label: 'VAT returns', icon: <Landmark /> },
-      { to: '/accounts', label: 'Chart of accounts', icon: <ListTree /> },
-      { to: '/journals', label: 'Manual journals', icon: <NotebookPen /> },
+      { to: '/banking', label: msg('Banking'), icon: <Banknote /> },
+      { to: '/reports', label: msg('Reports'), icon: <BarChart3 /> },
+      { to: '/vat', label: msg('VAT returns'), icon: <Landmark /> },
+      { to: '/accounts', label: msg('Chart of accounts'), icon: <ListTree /> },
+      { to: '/journals', label: msg('Manual journals'), icon: <NotebookPen /> },
     ],
   },
   {
-    title: 'Business',
+    title: msg('Business'),
     items: [
-      { to: '/templates', label: 'Templates', icon: <Palette /> },
-      { to: '/settings', label: 'Settings', icon: <Settings /> },
+      { to: '/templates', label: msg('Templates'), icon: <Palette /> },
+      { to: '/settings', label: msg('Settings'), icon: <Settings /> },
     ],
   },
 ];
@@ -146,13 +149,13 @@ function CompanySwitcher() {
       <DropdownTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-slate-100"
-          aria-label="Switch company"
+          className="flex w-full items-center gap-3 rounded-lg p-2 text-start hover:bg-slate-100"
+          aria-label={t('Switch company')}
         >
           <CompanyLogo name={company.name} logo={company.branding.logo} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold text-slate-900">
-              {company.name}
+              {localName(company)}
             </span>
             <span className="block truncate text-xs text-slate-500">
               {company.currency} · {APP_NAME}
@@ -162,7 +165,7 @@ function CompanySwitcher() {
         </button>
       </DropdownTrigger>
       <DropdownContent align="start" className="w-64">
-        <DropdownLabel>Companies</DropdownLabel>
+        <DropdownLabel>{t('Companies')}</DropdownLabel>
         {companies.map((c) => (
           <DropdownItem
             key={c.id}
@@ -172,12 +175,12 @@ function CompanySwitcher() {
             }}
             icon={c.id === company.id ? <Check /> : <span className="inline-block size-4" />}
           >
-            <span className="truncate">{c.name}</span>
+            <span className="truncate">{localName(c)}</span>
           </DropdownItem>
         ))}
         <DropdownSeparator />
         <DropdownItem icon={<Plus />} onSelect={() => navigate('/setup')}>
-          Add company
+          {t('Add company')}
         </DropdownItem>
       </DropdownContent>
     </DropdownMenu>
@@ -190,12 +193,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="p-3">
         <CompanySwitcher />
       </div>
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Main">
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t('Main')}>
         {NAV.map((group, gi) => (
           <div key={gi}>
             {group.title ? (
               <p className="px-2 pb-1.5 text-xs font-semibold tracking-wide text-slate-400 uppercase">
-                {group.title}
+                {t(group.title)}
               </p>
             ) : null}
             <ul className="space-y-0.5">
@@ -215,7 +218,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     }
                   >
                     {item.icon}
-                    {item.label}
+                    {t(item.label)}
                   </NavLink>
                 </li>
               ))}
@@ -224,13 +227,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
       <div className="border-t border-slate-200 px-5 py-3 text-xs text-slate-400">
-        Data is stored in this browser.{' '}
+        {t('Data is stored in this browser.')}{' '}
         <Link
           to="/settings/data"
           onClick={onNavigate}
           className="font-medium text-slate-500 underline-offset-2 hover:underline"
         >
-          Back up
+          {t('Back up')}
         </Link>
       </div>
     </div>
@@ -243,46 +246,46 @@ function NewMenu() {
     <DropdownMenu>
       <DropdownTrigger asChild>
         <Button size="sm">
-          <Plus /> New
+          <Plus /> {t('New')}
         </Button>
       </DropdownTrigger>
       <DropdownContent className="w-56">
-        <DropdownLabel>Sales</DropdownLabel>
+        <DropdownLabel>{t('Sales')}</DropdownLabel>
         <DropdownItem icon={<FileText />} onSelect={() => navigate('/invoices/new')}>
-          Invoice
+          {t('Invoice')}
         </DropdownItem>
         <DropdownItem icon={<ScrollText />} onSelect={() => navigate('/quotes/new')}>
-          Quote
+          {t('Quote')}
         </DropdownItem>
         <DropdownItem icon={<FileMinus />} onSelect={() => navigate('/credits/new')}>
-          Credit note
+          {t('Credit note')}
         </DropdownItem>
         <DropdownItem icon={<Repeat />} onSelect={() => navigate('/recurring/new')}>
-          Recurring invoice
+          {t('Recurring invoice')}
         </DropdownItem>
         <DropdownItem icon={<ArrowDownLeft />} onSelect={() => navigate('/payments/new')}>
-          Payment received
+          {t('Payment received')}
         </DropdownItem>
         <DropdownSeparator />
-        <DropdownLabel>Purchases</DropdownLabel>
+        <DropdownLabel>{t('Purchases')}</DropdownLabel>
         <DropdownItem icon={<Receipt />} onSelect={() => navigate('/bills/new')}>
-          Bill
+          {t('Bill')}
         </DropdownItem>
         <DropdownItem icon={<Wallet />} onSelect={() => navigate('/expenses?new=1')}>
-          Expense
+          {t('Expense')}
         </DropdownItem>
         <DropdownItem icon={<ArrowUpRight />} onSelect={() => navigate('/payments-made/new')}>
-          Payment made
+          {t('Payment made')}
         </DropdownItem>
         <DropdownSeparator />
         <DropdownItem icon={<Users />} onSelect={() => navigate('/clients/new')}>
-          Client
+          {t('Client')}
         </DropdownItem>
         <DropdownItem icon={<Truck />} onSelect={() => navigate('/vendors/new')}>
-          Vendor
+          {t('Vendor')}
         </DropdownItem>
         <DropdownItem icon={<Package />} onSelect={() => navigate('/products?new=1')}>
-          Product or service
+          {t('Product or service')}
         </DropdownItem>
       </DropdownContent>
     </DropdownMenu>
@@ -302,8 +305,12 @@ function useRecurringGeneration() {
       .then((created) => {
         if (created.length === 0) return;
         toast.success(
-          `${created.length} recurring invoice${created.length === 1 ? '' : 's'} created`,
-          { action: { label: 'View', onClick: () => navigate('/invoices') } },
+          tp(
+            created.length,
+            '{count} recurring invoice created',
+            '{count} recurring invoices created',
+          ),
+          { action: { label: t('View'), onClick: () => navigate('/invoices') } },
         );
       })
       .catch(() => {
@@ -323,45 +330,46 @@ export function AppLayout() {
 
   return (
     <div className="min-h-dvh">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-slate-200 bg-white lg:block">
+      <aside className="fixed inset-y-0 start-0 z-30 hidden w-64 border-e border-slate-200 bg-white lg:block">
         <SidebarContent />
       </aside>
 
       <DialogPrimitive.Root open={mobileOpen} onOpenChange={setMobileOpen}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden" />
-          <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-72 bg-white shadow-xl lg:hidden">
-            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+          <DialogPrimitive.Content className="fixed inset-y-0 start-0 z-50 w-72 bg-white shadow-xl lg:hidden">
+            <DialogPrimitive.Title className="sr-only">{t('Navigation')}</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
-              Main navigation
+              {t('Main navigation')}
             </DialogPrimitive.Description>
-            <DialogPrimitive.Close className="absolute top-3 -right-11 rounded-md bg-white p-1.5 text-slate-500">
+            <DialogPrimitive.Close className="absolute -end-11 top-3 rounded-md bg-white p-1.5 text-slate-500">
               <X className="size-5" />
-              <span className="sr-only">Close menu</span>
+              <span className="sr-only">{t('Close menu')}</span>
             </DialogPrimitive.Close>
             <SidebarContent onNavigate={() => setMobileOpen(false)} />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      <div className="lg:pl-64">
+      <div className="lg:ps-64">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
           <Button
             variant="ghost"
             size="icon-sm"
             className="lg:hidden"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open menu"
+            aria-label={t('Open menu')}
           >
             <MenuIcon />
           </Button>
           <div className="flex-1" />
+          <LanguageSwitch />
           <NewMenu />
         </header>
         <main
           className={cn('mx-auto px-4 py-6 sm:px-6 lg:py-8', wide ? 'max-w-[1600px]' : 'max-w-7xl')}
         >
-          <Suspense fallback={<Spinner className="py-24" label="Loading…" />}>
+          <Suspense fallback={<Spinner className="py-24" label={t('Loading…')} />}>
             <Outlet />
           </Suspense>
         </main>

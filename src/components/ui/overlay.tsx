@@ -3,6 +3,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 import { Button } from './button';
 
 /* -------------------------------------------------------------------------- */
@@ -50,9 +51,9 @@ export function DialogContent({
               <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
             )}
           </div>
-          <DialogPrimitive.Close className="-mt-1 -mr-1 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <DialogPrimitive.Close className="-me-1 -mt-1 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
             <X className="size-5" />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{t('Close')}</span>
           </DialogPrimitive.Close>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
@@ -196,14 +197,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             ) : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => close(false)}>
-                {options.cancelLabel ?? 'Cancel'}
+                {options.cancelLabel ?? t('Cancel')}
               </Button>
               <Button
                 variant={options.danger ? 'danger' : 'primary'}
                 onClick={() => close(true)}
                 autoFocus
               >
-                {options.confirmLabel ?? 'Confirm'}
+                {options.confirmLabel ?? t('Confirm')}
               </Button>
             </DialogFooter>
           </DialogContent>

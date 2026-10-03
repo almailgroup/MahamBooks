@@ -30,7 +30,8 @@ export function vatSettings(company: Company): VatSettings {
   if (saved) return saved;
   const country = company.address?.country ?? '';
   return {
-    registered: Boolean(company.taxId?.trim()),
+    // Kuwait has no VAT: a tax card or CR number doesn't make a company VAT-registered.
+    registered: country.toUpperCase() !== 'KW' && Boolean(company.taxId?.trim()),
     format: vatFormatFor(country),
     frequency: 'quarterly',
     startMonth: 1,
@@ -46,6 +47,7 @@ export function chartAccounts(companyId: ID, template: ChartTemplateId): Account
     companyId,
     code: a.code,
     name: a.name,
+    ...(a.nameAr ? { nameAr: a.nameAr } : {}),
     type: a.type,
     description: '',
     role: a.role ?? null,

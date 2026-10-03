@@ -25,6 +25,7 @@ const allFonts: FontId[] = [
   'lora',
   'spacegrotesk',
   'dmserif',
+  'plexarabic',
 ];
 
 let qr = '';

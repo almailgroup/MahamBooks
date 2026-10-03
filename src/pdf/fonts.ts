@@ -8,7 +8,8 @@ export type FontId =
   | 'playfair'
   | 'lora'
   | 'spacegrotesk'
-  | 'dmserif';
+  | 'dmserif'
+  | 'plexarabic';
 
 interface FontFile {
   weight: number;
@@ -95,7 +96,27 @@ export const FONT_FAMILIES: Record<FontId, FontFamilyDefinition> = {
     category: 'display',
     files: files('dmserif', [400], [400]),
   },
+  plexarabic: {
+    id: 'plexarabic',
+    family: 'IBM Plex Sans Arabic',
+    label: 'IBM Plex Sans Arabic',
+    category: 'sans',
+    // Arabic has no italics: italic text uses the upright letters.
+    files: [400, 500, 600, 700].flatMap((weight) =>
+      (['normal', 'italic'] as const).map((style) => ({
+        weight,
+        style,
+        file: `plexarabic-${weight}.ttf`,
+      })),
+    ),
+  },
 };
+
+/**
+ * Every template falls back to this font for Arabic letters, so Arabic names,
+ * addresses and descriptions print in any template.
+ */
+export const ARABIC_FONT: FontId = 'plexarabic';
 
 /** Fonts a user can pick to override a template's body font. */
 export const BODY_FONT_CHOICES: FontId[] = ['inter', 'manrope', 'plexsans', 'lora', 'spacegrotesk'];

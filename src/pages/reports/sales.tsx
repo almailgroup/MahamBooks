@@ -68,7 +68,7 @@ const WORDS = {
 function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
   return (
     <th
-      className={`px-4 py-3 text-xs font-medium tracking-wide whitespace-nowrap text-slate-500 uppercase ${right ? 'text-right' : 'text-left'}`}
+      className={`px-4 py-3 text-xs font-medium tracking-wide whitespace-nowrap text-slate-500 uppercase ${right ? 'text-end' : 'text-start'}`}
     >
       {children}
     </th>
@@ -86,7 +86,7 @@ function Td({
 }) {
   return (
     <td
-      className={`px-4 py-2.5 whitespace-nowrap ${right ? 'tabular text-right' : ''} ${strong ? 'font-semibold text-slate-900' : 'text-slate-700'}`}
+      className={`px-4 py-2.5 whitespace-nowrap ${right ? 'tabular text-end' : ''} ${strong ? 'font-semibold text-slate-900' : 'text-slate-700'}`}
     >
       {children}
     </td>

@@ -292,23 +292,23 @@ function SectionRows({
       ) : null}
       {section.rows.length === 0 ? (
         <tr>
-          <td colSpan={2} className="px-5 py-1.5 pl-8 text-sm text-slate-400">
+          <td colSpan={2} className="px-5 py-1.5 ps-8 text-sm text-slate-400">
             No transactions
           </td>
         </tr>
       ) : (
         section.rows.map((r) => (
           <tr key={r.account.id} className="hover:bg-slate-50">
-            <td className="py-1.5 pr-4 pl-8 text-sm">
+            <td className="py-1.5 ps-8 pe-4 text-sm">
               <Link
                 to={ledgerLink(r.account, range)}
                 className="hover:text-primary-700 text-slate-700"
               >
-                <span className="tabular mr-2 text-slate-400">{r.account.code}</span>
+                <span className="tabular me-2 text-slate-400">{r.account.code}</span>
                 {r.account.name}
               </Link>
             </td>
-            <td className="tabular px-5 py-1.5 text-right text-sm text-slate-700">
+            <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
               {money(r.amount)}
             </td>
           </tr>
@@ -350,7 +350,7 @@ function TotalRow({
       </td>
       <td
         className={cn(
-          'tabular px-5 py-2 text-right text-sm',
+          'tabular px-5 py-2 text-end text-sm',
           strong ? 'font-semibold' : 'font-medium',
           tone === 'profit' ? (amount < 0 ? 'text-red-600' : 'text-emerald-700') : 'text-slate-900',
         )}
@@ -539,17 +539,17 @@ export function BalanceSheetReport() {
             totalLabel="Capital and reserves"
           />
           <tr className="hover:bg-slate-50">
-            <td className="py-1.5 pr-4 pl-8 text-sm text-slate-700">Current year earnings</td>
-            <td className="tabular px-5 py-1.5 text-right text-sm text-slate-700">
+            <td className="py-1.5 ps-8 pe-4 text-sm text-slate-700">Current year earnings</td>
+            <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
               {money(bs.currentYearEarnings)}
             </td>
           </tr>
           {bs.previousYearsEarnings !== 0 ? (
             <tr className="hover:bg-slate-50">
-              <td className="py-1.5 pr-4 pl-8 text-sm text-slate-700">
+              <td className="py-1.5 ps-8 pe-4 text-sm text-slate-700">
                 Previous years&apos; earnings
               </td>
-              <td className="tabular px-5 py-1.5 text-right text-sm text-slate-700">
+              <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
                 {money(bs.previousYearsEarnings)}
               </td>
             </tr>
@@ -611,9 +611,9 @@ export function TrialBalanceReport() {
         <table className="w-full text-sm">
           <thead className="border-y border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
             <tr>
-              <th className="px-5 py-2.5 text-left font-medium">Account</th>
-              <th className="px-5 py-2.5 text-right font-medium">Debit</th>
-              <th className="px-5 py-2.5 text-right font-medium">Credit</th>
+              <th className="px-5 py-2.5 text-start font-medium">Account</th>
+              <th className="px-5 py-2.5 text-end font-medium">Debit</th>
+              <th className="px-5 py-2.5 text-end font-medium">Credit</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -625,23 +625,23 @@ export function TrialBalanceReport() {
                       to={ledgerLink(r.account, range)}
                       className="hover:text-primary-700 text-slate-700"
                     >
-                      <span className="tabular mr-2 text-slate-400">{r.account.code}</span>
+                      <span className="tabular me-2 text-slate-400">{r.account.code}</span>
                       {r.account.name}
                     </Link>
                   ) : (
                     <span className="text-slate-700">{r.label}</span>
                   )}
                 </td>
-                <td className="tabular px-5 py-2 text-right">{r.debit ? money(r.debit) : ''}</td>
-                <td className="tabular px-5 py-2 text-right">{r.credit ? money(r.credit) : ''}</td>
+                <td className="tabular px-5 py-2 text-end">{r.debit ? money(r.debit) : ''}</td>
+                <td className="tabular px-5 py-2 text-end">{r.credit ? money(r.credit) : ''}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr className="border-y-2 border-slate-200 bg-slate-50 font-semibold text-slate-900">
               <td className="px-5 py-2.5">Total</td>
-              <td className="tabular px-5 py-2.5 text-right">{money(tb.totalDebit)}</td>
-              <td className="tabular px-5 py-2.5 text-right">{money(tb.totalCredit)}</td>
+              <td className="tabular px-5 py-2.5 text-end">{money(tb.totalDebit)}</td>
+              <td className="tabular px-5 py-2.5 text-end">{money(tb.totalCredit)}</td>
             </tr>
           </tfoot>
         </table>
@@ -755,22 +755,22 @@ export function GeneralLedgerReport() {
           <table className="w-full text-sm">
             <thead className="border-y border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
               <tr>
-                <th className="px-5 py-2.5 text-left font-medium">Date</th>
-                <th className="px-3 py-2.5 text-left font-medium">Number</th>
-                <th className="px-3 py-2.5 text-left font-medium">Description</th>
-                <th className="px-3 py-2.5 text-right font-medium">Debit</th>
-                <th className="px-3 py-2.5 text-right font-medium">Credit</th>
-                <th className="px-5 py-2.5 text-right font-medium">Balance</th>
+                <th className="px-5 py-2.5 text-start font-medium">Date</th>
+                <th className="px-3 py-2.5 text-start font-medium">Number</th>
+                <th className="px-3 py-2.5 text-start font-medium">Description</th>
+                <th className="px-3 py-2.5 text-end font-medium">Debit</th>
+                <th className="px-3 py-2.5 text-end font-medium">Credit</th>
+                <th className="px-5 py-2.5 text-end font-medium">Balance</th>
               </tr>
             </thead>
             {activity.map((a) => (
               <tbody key={a.account.id} className="border-b border-slate-200">
                 <tr className="bg-slate-50/40">
                   <td colSpan={5} className="px-5 pt-3 pb-1.5 font-semibold text-slate-900">
-                    <span className="tabular mr-2 text-slate-400">{a.account.code}</span>
+                    <span className="tabular me-2 text-slate-400">{a.account.code}</span>
                     {a.account.name}
                   </td>
-                  <td className="tabular px-5 pt-3 pb-1.5 text-right text-slate-500">
+                  <td className="tabular px-5 pt-3 pb-1.5 text-end text-slate-500">
                     {money(a.opening)}
                   </td>
                 </tr>
@@ -788,13 +788,13 @@ export function GeneralLedgerReport() {
                       </Link>
                     </td>
                     <td className="px-3 py-1.5 text-slate-700">{l.description}</td>
-                    <td className="tabular px-3 py-1.5 text-right">
+                    <td className="tabular px-3 py-1.5 text-end">
                       {l.amount > 0 ? money(l.amount) : ''}
                     </td>
-                    <td className="tabular px-3 py-1.5 text-right">
+                    <td className="tabular px-3 py-1.5 text-end">
                       {l.amount < 0 ? money(-l.amount) : ''}
                     </td>
-                    <td className="tabular px-5 py-1.5 text-right text-slate-700">
+                    <td className="tabular px-5 py-1.5 text-end text-slate-700">
                       {money(l.balance)}
                     </td>
                   </tr>
@@ -803,9 +803,9 @@ export function GeneralLedgerReport() {
                   <td colSpan={3} className="px-5 py-2 font-medium">
                     Closing balance
                   </td>
-                  <td className="tabular px-3 py-2 text-right font-medium">{money(a.debit)}</td>
-                  <td className="tabular px-3 py-2 text-right font-medium">{money(a.credit)}</td>
-                  <td className="tabular px-5 py-2 text-right font-semibold">{money(a.closing)}</td>
+                  <td className="tabular px-3 py-2 text-end font-medium">{money(a.debit)}</td>
+                  <td className="tabular px-3 py-2 text-end font-medium">{money(a.credit)}</td>
+                  <td className="tabular px-5 py-2 text-end font-semibold">{money(a.closing)}</td>
                 </tr>
               </tbody>
             ))}

@@ -390,7 +390,7 @@ function Editor({
                   key={label}
                   className={cn(
                     'text-xs font-medium tracking-wide text-slate-500 uppercase',
-                    (label === 'Qty' || label === 'Rate' || label === 'Amount') && 'text-right',
+                    (label === 'Qty' || label === 'Rate' || label === 'Amount') && 'text-end',
                   )}
                 >
                   {label}
@@ -459,7 +459,7 @@ function Editor({
                       />
                     </div>
                     <p
-                      className="tabular col-span-5 self-center text-right font-medium text-slate-900 @3xl:col-span-1 @3xl:self-start @3xl:pt-2"
+                      className="tabular col-span-5 self-center text-end font-medium text-slate-900 @3xl:col-span-1 @3xl:self-start @3xl:pt-2"
                       aria-label={`Line ${index + 1} amount`}
                     >
                       {money(result.lines[index]?.net ?? 0)}

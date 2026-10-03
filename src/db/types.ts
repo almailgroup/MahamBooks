@@ -11,11 +11,25 @@ export type Timestamp = string;
 export interface Address {
   line1: string;
   line2: string;
+  /** Area in Kuwait (e.g. "Salmiya"), city elsewhere. */
   city: string;
+  /** Governorate in Kuwait (e.g. "Hawalli"), state or region elsewhere. */
   state: string;
   postalCode: string;
-  /** ISO 3166-1 alpha-2 code, e.g. "US", "GB", "AE". */
+  /** ISO 3166-1 alpha-2 code, e.g. "KW". */
   country: string;
+  /** Kuwaiti addresses: block (قطعة). */
+  block?: string;
+  street?: string;
+  /** Avenue (جادة). */
+  avenue?: string;
+  /** Building or house number. */
+  building?: string;
+  floor?: string;
+  /** Office, flat or shop number. */
+  unit?: string;
+  /** PACI automated address number (الرقم الآلي للعنوان). */
+  paci?: string;
 }
 
 /** Sales documents (invoice, quote, credit) and purchase documents (bill, vendor credit). */
@@ -93,6 +107,10 @@ export interface Branding {
   fontId: string | null;
   /** Print a PAID / VOID stamp on settled or cancelled documents. */
   showStatusStamp: boolean;
+  /** Company stamp (seal) image as a data URL, printed near the signature. */
+  stamp?: string | null;
+  /** Authorised signature image as a data URL. */
+  signature?: string | null;
 }
 
 export interface PaymentSettings {
@@ -179,6 +197,8 @@ export interface Account {
   companyId: ID;
   code: string;
   name: string;
+  /** Arabic name, shown in the Arabic interface and Arabic reports. */
+  nameAr?: string;
   type: AccountType;
   description: string;
   /** Set on the accounts the app posts to automatically. */
@@ -218,7 +238,7 @@ export interface ManualJournal {
   updatedAt: Timestamp;
 }
 
-export type ChartTemplateId = 'generic' | 'uk' | 'ae';
+export type ChartTemplateId = 'kw' | 'generic' | 'uk' | 'ae';
 
 export interface AccountingSettings {
   /** Chart of accounts the company started from. */
@@ -298,9 +318,59 @@ export interface VatReturnRecord {
   updatedAt: Timestamp;
 }
 
+/** Legal form of a Kuwaiti business; decides statutory reserve and levies. */
+export type LegalForm =
+  | 'sole_proprietorship'
+  | 'wll'
+  | 'spc'
+  | 'general_partnership'
+  | 'limited_partnership'
+  | 'kscc'
+  | 'ksc_listed'
+  | 'foreign_branch'
+  | 'freelance'
+  | 'other';
+
+/** Business activity; some activities may not take cash (see lib/kuwait-rules.ts). */
+export type BusinessActivity =
+  | 'general'
+  | 'health'
+  | 'salon'
+  | 'sports_club'
+  | 'pest_control'
+  | 'vehicles'
+  | 'gold_jewellery'
+  | 'real_estate';
+
+/** Kuwaiti registration details. Missing on companies created before; see kuwaitProfile(). */
+export interface KuwaitProfile {
+  legalForm: LegalForm;
+  /** Commercial licence number (رقم الرخصة التجارية). The CR number is registrationNumber. */
+  licenceNumber: string;
+  activity: BusinessActivity;
+  /** Share of the company owned by non-GCC foreign shareholders, 0–100 (15% income tax). */
+  foreignOwnershipPercent: number;
+  /** Paid-up capital in the company currency (the statutory reserve stops at 50% of it). */
+  capital: number;
+  /** Public Authority for Manpower company file number. */
+  pamFileNumber: string;
+  /** PIFSS employer (social security) number. */
+  pifssEmployerNumber: string;
+  /** Ministry of Finance tax card number. */
+  mofTaxCardNumber: string;
+  /** Kuwait Chamber of Commerce and Industry membership number. */
+  kcciNumber: string;
+  /** MOCI digital commerce registration number (online sellers). */
+  digitalCommerceNumber: string;
+  /** Mobile number registered for WAMD instant payments. */
+  wamdPhone: string;
+}
+
 export interface Company {
   id: ID;
   name: string;
+  /** Trade name in Arabic, printed on Arabic and bilingual documents. */
+  nameAr?: string;
   legalName: string;
   email: string;
   phone: string;
@@ -312,7 +382,12 @@ export interface Company {
   registrationNumber: string;
   address: Address;
   currency: string;
-  /** BCP 47 locale used for number and date formatting, e.g. "en-US". */
+  /**
+   * "local" writes Kuwaiti dinars as KD / د.ك (the default in Kuwait),
+   * "code" as KWD. Missing means "local".
+   */
+  currencyDisplay?: 'code' | 'local';
+  /** BCP 47 locale used for number and date formatting, e.g. "en-KW". */
   locale: string;
   dateFormat: DateFormat;
   language: DocumentLanguage;
@@ -325,6 +400,7 @@ export interface Company {
   emailTemplates: EmailTemplates;
   /** Missing on companies created before accounting existed (see ensureAccounting). */
   accounting?: AccountingSettings;
+  kuwait?: KuwaitProfile;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -343,6 +419,10 @@ export interface Client {
   companyId: ID;
   number: string;
   name: string;
+  /** Name in Arabic, printed on Arabic and bilingual documents. */
+  nameAr?: string;
+  /** Civil ID of an individual customer or of a cheque drawer. */
+  civilId?: string;
   contacts: ClientContact[];
   email: string;
   phone: string;
@@ -386,7 +466,10 @@ export interface Product {
   companyId: ID;
   sku: string;
   name: string;
+  /** Name in Arabic, copied to document lines. */
+  nameAr?: string;
   description: string;
+  descriptionAr?: string;
   unitPrice: number;
   unit: string;
   taxRateIds: ID[];
@@ -402,6 +485,8 @@ export interface LineItem {
   kind: 'item' | 'heading';
   productId: ID | null;
   name: string;
+  /** Arabic name of the item, printed on Arabic and bilingual documents. */
+  nameAr?: string;
   description: string;
   quantity: number;
   unit: string;
@@ -473,9 +558,22 @@ export interface InvoiceDocument {
   convertedToId: ID | null;
   /** Recurring profile that generated this invoice. */
   recurringId: ID | null;
+  /** Online payment link for this document (overrides the company's link). */
+  paymentLink?: PaymentLink | null;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** Payment providers that issue payment links in Kuwait. */
+export type PaymentLinkProvider =
+  'myfatoorah' | 'tap' | 'upayments' | 'hesabe' | 'ottu' | 'bank' | 'other';
+
+export interface PaymentLink {
+  provider: PaymentLinkProvider;
+  url: string;
+  /** Links from some providers stop working after a while. */
+  expiresAt: ISODate | null;
 }
 
 export type PaymentMethod =
@@ -596,7 +694,11 @@ export interface Activity {
   clientId: ID | null;
   documentId: ID | null;
   action: string;
+  /** The message in English as it was logged. */
   message: string;
+  /** Translation key and values, to show the message in the reader's language. */
+  messageKey?: string;
+  messageVars?: Record<string, string | number>;
 }
 
 /** Money spent without a bill: fuel, a train ticket, a software subscription. */

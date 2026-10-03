@@ -284,14 +284,14 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
           onClick={() => save('save')}
           loading={saving === 'save'}
           disabled={saving !== null}
-          className="rounded-r-none"
+          className="rounded-e-none"
         >
           <Save /> Save
         </Button>
         <DropdownMenu>
           <DropdownTrigger asChild>
             <Button
-              className="border-primary-500 rounded-l-none border-l px-2"
+              className="border-primary-500 rounded-s-none border-s px-2"
               disabled={saving !== null}
               aria-label="More save options"
             >

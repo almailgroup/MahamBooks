@@ -156,12 +156,12 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
               ]}
             />
             <div className="relative sm:w-72">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={`Search ${copy.plural}…`}
-                className="pl-9"
+                className="ps-9"
                 aria-label={`Search ${copy.plural}`}
               />
             </div>
@@ -172,12 +172,12 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
+                  <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
                     <th className="px-5 py-3">{copy.column}</th>
                     <th className="hidden px-3 py-3 md:table-cell">Contact</th>
                     <th className="hidden px-3 py-3 lg:table-cell">Location</th>
-                    <th className="px-3 py-3 text-right">{copy.amountLabel}</th>
-                    <th className="px-5 py-3 text-right">Outstanding</th>
+                    <th className="px-3 py-3 text-end">{copy.amountLabel}</th>
+                    <th className="px-5 py-3 text-end">Outstanding</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -219,10 +219,10 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                             .filter(Boolean)
                             .join(', ') || '—'}
                         </td>
-                        <td className="tabular px-3 py-3 text-right text-slate-600">
+                        <td className="tabular px-3 py-3 text-end text-slate-600">
                           {fmt.money(stats.invoiced, currency)}
                         </td>
-                        <td className="tabular px-5 py-3 text-right">
+                        <td className="tabular px-5 py-3 text-end">
                           <span
                             className={
                               stats.balance > 0 ? 'font-medium text-slate-900' : 'text-slate-400'
@@ -231,7 +231,7 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                             {fmt.money(stats.balance, currency)}
                           </span>
                           {stats.overdue ? (
-                            <Badge tone="red" className="ml-2">
+                            <Badge tone="red" className="ms-2">
                               Overdue
                             </Badge>
                           ) : null}

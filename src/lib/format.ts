@@ -1,4 +1,5 @@
 import { format as formatPattern } from 'date-fns';
+import { ar } from 'date-fns/locale/ar';
 import type { DateFormat, ISODate } from '@/db/types';
 import { currencyPrecision } from './money';
 import { isISODate, parseISODate } from './dates';
@@ -32,27 +33,67 @@ function decimalsOf(value: number): number {
   return idx === -1 ? 0 : Math.min(6, s.length - idx - 1);
 }
 
-export function formatMoney(amount: number, currency: string, locale: string): string {
+/**
+ * How currencies are shown: `code` is the international style ("KWD 1.500"),
+ * `local` the way amounts are written in Kuwait ("KD 1.500", "1.500 د.ك").
+ */
+export type CurrencyDisplay = 'code' | 'local';
+
+const LOCAL_SYMBOLS: Record<string, { latin: string; arabic: string }> = {
+  KWD: { latin: 'KD', arabic: 'د.ك' },
+};
+
+/**
+ * Arabic has no familiar symbols for most foreign currencies ("UK£"), so
+ * they are written with their code ("1,234.50 USD"); the dinar keeps د.ك.
+ */
+function arabicCode(locale: string, code: string, display: CurrencyDisplay): 'code' | 'symbol' {
+  if (!locale.toLowerCase().startsWith('ar')) return 'symbol';
+  return display === 'local' && LOCAL_SYMBOLS[code] ? 'symbol' : 'code';
+}
+
+function localize(text: string, code: string, display: CurrencyDisplay): string {
+  const local = display === 'local' ? LOCAL_SYMBOLS[code] : undefined;
+  if (!local) return text;
+  // CLDR writes "KWD" in English and "د.ك." (with a final dot) in Arabic.
+  return text.replace(code, local.latin).replace(/د\.ك\.?/, local.arabic);
+}
+
+export function formatMoney(
+  amount: number,
+  currency: string,
+  locale: string,
+  display: CurrencyDisplay = 'code',
+): string {
   const code = safeCurrency(currency);
   const digits = currencyPrecision(code);
-  return numberFormat(locale, {
+  const text = numberFormat(locale, {
     style: 'currency',
     currency: code,
+    currencyDisplay: arabicCode(locale, code, display),
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(amount || 0);
+  return localize(text, code, display);
 }
 
 /** Like formatMoney but keeps extra decimals of precise unit prices (e.g. 0.537). */
-export function formatUnitPrice(amount: number, currency: string, locale: string): string {
+export function formatUnitPrice(
+  amount: number,
+  currency: string,
+  locale: string,
+  display: CurrencyDisplay = 'code',
+): string {
   const code = safeCurrency(currency);
   const digits = currencyPrecision(code);
-  return numberFormat(locale, {
+  const text = numberFormat(locale, {
     style: 'currency',
     currency: code,
+    currencyDisplay: arabicCode(locale, code, display),
     minimumFractionDigits: digits,
     maximumFractionDigits: Math.max(digits, decimalsOf(amount)),
   }).format(amount || 0);
+  return localize(text, code, display);
 }
 
 /** Plain number with the currency's decimals and no symbol, e.g. "1,234.50". */
@@ -68,16 +109,21 @@ export function formatQuantity(quantity: number, locale: string): string {
   return numberFormat(locale, { maximumFractionDigits: 6 }).format(quantity || 0);
 }
 
+/** "5%" in English, "5٪" in Arabic; `rate` is a percentage (5 for 5%). */
 export function formatPercent(rate: number, locale: string): string {
-  return `${numberFormat(locale, { maximumFractionDigits: 4 }).format(rate || 0)}%`;
+  return numberFormat(locale, { style: 'percent', maximumFractionDigits: 4 }).format(
+    (rate || 0) / 100,
+  );
 }
 
-export function currencySymbol(currency: string, locale: string): string {
-  const parts = numberFormat(locale, {
-    style: 'currency',
-    currency: safeCurrency(currency),
-  }).formatToParts(0);
-  return parts.find((p) => p.type === 'currency')?.value ?? currency;
+export function currencySymbol(
+  currency: string,
+  locale: string,
+  display: CurrencyDisplay = 'code',
+): string {
+  const code = safeCurrency(currency);
+  const parts = numberFormat(locale, { style: 'currency', currency: code }).formatToParts(0);
+  return localize(parts.find((p) => p.type === 'currency')?.value ?? currency, code, display);
 }
 
 export function formatDate(
@@ -94,7 +140,12 @@ export function formatDate(
       return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(date);
     }
   }
-  return formatPattern(date, dateFormat);
+  // Month names follow the language: "3 أكتوبر 2026" in Arabic.
+  return formatPattern(
+    date,
+    dateFormat,
+    locale.toLowerCase().startsWith('ar') ? { locale: ar } : {},
+  );
 }
 
 export function formatDateTime(value: string | null | undefined, locale: string): string {

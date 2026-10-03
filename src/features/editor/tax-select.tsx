@@ -53,7 +53,7 @@ export function TaxSelect({
           type="button"
           title={value.map(label).join(' + ') || placeholder}
           className={cn(
-            'flex h-9 w-full items-center justify-between gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-left text-sm shadow-xs hover:border-slate-400',
+            'flex h-9 w-full items-center justify-between gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-start text-sm shadow-xs hover:border-slate-400',
             value.length === 0 && 'text-slate-400',
             className,
           )}
@@ -80,7 +80,7 @@ export function TaxSelect({
                   key={taxKey(t)}
                   type="button"
                   onClick={() => toggle(t)}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-slate-100"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-start text-sm hover:bg-slate-100"
                 >
                   <span
                     className={cn(
@@ -99,7 +99,7 @@ export function TaxSelect({
             <button
               type="button"
               onClick={() => onChange([])}
-              className="mt-1 w-full rounded-md border-t border-slate-100 px-2.5 py-2 text-left text-sm text-slate-500 hover:bg-slate-50"
+              className="mt-1 w-full rounded-md border-t border-slate-100 px-2.5 py-2 text-start text-sm text-slate-500 hover:bg-slate-50"
             >
               Clear
             </button>

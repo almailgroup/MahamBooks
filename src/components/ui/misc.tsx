@@ -1,6 +1,7 @@
 import type { HTMLAttributes, ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
 import { STATUS_META, type DisplayStatus, type StatusTone } from '@/lib/status';
 
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -88,7 +89,7 @@ export function Spinner({ className, label }: { className?: string; label?: stri
   return (
     <div className={cn('flex items-center justify-center gap-2 text-sm text-slate-500', className)}>
       <Loader2 className="size-4 animate-spin" aria-hidden />
-      {label ? <span>{label}</span> : <span className="sr-only">Loading</span>}
+      {label ? <span>{label}</span> : <span className="sr-only">{t('Loading')}</span>}
     </div>
   );
 }

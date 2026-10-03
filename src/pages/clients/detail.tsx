@@ -412,7 +412,7 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
                     <p className="font-medium text-slate-800">
                       {c.name || 'Contact'}
                       {c.primary && client.contacts.length > 1 ? (
-                        <span className="ml-2 text-xs font-normal text-slate-400">Primary</span>
+                        <span className="ms-2 text-xs font-normal text-slate-400">Primary</span>
                       ) : null}
                     </p>
                     {c.email ? (

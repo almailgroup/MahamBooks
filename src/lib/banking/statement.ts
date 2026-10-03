@@ -1,5 +1,6 @@
 import type { ISODate } from '@/db/types';
 import { isISODate } from '@/lib/dates';
+import { normalizeDigits } from '@/lib/money';
 
 /**
  * Bank statements as exported by online banking: CSV (any layout, mapped by
@@ -84,6 +85,26 @@ export const DATE_FORMATS: { value: DateFormat; label: string }[] = [
 ];
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+// Month names as Kuwaiti banks print them in Arabic.
+const ARABIC_MONTHS: string[][] = [
+  ['يناير'],
+  ['فبراير'],
+  ['مارس'],
+  ['أبريل', 'ابريل', 'إبريل'],
+  ['مايو'],
+  ['يونيو'],
+  ['يوليو'],
+  ['أغسطس', 'اغسطس'],
+  ['سبتمبر'],
+  ['أكتوبر', 'اكتوبر'],
+  ['نوفمبر'],
+  ['ديسمبر'],
+];
+
+function monthIndex(name: string): number {
+  const arabic = ARABIC_MONTHS.findIndex((names) => names.includes(name));
+  return arabic >= 0 ? arabic : MONTHS.indexOf(name.slice(0, 3).toLowerCase());
+}
 
 function iso(y: number, m: number, d: number): ISODate | null {
   const year = y < 100 ? 2000 + y : y;
@@ -93,7 +114,7 @@ function iso(y: number, m: number, d: number): ISODate | null {
 
 /** Reads a statement date; null when it doesn't fit the format. */
 export function parseStatementDate(value: string, format: DateFormat): ISODate | null {
-  const v = value.trim();
+  const v = normalizeDigits(value).trim();
   let m: RegExpExecArray | null;
   switch (format) {
     case 'yyyy-MM-dd':
@@ -112,9 +133,9 @@ export function parseStatementDate(value: string, format: DateFormat): ISODate |
       return format.startsWith('MM') ? iso(+m[3], +m[1], +m[2]) : iso(+m[3], +m[2], +m[1]);
     }
     case 'd MMM yyyy': {
-      m = /^(\d{1,2})[\s-]([A-Za-z]{3,9})[\s-](\d{2}|\d{4})$/.exec(v);
+      m = /^(\d{1,2})[\s-](\p{L}{3,9})[\s-](\d{2}|\d{4})$/u.exec(v);
       if (!m) return null;
-      const month = MONTHS.indexOf(m[2].slice(0, 3).toLowerCase());
+      const month = monthIndex(m[2]);
       return month < 0 ? null : iso(+m[3], month + 1, +m[1]);
     }
   }
@@ -138,14 +159,20 @@ export function detectDateFormats(values: string[], preferDayFirst = true): Date
  * decimal commas, minus signs before or after, (brackets), CR/DR.
  */
 export function parseAmount(value: string): number | null {
-  let v = value.replace(/[\s\u00a0]/g, '');
+  let v = normalizeDigits(value).replace(/[\s\u00a0\u200e\u200f\u061c]/g, '');
   if (!v) return null;
   let negative = false;
+  // Arabic statements mark debits and credits with words: مدين (debit) / دائن (credit).
+  if (v.includes('مدين')) negative = true;
+  v = v.replace(/مدين|دائن/g, '');
   if (/DR$/i.test(v)) {
-    negative = true;
+    negative = !negative;
     v = v.slice(0, -2);
   } else if (/CR$/i.test(v)) v = v.slice(0, -2);
-  // Currency signs and codes (£, AED, EUR…).
+  // Kuwaiti dinar signs contain dots ("د.ك.", "K.D."); remove them before the
+  // dots are read as separators.
+  v = v.replace(/د\.?ك\.?|دينار(?:كويتي)?|فلس|K\.D\.?/gi, '');
+  // Other currency signs and codes (KWD, KD, $, AED…).
   v = v.replace(/[^\d.,()+-]/g, '');
   if (/^\(.*\)$/.test(v)) {
     negative = !negative;
@@ -168,10 +195,9 @@ export function parseAmount(value: string): number | null {
     normal = lastComma > lastDot ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, '');
   } else if (lastComma >= 0) {
     const decimals = v.length - lastComma - 1;
-    normal =
-      (v.match(/,/g) ?? []).length === 1 && decimals !== 3
-        ? v.replace(',', '.')
-        : v.replace(/,/g, '');
+    // "0,250" is a decimal comma; "12,500" is twelve thousand five hundred.
+    const decimalComma = (v.match(/,/g) ?? []).length === 1 && (decimals !== 3 || /^0?,/.test(v));
+    normal = decimalComma ? v.replace(',', '.') : v.replace(/,/g, '');
   } else {
     normal = (v.match(/\./g) ?? []).length > 1 ? v.replace(/\./g, '') : v;
   }
@@ -197,19 +223,22 @@ export interface CsvMapping {
   invert: boolean;
 }
 
-// Column names in English and the languages documents are offered in.
+// Column names in English, Arabic and the languages documents are offered in.
 const HEADER_HINTS: Record<
   'date' | 'description' | 'reference' | 'amount' | 'moneyIn' | 'moneyOut' | 'balance',
   RegExp
 > = {
-  date: /date|datum|fecha|data|buchungstag|valuta/i,
+  date: /date|datum|fecha|data|buchungstag|valuta|تاريخ/i,
   description:
-    /description|details|narrative|memo|payee|particulars|name|merchant|beneficiary|verwendungszweck|libell|concepto|omschrijving|descri/i,
-  reference: /reference|^ref|transaction id|cheque|check|referenz|r[ée]f[ée]rence|referencia/i,
-  moneyIn: /paid in|money in|credit|deposit|^in$|receipts?|haben|cr[ée]dit|abono|ingreso/i,
-  moneyOut: /paid out|money out|debit|withdrawal|payment|^out$|spent|soll|d[ée]bit|cargo|gasto/i,
-  amount: /amount|value|sum|betrag|montant|importe|bedrag|valor|importo/i,
-  balance: /balance|saldo|solde|kontostand/i,
+    /description|details|narrative|memo|payee|particulars|name|merchant|beneficiary|verwendungszweck|libell|concepto|omschrijving|descri|البيان|الوصف|التفاصيل|الشرح/i,
+  reference:
+    /reference|^ref|transaction id|cheque|check|referenz|r[ée]f[ée]rence|referencia|المرجع|رقم الشيك/i,
+  moneyIn:
+    /paid in|money in|credit|deposit|^in$|receipts?|haben|cr[ée]dit|abono|ingreso|دائن|إيداع|ايداع|وارد/i,
+  moneyOut:
+    /paid out|money out|debit|withdrawal|payment|^out$|spent|soll|d[ée]bit|cargo|gasto|مدين|سحب|صادر/i,
+  amount: /amount|value|sum|betrag|montant|importe|bedrag|valor|importo|المبلغ|القيمة/i,
+  balance: /balance|saldo|solde|kontostand|الرصيد/i,
 };
 
 /** A first guess at what each column holds, from names or contents. */

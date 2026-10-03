@@ -1,5 +1,5 @@
 import { lightSafe, normalizeHex, readableOn, textSafe, tint } from '@/lib/color';
-import { FONT_FAMILIES, type FontId } from '../fonts';
+import { ARABIC_FONT, FONT_FAMILIES, type FontId } from '../fonts';
 import type { RenderModel } from '../model';
 import type { TemplateDefinition, TemplateTheme } from './types';
 
@@ -12,8 +12,14 @@ const PAGE_SIZES = {
 export function templateFontIds(def: TemplateDefinition, override: FontId | null): FontId[] {
   const body = override ?? def.fonts.body;
   const heading = override && def.fonts.heading === def.fonts.body ? override : def.fonts.heading;
-  return [...new Set<FontId>([body, heading, def.fonts.mono])];
+  return [...new Set<FontId>([body, heading, def.fonts.mono, ARABIC_FONT])];
 }
+
+/** A font family followed by the Arabic fallback. */
+const withArabic = (id: FontId): string[] => [
+  FONT_FAMILIES[id].family,
+  FONT_FAMILIES[ARABIC_FONT].family,
+];
 
 export function buildTheme(def: TemplateDefinition, model: RenderModel): TemplateTheme {
   const accent = normalizeHex(model.accent, def.defaultAccent);
@@ -35,9 +41,9 @@ export function buildTheme(def: TemplateDefinition, model: RenderModel): Templat
     line: '#e2e8f0',
     surface: '#f8fafc',
     fonts: {
-      body: FONT_FAMILIES[bodyId].family,
-      heading: FONT_FAMILIES[headingId].family,
-      mono: FONT_FAMILIES[def.fonts.mono].family,
+      body: withArabic(bodyId),
+      heading: withArabic(headingId),
+      mono: withArabic(def.fonts.mono),
     },
     pageWidth: size.width,
     pageHeight: size.height,

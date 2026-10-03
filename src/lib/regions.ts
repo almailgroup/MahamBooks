@@ -48,7 +48,7 @@ export const REGION_DEFAULTS: Record<string, RegionDefaults> = {
   BH: base('BHD', 'en-US', 'VAT No.', { name: 'VAT', rate: 10 }),
   OM: base('OMR', 'en-US', 'VATIN', { name: 'VAT', rate: 5 }),
   QA: base('QAR', 'en-US', 'Tax ID', null),
-  KW: base('KWD', 'en-US', 'Tax ID', null),
+  KW: base('KWD', 'en-KW', 'Tax card no.', null),
   EG: base('EGP', 'en-US', 'Tax Reg. No.', { name: 'VAT', rate: 14 }),
   JO: base('JOD', 'en-US', 'Tax No.', { name: 'GST', rate: 16 }),
   MA: base('MAD', 'fr-FR', 'ICE', { name: 'TVA', rate: 20 }, { language: 'fr' }),
@@ -105,6 +105,7 @@ export const REGION_DEFAULTS: Record<string, RegionDefaults> = {
   PL: base('PLN', 'pl-PL', 'NIP', { name: 'VAT', rate: 23 }, { dateFormat: 'dd.MM.yyyy' }),
 };
 
+/** Defaults for a country; Kuwait when the country is not known. */
 export function regionDefaults(country: string): RegionDefaults {
-  return REGION_DEFAULTS[country.toUpperCase()] ?? base('USD', 'en-US', 'Tax ID', null);
+  return REGION_DEFAULTS[country.toUpperCase()] ?? REGION_DEFAULTS.KW;
 }

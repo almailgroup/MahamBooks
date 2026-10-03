@@ -39,7 +39,7 @@ import {
   type BookEntry,
 } from '@/lib/banking/match';
 import { isMoneyAccount } from '@/lib/accounting/account-types';
-import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
+import { currencyPrecision, fromMinor, sameAmount, toMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
@@ -425,7 +425,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                     </div>
                     <div
                       className={cn(
-                        'tabular shrink-0 text-right text-sm font-semibold',
+                        'tabular shrink-0 text-end text-sm font-semibold',
                         t.amount > 0 ? 'text-emerald-700' : 'text-slate-900',
                       )}
                     >
@@ -574,11 +574,11 @@ function MatchPanel({
     .filter((d) => d.type === (into ? 'invoice' : 'bill'))
     .sort(
       (a, b) =>
-        Number(Math.abs(b.totals.balance - amount) < 0.005) -
-          Number(Math.abs(a.totals.balance - amount) < 0.005) ||
+        Number(sameAmount(b.totals.balance, amount, b.currency)) -
+          Number(sameAmount(a.totals.balance, amount, a.currency)) ||
         a.issueDate.localeCompare(b.issueDate),
     );
-  const exactDoc = docs.find((d) => Math.abs(d.totals.balance - amount) < 0.005);
+  const exactDoc = docs.find((d) => sameAmount(d.totals.balance, amount, d.currency));
   const recipes: { value: Recipe; label: string }[] = into
     ? [
         { value: 'document', label: 'Invoice payment' },
@@ -678,7 +678,7 @@ function MatchPanel({
                     <option key={d.id} value={d.id}>
                       {d.number} · {names.get(d.clientId) ?? '—'} · balance{' '}
                       {fmt.money(d.totals.balance, d.currency)}
-                      {Math.abs(d.totals.balance - amount) < 0.005 ? ' · same amount' : ''}
+                      {sameAmount(d.totals.balance, amount, d.currency) ? ' · same amount' : ''}
                     </option>
                   ))}
                 </Select>

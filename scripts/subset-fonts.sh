@@ -5,7 +5,8 @@
 # currency symbols and the OpenType features used for print (kerning,
 # ligatures, tabular/lining figures). Hinting is dropped (not used in PDFs).
 #
-# Families with a Reserved Font Name (IBM Plex Sans, Playfair Display, Lora) are
+# Families with a Reserved Font Name (IBM Plex Sans, IBM Plex Sans Arabic,
+# Playfair Display, Lora) are
 # copied unmodified: the OFL does not allow a modified (e.g. subsetted)
 # version to keep a reserved name.
 set -euo pipefail
@@ -62,6 +63,11 @@ copy ibm-plex-sans IBMPlexSans_700Bold.ttf plexsans-700
 subset jetbrains-mono JetBrainsMono_400Regular.ttf jetbrainsmono-400 "$NO_LIGATURES"
 subset jetbrains-mono JetBrainsMono_500Medium.ttf jetbrainsmono-500 "$NO_LIGATURES"
 subset jetbrains-mono JetBrainsMono_600SemiBold.ttf jetbrainsmono-600 "$NO_LIGATURES"
+
+copy ibm-plex-sans-arabic IBMPlexSansArabic_400Regular.ttf plexarabic-400
+copy ibm-plex-sans-arabic IBMPlexSansArabic_500Medium.ttf plexarabic-500
+copy ibm-plex-sans-arabic IBMPlexSansArabic_600SemiBold.ttf plexarabic-600
+copy ibm-plex-sans-arabic IBMPlexSansArabic_700Bold.ttf plexarabic-700
 
 copy playfair-display PlayfairDisplay_400Regular.ttf playfair-400
 copy playfair-display PlayfairDisplay_400Regular_Italic.ttf playfair-400-italic

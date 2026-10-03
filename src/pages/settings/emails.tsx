@@ -53,7 +53,7 @@ export default function EmailSettings() {
             {EMAIL_PLACEHOLDERS.map((p) => (
               <code
                 key={p}
-                className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700"
+                className="me-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700"
               >
                 {p}
               </code>

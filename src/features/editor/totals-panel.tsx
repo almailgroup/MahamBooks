@@ -3,6 +3,7 @@ import type { Charge, InvoiceDocument, TaxLine, TaxRate } from '@/db/types';
 import type { CalcResult } from '@/lib/calc';
 import { isPurchaseType } from '@/lib/document-types';
 import { shortId } from '@/lib/ids';
+import { currencyPrecision, round } from '@/lib/money';
 import { Button } from '@/components/ui/button';
 import { Input, NumberInput, Switch } from '@/components/ui/form';
 import { DiscountInput } from './line-items';
@@ -80,7 +81,7 @@ export function TotalsPanel({
               onChange={(discount, discountType) => onChange({ discount, discountType })}
             />
           </div>
-          <span className="tabular min-w-16 text-right text-sm text-slate-600">
+          <span className="tabular min-w-16 text-end text-sm text-slate-600">
             {result.discount ? money(-result.discount) : '—'}
           </span>
         </div>
@@ -214,7 +215,7 @@ export function TotalsPanel({
                 onChange(
                   on
                     ? {
-                        deposit: Math.round(result.total * 0.5 * 100) / 100 || 0,
+                        deposit: round(result.total * 0.5, currencyPrecision(doc.currency)),
                         depositDueDate: doc.issueDate,
                       }
                     : { deposit: 0, depositDueDate: null },

@@ -181,10 +181,10 @@ function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) 
           <table className="w-full min-w-[720px] text-sm">
             <thead className="border-b border-slate-100 text-xs tracking-wide text-slate-500 uppercase">
               <tr>
-                <th className="w-[34%] px-4 py-2.5 text-left font-medium">Account</th>
-                <th className="px-3 py-2.5 text-left font-medium">Description</th>
-                <th className="w-36 px-3 py-2.5 text-right font-medium">Debit</th>
-                <th className="w-36 px-3 py-2.5 text-right font-medium">Credit</th>
+                <th className="w-[34%] px-4 py-2.5 text-start font-medium">Account</th>
+                <th className="px-3 py-2.5 text-start font-medium">Description</th>
+                <th className="w-36 px-3 py-2.5 text-end font-medium">Debit</th>
+                <th className="w-36 px-3 py-2.5 text-end font-medium">Credit</th>
                 <th className="w-12" />
               </tr>
             </thead>
@@ -229,7 +229,7 @@ function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) 
                       }
                     />
                   </td>
-                  <td className="px-2 py-2 text-right">
+                  <td className="px-2 py-2 text-end">
                     <Button
                       variant="ghost"
                       size="icon-sm"
@@ -256,23 +256,23 @@ function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) 
                     <Plus /> Add line
                   </Button>
                 </td>
-                <td className="px-3 py-3 text-right font-medium text-slate-700">Total</td>
-                <td className="tabular px-3 py-3 text-right font-semibold text-slate-900">
+                <td className="px-3 py-3 text-end font-medium text-slate-700">Total</td>
+                <td className="tabular px-3 py-3 text-end font-semibold text-slate-900">
                   {fmt.money(totals.debit)}
                 </td>
-                <td className="tabular px-3 py-3 text-right font-semibold text-slate-900">
+                <td className="tabular px-3 py-3 text-end font-semibold text-slate-900">
                   {fmt.money(totals.credit)}
                 </td>
                 <td />
               </tr>
               {totals.difference !== 0 ? (
                 <tr>
-                  <td colSpan={2} className="px-3 pb-3 text-right text-sm text-red-600">
+                  <td colSpan={2} className="px-3 pb-3 text-end text-sm text-red-600">
                     Difference
                   </td>
                   <td
                     colSpan={2}
-                    className={cn('tabular px-3 pb-3 text-right font-semibold text-red-600')}
+                    className={cn('tabular px-3 pb-3 text-end font-semibold text-red-600')}
                   >
                     {fmt.money(Math.abs(totals.difference))}{' '}
                     {totals.difference > 0 ? 'more debit' : 'more credit'}
