@@ -888,7 +888,9 @@ export interface Payment {
   cheque?: ChequeDetails | null;
   /**
    * A void payment stays on record (a returned or cancelled cheque) but no
-   * longer counts: it leaves the books and the balances of its documents.
+   * longer counts towards the balances of its documents. A returned or
+   * cancelled cheque keeps its entries and is reversed on `voidedOn`; any
+   * other void payment leaves the books.
    */
   voided?: boolean;
   voidReason?: string;

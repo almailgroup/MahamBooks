@@ -89,6 +89,20 @@ async function books(company: Company) {
   return { byCode, total: lines.reduce((s, l) => s + l.amount, 0), accounts };
 }
 
+/** Balances by account code in fils on a date (lines dated up to and including it). */
+async function balancesOn(company: Company, date: string) {
+  const { accounts, lines, problems } = await loadLedger(company);
+  expect(problems).toEqual([]);
+  const byCode: Record<string, number> = {};
+  for (const l of lines) {
+    if (l.date > date) continue;
+    const code = accounts.find((a) => a.id === l.accountId)!.code;
+    byCode[code] = (byCode[code] ?? 0) + l.amount;
+  }
+  for (const code of Object.keys(byCode)) if (byCode[code] === 0) delete byCode[code];
+  return byCode;
+}
+
 const bankId = async (company: Company) =>
   (await db.accounts.where('companyId').equals(company.id).toArray()).find(
     (a) => a.role === 'bank',
@@ -257,20 +271,49 @@ describe('returned cheques', () => {
     expect((await db.documents.get(invoice.id))?.status).toBe('paid');
   });
 
-  it('respect the lock date of the payment', async () => {
+  it('are booked on the return date and leave closed periods as they were', async () => {
+    const { company, client } = await kuwait();
+    const invoice = await issue(company, client.id, 'invoice', 100);
+    const payment = await chequePayment(company, invoice);
+    await clearCheque(payment.id, { date: '2026-11-16' });
+    const before = await balancesOn(company, '2026-11-30');
+    await db.companies.update(company.id, {
+      accounting: { ...company.accounting!, lockDate: '2026-11-30' },
+    });
+    // A return inside the closed period is refused; after it, the books of
+    // the closed period stay exactly as they were.
+    await expect(
+      returnCheque(payment.id, { date: '2026-11-20', reason: 'Insufficient funds' }),
+    ).rejects.toThrow(LockedPeriodError);
+    await returnCheque(payment.id, { date: '2026-12-03', reason: 'Insufficient funds' });
+    expect(await balancesOn(company, '2026-11-30')).toEqual(before);
+    expect(before).toEqual({ '1000': 100_000, '4000': -100_000 });
+    // From the return date the invoice is owed again and the bank gave the money back.
+    expect(await balancesOn(company, '2026-12-03')).toEqual({ '1100': 100_000, '4000': -100_000 });
+    expect((await db.documents.get(invoice.id))?.totals.balance).toBe(100);
+  });
+
+  it('respect the lock date when clearing', async () => {
     const { company, client } = await kuwait();
     const invoice = await issue(company, client.id, 'invoice', 100);
     const payment = await chequePayment(company, invoice);
     await db.companies.update(company.id, {
       accounting: { ...company.accounting!, lockDate: '2026-10-31' },
     });
-    await expect(
-      returnCheque(payment.id, { date: '2026-11-20', reason: 'Insufficient funds' }),
-    ).rejects.toThrow(LockedPeriodError);
     await expect(clearCheque(payment.id, { date: '2026-10-20' })).rejects.toThrow(
       LockedPeriodError,
     );
     await expect(clearCheque(payment.id, { date: '2026-11-20' })).resolves.toBeTruthy();
+  });
+
+  it('held in hand are reversed out of post-dated cheques on the return date', async () => {
+    const { company, client } = await kuwait();
+    const invoice = await issue(company, client.id, 'invoice', 75.5);
+    const payment = await chequePayment(company, invoice);
+    await returnCheque(payment.id, { date: '2026-11-17', reason: '' });
+    // While held, the cheque sat in 1150; after the return the invoice is owed again.
+    expect(await balancesOn(company, '2026-11-16')).toEqual({ '1150': 75_500, '4000': -75_500 });
+    expect(await balancesOn(company, '2026-11-17')).toEqual({ '1100': 75_500, '4000': -75_500 });
   });
 });
 
@@ -286,6 +329,26 @@ describe('cancelled cheques', () => {
     });
     expect((await db.documents.get(invoice.id))?.totals.balance).toBe(90.125);
     expect((await books(company)).byCode).toEqual({ '1100': 90_125, '4000': -90_125 });
+    // Until the cancellation the cheque was in hand.
+    expect(await balancesOn(company, '2026-10-06')).toEqual({ '1150': 90_125, '4000': -90_125 });
+  });
+
+  it('are booked on the cancellation date, after any closed period', async () => {
+    const { company, client } = await kuwait();
+    const invoice = await issue(company, client.id, 'invoice', 90);
+    const payment = await chequePayment(company, invoice);
+    await db.companies.update(company.id, {
+      accounting: { ...company.accounting!, lockDate: '2026-10-31' },
+    });
+    await expect(cancelCheque(payment.id, { date: '2026-10-20', reason: '' })).rejects.toThrow(
+      LockedPeriodError,
+    );
+    await expect(cancelCheque(payment.id, { date: '2026-10-01', reason: '' })).rejects.toThrow(
+      ChequeError,
+    );
+    await cancelCheque(payment.id, { date: '2026-11-02', reason: 'Stopped' });
+    expect(await balancesOn(company, '2026-10-31')).toEqual({ '1150': 90_000, '4000': -90_000 });
+    expect(await balancesOn(company, '2026-11-02')).toEqual({ '1100': 90_000, '4000': -90_000 });
   });
 
   it('are refused once the cheque cleared', async () => {

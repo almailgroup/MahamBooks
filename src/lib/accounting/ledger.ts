@@ -589,9 +589,25 @@ export function postStockEntry(
 }
 
 /**
+ * Date a returned or cancelled cheque is reversed in the books, or null for
+ * any other payment. The payment keeps its entries on its own date and the
+ * reversal goes on the day the cheque came back (or was cancelled), so
+ * closed periods never change. Cheques voided before reversals were dated
+ * have no void date and leave the books altogether.
+ */
+export function chequeReversalDate(
+  payment: Pick<Payment, 'voided' | 'voidedOn' | 'cheque'>,
+): ISODate | null {
+  const status = payment.cheque?.status;
+  if (!payment.voided || (status !== 'returned' && status !== 'cancelled')) return null;
+  return payment.voidedOn ?? null;
+}
+
+/**
  * Ledger lines of a payment received from a client or made to a vendor.
- * Credit-note applications only match documents and move no money, and void
- * payments (returned or cancelled cheques) leave the books.
+ * Credit-note applications only match documents and move no money. A
+ * returned or cancelled cheque stays on its date and is reversed on the
+ * day it came back; any other void payment leaves the books.
  *
  * The money side is the account stored on the payment (the clearing account
  * for KNET and cards, post-dated cheques for cheques) or, for payments
@@ -599,7 +615,9 @@ export function postStockEntry(
  * out of that same account on the payment date.
  */
 export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] {
-  if (payment.method === 'credit_note' || payment.voided) return [];
+  if (payment.method === 'credit_note') return [];
+  const reversedOn = chequeReversalDate(payment);
+  if (payment.voided && !reversedOn) return [];
   const out = payment.direction === 'out';
   const p = ctx.precision;
   const rate = rateOf(payment, ctx);
@@ -663,7 +681,13 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
   }
   const kept = lines.filter((l) => l.amount !== 0);
   if (!balanced(kept)) throw new UnbalancedEntryError(`Payment ${payment.number} does not balance`);
-  return kept;
+  if (!reversedOn) return kept;
+  const reason = payment.cheque?.status === 'cancelled' ? 'cancelled' : 'returned';
+  const description = `Cheque ${payment.cheque?.number ?? ''} ${reason} (${payment.number})`;
+  return [
+    ...kept,
+    ...kept.map((l) => ({ ...l, date: reversedOn, amount: -l.amount, description })),
+  ];
 }
 
 /** Ledger lines of an expense: the category and input tax, paid from a money account. */
@@ -824,7 +848,8 @@ export function buildLedger(
     }
   }
   for (const payment of data.payments) {
-    if (payment.method !== 'credit_note' && !payment.voided && needsRate(payment, ctx)) {
+    const posted = !payment.voided || chequeReversalDate(payment) !== null;
+    if (payment.method !== 'credit_note' && posted && needsRate(payment, ctx)) {
       problems.push({
         source: 'payment',
         sourceId: payment.id,

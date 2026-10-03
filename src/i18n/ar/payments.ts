@@ -98,6 +98,8 @@ export default {
     'المبالغ الموزعة على الفواتير أكبر من الدفعة.',
   'The bank charge cannot be negative.': 'لا يمكن أن تكون الرسوم البنكية سالبة.',
   'The cheque can’t be deposited before the payment date.': 'لا يمكن إيداع الشيك قبل تاريخ الدفعة.',
+  'The cancellation date can’t be before the payment date.':
+    'لا يمكن أن يسبق تاريخ الإلغاء تاريخ الدفعة.',
   'The clearing date can’t be before the cheque was received or deposited.':
     'لا يمكن أن يسبق تاريخ التحصيل تاريخ استلام الشيك أو إيداعه.',
   'The fee cannot be negative.': 'لا يمكن أن تكون العمولة سالبة.',

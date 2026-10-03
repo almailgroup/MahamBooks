@@ -34,10 +34,12 @@ import { msg, t } from '@/i18n';
  *   posts Dr bank / Cr 1150 on the clearing date.
  * - issued: the payment credits 2150 Post-dated cheques issued. Clearing
  *   posts Dr 2150 / Cr bank.
- * - returned: the payment is voided (it leaves the books and its invoices
- *   or bills are open again), a clearing is reversed on the return date and
+ * - returned: the payment is voided, so its invoices or bills are open
+ *   again. Its entries stay on its own date and are reversed on the return
+ *   date (with the clearing, if it cleared), so closed periods never change;
  *   the bank's charge can be recorded as an expense.
- * - cancelled: a cheque that was never presented is voided the same way.
+ * - cancelled: a cheque that was never presented is voided and reversed on
+ *   the cancellation date the same way.
  *
  * Security cheques are a memo register only; cashing one records a payment.
  */
@@ -258,8 +260,8 @@ export interface ReturnInput {
 
 /**
  * Records a cheque the bank returned unpaid. The payment is voided so the
- * documents it paid are open again; a clearing is reversed on the return
- * date; the bank's charge is recorded as an expense.
+ * documents it paid are open again; the payment and any clearing are
+ * reversed on the return date; the bank's charge is recorded as an expense.
  */
 export async function returnCheque(paymentId: ID, input: ReturnInput): Promise<Payment> {
   return db.transaction('rw', TABLES(), async () => {
@@ -271,8 +273,9 @@ export async function returnCheque(paymentId: ID, input: ReturnInput): Promise<P
     if (input.date < payment.date) {
       throw new ChequeError(t('The return date can’t be before the payment date.'));
     }
-    // Voiding takes the payment out of the books on its own date.
-    assertUnlocked(company, payment.date, input.date);
+    // The payment keeps its entries on its own date; the return is booked on
+    // the day the cheque came back, so a closed period never changes.
+    assertUnlocked(company, input.date);
     const out = isOut(payment);
     const reason = input.reason.trim() || t('Cheque returned');
     const precision = currencyPrecision(company.currency);
@@ -376,7 +379,8 @@ export async function returnCheque(paymentId: ID, input: ReturnInput): Promise<P
 
 /**
  * Cancels a cheque that was never presented (given back, lost or stopped).
- * The payment is voided like a returned cheque; nothing reached the bank.
+ * The payment is voided like a returned cheque and reversed on the
+ * cancellation date; nothing reached the bank.
  */
 export async function cancelCheque(
   paymentId: ID,
@@ -388,7 +392,10 @@ export async function cancelCheque(
     if (payment.voided || (status !== 'held' && status !== 'deposited')) {
       throw new ChequeError(t('Only a cheque that has not cleared can be cancelled.'));
     }
-    assertUnlocked(company, payment.date, input.date);
+    if (input.date < payment.date) {
+      throw new ChequeError(t('The cancellation date can’t be before the payment date.'));
+    }
+    assertUnlocked(company, input.date);
     const reason = input.reason.trim() || t('Cheque cancelled');
     const next = await updateCheque(
       payment,
