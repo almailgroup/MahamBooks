@@ -14,11 +14,12 @@ import { isCurrent } from '@/lib/hr/employees';
 import { today } from '@/lib/dates';
 import { useCompany, useFormat } from '@/app/company';
 import { Button } from '@/components/ui/button';
-import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
+import { Field, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { AlertTriangle } from 'lucide-react';
+import { DateField } from '@/components/ui/date-field';
 
 function useLeaveWarningText() {
   const fmt = useFormat();
@@ -153,12 +154,11 @@ export function LeaveDialog({
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label={t('First day')}>
                   {(id) => (
-                    <Input
+                    <DateField
                       id={id}
-                      type="date"
                       value={start}
-                      onChange={(e) => {
-                        const value = e.target.value;
+                      onChange={(iso) => {
+                        const value = iso;
                         if (!value) return;
                         setStart(value);
                         if (end < value) setEnd(value);
@@ -168,12 +168,11 @@ export function LeaveDialog({
                 </Field>
                 <Field label={t('Last day')}>
                   {(id) => (
-                    <Input
+                    <DateField
                       id={id}
-                      type="date"
                       value={end}
                       min={start}
-                      onChange={(e) => e.target.value && setEnd(e.target.value)}
+                      onChange={(iso) => iso && setEnd(iso)}
                     />
                   )}
                 </Field>
@@ -222,12 +221,7 @@ export function LeaveDialog({
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label={t('Date')}>
                   {(id) => (
-                    <Input
-                      id={id}
-                      type="date"
-                      value={start}
-                      onChange={(e) => e.target.value && setStart(e.target.value)}
-                    />
+                    <DateField id={id} value={start} onChange={(iso) => iso && setStart(iso)} />
                   )}
                 </Field>
                 <Field

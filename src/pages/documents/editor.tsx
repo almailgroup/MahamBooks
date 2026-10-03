@@ -49,7 +49,9 @@ import { ClientDialog } from '@/features/clients/client-dialog';
 import { useCreditCheck } from '@/features/clients/credit-check';
 import { retentionDefaults } from '@/lib/retention';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { StickyActions } from '@/components/ui/sticky-actions';
 import { isCustomer } from '@/db/purchases';
+import { DateField } from '@/components/ui/date-field';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
 const QUOTE_VALIDITY = [7, 14, 30, 45, 60, 90];
@@ -379,7 +381,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
             {showPreview ? <EyeOff /> : <Eye />}{' '}
             {showPreview ? t('Hide preview') : t('Show preview')}
           </Button>
-          {saveButtons}
+          <StickyActions>{saveButtons}</StickyActions>
         </div>
       </div>
 
@@ -435,12 +437,11 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
               </Field>
               <Field label={t('Issue date')}>
                 {(fid) => (
-                  <Input
+                  <DateField
                     id={fid}
-                    type="date"
                     value={doc.issueDate}
-                    onChange={(e) => {
-                      const value = e.target.value;
+                    onChange={(iso) => {
+                      const value = iso;
                       if (!value) return;
                       update({
                         issueDate: value,
@@ -482,11 +483,10 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                         ))}
                         <option value="custom">{t('Custom')}</option>
                       </Select>
-                      <Input
+                      <DateField
                         id={fid}
-                        type="date"
                         value={doc.dueDate ?? ''}
-                        onChange={(e) => update({ dueDate: e.target.value || null })}
+                        onChange={(iso) => update({ dueDate: iso || null })}
                         className="min-w-36 flex-1"
                       />
                     </div>
@@ -499,11 +499,10 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 <>
                   <Field label={t('Delivery date')} optional={type !== 'delivery_note'}>
                     {(fid) => (
-                      <Input
+                      <DateField
                         id={fid}
-                        type="date"
                         value={doc.deliveryDate ?? ''}
-                        onChange={(e) => update({ deliveryDate: e.target.value || null })}
+                        onChange={(iso) => update({ deliveryDate: iso || null })}
                       />
                     )}
                   </Field>
@@ -681,7 +680,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
             ) : null}
           </div>
 
-          <div className="flex justify-end border-t border-slate-200 pt-4 xl:hidden">
+          <div className="hidden justify-end border-t border-slate-200 pt-4 lg:flex xl:hidden">
             {saveButtons}
           </div>
         </div>

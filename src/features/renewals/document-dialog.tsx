@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 const OWNERS: DocumentOwnerType[] = ['company', 'employee', 'vehicle', 'other'];
 
@@ -241,21 +242,19 @@ export function DocumentDialog({
             </Field>
             <Field label={t('Issue date')} optional>
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   value={draft.issueDate ?? ''}
-                  onChange={(e) => set({ issueDate: e.target.value || null })}
+                  onChange={(iso) => set({ issueDate: iso || null })}
                 />
               )}
             </Field>
             <Field label={t('Expiry date')}>
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   value={draft.expiryDate ?? ''}
-                  onChange={(e) => set({ expiryDate: e.target.value || null })}
+                  onChange={(iso) => set({ expiryDate: iso || null })}
                 />
               )}
             </Field>

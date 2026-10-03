@@ -30,6 +30,7 @@ import {
 import type { StatementSide } from '@/lib/statements';
 import { t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
+import { DateField } from '@/components/ui/date-field';
 import { Field, Input, NumberInput, Textarea } from '@/components/ui/form';
 import { Badge, Card, CardBody, CardHeader, EmptyState, Segmented } from '@/components/ui/misc';
 import {
@@ -107,21 +108,20 @@ function CertificateDialog({
           </Field>
           <Field label={t('Issue date')}>
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
+                required
                 value={value.issueDate}
-                onChange={(e) => set({ issueDate: e.target.value })}
+                onChange={(iso) => set({ issueDate: iso })}
               />
             )}
           </Field>
           <Field label={t('Expiry date')} optional hint={t('Leave empty if it doesn’t expire.')}>
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
                 value={value.expiryDate ?? ''}
-                onChange={(e) => set({ expiryDate: e.target.value || null })}
+                onChange={(iso) => set({ expiryDate: iso || null })}
               />
             )}
           </Field>
@@ -232,9 +232,7 @@ function ReleaseDialog({
         <DialogBody className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('Release date')}>
-              {(id) => (
-                <Input id={id} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              )}
+              {(id) => <DateField id={id} required value={date} onChange={setDate} />}
             </Field>
             {single ? (
               <Field
@@ -596,7 +594,7 @@ export function RetentionPanel({
                     <span
                       className={
                         release.reversedOn
-                          ? 'tabular text-sm text-slate-400 line-through'
+                          ? 'tabular text-sm text-slate-500 line-through'
                           : 'tabular text-sm font-semibold text-slate-900'
                       }
                     >

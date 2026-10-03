@@ -8,6 +8,7 @@ import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
+import { DateField } from '@/components/ui/date-field';
 
 /** Records that the goods were handed over: when, and who signed for them. */
 export function DeliverDialog({
@@ -55,13 +56,7 @@ export function DeliverDialog({
           <DialogBody>
             <Field label={t('Delivery date')}>
               {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value || date)}
-                />
+                <DateField id={id} required value={date} onChange={(iso) => setDate(iso || date)} />
               )}
             </Field>
             <Field label={t('Received by')} error={errors.name}>

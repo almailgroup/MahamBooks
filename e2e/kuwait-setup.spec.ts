@@ -29,6 +29,8 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   // The dashboard: Arabic name, dinars, and no VAT returns in the menu.
   await expect(page.getByText('شركة الميل للتجارة جاهزة.')).toBeVisible();
   const menu = page.getByRole('navigation', { name: 'الرئيسية' });
+  // Accounting is a group in the menu; it opens to show its pages.
+  await menu.getByRole('button', { name: 'المحاسبة' }).click();
   await expect(menu.getByRole('link', { name: 'دليل الحسابات' })).toBeVisible();
   await expect(menu.getByRole('link', { name: 'إقرارات ضريبة القيمة المضافة' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'تبديل الشركة' })).toContainText(

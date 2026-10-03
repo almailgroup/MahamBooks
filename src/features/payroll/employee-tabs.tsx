@@ -188,7 +188,7 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                   <span
                     className={
                       r.status === 'cancelled'
-                        ? 'tabular text-slate-400 line-through'
+                        ? 'tabular text-slate-500 line-through'
                         : 'tabular text-slate-700'
                     }
                   >

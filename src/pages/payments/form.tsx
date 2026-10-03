@@ -21,6 +21,7 @@ import { currentLanguage, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
+import { StickyActions } from '@/components/ui/sticky-actions';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { CurrencySelect } from '@/components/fields';
@@ -40,6 +41,7 @@ import {
   ProviderSelect,
   useCashCheck,
 } from '@/features/payments/fields';
+import { DateField } from '@/components/ui/date-field';
 
 const METHODS = new Set<string>([
   'bank_transfer',
@@ -336,14 +338,14 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         breadcrumb={<Link to={copy.base}>{t(copy.title)}</Link>}
         title={id ? t('Edit payment {number}', { number: payment.number }) : t(copy.recordTitle)}
         actions={
-          <>
+          <StickyActions>
             <Button variant="ghost" onClick={() => navigate(-1)}>
               {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
               {t('Save payment')}
             </Button>
-          </>
+          </StickyActions>
         }
       />
 
@@ -396,11 +398,10 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
           </Field>
           <Field label={t('Date')}>
             {(fid) => (
-              <Input
+              <DateField
                 id={fid}
-                type="date"
                 value={payment.date}
-                onChange={(e) => set({ date: e.target.value || today() })}
+                onChange={(iso) => set({ date: iso || today() })}
               />
             )}
           </Field>

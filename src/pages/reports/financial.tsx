@@ -37,8 +37,9 @@ import {
 } from '@/lib/accounting/statements';
 import { msg, t } from '@/i18n';
 import { Badge, Card, Spinner } from '@/components/ui/misc';
-import { Checkbox, Input, Select } from '@/components/ui/form';
+import { Checkbox, Select } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
+import { DateField } from '@/components/ui/date-field';
 
 /* -------------------------------------------------------------------------- */
 /* Periods                                                                    */
@@ -145,19 +146,17 @@ function PeriodPicker({ period }: { period: ReturnType<typeof usePeriod> }) {
       </Select>
       {preset === 'custom' ? (
         <>
-          <Input
-            type="date"
+          <DateField
             aria-label={t('From')}
             value={custom.from}
-            onChange={(e) => setCustom({ ...custom, from: e.target.value || custom.from })}
+            onChange={(iso) => setCustom({ ...custom, from: iso || custom.from })}
             className="w-auto"
           />
-          <span className="text-slate-400">–</span>
-          <Input
-            type="date"
+          <span className="text-slate-500">–</span>
+          <DateField
             aria-label={t('To')}
             value={custom.to}
-            onChange={(e) => setCustom({ ...custom, to: e.target.value || custom.to })}
+            onChange={(iso) => setCustom({ ...custom, to: iso || custom.to })}
             className="w-auto"
           />
         </>
@@ -183,11 +182,10 @@ function AsOfPicker({ picker }: { picker: ReturnType<typeof useAsOf> }) {
         ))}
       </Select>
       {preset === 'custom' ? (
-        <Input
-          type="date"
+        <DateField
           aria-label={t('Date')}
           value={custom}
-          onChange={(e) => setCustom(e.target.value || custom)}
+          onChange={(iso) => setCustom(iso || custom)}
           className="w-auto"
         />
       ) : null}
@@ -551,7 +549,7 @@ export function GeneralLedgerReport() {
               <tbody key={a.account.id} className="border-b border-slate-200">
                 <tr className="bg-slate-50/40">
                   <td colSpan={5} className="px-5 pt-3 pb-1.5 font-semibold text-slate-900">
-                    <span className="tabular me-2 text-slate-400">{a.account.code}</span>
+                    <span className="tabular me-2 text-slate-500">{a.account.code}</span>
                     {accountName(a.account)}
                   </td>
                   <td className="tabular px-5 pt-3 pb-1.5 text-end text-slate-500">

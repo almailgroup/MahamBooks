@@ -19,13 +19,14 @@ const variants: Record<ButtonVariant, string> = {
   subtle: 'bg-primary-50 text-primary-700 hover:bg-primary-100',
 };
 
+// On touch screens every button is at least 44px tall (and wide for icons).
 const sizes: Record<ButtonSize, string> = {
-  xs: 'h-7 px-2 text-xs',
-  sm: 'h-8 px-3 text-sm',
-  md: 'h-9 px-4 text-sm',
+  xs: 'h-7 px-2 text-xs pointer-coarse:min-h-11',
+  sm: 'h-8 px-3 text-sm pointer-coarse:min-h-11',
+  md: 'h-9 px-4 text-sm pointer-coarse:min-h-11',
   lg: 'h-11 px-5 text-base',
-  icon: 'size-9',
-  'icon-sm': 'size-8',
+  icon: 'size-9 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+  'icon-sm': 'size-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
 };
 
 export function buttonClass(

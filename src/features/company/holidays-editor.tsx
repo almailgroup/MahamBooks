@@ -16,6 +16,7 @@ import {
   useConfirm,
 } from '@/components/ui/overlay';
 import { companyHolidays, hasOwnHolidays, replaceYear } from './holidays';
+import { DateField } from '@/components/ui/date-field';
 
 interface Editing {
   /** Position in the year's list, or null for a new holiday. */
@@ -68,13 +69,12 @@ function HolidayDialog({
           <DialogBody>
             <Field label={t('Date')} error={submitted ? dateProblem : undefined}>
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   value={holiday.date}
                   min={`${year}-01-01`}
                   max={`${year}-12-31`}
-                  onChange={(e) => setHoliday({ ...holiday, date: e.target.value })}
+                  onChange={(iso) => setHoliday({ ...holiday, date: iso })}
                   aria-invalid={submitted && dateProblem !== null}
                 />
               )}

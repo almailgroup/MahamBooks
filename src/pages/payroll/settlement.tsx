@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 const REASONS = Object.keys(LEAVING_REASON_LABELS) as LeavingReason[];
 
@@ -367,13 +368,10 @@ function SettlementFormView({ employee, data }: { employee: Employee; data: Sett
             <CardBody className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label={t('Leaving date')}>
                 {(id) => (
-                  <Input
+                  <DateField
                     id={id}
-                    type="date"
                     value={form.leavingDate}
-                    onChange={(e) =>
-                      e.target.value && setForm((f) => start(e.target.value, f.reason, f))
-                    }
+                    onChange={(iso) => iso && setForm((f) => start(iso, f.reason, f))}
                   />
                 )}
               </Field>

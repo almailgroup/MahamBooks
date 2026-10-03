@@ -16,6 +16,7 @@ import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { KIND_LABELS, PRODUCT_KINDS } from '@/features/inventory/labels';
 import type { InventoryData } from '@/features/inventory/use-inventory';
+import { DateField } from '@/components/ui/date-field';
 
 const KIND_ICONS: Record<ProductKind, typeof Package> = {
   service: Wrench,
@@ -342,13 +343,10 @@ export function ItemDialog({
                     </Field>
                     <Field label={t('As of')}>
                       {(id) => (
-                        <Input
+                        <DateField
                           id={id}
-                          type="date"
                           value={opening.date}
-                          onChange={(e) =>
-                            e.target.value && setOpening((o) => ({ ...o, date: e.target.value }))
-                          }
+                          onChange={(iso) => iso && setOpening((o) => ({ ...o, date: iso }))}
                         />
                       )}
                     </Field>

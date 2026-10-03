@@ -236,7 +236,7 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                           <PaymentStatusBadge payment={r.payment} />
                         </span>
                         {r.payment.cheque?.number || r.payment.reference ? (
-                          <span className="block text-xs text-slate-400">
+                          <span className="block text-xs text-slate-500">
                             {r.payment.cheque?.number
                               ? t('Cheque {number}', { number: r.payment.cheque.number })
                               : r.payment.reference}
@@ -256,7 +256,7 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                       <td
                         className={
                           r.payment.voided
-                            ? 'tabular px-5 py-3 text-end text-slate-400 line-through'
+                            ? 'tabular px-5 py-3 text-end text-slate-500 line-through'
                             : 'tabular px-5 py-3 text-end font-medium text-slate-900'
                         }
                       >

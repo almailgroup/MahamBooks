@@ -28,6 +28,7 @@ import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer } from '@/db/purchases';
 import { t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
+import { DateField } from '@/components/ui/date-field';
 
 export default function RecurringEditorPage() {
   const { id } = useParams();
@@ -265,11 +266,10 @@ export default function RecurringEditorPage() {
               </Field>
               <Field label={t('First invoice date')}>
                 {(fid) => (
-                  <Input
+                  <DateField
                     id={fid}
-                    type="date"
                     value={profile.startDate}
-                    onChange={(e) => e.target.value && reschedule({ startDate: e.target.value })}
+                    onChange={(iso) => iso && reschedule({ startDate: iso })}
                   />
                 )}
               </Field>

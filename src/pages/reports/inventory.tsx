@@ -15,7 +15,7 @@ import { t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, Spinner } from '@/components/ui/misc';
-import { Input, Select } from '@/components/ui/form';
+import { Select } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { MOVEMENT_LABELS, movementLink } from '@/features/inventory/labels';
 import {
@@ -26,6 +26,7 @@ import {
 } from '@/features/inventory/use-inventory';
 import { useLedger } from '@/features/accounting/use-ledger';
 import { isolate } from '@/features/reports/report-language';
+import { DateField } from '@/components/ui/date-field';
 
 export type InventoryReportId =
   'stock-on-hand' | 'stock-valuation' | 'stock-movements' | 'low-stock';
@@ -84,10 +85,9 @@ function DateInput({
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-medium text-slate-500">{label}</span>
-      <Input
-        type="date"
+      <DateField
         value={value}
-        onChange={(e) => (e.target.value || !required) && onChange(e.target.value)}
+        onChange={(iso) => (iso || !required) && onChange(iso)}
         className="w-40"
       />
     </label>

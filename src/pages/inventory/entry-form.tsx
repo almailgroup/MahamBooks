@@ -18,6 +18,7 @@ import { Field, Input, NumberInput, Select } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { ADJUSTMENT_REASONS, ENTRY_LABELS, REASON_LABELS } from '@/features/inventory/labels';
 import { useInventory } from '@/features/inventory/use-inventory';
+import { DateField } from '@/components/ui/date-field';
 
 interface Row {
   key: string;
@@ -180,14 +181,7 @@ export default function StockEntryForm() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t('Date')}>
-                {(id) => (
-                  <Input
-                    id={id}
-                    type="date"
-                    value={date}
-                    onChange={(e) => e.target.value && setDate(e.target.value)}
-                  />
-                )}
+                {(id) => <DateField id={id} value={date} onChange={(iso) => iso && setDate(iso)} />}
               </Field>
               <Field label={kind === 'transfer' ? t('From warehouse') : t('Warehouse')}>
                 {(id) => (

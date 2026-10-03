@@ -44,6 +44,7 @@ import { Checkbox, Field, Input, NumberInput, Select, Textarea } from '@/compone
 import { Card, CardBody, CardHeader, Segmented } from '@/components/ui/misc';
 import type { AttachedFile } from '@/features/purchases/attachments';
 import { FileList } from './file-list';
+import { DateField } from '@/components/ui/date-field';
 
 export type EmployeeErrors = Partial<
   Record<'name' | 'iban' | 'contractEnd' | 'leavingDate' | 'number', string>
@@ -293,11 +294,10 @@ export function EmployeeForm({
         </Field>
         <Field label={t('Civil ID expiry')} optional>
           {(id) => (
-            <Input
+            <DateField
               id={id}
-              type="date"
               value={value.civilIdExpiry ?? ''}
-              onChange={(e) => set({ civilIdExpiry: e.target.value || null })}
+              onChange={(iso) => set({ civilIdExpiry: iso || null })}
             />
           )}
         </Field>
@@ -313,11 +313,10 @@ export function EmployeeForm({
         </Field>
         <Field label={t('Passport expiry')} optional>
           {(id) => (
-            <Input
+            <DateField
               id={id}
-              type="date"
               value={value.passportExpiry ?? ''}
-              onChange={(e) => set({ passportExpiry: e.target.value || null })}
+              onChange={(iso) => set({ passportExpiry: iso || null })}
             />
           )}
         </Field>
@@ -370,11 +369,10 @@ export function EmployeeForm({
           </Field>
           <Field label={t('Residency expiry')}>
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
                 value={value.residencyExpiry ?? ''}
-                onChange={(e) => set({ residencyExpiry: e.target.value || null })}
+                onChange={(iso) => set({ residencyExpiry: iso || null })}
               />
             )}
           </Field>
@@ -392,11 +390,10 @@ export function EmployeeForm({
               </Field>
               <Field label={t('Work permit expiry')} optional>
                 {(id) => (
-                  <Input
+                  <DateField
                     id={id}
-                    type="date"
                     value={value.workPermitExpiry ?? ''}
-                    onChange={(e) => set({ workPermitExpiry: e.target.value || null })}
+                    onChange={(iso) => set({ workPermitExpiry: iso || null })}
                   />
                 )}
               </Field>
@@ -481,11 +478,10 @@ export function EmployeeForm({
         </Field>
         <Field label={t('Hire date')}>
           {(id) => (
-            <Input
+            <DateField
               id={id}
-              type="date"
               value={value.hireDate ?? ''}
-              onChange={(e) => set({ hireDate: e.target.value || null })}
+              onChange={(iso) => set({ hireDate: iso || null })}
             />
           )}
         </Field>
@@ -505,12 +501,11 @@ export function EmployeeForm({
           }
         >
           {(id) => (
-            <Input
+            <DateField
               id={id}
-              type="date"
               value={value.probationEnd ?? ''}
               min={value.hireDate ?? undefined}
-              onChange={(e) => set({ probationEnd: e.target.value || null })}
+              onChange={(iso) => set({ probationEnd: iso || null })}
             />
           )}
         </Field>
@@ -542,11 +537,10 @@ export function EmployeeForm({
             }
           >
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
                 value={value.contractEnd ?? ''}
-                onChange={(e) => set({ contractEnd: e.target.value || null })}
+                onChange={(iso) => set({ contractEnd: iso || null })}
                 aria-invalid={Boolean(errors.contractEnd)}
               />
             )}
@@ -765,11 +759,10 @@ export function EmployeeForm({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label={t('Leaving date')} error={errors.leavingDate}>
                 {(id) => (
-                  <Input
+                  <DateField
                     id={id}
-                    type="date"
                     value={value.leavingDate ?? ''}
-                    onChange={(e) => set({ leavingDate: e.target.value || null })}
+                    onChange={(iso) => set({ leavingDate: iso || null })}
                     aria-invalid={Boolean(errors.leavingDate)}
                   />
                 )}

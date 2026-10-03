@@ -21,9 +21,10 @@ import { msg, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Card, Spinner } from '@/components/ui/misc';
-import { Input, Select } from '@/components/ui/form';
+import { Select } from '@/components/ui/form';
 import { CurrencySelect } from '@/components/fields';
 import { isolate } from '@/features/reports/report-language';
+import { DateField } from '@/components/ui/date-field';
 
 export type SalesReportId =
   'aging' | 'tax' | 'sales' | 'payments' | 'payables' | 'purchases' | 'payments-made';
@@ -220,22 +221,16 @@ export function SalesReports({ report }: { report: SalesReportId }) {
               </div>
               {preset === 'custom' ? (
                 <>
-                  <Input
-                    type="date"
+                  <DateField
                     aria-label={t('From')}
                     value={custom.from}
-                    onChange={(e) =>
-                      e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))
-                    }
+                    onChange={(iso) => iso && setCustom((c) => ({ ...c, from: iso }))}
                     className="w-40"
                   />
-                  <Input
-                    type="date"
+                  <DateField
                     aria-label={t('To')}
                     value={custom.to}
-                    onChange={(e) =>
-                      e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))
-                    }
+                    onChange={(iso) => iso && setCustom((c) => ({ ...c, to: iso }))}
                     className="w-40"
                   />
                 </>

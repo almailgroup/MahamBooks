@@ -12,6 +12,8 @@ function Notifications() {
       position={dir === 'rtl' ? 'bottom-left' : 'bottom-right'}
       richColors
       closeButton
+      // On phones, above the tab bar and an editor's action bar.
+      mobileOffset={{ bottom: 'calc(5.75rem + env(safe-area-inset-bottom))' }}
     />
   );
 }

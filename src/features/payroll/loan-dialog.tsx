@@ -9,11 +9,12 @@ import { currencyPrecision, dec, round } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { useCompany, useFormat } from '@/app/company';
 import { Button } from '@/components/ui/button';
-import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
+import { Field, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { moneyAccounts } from './shared';
+import { DateField } from '@/components/ui/date-field';
 
 /** Records an interest-free loan or salary advance to an employee. */
 export function LoanDialog({
@@ -124,14 +125,7 @@ export function LoanDialog({
               )}
             </Field>
             <Field label={t('Paid on')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={date}
-                  onChange={(e) => e.target.value && setDate(e.target.value)}
-                />
-              )}
+              {(id) => <DateField id={id} value={date} onChange={(iso) => iso && setDate(iso)} />}
             </Field>
             <Field label={t('First instalment in')}>
               {(id) => (

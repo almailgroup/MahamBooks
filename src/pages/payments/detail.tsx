@@ -403,12 +403,12 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
                             {doc.number}
                           </Link>
                         ) : (
-                          <span className="text-slate-400">{t(copy.deletedDoc)}</span>
+                          <span className="text-slate-500">{t(copy.deletedDoc)}</span>
                         )}
                         <span
                           className={
                             payment.voided
-                              ? 'tabular text-slate-400 line-through'
+                              ? 'tabular text-slate-500 line-through'
                               : 'tabular font-medium'
                           }
                         >

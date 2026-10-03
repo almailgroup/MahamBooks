@@ -24,6 +24,7 @@ import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc
 import { Field, Input, NumberInput, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { useConfirm } from '@/components/ui/overlay';
+import { DateField } from '@/components/ui/date-field';
 
 function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) {
   const company = useCompany();
@@ -186,12 +187,11 @@ function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) 
         <CardBody className="grid gap-4 md:grid-cols-[180px_minmax(0,1fr)]">
           <Field label={t('Date')}>
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
                 value={journal.date}
                 disabled={readOnly}
-                onChange={(e) => update({ date: e.target.value || journal.date })}
+                onChange={(iso) => update({ date: iso || journal.date })}
               />
             )}
           </Field>

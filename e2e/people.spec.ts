@@ -49,11 +49,13 @@ test('a residency expiring in 20 days is renewed from Compliance with its fee', 
   // Renewed for a year, with a KD 10 fee paid from the bank.
   await item.getByRole('button', { name: 'Renew' }).click();
   const dialog = page.getByRole('dialog', { name: 'Renew Residency' });
+  // Date fields show the company's format (dd/MM/yyyy in Kuwait).
   await expect(dialog.getByLabel('New expiry date')).toHaveValue(
     (() => {
       const d = new Date(`${inDays(20)}T00:00:00Z`);
       d.setUTCFullYear(d.getUTCFullYear() + 1);
-      return d.toISOString().slice(0, 10);
+      const [year, month, day] = d.toISOString().slice(0, 10).split('-');
+      return `${day}/${month}/${year}`;
     })(),
   );
   await dialog.getByLabel('Fee paid').fill('10');

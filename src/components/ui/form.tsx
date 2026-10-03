@@ -12,15 +12,17 @@ import { cn } from '@/lib/cn';
 import { normalizeDigits } from '@/lib/money';
 import { t } from '@/i18n';
 
+// Touch screens get 44px fields and 16px text (smaller text makes phones zoom in).
 const control =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15';
+  'w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15 pointer-coarse:text-base';
+const height = 'h-9 pointer-coarse:h-11';
 
 export function Input({
   className,
   ref,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
-  return <input ref={ref} className={cn(control, 'h-9', className)} {...props} />;
+  return <input ref={ref} className={cn(control, height, className)} {...props} />;
 }
 
 export function Textarea({
@@ -40,7 +42,7 @@ export function Textarea({
 export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div className="relative">
-      <select className={cn(control, 'h-9 appearance-none pe-9', className)} {...props}>
+      <select className={cn(control, height, 'appearance-none pe-9', className)} {...props}>
         {children}
       </select>
       <ChevronDown
@@ -78,7 +80,7 @@ export function Field({
         <Label htmlFor={id}>
           {label}
           {optional ? (
-            <span className="ms-1 font-normal text-slate-400">({t('optional')})</span>
+            <span className="ms-1 font-normal text-slate-500">({t('optional')})</span>
           ) : null}
         </Label>
       ) : null}
@@ -107,10 +109,10 @@ export function Checkbox({
       <input
         id={id}
         type="checkbox"
-        className="accent-primary-600 mt-0.5 size-4 shrink-0 rounded border-slate-300"
+        className="accent-primary-600 mt-0.5 size-4 shrink-0 rounded border-slate-300 pointer-coarse:size-5"
         {...props}
       />
-      <label htmlFor={id} className="text-sm">
+      <label htmlFor={id} className="text-sm pointer-coarse:py-0.5">
         <span className="font-medium text-slate-800">{label}</span>
         {description ? <span className="block text-slate-500">{description}</span> : null}
       </label>
@@ -217,7 +219,7 @@ export function NumberInput({
       // Numbers read left to right in Arabic too ("-12.500", not "12.500-");
       // in the Arabic layout they line up on the left like amount columns.
       dir="ltr"
-      className={cn(control, 'tabular h-9 text-end rtl:text-left', className)}
+      className={cn(control, height, 'tabular text-end rtl:text-left', className)}
       value={display}
       onChange={(e) => {
         setText(e.target.value);

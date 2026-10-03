@@ -49,6 +49,7 @@ import {
   DialogFooter,
   useConfirm,
 } from '@/components/ui/overlay';
+import { DateField } from '@/components/ui/date-field';
 
 type VatStatus = 'filed' | 'open' | 'ready' | 'overdue';
 
@@ -333,12 +334,7 @@ function FileDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('Filed on')}>
               {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={filedOn}
-                  onChange={(e) => e.target.value && setFiledOn(e.target.value)}
-                />
+                <DateField id={id} value={filedOn} onChange={(iso) => iso && setFiledOn(iso)} />
               )}
             </Field>
             <Field label={t('Reference')} optional>
@@ -407,14 +403,7 @@ function PaymentDialog({ record, onClose }: { record: VatReturnRecord; onClose: 
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('Date')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={date}
-                  onChange={(e) => e.target.value && setDate(e.target.value)}
-                />
-              )}
+              {(id) => <DateField id={id} value={date} onChange={(iso) => iso && setDate(iso)} />}
             </Field>
             <Field label={pay ? t('Paid from') : t('Received into')}>
               {(id) => (

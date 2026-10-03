@@ -28,6 +28,7 @@ import {
   ProviderSelect,
   useCashCheck,
 } from '@/features/payments/fields';
+import { DateField } from '@/components/ui/date-field';
 
 /** Records a payment against one invoice (money in) or bill (money out). */
 export function RecordPaymentDialog({
@@ -177,12 +178,7 @@ export function RecordPaymentDialog({
             </Field>
             <Field label={t('Date')}>
               {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value || today())}
-                />
+                <DateField id={id} value={date} onChange={(iso) => setDate(iso || today())} />
               )}
             </Field>
             <Field label={t('Method')} hint={noCashHint(company, direction)}>

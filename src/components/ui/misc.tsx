@@ -1,4 +1,11 @@
-import type { HTMLAttributes, ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
@@ -146,7 +153,44 @@ export function PageHeader({
   );
 }
 
-/** Segmented control used for status filters and small toggles. */
+/**
+ * Which ends of a sideways-scrolling strip have more to see, for fading
+ * them (`scroll-fade-start` / `scroll-fade-end`). Works right to left too.
+ */
+export function useScrollEdges(
+  ref: RefObject<HTMLElement | null>,
+  axis: 'x' | 'y' = 'x',
+): {
+  start: boolean;
+  end: boolean;
+} {
+  const [edges, setEdges] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      // scrollLeft is negative when scrolled in a right-to-left strip.
+      const scrolled = Math.abs(axis === 'x' ? el.scrollLeft : el.scrollTop);
+      const room =
+        axis === 'x' ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+      const next = { start: scrolled > 1, end: scrolled < room - 1 };
+      setEdges((e) => (e.start === next.start && e.end === next.end ? e : next));
+    };
+    // Not in every test environment; the fades are only a hint.
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(el);
+    // Content that grows (a group opening) changes the room too.
+    for (const child of el.children) observer?.observe(child);
+    el.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      observer?.disconnect();
+      el.removeEventListener('scroll', measure);
+    };
+  }, [ref, axis]);
+  return edges;
+}
+
+/** Segmented control used for status filters and small toggles; scrolls sideways when narrow. */
 export function Segmented<T extends string>({
   value,
   onChange,
@@ -160,11 +204,26 @@ export function Segmented<T extends string>({
   className?: string;
   size?: 'sm' | 'md';
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const edges = useScrollEdges(ref);
+  useEffect(() => {
+    // Keep the chosen tab in view on a narrow screen.
+    const strip = ref.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+    const box = strip.getBoundingClientRect();
+    const own = tab.getBoundingClientRect();
+    if (own.left >= box.left && own.right <= box.right) return;
+    strip.scrollBy({ left: own.left + own.width / 2 - (box.left + box.width / 2) });
+  }, [value]);
   return (
     <div
+      ref={ref}
       role="tablist"
       className={cn(
-        'inline-flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-1',
+        'no-scrollbar inline-flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-1',
+        edges.start && 'scroll-fade-start',
+        edges.end && 'scroll-fade-end',
         className,
       )}
     >
@@ -176,8 +235,10 @@ export function Segmented<T extends string>({
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors',
-            size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm',
+            'inline-flex shrink-0 items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors',
+            size === 'sm'
+              ? 'px-2 py-1 text-xs pointer-coarse:min-h-9'
+              : 'px-3 py-1.5 text-sm pointer-coarse:min-h-10',
             value === o.value
               ? 'bg-white text-slate-900 shadow-sm'
               : 'text-slate-600 hover:text-slate-900',
@@ -225,9 +286,9 @@ export function Stat({
         className={cn(
           'mt-2 text-2xl font-semibold tracking-tight',
           tone === 'danger'
-            ? 'text-red-600'
+            ? 'text-red-700'
             : tone === 'success'
-              ? 'text-emerald-600'
+              ? 'text-emerald-700'
               : 'text-slate-900',
         )}
       >
@@ -240,7 +301,7 @@ export function Stat({
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-[11px] text-slate-500">
+    <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-xs text-slate-500">
       {children}
     </kbd>
   );

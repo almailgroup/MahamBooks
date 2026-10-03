@@ -48,6 +48,8 @@ import { accountingSettings } from '@/db/chart-setup';
 import { stockAccounts } from '@/lib/inventory/sources';
 import { formatUnitPrice } from '@/lib/format';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { StickyActions } from '@/components/ui/sticky-actions';
+import { DateField } from '@/components/ui/date-field';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
 
@@ -282,7 +284,7 @@ function Editor({
               : t('Edit {document} {number}', { document: documentNoun(type), number: doc.number })}
           </h1>
         </div>
-        {actions}
+        <StickyActions>{actions}</StickyActions>
       </div>
 
       <div className="space-y-6">
@@ -332,12 +334,11 @@ function Editor({
             </Field>
             <Field label={type === 'bill' ? t('Bill date') : order ? t('Order date') : t('Date')}>
               {(fid) => (
-                <Input
+                <DateField
                   id={fid}
-                  type="date"
                   value={doc.issueDate}
-                  onChange={(e) => {
-                    const value = e.target.value;
+                  onChange={(iso) => {
+                    const value = iso;
                     if (!value) return;
                     update({
                       issueDate: value,
@@ -373,11 +374,10 @@ function Editor({
                       ))}
                       <option value="custom">{t('Custom')}</option>
                     </Select>
-                    <Input
+                    <DateField
                       id={fid}
-                      type="date"
                       value={doc.dueDate ?? ''}
-                      onChange={(e) => update({ dueDate: e.target.value || null })}
+                      onChange={(iso) => update({ dueDate: iso || null })}
                       className="min-w-36 flex-1"
                     />
                   </div>
@@ -388,11 +388,10 @@ function Editor({
               <>
                 <Field label={t('Delivery date')} optional>
                   {(fid) => (
-                    <Input
+                    <DateField
                       id={fid}
-                      type="date"
                       value={doc.deliveryDate ?? ''}
-                      onChange={(e) => update({ deliveryDate: e.target.value || null })}
+                      onChange={(iso) => update({ deliveryDate: iso || null })}
                     />
                   )}
                 </Field>
@@ -716,7 +715,7 @@ function Editor({
           </Card>
         </div>
 
-        <div className="flex justify-end border-t border-slate-200 pt-4">{actions}</div>
+        <div className="hidden justify-end border-t border-slate-200 pt-4 lg:flex">{actions}</div>
       </div>
 
       {vendorDialog.open ? (

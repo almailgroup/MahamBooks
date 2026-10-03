@@ -28,7 +28,7 @@ import { t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
-import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
+import { Field, NumberInput, Select, Textarea } from '@/components/ui/form';
 import {
   Dialog,
   DialogBody,
@@ -50,6 +50,7 @@ import {
   useAssetData,
 } from './shared';
 import { isolate } from '@/features/reports/report-language';
+import { DateField } from '@/components/ui/date-field';
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -122,9 +123,7 @@ function DisposeDialog({ asset, onClose }: { asset: FixedAsset; onClose: () => v
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('Date')}>
-              {(id) => (
-                <Input id={id} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              )}
+              {(id) => <DateField id={id} value={date} onChange={(iso) => setDate(iso)} />}
             </Field>
             <Field label={t('Sale price')} hint={t('Leave at zero if it was scrapped.')}>
               {(id) => (

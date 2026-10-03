@@ -95,7 +95,7 @@ export function Combobox({
             className,
           )}
         >
-          <span className={cn('min-w-0 truncate', !selected && 'text-slate-400')}>
+          <span className={cn('min-w-0 truncate', !selected && 'text-slate-500')}>
             {selected
               ? renderValue
                 ? renderValue(selected)
@@ -137,7 +137,7 @@ export function Combobox({
               className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
             />
           </div>
-          <div ref={listRef} role="listbox" className="max-h-72 overflow-y-auto p-1">
+          <div ref={listRef} role="listbox" className="scroll-thin max-h-72 overflow-y-auto p-1">
             {filtered.length === 0 && !showCreate ? (
               <p className="px-3 py-6 text-center text-sm text-slate-500">
                 {emptyText ?? t('No matches')}

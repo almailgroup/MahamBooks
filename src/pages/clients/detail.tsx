@@ -141,7 +141,7 @@ function PaymentRow({ payment, href, out }: { payment: Payment; href: string; ou
           <span
             className={
               payment.voided
-                ? 'tabular text-sm text-slate-400 line-through'
+                ? 'tabular text-sm text-slate-500 line-through'
                 : out
                   ? 'tabular text-sm font-semibold text-slate-900'
                   : 'tabular text-sm font-semibold text-emerald-700'
@@ -343,7 +343,7 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
                 <p className="font-medium text-slate-800">
                   {c.name || t('Contact person')}
                   {c.primary && client.contacts.length > 1 ? (
-                    <span className="ms-2 text-xs font-normal text-slate-400">
+                    <span className="ms-2 text-xs font-normal text-slate-500">
                       {t('Primary contact')}
                     </span>
                   ) : null}

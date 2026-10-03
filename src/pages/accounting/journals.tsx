@@ -100,7 +100,7 @@ export default function JournalsPage() {
                           {j.number}
                         </td>
                         <td className="px-3 py-2.5 text-slate-700">
-                          {j.reference || <span className="text-slate-400">—</span>}
+                          {j.reference || <span className="text-slate-500">—</span>}
                         </td>
                         <td className="tabular px-3 py-2.5 text-end text-slate-900">
                           {fmt.money(journalTotals(j.lines, p).debit)}

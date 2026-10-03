@@ -39,6 +39,7 @@ import {
   suggestExpense,
   useAssetData,
 } from './shared';
+import { DateField } from '@/components/ui/date-field';
 
 const SOURCES: AssetSource[] = ['purchase', 'bill', 'opening', 'existing'];
 
@@ -344,13 +345,12 @@ function Editor({
                 ) : null}
                 <Field label={t('Purchase date')}>
                   {(id) => (
-                    <Input
+                    <DateField
                       id={id}
-                      type="date"
                       value={asset.purchaseDate}
                       disabled={locked}
-                      onChange={(e) => {
-                        const purchaseDate = e.target.value;
+                      onChange={(iso) => {
+                        const purchaseDate = iso;
                         update({
                           purchaseDate,
                           depreciationStart:
@@ -383,12 +383,11 @@ function Editor({
             <CardBody className="grid gap-4 md:grid-cols-2">
               <Field label={t('Depreciation starts')} hint={t('When the asset was put to use.')}>
                 {(id) => (
-                  <Input
+                  <DateField
                     id={id}
-                    type="date"
                     value={asset.depreciationStart}
                     disabled={locked}
-                    onChange={(e) => update({ depreciationStart: e.target.value })}
+                    onChange={(iso) => update({ depreciationStart: iso })}
                   />
                 )}
               </Field>
@@ -476,14 +475,11 @@ function Editor({
                   {asset.openingDepreciation > 0 ? (
                     <Field label={t('Charged up to')}>
                       {(id) => (
-                        <Input
+                        <DateField
                           id={id}
-                          type="date"
                           value={asset.openingDepreciationDate ?? ''}
                           disabled={locked}
-                          onChange={(e) =>
-                            update({ openingDepreciationDate: e.target.value || null })
-                          }
+                          onChange={(iso) => update({ openingDepreciationDate: iso || null })}
                         />
                       )}
                     </Field>

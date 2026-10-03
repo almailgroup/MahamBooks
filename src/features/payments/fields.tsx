@@ -30,6 +30,7 @@ import {
   type PaymentDirection,
 } from '@/lib/payment-methods';
 import { Checkbox, Field, Input, Select } from '@/components/ui/form';
+import { DateField } from '@/components/ui/date-field';
 
 const byCode = (a: Account, b: Account) =>
   a.code.localeCompare(b.code, undefined, { numeric: true });
@@ -290,11 +291,10 @@ export function ChequeFields({
         }
       >
         {(fid) => (
-          <Input
+          <DateField
             id={fid}
-            type="date"
             value={cheque.date}
-            onChange={(e) => onChange({ date: e.target.value })}
+            onChange={(iso) => onChange({ date: iso })}
             disabled={disabled}
           />
         )}

@@ -9,6 +9,7 @@ import { Field, Input, NumberInput, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { t } from '@/i18n';
 import { localName } from '@/i18n/names';
+import { DateField } from '@/components/ui/date-field';
 
 /** Moves money between two of the company's bank, cash or card accounts. */
 export function TransferDialog({
@@ -69,14 +70,7 @@ export function TransferDialog({
             {select(t('From'), from, setFrom)}
             {select(t('To'), to, setTo)}
             <Field label={t('Date')}>
-              {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={date}
-                  onChange={(e) => e.target.value && setDate(e.target.value)}
-                />
-              )}
+              {(id) => <DateField id={id} value={date} onChange={(iso) => iso && setDate(iso)} />}
             </Field>
             <Field label={t('Amount ({currency})', { currency: company.currency })}>
               {(id) => (

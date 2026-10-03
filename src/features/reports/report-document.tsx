@@ -32,7 +32,7 @@ function Label({ row, text, link }: { row: ReportRow; text: ReportText; link: st
   const content = (
     <>
       {row.record?.code ? (
-        <span className="tabular me-2 text-slate-400">{row.record.code}</span>
+        <span className="tabular me-2 text-slate-500">{row.record.code}</span>
       ) : null}
       {rowLabel(row, text)}
     </>
@@ -127,7 +127,7 @@ export function ReportDocument({
             <p className="text-sm text-slate-600">{subtitleText(model.subtitle, text)}</p>
           </div>
         ))}
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-slate-500">
           {texts
             .map((text) => text.t(msg('Amounts in {currency}'), { currency: text.currencyName }))
             .join(' · ')}

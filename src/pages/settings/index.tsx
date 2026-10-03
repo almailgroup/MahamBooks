@@ -95,7 +95,7 @@ export default function SettingsPage() {
           >
             {GROUPS.map((group) => (
               <div key={group.title} className="contents lg:block">
-                <p className="hidden px-3 pb-1.5 text-xs font-semibold tracking-wide text-slate-400 uppercase lg:block">
+                <p className="hidden px-3 pb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase lg:block">
                   {t(group.title)}
                 </p>
                 <ul className="contents lg:block lg:space-y-0.5">

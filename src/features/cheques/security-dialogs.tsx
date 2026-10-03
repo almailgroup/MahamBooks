@@ -22,6 +22,7 @@ import { Segmented } from '@/components/ui/misc';
 import { CurrencySelect } from '@/components/fields';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { BankSelect } from '@/features/payments/fields';
+import { DateField } from '@/components/ui/date-field';
 
 function useContacts(direction: 'in' | 'out') {
   const company = useCompany();
@@ -166,11 +167,10 @@ export function SecurityChequeDialog({
               hint={t('Security cheques are often undated.')}
             >
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   value={draft.date ?? ''}
-                  onChange={(e) => set({ date: e.target.value || null })}
+                  onChange={(iso) => set({ date: iso || null })}
                 />
               )}
             </Field>
@@ -266,14 +266,7 @@ export function GiveBackDialog({
       >
         <DialogBody>
           <Field label={t('Date')}>
-            {(id) => (
-              <Input
-                id={id}
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value || today())}
-              />
-            )}
+            {(id) => <DateField id={id} value={date} onChange={(iso) => setDate(iso || today())} />}
           </Field>
         </DialogBody>
         <DialogFooter>
@@ -342,14 +335,7 @@ export function CashSecurityDialog({
                 )}
           </p>
           <Field label={t('Date')}>
-            {(id) => (
-              <Input
-                id={id}
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value || today())}
-              />
-            )}
+            {(id) => <DateField id={id} value={date} onChange={(iso) => setDate(iso || today())} />}
           </Field>
           {cheque.clientId ? null : (
             <Field label={given ? t('Vendor') : t('Client')}>

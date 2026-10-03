@@ -14,6 +14,7 @@ import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui
 import { expenseCategoryOptions, PaidFromSelect } from './account-fields';
 import { entryTitle } from './display';
 import { currentLanguage, t } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 /** Category value meaning "the fee account, created when the company doesn't have it". */
 const NEW_FEE_ACCOUNT = '__fee_account__';
@@ -129,22 +130,16 @@ export function RenewDialog({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label={t('Renewed on')}>
               {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={renewedOn}
-                  onChange={(e) => e.target.value && setRenewedOn(e.target.value)}
-                />
+                <DateField id={id} value={renewedOn} onChange={(iso) => iso && setRenewedOn(iso)} />
               )}
             </Field>
             <Field label={t('New expiry date')}>
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   value={newExpiry}
                   min={entry.expiryDate ?? undefined}
-                  onChange={(e) => setNewExpiry(e.target.value)}
+                  onChange={(iso) => setNewExpiry(iso)}
                   aria-invalid={Boolean(error)}
                 />
               )}

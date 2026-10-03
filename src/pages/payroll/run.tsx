@@ -44,7 +44,7 @@ import { SalaryFileDialog } from '@/features/payroll/salary-file-dialog';
 import { AmountRow, PayDialog, RunStatusBadge, useWarningText } from '@/features/payroll/shared';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner, Stat } from '@/components/ui/misc';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, Select } from '@/components/ui/form';
 import {
   DropdownContent,
   DropdownItem,
@@ -54,6 +54,7 @@ import {
 } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 function EntryLink({ journal, label }: { journal: ManualJournal | undefined; label: string }) {
   const fmt = useFormat();
@@ -441,13 +442,12 @@ export default function PayRunPage() {
                   hint={t('Wages are due within 7 days of the end of the month (art. 56).')}
                 >
                   {(fieldId) => (
-                    <Input
+                    <DateField
                       id={fieldId}
-                      type="date"
                       value={run.payDate}
-                      onChange={(e) =>
-                        e.target.value &&
-                        void updatePayRun(run.id, { payDate: e.target.value }).catch((err) =>
+                      onChange={(iso) =>
+                        iso &&
+                        void updatePayRun(run.id, { payDate: iso }).catch((err) =>
                           toast.error(err instanceof Error ? err.message : String(err)),
                         )
                       }

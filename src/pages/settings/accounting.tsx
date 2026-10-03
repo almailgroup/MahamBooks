@@ -14,9 +14,10 @@ import { useFormat } from '@/app/company';
 import { interfaceLocale, msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
+import { Field, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 import { isolate } from '@/features/reports/report-language';
+import { DateField } from '@/components/ui/date-field';
 
 /** Quarter ends for each stagger (the month a quarter starts in). */
 const STAGGERS = [
@@ -160,11 +161,10 @@ export default function AccountingSettings() {
         <div className="flex flex-wrap items-end gap-3">
           <Field label={t('Lock transactions up to and including')}>
             {(id) => (
-              <Input
+              <DateField
                 id={id}
-                type="date"
                 value={settings.lockDate ?? ''}
-                onChange={(e) => setSettings({ lockDate: e.target.value || null })}
+                onChange={(iso) => setSettings({ lockDate: iso || null })}
                 className="w-52"
               />
             )}
@@ -340,11 +340,11 @@ export default function AccountingSettings() {
                 <span className="text-end font-medium text-slate-900">
                   {account ? (
                     <>
-                      <span className="tabular me-2 text-slate-400">{account.code}</span>
+                      <span className="tabular me-2 text-slate-500">{account.code}</span>
                       {localName(account)}
                     </>
                   ) : (
-                    <span className="text-slate-400">—</span>
+                    <span className="text-slate-500">—</span>
                   )}
                 </span>
               </div>

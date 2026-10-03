@@ -56,7 +56,7 @@ export function TaxSelect({
           title={value.map(label).join(' + ') || placeholder}
           className={cn(
             'flex h-9 w-full items-center justify-between gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-start text-sm shadow-xs hover:border-slate-400',
-            value.length === 0 && 'text-slate-400',
+            value.length === 0 && 'text-slate-500',
             className,
           )}
         >

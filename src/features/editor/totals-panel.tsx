@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input, NumberInput, Switch } from '@/components/ui/form';
 import { DiscountInput } from './line-items';
 import { TaxSelect } from './tax-select';
+import { DateField } from '@/components/ui/date-field';
 
 function Row({
   label,
@@ -319,10 +320,9 @@ export function TotalsPanel({
                   <span className="mb-1 block text-xs font-medium text-slate-500">
                     {t('Deposit due')}
                   </span>
-                  <Input
-                    type="date"
+                  <DateField
                     value={doc.depositDueDate ?? ''}
-                    onChange={(e) => onChange({ depositDueDate: e.target.value || null })}
+                    onChange={(iso) => onChange({ depositDueDate: iso || null })}
                   />
                 </label>
               </div>

@@ -21,7 +21,8 @@ import { whatsappUrl } from '@/lib/whatsapp';
 import { currentLanguage, t } from '@/i18n';
 import { CHEQUE_STATUS_META } from '@/lib/status';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { DateField } from '@/components/ui/date-field';
+import { Field, Select } from '@/components/ui/form';
 import { Badge, Segmented } from '@/components/ui/misc';
 import { downloadBlob, printBlob } from '@/pdf/client';
 import { DOCUMENT_LANGUAGES } from '@/pdf/languages';
@@ -189,25 +190,21 @@ export function StatementPanel({
               <>
                 <Field label={t('From')} className="w-40">
                   {(id) => (
-                    <Input
+                    <DateField
                       id={id}
-                      type="date"
+                      required
                       value={custom.from}
-                      onChange={(e) =>
-                        e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))
-                      }
+                      onChange={(iso) => iso && setCustom((c) => ({ ...c, from: iso }))}
                     />
                   )}
                 </Field>
                 <Field label={t('To')} className="w-40">
                   {(id) => (
-                    <Input
+                    <DateField
                       id={id}
-                      type="date"
+                      required
                       value={custom.to}
-                      onChange={(e) =>
-                        e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))
-                      }
+                      onChange={(iso) => iso && setCustom((c) => ({ ...c, to: iso }))}
                     />
                   )}
                 </Field>

@@ -643,7 +643,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                             <span
                               className={
                                 p.voided
-                                  ? 'tabular text-slate-400 line-through'
+                                  ? 'tabular text-slate-500 line-through'
                                   : 'tabular font-medium'
                               }
                             >
@@ -674,7 +674,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
                       <p className="text-sm text-slate-700">{activityText(a)}</p>
-                      <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
+                      <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}
                 </ol>

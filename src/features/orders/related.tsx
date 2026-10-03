@@ -156,7 +156,7 @@ export function OrderProgressCard({
                     {fmt.quantity(p.delivered)}
                     {p.inDelivery ? (
                       <span
-                        className="block text-xs font-normal text-slate-400"
+                        className="block text-xs font-normal text-slate-500"
                         title={t('On draft delivery notes')}
                       >
                         +{fmt.quantity(p.inDelivery)}

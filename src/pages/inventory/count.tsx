@@ -17,6 +17,7 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
 import { useInventory } from '@/features/inventory/use-inventory';
+import { DateField } from '@/components/ui/date-field';
 
 const draftKey = (companyId: ID, warehouseId: ID) => `stock-count:${companyId}:${warehouseId}`;
 
@@ -240,11 +241,7 @@ export default function StockCountPage() {
               <span className="mb-1 block text-xs font-medium text-slate-500">
                 {t('Count date')}
               </span>
-              <Input
-                type="date"
-                value={date}
-                onChange={(e) => e.target.value && setDate(e.target.value)}
-              />
+              <DateField value={date} onChange={(iso) => iso && setDate(iso)} />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-slate-500">{t('Search')}</span>
@@ -306,7 +303,7 @@ export default function StockCountPage() {
                         className={cn(
                           'tabular px-4 py-2 text-end font-medium whitespace-nowrap',
                           difference === null || difference === 0
-                            ? 'text-slate-400'
+                            ? 'text-slate-500'
                             : difference < 0
                               ? 'text-red-600'
                               : 'text-emerald-700',

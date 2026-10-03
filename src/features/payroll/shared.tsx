@@ -9,10 +9,11 @@ import { cn } from '@/lib/cn';
 import { useFormat } from '@/app/company';
 import { Badge, PageHeader } from '@/components/ui/misc';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { msg, t } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 /** Title and the Pay runs / Leave / Loans / Settings tabs of the payroll pages. */
 export function PayrollHeader({
@@ -192,14 +193,7 @@ export function PayDialog({
             <p className="tabular text-xl font-semibold text-slate-900">{fmt.money(amount)}</p>
           </div>
           <Field label={t('Payment date')}>
-            {(id) => (
-              <Input
-                id={id}
-                type="date"
-                value={date}
-                onChange={(e) => e.target.value && setDate(e.target.value)}
-              />
-            )}
+            {(id) => <DateField id={id} value={date} onChange={(iso) => iso && setDate(iso)} />}
           </Field>
           <Field label={t('Paid from')}>
             {(id) => (

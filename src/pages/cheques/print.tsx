@@ -278,7 +278,7 @@ export default function ChequeRegisterPrintPage() {
                             {who.en && who.en !== p.cheque.drawer ? <Both {...who} /> : null}
                           </td>
                           <td
-                            className={`tabular border border-slate-300 px-2 py-1.5 text-end ${p.voided ? 'text-slate-400 line-through' : ''}`}
+                            className={`tabular border border-slate-300 px-2 py-1.5 text-end ${p.voided ? 'text-slate-500 line-through' : ''}`}
                             dir="ltr"
                           >
                             {formatMoney(p.amount, p.currency, EN, display)}

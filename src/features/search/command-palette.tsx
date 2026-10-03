@@ -1,0 +1,418 @@
+import { useDeferredValue, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router';
+import { useLiveQuery } from 'dexie-react-hooks';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import type { LucideIcon } from 'lucide-react';
+import {
+  ArrowRight,
+  Clock,
+  CornerDownLeft,
+  FileText,
+  IdCard,
+  Languages,
+  Package,
+  Search,
+  Truck,
+  Users,
+  Zap,
+} from 'lucide-react';
+import { cn } from '@/lib/cn';
+import { useCompany, useFormat } from '@/app/company';
+import { useTaxesEnabled } from '@/features/company/taxes';
+import { NAV, NAV_FOOTER } from '@/features/shell/nav';
+import { CREATE_GROUPS } from '@/features/shell/create';
+import { useLanguage } from '@/i18n/provider';
+import { msg, t, tp } from '@/i18n';
+import { makeEntry, searchEntries, type SearchEntry, type SearchKind } from './rank';
+import { recordEntries, staticEntries } from './sources';
+import { loadRecent, rememberRecent, type RecentItem } from './recent';
+
+const SECTION_LABELS: Record<SearchKind, string> = {
+  recent: msg('Recent'),
+  action: msg('Actions'),
+  page: msg('Pages'),
+  client: msg('Clients'),
+  vendor: msg('Vendors'),
+  item: msg('Products & services'),
+  employee: msg('Employees'),
+  document: msg('Documents'),
+};
+
+const KIND_ICONS: Record<SearchKind, LucideIcon> = {
+  recent: Clock,
+  action: Zap,
+  page: ArrowRight,
+  client: Users,
+  vendor: Truck,
+  item: Package,
+  employee: IdCard,
+  document: FileText,
+};
+
+/** Each page's and action's own icon. */
+const ICONS = new Map<string, LucideIcon>([
+  ...NAV.flatMap((entry): [string, LucideIcon][] =>
+    entry.kind === 'link'
+      ? [[`page:${entry.to}`, entry.icon]]
+      : entry.children.map((c): [string, LucideIcon] => [`page:${c.to}`, entry.icon]),
+  ),
+  ...NAV_FOOTER.map((l): [string, LucideIcon] => [`page:${l.to}`, l.icon]),
+  ...CREATE_GROUPS.flatMap((g) =>
+    g.actions.map((a): [string, LucideIcon] => [`action:${a.id}`, a.icon]),
+  ),
+]);
+
+/** Shown before anything is typed. */
+const QUICK_ACTIONS = [
+  'action:invoice',
+  'action:payment_in',
+  'action:expense',
+  'action:bill',
+  'action:cheques-week',
+  'action:overdue-invoices',
+];
+
+const LANGUAGE_KEY = 'action:language';
+
+interface Section {
+  kind: SearchKind;
+  label: string;
+  entries: SearchEntry[];
+}
+
+/** "Ctrl K" or "⌘K", for the search button and help. */
+export function shortcutLabel(): string {
+  const platform =
+    typeof navigator === 'undefined'
+      ? ''
+      : ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
+          ?.platform ?? navigator.platform);
+  return /mac|iphone|ipad/i.test(platform) ? '⌘K' : 'Ctrl K';
+}
+
+export function CommandPalette({
+  open,
+  onOpenChange,
+  onOpenItem,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Items have no page of their own; the shell opens their dialog. */
+  onOpenItem: (id: string) => void;
+}) {
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[2px]" />
+        <DialogPrimitive.Content
+          className="data-[state=open]:animate-fade-in fixed inset-0 z-50 flex flex-col bg-white shadow-2xl outline-none sm:inset-x-4 sm:top-[12vh] sm:bottom-auto sm:mx-auto sm:max-h-[min(36rem,76vh)] sm:max-w-xl sm:rounded-xl sm:ring-1 sm:ring-slate-900/10"
+          aria-describedby={undefined}
+        >
+          <DialogPrimitive.Title className="sr-only">{t('Search')}</DialogPrimitive.Title>
+          {open ? (
+            <PaletteBody onClose={() => onOpenChange(false)} onOpenItem={onOpenItem} />
+          ) : null}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+function PaletteBody({
+  onClose,
+  onOpenItem,
+}: {
+  onClose: () => void;
+  onOpenItem: (id: string) => void;
+}) {
+  const company = useCompany();
+  const fmt = useFormat();
+  const navigate = useNavigate();
+  const taxesOn = useTaxesEnabled();
+  const { language, setLanguage } = useLanguage();
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [recent] = useState<RecentItem[]>(() => loadRecent(company.id));
+  const deferred = useDeferredValue(query);
+  const listId = useId();
+
+  const fixed = useMemo(() => {
+    const switchTo = language === 'ar' ? 'English' : 'العربية';
+    return [
+      ...staticEntries(taxesOn),
+      makeEntry({
+        key: LANGUAGE_KEY,
+        kind: 'action',
+        title: t('Switch to {language}', { language: switchTo }),
+        to: '',
+        names: [t('Switch to {language}', { language: switchTo }), switchTo],
+        terms: ['language arabic english لغة عربي'],
+        boost: 5,
+      }),
+    ];
+    // The language is a dependency: titles are translated when built.
+  }, [taxesOn, language]);
+  const records = useLiveQuery(
+    () => recordEntries(company, fmt),
+    // `language` changes the names and words shown.
+    [company, fmt, language],
+  );
+
+  const sections = useMemo<Section[]>(() => {
+    const all = records ? [...fixed, ...records] : fixed;
+    if (!deferred.trim()) {
+      const byKey = new Map(all.map((e) => [e.key, e]));
+      const recentEntries = recent.map(
+        (r): SearchEntry =>
+          // Fresh title and route when the record still exists.
+          byKey.get(r.key) ?? {
+            ...r,
+            names: [],
+            terms: [],
+            compact: [],
+            amounts: [],
+            boost: 0,
+          },
+      );
+      const quick = QUICK_ACTIONS.map((k) => byKey.get(k)).filter(
+        (e): e is SearchEntry => e !== undefined && !recent.some((r) => r.key === e.key),
+      );
+      return [
+        { kind: 'recent' as const, label: t(SECTION_LABELS.recent), entries: recentEntries },
+        { kind: 'action' as const, label: t('Quick actions'), entries: quick },
+      ].filter((s) => s.entries.length > 0);
+    }
+    // Sections in the order of their best result.
+    const found = searchEntries(all, deferred, 50);
+    const map = new Map<SearchKind, SearchEntry[]>();
+    for (const entry of found) {
+      const list = map.get(entry.kind) ?? [];
+      list.push(entry);
+      map.set(entry.kind, list);
+    }
+    return [...map.entries()].map(([kind, entries]) => ({
+      kind,
+      label: t(SECTION_LABELS[kind]),
+      entries,
+    }));
+  }, [fixed, records, deferred, recent]);
+
+  const flat = useMemo(() => sections.flatMap((s) => s.entries), [sections]);
+  const current = Math.min(active, Math.max(0, flat.length - 1));
+  const optionId = (i: number) => `${listId}-option-${i}`;
+
+  useEffect(() => {
+    document.getElementById(optionId(current))?.scrollIntoView({ block: 'nearest' });
+    // optionId only depends on listId.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, listId]);
+
+  const choose = (entry: SearchEntry | undefined) => {
+    if (!entry) return;
+    onClose();
+    if (entry.key === LANGUAGE_KEY) {
+      void setLanguage(language === 'ar' ? 'en' : 'ar');
+      return;
+    }
+    rememberRecent(company.id, {
+      key: entry.key,
+      kind: entry.kind,
+      title: entry.title,
+      subtitle: entry.subtitle,
+      to: entry.to,
+    });
+    if (entry.kind === 'item') {
+      navigate('/products');
+      onOpenItem(entry.key.slice('item:'.length));
+      return;
+    }
+    navigate(entry.to);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const move = (to: number) => {
+      e.preventDefault();
+      if (flat.length) setActive((to + flat.length) % flat.length);
+    };
+    if (e.key === 'ArrowDown') move(current + 1);
+    else if (e.key === 'ArrowUp') move(current - 1);
+    else if (e.key === 'PageDown') move(Math.min(flat.length - 1, current + 5));
+    else if (e.key === 'PageUp') move(Math.max(0, current - 5));
+    else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      choose(flat[current]);
+    }
+  };
+
+  let index = -1;
+  const searching = deferred.trim().length > 0;
+
+  return (
+    <>
+      <div className="flex items-center gap-3 border-b border-slate-200 px-4 sm:px-5">
+        <Search className="size-5 shrink-0 text-slate-400" aria-hidden />
+        <input
+          autoFocus
+          role="combobox"
+          aria-expanded
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={flat.length ? optionId(current) : undefined}
+          aria-label={t('Search')}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+          }}
+          onKeyDown={onKeyDown}
+          placeholder={t('Search clients, documents, items or pages…')}
+          className="h-14 min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="go"
+        />
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-primary-700 -me-2 rounded-md px-2 py-1.5 text-sm font-medium sm:hidden"
+        >
+          {t('Cancel')}
+        </button>
+        <kbd className="hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-xs text-slate-500 sm:block">
+          Esc
+        </kbd>
+      </div>
+
+      <div
+        id={listId}
+        role="listbox"
+        aria-label={t('Results')}
+        className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
+      >
+        {sections.length === 0 ? (
+          <Empty searching={searching} query={deferred} loading={!records && searching} />
+        ) : (
+          sections.map((section) => (
+            <div key={section.kind} role="group" aria-labelledby={`${listId}-${section.kind}`}>
+              <p
+                id={`${listId}-${section.kind}`}
+                className="px-3 pt-3 pb-1.5 text-xs font-semibold text-slate-500"
+              >
+                {section.label}
+              </p>
+              {section.entries.map((entry) => {
+                index += 1;
+                const i = index;
+                const Icon =
+                  ICONS.get(entry.key) ??
+                  (entry.key === LANGUAGE_KEY ? Languages : KIND_ICONS[entry.kind]);
+                return (
+                  <div
+                    key={entry.key}
+                    id={optionId(i)}
+                    role="option"
+                    aria-selected={i === current}
+                    onPointerMove={() => i !== current && setActive(i)}
+                    onClick={() => choose(entry)}
+                    className={cn(
+                      'flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-2',
+                      i === current ? 'bg-primary-50' : 'hover:bg-slate-50',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'flex size-8 shrink-0 items-center justify-center rounded-md [&_svg]:size-4',
+                        i === current
+                          ? 'text-primary-700 bg-white shadow-xs ring-1 ring-slate-200'
+                          : 'bg-slate-100 text-slate-500',
+                      )}
+                      aria-hidden
+                    >
+                      <Icon />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span
+                        dir="auto"
+                        className="block truncate text-start text-sm font-medium text-slate-900"
+                      >
+                        {entry.title}
+                      </span>
+                      {entry.subtitle ? (
+                        <span className="block truncate text-xs text-slate-500">
+                          {entry.subtitle}
+                        </span>
+                      ) : null}
+                    </span>
+                    {entry.amount ? (
+                      <span
+                        dir="ltr"
+                        className="tabular shrink-0 text-sm text-slate-600 [unicode-bidi:isolate]"
+                      >
+                        {entry.amount}
+                      </span>
+                    ) : null}
+                    {i === current ? (
+                      <CornerDownLeft
+                        className="hidden size-4 shrink-0 text-slate-400 sm:block rtl:-scale-x-100"
+                        aria-hidden
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="hidden items-center gap-4 border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500 sm:flex">
+        <Hint keys={['↑', '↓']}>{t('to move')}</Hint>
+        <Hint keys={['↵']}>{t('to open')}</Hint>
+        <Hint keys={['Esc']}>{t('to close')}</Hint>
+        {searching && flat.length ? (
+          <span className="ms-auto">{tp(flat.length, '{count} result', '{count} results')}</span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function Hint({ keys, children }: { keys: string[]; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {keys.map((k) => (
+        <kbd
+          key={k}
+          className="min-w-5 rounded border border-slate-200 bg-slate-50 px-1 py-px text-center font-sans text-[0.6875rem] text-slate-600"
+        >
+          {k}
+        </kbd>
+      ))}
+      {children}
+    </span>
+  );
+}
+
+function Empty({
+  searching,
+  query,
+  loading,
+}: {
+  searching: boolean;
+  query: string;
+  loading: boolean;
+}) {
+  if (loading)
+    return <p className="px-3 py-10 text-center text-sm text-slate-500">{t('Loading…')}</p>;
+  return (
+    <div className="px-6 py-12 text-center">
+      <p className="text-sm font-medium text-slate-800">
+        {searching ? t('Nothing found for “{query}”', { query: query.trim() }) : t('Start typing')}
+      </p>
+      <p className="mt-1 text-sm text-slate-500">
+        {t('Try a client name, a document number such as INV-0001, or an amount.')}
+      </p>
+    </div>
+  );
+}

@@ -43,9 +43,10 @@ import { addDaysISO, isISODate, today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
 import { msg, t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, Select } from '@/components/ui/form';
 import { Badge, Segmented } from '@/components/ui/misc';
 import { SettingsSection } from './shared';
+import { DateField } from '@/components/ui/date-field';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const PREVIEW_LIMIT = 200;
@@ -410,13 +411,7 @@ export default function ImportSettings() {
               hint={t('Usually the last day before you start using AlmailBooks.')}
             >
               {(id) => (
-                <Input
-                  id={id}
-                  type="date"
-                  value={asOf}
-                  max={today()}
-                  onChange={(e) => setAsOf(e.target.value)}
-                />
+                <DateField id={id} value={asOf} max={today()} onChange={(iso) => setAsOf(iso)} />
               )}
             </Field>
           ) : null}
@@ -690,7 +685,7 @@ export default function ImportSettings() {
                   const summary = rowSummary(kind, row, (n) => fmt.money(n));
                   return (
                     <li key={row.line} className="flex gap-3 px-3 py-2.5 sm:px-4">
-                      <span className="tabular w-9 shrink-0 pt-0.5 text-xs text-slate-400">
+                      <span className="tabular w-9 shrink-0 pt-0.5 text-xs text-slate-500">
                         {row.line}
                       </span>
                       <div className="min-w-0 flex-1">

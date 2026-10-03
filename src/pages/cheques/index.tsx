@@ -345,7 +345,7 @@ export default function ChequeRegisterPage() {
                           <span
                             className={cn(
                               'tabular text-sm font-medium',
-                              p.voided ? 'text-slate-400 line-through' : 'text-slate-900',
+                              p.voided ? 'text-slate-500 line-through' : 'text-slate-900',
                             )}
                           >
                             {fmt.money(p.amount, p.currency)}
@@ -415,7 +415,7 @@ export default function ChequeRegisterPage() {
                               <td
                                 className={cn(
                                   'tabular px-3 py-3 text-end font-medium whitespace-nowrap',
-                                  p.voided ? 'text-slate-400 line-through' : 'text-slate-900',
+                                  p.voided ? 'text-slate-500 line-through' : 'text-slate-900',
                                 )}
                               >
                                 {fmt.money(p.amount, p.currency)}

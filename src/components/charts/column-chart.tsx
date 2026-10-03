@@ -166,7 +166,7 @@ export function ColumnChart({
                     y={y(t)}
                     dy="0.32em"
                     textAnchor="end"
-                    className="tabular fill-slate-400 text-[11px]"
+                    className="tabular fill-slate-500 text-xs"
                   >
                     {formatTick(t)}
                   </text>
@@ -203,10 +203,7 @@ export function ColumnChart({
                         x={margin.left + band * i + band / 2}
                         y={height - 8}
                         textAnchor="middle"
-                        className={cn(
-                          'text-[11px]',
-                          isActive ? 'fill-slate-700' : 'fill-slate-400',
-                        )}
+                        className={cn('text-xs', isActive ? 'fill-slate-800' : 'fill-slate-500')}
                       >
                         {label}
                       </text>

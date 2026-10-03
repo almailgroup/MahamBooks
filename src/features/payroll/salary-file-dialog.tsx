@@ -152,7 +152,7 @@ export function SalaryFileDialog({
             <ol className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
               {layout.columns.map((c, i) => (
                 <li key={c} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <span className="tabular w-5 text-slate-400">{i + 1}</span>
+                  <span className="tabular w-5 text-slate-500">{i + 1}</span>
                   <span className="min-w-0 flex-1 text-slate-800">
                     {t(SALARY_FILE_COLUMNS[c].label)}
                   </span>

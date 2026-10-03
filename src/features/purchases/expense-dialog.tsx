@@ -30,6 +30,7 @@ import {
   useAccounts,
 } from '@/features/accounting/account-pickers';
 import { AttachmentList, useDraftAttachments } from './attachments';
+import { DateField } from '@/components/ui/date-field';
 
 /** Tax included in an amount paid: amount − amount / (1 + Σ rates). Reverse charge is never included. */
 export function includedTax(amount: number, taxes: TaxLine[], currency: string): number {
@@ -197,11 +198,10 @@ export function ExpenseDialog({
             >
               <Field label={t('Date')}>
                 {(id) => (
-                  <Input
+                  <DateField
                     id={id}
-                    type="date"
                     value={draft.date}
-                    onChange={(e) => e.target.value && set({ date: e.target.value })}
+                    onChange={(iso) => iso && set({ date: iso })}
                   />
                 )}
               </Field>

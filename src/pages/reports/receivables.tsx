@@ -24,7 +24,8 @@ import { retentionKindLabel, RETENTION_STATUS_META, retentionStatus } from '@/li
 import { msg, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { DateField } from '@/components/ui/date-field';
+import { Field, Select } from '@/components/ui/form';
 import { Badge, Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
 import { CreditBar } from '@/features/clients/contact-summary';
 import { statementLanguageFor, statementPdf } from '@/features/statements/statement-panel';
@@ -229,25 +230,21 @@ function StatementsReport() {
           <div className="flex flex-wrap gap-3">
             <Field label={t('From')} className="w-40">
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
+                  required
                   value={custom.from}
-                  onChange={(e) =>
-                    e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))
-                  }
+                  onChange={(iso) => iso && setCustom((c) => ({ ...c, from: iso }))}
                 />
               )}
             </Field>
             <Field label={t('To')} className="w-40">
               {(id) => (
-                <Input
+                <DateField
                   id={id}
-                  type="date"
+                  required
                   value={custom.to}
-                  onChange={(e) =>
-                    e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))
-                  }
+                  onChange={(iso) => iso && setCustom((c) => ({ ...c, to: iso }))}
                 />
               )}
             </Field>
@@ -303,7 +300,7 @@ function StatementsReport() {
                       </Td>
                       <Td
                         end
-                        className={overdue > 0 ? 'font-medium text-red-600' : 'text-slate-400'}
+                        className={overdue > 0 ? 'font-medium text-red-600' : 'text-slate-500'}
                       >
                         {m(overdue)}
                       </Td>
@@ -635,7 +632,7 @@ function ExposureReport() {
                     </Td>
                     <Td className="min-w-44">
                       {p.limit === null ? (
-                        <span className="text-slate-400">{t('No credit limit')}</span>
+                        <span className="text-slate-500">{t('No credit limit')}</span>
                       ) : (
                         <>
                           <span className="tabular text-xs text-slate-600">
@@ -655,7 +652,7 @@ function ExposureReport() {
                     </Td>
                     <Td
                       end
-                      className={p.overdue > 0 ? 'font-medium text-red-600' : 'text-slate-400'}
+                      className={p.overdue > 0 ? 'font-medium text-red-600' : 'text-slate-500'}
                     >
                       {money(p.overdue, p.precision)}
                     </Td>

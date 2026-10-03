@@ -132,7 +132,7 @@ export function ItemNameInput({
               </span>
               <span className="tabular shrink-0 text-sm text-slate-600">
                 {formatPrice(priceOf(p))}
-                {p.unit ? <span className="text-slate-400"> / {p.unit}</span> : null}
+                {p.unit ? <span className="text-slate-500"> / {p.unit}</span> : null}
               </span>
             </button>
           ))}

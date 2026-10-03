@@ -18,6 +18,7 @@ import {
   DialogFooter,
   useConfirm,
 } from '@/components/ui/overlay';
+import { DateField } from '@/components/ui/date-field';
 
 const LINK_PROVIDERS = PAYMENT_PROVIDERS.filter((p) => p.kind !== 'bnpl') as {
   value: PaymentLinkProvider;
@@ -93,12 +94,11 @@ export function PaymentLinkDialog({ doc, onClose }: { doc: InvoiceDocument; onCl
           >
             {(id) => (
               <div className="flex flex-wrap gap-2">
-                <Input
+                <DateField
                   id={id}
-                  type="date"
                   className="w-auto flex-1"
                   value={link.expiresAt ?? ''}
-                  onChange={(e) => setLink({ ...link, expiresAt: e.target.value || null })}
+                  onChange={(iso) => setLink({ ...link, expiresAt: iso || null })}
                 />
                 <Button
                   variant="outline"

@@ -259,7 +259,7 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                           <td className="tabular px-5 py-3 text-end">
                             <span
                               className={
-                                row.balance > 0 ? 'font-medium text-slate-900' : 'text-slate-400'
+                                row.balance > 0 ? 'font-medium text-slate-900' : 'text-slate-500'
                               }
                             >
                               {fmt.money(row.balance, currencyOf(client))}
@@ -292,7 +292,7 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                           className={
                             row.balance > 0
                               ? 'tabular block text-sm font-semibold text-slate-900'
-                              : 'tabular block text-sm text-slate-400'
+                              : 'tabular block text-sm text-slate-500'
                           }
                         >
                           {fmt.money(row.balance, currencyOf(row.client))}

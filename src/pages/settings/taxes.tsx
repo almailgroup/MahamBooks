@@ -61,7 +61,7 @@ function TaxRow({
           allowNegative={false}
           className="pe-7"
         />
-        <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 rtl:start-3 rtl:end-auto">
+        <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 rtl:start-3 rtl:end-auto">
           %
         </span>
       </div>

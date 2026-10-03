@@ -472,7 +472,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                     item.kind === 'heading' ? null : (
                       <tr key={item.id}>
                         <td className="px-5 py-2.5 text-slate-800">
-                          {item.name || <span className="text-slate-400">—</span>}
+                          {item.name || <span className="text-slate-500">—</span>}
                           {item.nameAr ? (
                             <span className="block text-xs text-slate-500" dir="rtl" lang="ar">
                               {item.nameAr}
@@ -664,7 +664,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                             <span
                               className={
                                 p.voided
-                                  ? 'tabular text-slate-400 line-through'
+                                  ? 'tabular text-slate-500 line-through'
                                   : 'tabular font-medium'
                               }
                             >
@@ -693,7 +693,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
                       <p className="text-sm text-slate-700">{activityText(a)}</p>
-                      <p className="text-xs text-slate-400">{fmt.dateTime(a.at)}</p>
+                      <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}
                 </ol>

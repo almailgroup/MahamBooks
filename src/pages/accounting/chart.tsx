@@ -409,7 +409,7 @@ export default function ChartOfAccountsPage() {
                     return (
                       <tr
                         key={a.id}
-                        className={cn('hover:bg-slate-50', a.archived && 'text-slate-400')}
+                        className={cn('hover:bg-slate-50', a.archived && 'text-slate-500')}
                       >
                         <td className="tabular px-4 py-2 align-top text-slate-500">{a.code}</td>
                         <td className="px-3 py-2">
@@ -417,7 +417,7 @@ export default function ChartOfAccountsPage() {
                             to={`/reports/general-ledger?account=${a.id}&from=0000-01-01&to=${today()}`}
                             className={cn(
                               'hover:text-primary-700 font-medium',
-                              a.archived ? 'text-slate-400' : 'text-slate-900',
+                              a.archived ? 'text-slate-500' : 'text-slate-900',
                             )}
                           >
                             {localName(a)}
@@ -434,7 +434,7 @@ export default function ChartOfAccountsPage() {
                           ) : null}
                           {other ? (
                             <span
-                              className="block text-xs text-slate-400"
+                              className="block text-xs text-slate-500"
                               dir={currentLanguage() === 'ar' ? 'ltr' : 'rtl'}
                               lang={currentLanguage() === 'ar' ? 'en' : 'ar'}
                             >

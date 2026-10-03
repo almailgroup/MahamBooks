@@ -40,6 +40,7 @@ import {
 import { useAccounts } from '@/features/accounting/account-pickers';
 import { BankAccountSelect, ChequeFields } from '@/features/payments/fields';
 import { PAYMENT_COPY, paymentDirection } from '@/features/payments/direction';
+import { DateField } from '@/components/ui/date-field';
 
 export type ChequeAction = 'deposit' | 'clear' | 'return' | 'cancel' | 'replace';
 
@@ -272,12 +273,11 @@ function DepositDialog({ payment, onClose }: { payment: ChequePayment; onClose: 
         }
       >
         {(id) => (
-          <Input
+          <DateField
             id={id}
-            type="date"
             value={date}
             min={payment.date}
-            onChange={(e) => setDate(e.target.value || today())}
+            onChange={(iso) => setDate(iso || today())}
           />
         )}
       </Field>
@@ -325,12 +325,11 @@ function ClearDialog({ payment, onClose }: { payment: ChequePayment; onClose: ()
       </p>
       <Field label={t('Clearing date')}>
         {(id) => (
-          <Input
+          <DateField
             id={id}
-            type="date"
             value={date}
             min={earliest}
-            onChange={(e) => setDate(e.target.value || today())}
+            onChange={(iso) => setDate(iso || today())}
           />
         )}
       </Field>
@@ -397,12 +396,11 @@ function ReturnDialog({ payment, onClose }: { payment: ChequePayment; onClose: (
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={t('Return date')}>
           {(id) => (
-            <Input
+            <DateField
               id={id}
-              type="date"
               value={date}
               min={payment.date}
-              onChange={(e) => setDate(e.target.value || today())}
+              onChange={(iso) => setDate(iso || today())}
             />
           )}
         </Field>
@@ -481,12 +479,11 @@ function CancelDialog({ payment, onClose }: { payment: ChequePayment; onClose: (
       </p>
       <Field label={t('Date')}>
         {(id) => (
-          <Input
+          <DateField
             id={id}
-            type="date"
             value={date}
             min={payment.date}
-            onChange={(e) => setDate(e.target.value || today())}
+            onChange={(iso) => setDate(iso || today())}
           />
         )}
       </Field>
@@ -570,14 +567,7 @@ function ReplaceDialog({
           )}
         </Field>
         <Field label={direction === 'out' ? t('Date issued') : t('Date received')}>
-          {(id) => (
-            <Input
-              id={id}
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value || today())}
-            />
-          )}
+          {(id) => <DateField id={id} value={date} onChange={(iso) => setDate(iso || today())} />}
         </Field>
       </div>
       <ChequeFields

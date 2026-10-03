@@ -51,12 +51,12 @@ export function DialogContent({
               <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
             )}
           </div>
-          <DialogPrimitive.Close className="-me-1 -mt-1 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <DialogPrimitive.Close className="-me-1 -mt-1 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 pointer-coarse:-me-2.5 pointer-coarse:-mt-2.5 pointer-coarse:p-2.5">
             <X className="size-5" />
             <span className="sr-only">{t('Close')}</span>
           </DialogPrimitive.Close>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">{children}</div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );
@@ -70,7 +70,8 @@ export function DialogFooter({ className, children }: { className?: string; chil
   return (
     <div
       className={cn(
-        'flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 sm:flex-row sm:justify-end',
+        // Stays in view at the bottom of a long dialog.
+        'sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3 sm:flex-row sm:justify-end',
         className,
       )}
     >
@@ -129,13 +130,13 @@ export function DropdownItem({
       disabled={disabled}
       onSelect={onSelect}
       className={cn(
-        'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4',
+        'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11 [&_svg]:size-4',
         danger
           ? 'text-red-600 data-[highlighted]:bg-red-50'
           : 'text-slate-700 data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900',
       )}
     >
-      {icon ? <span className={danger ? 'text-red-500' : 'text-slate-400'}>{icon}</span> : null}
+      {icon ? <span className={danger ? 'text-red-500' : 'text-slate-500'}>{icon}</span> : null}
       {children}
     </Menu.Item>
   );

@@ -121,7 +121,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
                 {due.map(({ asset, amount }) => (
                   <li key={asset.id} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="min-w-0 truncate text-slate-700">
-                      <span className="tabular me-2 text-slate-400">{asset.number}</span>
+                      <span className="tabular me-2 text-slate-500">{asset.number}</span>
                       {localName(asset)}
                     </span>
                     <span className="tabular shrink-0 text-slate-900">
@@ -214,12 +214,12 @@ function RunsTable({ runs }: { runs: DepreciationRun[] }) {
         </thead>
         <tbody className="divide-y divide-slate-100">
           {sorted.map((run) => (
-            <tr key={run.id} className={cn(run.reversedAt && 'text-slate-400')}>
+            <tr key={run.id} className={cn(run.reversedAt && 'text-slate-500')}>
               <td className="px-4 py-2.5 whitespace-nowrap">
                 <span
                   className={cn(
                     'font-medium',
-                    run.reversedAt ? 'text-slate-400 line-through' : 'text-slate-900',
+                    run.reversedAt ? 'text-slate-500 line-through' : 'text-slate-900',
                   )}
                 >
                   {monthLabel(run.period, company.locale)}

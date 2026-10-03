@@ -22,6 +22,7 @@ import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
+import { DateField } from '@/components/ui/date-field';
 
 const ACCOUNT_KEYS = Object.keys(PAYROLL_ACCOUNTS) as PayrollAccountKey[];
 
@@ -269,16 +270,13 @@ export default function PayrollSettingsPage() {
                   first={
                     <>
                       <CellLabel htmlFor={`pifss-from-${i}`}>{t('From')}</CellLabel>
-                      <Input
+                      <DateField
                         id={`pifss-from-${i}`}
-                        type="date"
                         value={r.from}
-                        onChange={(e) =>
-                          e.target.value &&
+                        onChange={(iso) =>
+                          iso &&
                           set({
-                            pifss: value.pifss.map((x, j) =>
-                              j === i ? { ...x, from: e.target.value } : x,
-                            ),
+                            pifss: value.pifss.map((x, j) => (j === i ? { ...x, from: iso } : x)),
                           })
                         }
                       />
