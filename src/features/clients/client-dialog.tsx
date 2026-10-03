@@ -5,6 +5,7 @@ import { createClient } from '@/db/defaults';
 import { saveClient } from '@/db/records';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
+import { t } from '@/i18n';
 import { ClientForm, newContact, validateClient } from './client-form';
 import { CONTACT_COPY, contactRoles, type ContactKind } from './contact-kind';
 
@@ -53,11 +54,11 @@ export function ClientDialog({
         ...client,
         contacts: client.contacts.filter((c) => c.name || c.email || c.phone),
       });
-      toast.success(`${copy.column} ${saved.name} added`);
+      toast.success(t(copy.added, { name: saved.name }));
       onSaved(saved);
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : `Could not save the ${copy.singular}.`);
+      toast.error(error instanceof Error ? error.message : t(copy.saveError));
     } finally {
       setSaving(false);
     }
@@ -65,11 +66,7 @@ export function ClientDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        title={`New ${copy.singular}`}
-        description={`You can add more details later from the ${copy.title} page.`}
-        size="lg"
-      >
+      <DialogContent title={t(copy.newLabel)} description={t(copy.quickHint)} size="lg">
         <DialogBody>
           <ClientForm
             value={client}
@@ -82,10 +79,10 @@ export function ClientDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={save} loading={saving}>
-            Save {copy.singular}
+            {t(copy.saveLabel)}
           </Button>
         </DialogFooter>
       </DialogContent>

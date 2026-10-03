@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculate, taxKey, taxKind, type CalcInput } from './calc';
+import { calculate, retentionOf, taxKey, taxKind, type CalcInput } from './calc';
 
 const base: Omit<CalcInput, 'items'> = { precision: 2 };
 const vat20 = { name: 'VAT', rate: 20 };
@@ -256,5 +256,43 @@ describe('calculate', () => {
   it('returns zeros for an empty document', () => {
     const r = calculate({ ...base, items: [] });
     expect(r).toMatchObject({ subtotal: 0, total: 0, balance: 0, taxTotal: 0 });
+  });
+});
+
+describe('retention', () => {
+  const kwd = (unitPrice: number, extra: Partial<CalcInput> = {}): CalcInput => ({
+    precision: 3,
+    items: [{ quantity: 1, unitPrice }],
+    ...extra,
+  });
+
+  it('holds back a share of the total, rounded to the fils', () => {
+    expect(retentionOf(1234.567, 5, 3)).toBe(61.728);
+    // 5% of 0.010 is 0.0005: half a fils rounds up.
+    expect(retentionOf(0.01, 5, 3)).toBe(0.001);
+    expect(retentionOf(1000, 0, 3)).toBe(0);
+    expect(retentionOf(1000, -5, 3)).toBe(0);
+    expect(retentionOf(1000, 150, 3)).toBe(1000);
+  });
+
+  it('is not due: the balance leaves it out until it is released', () => {
+    const held = calculate(kwd(1234.567, { retentionPercent: 5, paid: 500 }));
+    expect(held).toMatchObject({
+      total: 1234.567,
+      retention: 61.728,
+      retentionHeld: 61.728,
+      paid: 500,
+      balance: 672.839,
+    });
+    const released = calculate(
+      kwd(1234.567, { retentionPercent: 5, paid: 500, retentionReleased: 61.728 }),
+    );
+    expect(released).toMatchObject({ retentionHeld: 0, balance: 734.567 });
+    // More released than held counts as fully released.
+    expect(calculate(kwd(100, { retentionPercent: 10, retentionReleased: 50 })).balance).toBe(100);
+  });
+
+  it('is never part of the deposit asked for', () => {
+    expect(calculate(kwd(1000, { retentionPercent: 10, deposit: 1000 })).depositDue).toBe(900);
   });
 });

@@ -1,6 +1,6 @@
 import type { InvoiceDocument } from '@/db/types';
 import { calculate, type CalcInput, type CalcResult } from './calc';
-import { currencyPrecision } from './money';
+import { currencyPrecision, dec, round } from './money';
 
 export type CalculableDocument = Pick<
   InvoiceDocument,
@@ -12,7 +12,24 @@ export type CalculableDocument = Pick<
   | 'pricesIncludeTax'
   | 'currency'
   | 'deposit'
->;
+> &
+  Partial<Pick<InvoiceDocument, 'type' | 'retentionPercent' | 'retentionReleases'>>;
+
+/** Document types that can hold back a retention. */
+export function takesRetention(type: InvoiceDocument['type'] | undefined): boolean {
+  return type === 'invoice' || type === 'bill';
+}
+
+/** Retention released so far (releases that were not undone), in the document currency. */
+export function releasedRetention(
+  doc: Partial<Pick<InvoiceDocument, 'retentionReleases' | 'currency'>>,
+): number {
+  const p = currencyPrecision(doc.currency || 'KWD');
+  const released = (doc.retentionReleases ?? [])
+    .filter((r) => !r.reversedOn)
+    .reduce((acc, r) => acc.plus(dec(r.amount)), dec(0));
+  return round(released, p);
+}
 
 export function documentCalcInput(
   doc: CalculableDocument,
@@ -36,6 +53,10 @@ export function documentCalcInput(
     pricesIncludeTax: doc.pricesIncludeTax,
     paid: options.paid ?? 0,
     deposit: doc.deposit,
+    // Only invoices and bills hold back a retention; a document without a type
+    // (a recurring template) has none.
+    retentionPercent: takesRetention(doc.type) ? (doc.retentionPercent ?? 0) : 0,
+    retentionReleased: takesRetention(doc.type) ? releasedRetention(doc) : 0,
   };
 }
 

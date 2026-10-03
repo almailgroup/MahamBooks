@@ -34,6 +34,7 @@ import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { CurrencySelect } from '@/components/fields';
+import { retentionDefaults } from '@/lib/retention';
 import { TotalsPanel } from '@/features/editor/totals-panel';
 import { TaxSelect } from '@/features/editor/tax-select';
 import { ClientDialog } from '@/features/clients/client-dialog';
@@ -172,6 +173,7 @@ function Editor({
             d.issueDate,
             picked.paymentTermsDays ?? company.defaults.paymentTermsDays,
           );
+          Object.assign(next, retentionDefaults(picked, type, d.issueDate));
         }
       }
       return next;
@@ -666,6 +668,7 @@ function Editor({
                 money={money}
                 percent={fmt.percent}
                 taxExempt={Boolean(vendor?.taxExempt)}
+                contact={vendor}
               />
             </CardBody>
           </Card>

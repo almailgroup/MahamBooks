@@ -49,7 +49,15 @@ export interface RenderItem {
 }
 
 export type TotalKind =
-  'subtotal' | 'discount' | 'charge' | 'tax' | 'total' | 'included-tax' | 'paid' | 'balance';
+  | 'subtotal'
+  | 'discount'
+  | 'charge'
+  | 'tax'
+  | 'total'
+  | 'included-tax'
+  | 'retention'
+  | 'paid'
+  | 'balance';
 
 export interface RenderTotal {
   kind: TotalKind;
@@ -184,7 +192,25 @@ export type RenderableDocument = Pick<
   | 'deliveryPlace'
   | 'receiverName'
   | 'receiverCivilId'
-> & { totals: Pick<InvoiceDocument['totals'], 'paid'> };
+> &
+  Partial<Pick<InvoiceDocument, 'retentionPercent' | 'retentionReleases'>> & {
+    totals: Pick<InvoiceDocument['totals'], 'paid'>;
+  };
+
+/**
+ * "Retention held" in each printed language. Kept here rather than with the
+ * other printed words: it is not a word companies change.
+ */
+const RETENTION_LABEL: Record<Exclude<DocumentLanguage, 'ar-en'>, string> = {
+  en: 'Retention held',
+  ar: 'محتجزات',
+  fr: 'Retenue de garantie',
+  es: 'Retención',
+  de: 'Einbehalt',
+  pt: 'Retenção',
+  it: 'Ritenuta a garanzia',
+  nl: 'Inhouding',
+};
 
 const TITLE_KEYS: Record<PrintableDocumentType, LabelKey> = {
   invoice: 'invoice',
@@ -500,12 +526,28 @@ export function buildRenderModel(
     };
   } else {
     const balanceKey: LabelKey = doc.type === 'credit' ? 'creditRemaining' : 'balanceDue';
-    if (result.paid !== 0) {
-      totals.push(total('paid', 'paid', -result.paid));
-      totals.push(total('balance', balanceKey, isVoid ? 0 : result.balance));
+    if (result.retentionHeld !== 0) {
+      // Held back until released: not part of the amount due.
+      const lang = language === 'ar-en' ? 'ar' : language;
+      const percent =
+        doc.retentionPercent && result.retentionHeld === result.retention
+          ? ` (${formatPercent(doc.retentionPercent, locale)})`
+          : '';
+      totals.push({
+        kind: 'retention',
+        label: `${RETENTION_LABEL[lang] ?? RETENTION_LABEL.en}${percent}`,
+        secondary: secondary ? `${RETENTION_LABEL.en}${percent}` : '',
+        value: money(-result.retentionHeld),
+      });
     }
-    const dueKey: LabelKey =
-      result.paid !== 0 ? balanceKey : doc.type === 'credit' ? 'total' : 'amountDue';
+    const showBalance = result.paid !== 0 || result.retentionHeld !== 0;
+    if (result.paid !== 0) totals.push(total('paid', 'paid', -result.paid));
+    if (showBalance) totals.push(total('balance', balanceKey, isVoid ? 0 : result.balance));
+    const dueKey: LabelKey = showBalance
+      ? balanceKey
+      : doc.type === 'credit'
+        ? 'total'
+        : 'amountDue';
     amountDue = {
       label: labels[dueKey],
       secondary: en(dueKey),

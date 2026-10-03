@@ -24,6 +24,11 @@ export const JOURNAL_KINDS: Record<JournalKind, JournalKindInfo> = {
   asset_opening: { label: msg('Asset opening balance'), tone: 'amber', owner: msg('Fixed assets') },
   asset_disposal: { label: msg('Asset disposal'), tone: 'amber', owner: msg('Fixed assets') },
   year_end: { label: msg('Year-end close'), tone: 'green', owner: msg('Year-end close') },
+  retention_release: {
+    label: msg('Retention release'),
+    tone: 'violet',
+    owner: msg('Retentions'),
+  },
 };
 
 /**
@@ -37,6 +42,7 @@ export const ACCOUNTING_OWNED_KINDS: JournalKind[] = [
   'asset_opening',
   'asset_disposal',
   'year_end',
+  'retention_release',
 ];
 
 /** Information for a journal's kind, or null for an ordinary manual journal. */
@@ -69,6 +75,8 @@ export function journalOwnerLink(
     }
     case 'payroll':
       return '/payroll';
+    case 'retention_release':
+      return '/reports/retentions';
     default:
       return null;
   }

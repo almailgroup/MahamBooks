@@ -462,6 +462,7 @@ export async function loadLedger(company: Company): Promise<CompanyLedger> {
     : [[], [], []];
   const exempt = new Set(clients.filter((c) => c.taxExempt).map((c) => c.id));
   const byId = new Map(documents.map((d) => [d.id, d]));
+  const template = accountingSettings(company).template;
   const ctx: LedgerContext = {
     companyCurrency: company.currency,
     precision: currencyPrecision(company.currency),
@@ -470,13 +471,11 @@ export async function loadLedger(company: Company): Promise<CompanyLedger> {
     productAccounts: new Map(products.map((p) => [p.id, p.incomeAccountId])),
     taxExempt: (id) => exempt.has(id),
     documents: byId,
-    stock: stockLedgerContext({
-      accounts,
-      products,
-      landedCosts,
-      documents: byId,
-      template: accountingSettings(company).template,
-    }),
+    stock: stockLedgerContext({ accounts, products, landedCosts, documents: byId, template }),
+    retentionAccounts: {
+      receivable: findSpecAccount(accounts, 'retentionsReceivable', template)?.id,
+      payable: findSpecAccount(accounts, 'retentionsPayable', template)?.id,
+    },
   };
   const { lines, problems } = buildLedger(
     { documents, payments, journals, expenses, stock: { movements, entries } },

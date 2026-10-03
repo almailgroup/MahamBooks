@@ -10,17 +10,19 @@ import type {
   InvoiceDocument,
   TaxLine,
 } from './types';
-import { computeDocument } from '@/lib/document-calc';
+import { computeDocument, releasedRetention, takesRetention } from '@/lib/document-calc';
+import { retentionDefaults } from '@/lib/retention';
 import { taxLineOf } from '@/lib/calc';
 import { allocateNumber } from '@/lib/numbering';
 import { issuedStatus, settledStatus } from '@/lib/status';
 import { addDaysISO, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
+import { currencyPrecision, dec, round } from '@/lib/money';
 import { isPosted } from '@/lib/accounting/ledger';
 import { isPurchaseType, postsToLedger } from '@/lib/document-types';
 import { deliveryStatusOf, lineProgress, orderStatus } from '@/lib/orders';
 import { msg, t } from '@/i18n';
-import { assertUnlocked } from './accounting';
+import { assertUnlocked, ensureSpecAccount } from './accounting';
 import { syncDocumentStock, withStockTables } from './inventory';
 
 /** Activity log messages of each type (English keys, shown in the reader's language). */
@@ -128,6 +130,7 @@ export async function draftDocument(
   const wording = defaultWording(company, type);
   const priced = type !== 'delivery_note';
   return createDocument(company.id, type, {
+    ...retentionDefaults(client, type, issueDate),
     clientId: client?.id ?? '',
     issueDate,
     dueDate:
@@ -199,7 +202,7 @@ export function applyTotals(
   client: Pick<Client, 'taxExempt'> | null,
 ): InvoiceDocument {
   const result = computeDocument(doc, { paid, taxExempt: client?.taxExempt });
-  const totals = {
+  const totals: InvoiceDocument['totals'] = {
     subtotal: result.subtotal,
     discount: result.discount,
     taxTotal: result.taxTotal,
@@ -207,10 +210,16 @@ export function applyTotals(
     paid: result.paid,
     balance: result.balance,
   };
-  // Only documents that take payments move between sent, partially paid and paid.
+  if (result.retention !== 0) totals.retention = result.retention;
+  // Only documents that take payments move between sent, partially paid and
+  // paid. A retention still held is not due yet, so it doesn't keep them open.
   let status: DocumentStatus = doc.status;
   if (postsToLedger(doc.type) && doc.status !== 'void') {
-    status = settledStatus(doc, result.total, result.paid);
+    const due = round(
+      dec(result.total).minus(dec(result.retentionHeld)),
+      currencyPrecision(doc.currency || 'KWD'),
+    );
+    status = settledStatus(doc, due, result.paid);
   }
   const settled = status === 'paid' || status === 'applied';
   return {
@@ -319,6 +328,23 @@ export async function suggestNumber(
   ).number;
 }
 
+export class RetentionError extends Error {}
+
+/**
+ * The retention fields as they may be saved: only invoices and bills hold
+ * one back, and releases are only ever recorded by the retention module, so
+ * an editor working on an older copy can't drop them.
+ */
+function withRetention(doc: InvoiceDocument, existing: InvoiceDocument | undefined) {
+  const next: InvoiceDocument = { ...doc, retentionReleases: existing?.retentionReleases };
+  if (!takesRetention(doc.type)) {
+    delete next.retentionPercent;
+    delete next.retentionKind;
+  }
+  if (!next.retentionReleases?.length) delete next.retentionReleases;
+  return next;
+}
+
 export class DuplicateNumberError extends Error {
   constructor(number: string) {
     super(t('The number {number} is already used by another document.', { number }));
@@ -333,7 +359,14 @@ export class DuplicateNumberError extends Error {
 export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocument> {
   return db.transaction(
     'rw',
-    withStockTables([db.documents, db.companies, db.clients, db.payments, db.activities]),
+    withStockTables([
+      db.documents,
+      db.companies,
+      db.clients,
+      db.payments,
+      db.activities,
+      db.accounts,
+    ]),
     async () => {
       const company = await db.companies.get(input.companyId);
       if (!company) throw new Error('Company not found');
@@ -342,7 +375,7 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
         assertUnlocked(company, input.issueDate, existing?.issueDate);
       }
       const client = input.clientId ? await db.clients.get(input.clientId) : undefined;
-      let doc: InvoiceDocument = { ...input, number: input.number.trim() };
+      let doc: InvoiceDocument = withRetention({ ...input, number: input.number.trim() }, existing);
 
       const taken = await takenNumbers(company.id, doc.type, doc.id);
       if (!doc.number) {
@@ -364,6 +397,20 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       }
 
       doc = applyTotals(doc, existing ? await paidAmount(existing) : 0, client ?? null);
+      if (dec(releasedRetention(doc)).gt(dec(doc.totals.retention ?? 0))) {
+        throw new RetentionError(
+          t(
+            'More retention has been released than this document would hold. Undo a release first.',
+          ),
+        );
+      }
+      if (isPosted(doc) && doc.totals.retention) {
+        // Held-back money waits in 1110 Retentions receivable (2010 payable).
+        await ensureSpecAccount(
+          company,
+          doc.type === 'bill' ? 'retentionsPayable' : 'retentionsReceivable',
+        );
+      }
       doc.updatedAt = nowStamp();
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.documents.put(doc);

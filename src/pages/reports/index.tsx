@@ -11,6 +11,7 @@ import { GeneralLedgerReport, StatementReport } from './financial';
 import { AuditorPack } from './auditor-pack';
 import { SalesReports, type SalesReportId } from './sales';
 import { INVENTORY_REPORTS, InventoryReports, type InventoryReportId } from './inventory';
+import { ReceivablesReports, type ReceivablesReportId } from './receivables';
 
 const GROUPS = [
   {
@@ -41,6 +42,14 @@ const GROUPS = [
     ],
   },
   {
+    title: msg('Credit control'),
+    items: [
+      { id: 'statements', label: msg('Statements of account') },
+      { id: 'exposure', label: msg('Customer exposure') },
+      { id: 'retentions', label: msg('Retentions') },
+    ],
+  },
+  {
     title: msg('Purchases'),
     items: [
       { id: 'payables', label: msg('Payables aging') },
@@ -67,6 +76,8 @@ const STATEMENTS: StatementId[] = [
   'trial-balance',
   'asset-schedule',
 ];
+
+const RECEIVABLES: ReceivablesReportId[] = ['statements', 'exposure', 'retentions'];
 
 const SALES: SalesReportId[] = [
   'aging',
@@ -149,6 +160,9 @@ export default function ReportsPage() {
           ) : null}
           {INVENTORY_REPORTS.includes(current as InventoryReportId) ? (
             <InventoryReports report={current as InventoryReportId} />
+          ) : null}
+          {RECEIVABLES.includes(current as ReceivablesReportId) ? (
+            <ReceivablesReports key={current} report={current as ReceivablesReportId} />
           ) : null}
         </div>
       </div>

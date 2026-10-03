@@ -46,6 +46,8 @@ import { useLivePdf } from '@/components/pdf/use-pdf';
 import { LineItemsEditor } from '@/features/editor/line-items';
 import { TotalsPanel } from '@/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
+import { useCreditCheck } from '@/features/clients/credit-check';
+import { retentionDefaults } from '@/lib/retention';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer } from '@/db/purchases';
 
@@ -99,6 +101,8 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const [showPreview, setShowPreview] = useState(true);
   const [mobilePreview, setMobilePreview] = useState(false);
   const [notFound, setNotFound] = useState(false);
+
+  const checkCredit = useCreditCheck();
 
   // Reads the latest company without making the load effect depend on it.
   const currentCompany = useEffectEvent(() => company);
@@ -213,6 +217,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
             d.issueDate,
             picked.paymentTermsDays ?? company.defaults.paymentTermsDays,
           );
+          Object.assign(next, retentionDefaults(picked, type, d.issueDate));
         }
       }
       return next;
@@ -234,6 +239,8 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
       toast.error(t('Please fix the highlighted fields.'));
       return;
     }
+    // Customers on credit hold, or going over their limit, need a confirmation.
+    if (!(await checkCredit(doc, client))) return;
     setSaving(intent);
     try {
       const saved = await saveDocument({
@@ -667,6 +674,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     percent={fmt.percent}
                     taxExempt={Boolean(client?.taxExempt)}
                     allowDeposit={type === 'invoice' || type === 'proforma'}
+                    contact={client}
                   />
                 </CardBody>
               </Card>

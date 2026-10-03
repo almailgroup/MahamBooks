@@ -445,6 +445,20 @@ export const ACCOUNT_SPECS = {
     'liability_current',
     /income tax/i,
   ),
+  retentionsReceivable: spec(
+    '1110',
+    'Retentions receivable',
+    'محتجزات مدينة',
+    'asset_current',
+    /retentions? (receivable|held by customers)/i,
+  ),
+  retentionsPayable: spec(
+    '2010',
+    'Retentions payable',
+    'محتجزات دائنة',
+    'liability_current',
+    /retentions? (payable|held from vendors)/i,
+  ),
   endOfService: spec(
     '2700',
     'End-of-service indemnity provision',

@@ -540,9 +540,66 @@ export interface Client {
   isVendor?: boolean;
   /** Internal notes, never printed. */
   notes: string;
+  /**
+   * Customers: the most they may owe at once, in the company currency (open
+   * balance plus cheques not yet cleared). Missing or null means no limit.
+   */
+  creditLimit?: number | null;
+  /** Customers: no new invoices or sales orders without an override. */
+  creditHold?: boolean;
+  /**
+   * Share of each invoice (or bill) held back as a retention, e.g. 5 for the
+   * 5% tax retention. Missing, null or 0 means none.
+   */
+  retentionPercent?: number | null;
+  /** What the retention is waiting for; missing means 'tax'. */
+  retentionKind?: RetentionKind;
+  /**
+   * Tax clearance certificates: the vendor's, or the company's own as given to
+   * this customer. A valid one on the document date means nothing is retained.
+   */
+  clearanceCertificates?: ClearanceCertificate[];
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * Why money is held back from an invoice or bill: the 5% tax retention that
+ * payers keep until the Ministry of Finance clearance certificate is shown,
+ * or a contract retention kept until handover.
+ */
+export type RetentionKind = 'tax' | 'contract';
+
+/** A Ministry of Finance tax clearance certificate (شهادة براءة ذمة ضريبية). */
+export interface ClearanceCertificate {
+  id: ID;
+  number: string;
+  issueDate: ISODate;
+  /** Last day it is valid; null when it doesn't expire. */
+  expiryDate: ISODate | null;
+  notes?: string;
+}
+
+/**
+ * Part of a retention paid back (released): it moves from retentions
+ * receivable (or payable) back to the invoice (or bill) balance, so it can be
+ * paid like any other amount. Undoing it posts a reversing entry.
+ */
+export interface RetentionRelease {
+  id: ID;
+  date: ISODate;
+  /** In the document currency. */
+  amount: number;
+  /** What allowed the release: a clearance certificate or the handover. */
+  basis: 'certificate' | 'handover';
+  /** Certificate number, or a note about the handover. */
+  reference: string;
+  /** Entry moving the amount back to the receivable (or payable). */
+  journalId: ID;
+  /** Set when the release was undone. */
+  reversedOn?: ISODate | null;
+  reversalJournalId?: ID | null;
 }
 
 export interface TaxRate {
@@ -639,7 +696,10 @@ export interface DocumentTotals {
   taxTotal: number;
   total: number;
   paid: number;
+  /** Amount due now: the total less the retention still held, payments and credits. */
   balance: number;
+  /** Invoices and bills: amount held back as a retention (missing means none). */
+  retention?: number;
 }
 
 export interface InvoiceDocument {
@@ -702,6 +762,14 @@ export interface InvoiceDocument {
   receiverName?: string;
   /** Delivery notes: Civil ID number of the person who signed (optional). */
   receiverCivilId?: string;
+  /**
+   * Invoices and bills: share of the total held back as a retention (e.g. 5).
+   * It is not due until released; missing or 0 means none.
+   */
+  retentionPercent?: number;
+  retentionKind?: RetentionKind;
+  /** Parts of the retention released so far, oldest first. */
+  retentionReleases?: RetentionRelease[];
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -1198,7 +1266,8 @@ export type JournalKind =
   | 'asset_purchase'
   | 'asset_opening'
   | 'asset_disposal'
-  | 'year_end';
+  | 'year_end'
+  | 'retention_release';
 
 export type DepreciationMethod = 'straight_line' | 'declining_balance';
 

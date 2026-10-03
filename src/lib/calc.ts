@@ -1,4 +1,4 @@
-import { Decimal, dec, round } from './money';
+import { Decimal, dec, round, type Numeric } from './money';
 
 export type DiscountType = 'percent' | 'amount';
 
@@ -78,6 +78,10 @@ export interface CalcInput {
   paid?: number;
   /** Deposit / partial amount requested up front. */
   deposit?: number;
+  /** Share of the total held back as a retention (e.g. 5 for 5%); not due until released. */
+  retentionPercent?: number;
+  /** Part of the retention released so far (due again like the rest of the total). */
+  retentionReleased?: number;
 }
 
 export interface CalcLineResult {
@@ -117,9 +121,22 @@ export interface CalcResult {
   netTotal: number;
   total: number;
   paid: number;
+  /** Retention held back from the total: `retentionPercent` of it, rounded to the currency. */
+  retention: number;
+  /** Part of the retention still held (not released yet). */
+  retentionHeld: number;
+  /** Amount due: total less the retention still held and what was paid. */
   balance: number;
   /** Part of the deposit that is still outstanding (0 when no deposit was requested). */
   depositDue: number;
+}
+
+/** Retention on a total: `percent` of it, rounded to the currency (5% of 1,234.567 = 61.728). */
+export function retentionOf(total: Numeric, percent: number | null | undefined, precision: number) {
+  const rate = Number.isFinite(percent) ? Math.min(Math.max(percent ?? 0, 0), 100) : 0;
+  if (rate === 0) return 0;
+  const amount = round(dec(total).times(dec(rate)).dividedBy(100), precision);
+  return amount > 0 ? amount : 0;
 }
 
 export function taxKey(tax: TaxLine): string {
@@ -249,12 +266,19 @@ export function calculate(input: CalcInput): CalcResult {
   const netTotal = total.minus(taxTotal);
 
   const paid = dec(round(input.paid ?? 0, p));
-  const balance = total.minus(paid);
+  const retention = dec(retentionOf(round(total, p), input.retentionPercent, p));
+  let released = dec(round(input.retentionReleased ?? 0, p));
+  if (released.isNegative()) released = new Decimal(0);
+  if (released.gt(retention)) released = retention;
+  const retentionHeld = retention.minus(released);
+  const balance = total.minus(retentionHeld).minus(paid);
 
   const deposit = dec(input.deposit ?? 0);
   let depositDue = new Decimal(0);
   if (deposit.gt(0)) {
-    const capped = deposit.gt(total) ? total : deposit;
+    // The retention is never part of the amount asked for up front.
+    const payable = total.minus(retention);
+    const capped = deposit.gt(payable) ? payable : deposit;
     depositDue = capped.minus(paid);
     if (depositDue.isNegative()) depositDue = new Decimal(0);
   }
@@ -270,6 +294,8 @@ export function calculate(input: CalcInput): CalcResult {
     netTotal: round(netTotal, p),
     total: round(total, p),
     paid: round(paid, p),
+    retention: round(retention, p),
+    retentionHeld: round(retentionHeld, p),
     balance: round(balance, p),
     depositDue: round(depositDue, p),
   };

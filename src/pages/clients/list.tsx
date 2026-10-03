@@ -4,15 +4,26 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Download, Plus, Search } from 'lucide-react';
 import { db } from '@/db/db';
 import { isCustomer, isVendor } from '@/db/purchases';
+import type { Client } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { countryName } from '@/lib/geo';
 import { downloadCsv } from '@/lib/csv';
 import { displayStatus } from '@/lib/status';
 import { today } from '@/lib/dates';
+import { t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Input } from '@/components/ui/form';
 import { CONTACT_COPY, type ContactKind } from '@/features/clients/contact-kind';
+
+interface Row {
+  client: Client;
+  invoiced: number;
+  balance: number;
+  overdue: boolean;
+  count: number;
+}
 
 export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKind }) {
   const copy = CONTACT_COPY[kind];
@@ -31,18 +42,16 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
     [company.id, copy.docType],
   );
 
-  const rows = useMemo(() => {
+  const rows = useMemo<Row[] | null>(() => {
     if (!clients || !docs) return null;
     const now = today();
-    const stats = new Map<
-      string,
-      { invoiced: number; balance: number; overdue: boolean; count: number }
-    >();
+    const currencies = new Map(clients.map((c) => [c.id, c.currency ?? company.currency]));
+    const stats = new Map<string, Omit<Row, 'client'>>();
     for (const d of docs) {
       if (d.status === 'draft' || d.status === 'void') continue;
       const s = stats.get(d.clientId) ?? { invoiced: 0, balance: 0, overdue: false, count: 0 };
       s.count += 1;
-      if (d.currency === (clients.find((c) => c.id === d.clientId)?.currency ?? company.currency)) {
+      if (d.currency === currencies.get(d.clientId)) {
         s.invoiced += d.totals.total;
         if (d.status === 'sent' || d.status === 'partial') s.balance += d.totals.balance;
       }
@@ -53,9 +62,9 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
       .filter((c) => (kind === 'vendor' ? isVendor(c) : isCustomer(c)))
       .map((c) => ({
         client: c,
-        stats: stats.get(c.id) ?? { invoiced: 0, balance: 0, overdue: false, count: 0 },
+        ...(stats.get(c.id) ?? { invoiced: 0, balance: 0, overdue: false, count: 0 }),
       }))
-      .sort((a, b) => a.client.name.localeCompare(b.client.name));
+      .sort((a, b) => localName(a.client).localeCompare(localName(b.client)));
   }, [clients, docs, company.currency, kind]);
 
   const filtered = useMemo(() => {
@@ -65,39 +74,52 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
       ({ client }) =>
         (view === 'archived' ? client.archived : !client.archived) &&
         (!q ||
-          `${client.name} ${client.number} ${client.email} ${client.contacts.map((c) => `${c.name} ${c.email}`).join(' ')} ${client.address.city}`
+          [
+            client.name,
+            client.nameAr ?? '',
+            client.number,
+            client.email,
+            client.phone,
+            client.address.city,
+            ...client.contacts.map((c) => `${c.name} ${c.email} ${c.phone}`),
+          ]
+            .join(' ')
             .toLowerCase()
             .includes(q)),
     );
   }, [rows, query, view]);
 
-  if (!rows) return <Spinner className="py-24" label="Loading…" />;
+  if (!rows) return <Spinner className="py-24" label={t('Loading…')} />;
 
   const archivedCount = rows.filter((r) => r.client.archived).length;
+  const currencyOf = (client: Client) => client.currency ?? company.currency;
 
   const exportCsv = () =>
     downloadCsv(
-      `${copy.plural}-${today()}`,
+      `${copy.fileName}-${today()}`,
       [
-        'Number',
-        'Name',
-        'Contact',
-        'Email',
-        'Phone',
-        'Address',
-        'City',
-        'Postal code',
-        'Country',
-        'Tax ID',
-        'Currency',
-        copy.amountLabel,
-        'Outstanding',
+        t('Number'),
+        t('Name'),
+        t('Arabic name'),
+        t('Contact person'),
+        t('Email'),
+        t('Phone'),
+        t('Address'),
+        t('City'),
+        t('Postal code'),
+        t('Country'),
+        t('Tax ID'),
+        t('Currency'),
+        t('Credit limit'),
+        t(copy.amountLabel),
+        t(copy.owedLabel),
       ],
-      filtered.map(({ client, stats }) => {
+      filtered.map(({ client, invoiced, balance }) => {
         const contact = client.contacts.find((c) => c.primary) ?? client.contacts[0];
         return [
           client.number,
           client.name,
+          client.nameAr ?? '',
           contact?.name ?? '',
           contact?.email || client.email,
           client.phone || contact?.phone || '',
@@ -106,27 +128,35 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
           client.address.postalCode,
           client.address.country,
           client.taxId,
-          client.currency ?? company.currency,
-          stats.invoiced,
-          stats.balance,
+          currencyOf(client),
+          client.creditLimit ?? '',
+          invoiced,
+          balance,
         ];
       }),
     );
 
+  const badges = (row: Row) => (
+    <>
+      {row.client.creditHold ? <Badge tone="red">{t('On credit hold')}</Badge> : null}
+      {row.overdue ? <Badge tone="red">{t('Overdue')}</Badge> : null}
+    </>
+  );
+
   return (
     <div>
       <PageHeader
-        title={copy.title}
-        description={copy.description}
+        title={t(copy.title)}
+        description={t(copy.description)}
         actions={
           <>
             {rows.length > 0 ? (
               <Button variant="outline" onClick={exportCsv}>
-                <Download /> Export CSV
+                <Download /> {t('Export CSV')}
               </Button>
             ) : null}
             <ButtonLink to={`${copy.base}/new`}>
-              <Plus /> New {copy.singular}
+              <Plus /> {t(copy.newLabel)}
             </ButtonLink>
           </>
         }
@@ -135,11 +165,11 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
         <Card>
           <EmptyState
             icon={copy.icon}
-            title={`No ${copy.plural} yet`}
-            description={copy.empty}
+            title={t(copy.emptyTitle)}
+            description={t(copy.empty)}
             action={
               <ButtonLink to={`${copy.base}/new`}>
-                <Plus /> New {copy.singular}
+                <Plus /> {t(copy.newLabel)}
               </ButtonLink>
             }
           />
@@ -151,8 +181,8 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
               value={view}
               onChange={setView}
               options={[
-                { value: 'active', label: 'Active', count: rows.length - archivedCount },
-                { value: 'archived', label: 'Archived', count: archivedCount },
+                { value: 'active', label: t('Active'), count: rows.length - archivedCount },
+                { value: 'archived', label: t('Archived'), count: archivedCount },
               ]}
             />
             <div className="relative sm:w-72">
@@ -160,88 +190,120 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={`Search ${copy.plural}…`}
+                placeholder={t(copy.search)}
                 className="ps-9"
-                aria-label={`Search ${copy.plural}`}
+                aria-label={t(copy.search)}
               />
             </div>
           </div>
           {filtered.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-slate-500">No {copy.plural} match.</p>
+            <p className="px-6 py-12 text-center text-sm text-slate-500">{t(copy.noMatch)}</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                    <th className="px-5 py-3">{copy.column}</th>
-                    <th className="hidden px-3 py-3 md:table-cell">Contact</th>
-                    <th className="hidden px-3 py-3 lg:table-cell">Location</th>
-                    <th className="px-3 py-3 text-end">{copy.amountLabel}</th>
-                    <th className="px-5 py-3 text-end">Outstanding</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.map(({ client, stats }) => {
-                    const contact = client.contacts.find((c) => c.primary) ?? client.contacts[0];
-                    const currency = client.currency ?? company.currency;
-                    return (
-                      <tr
-                        key={client.id}
-                        onClick={() => navigate(`${copy.base}/${client.id}`)}
-                        className="cursor-pointer hover:bg-slate-50"
-                      >
-                        <td className="px-5 py-3">
-                          <Link
-                            to={`${copy.base}/${client.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="hover:text-primary-700 font-medium text-slate-900"
-                          >
-                            {client.name}
-                          </Link>
-                          <span className="block text-xs text-slate-500">
-                            {client.number}
-                            {client.currency ? ` · ${client.currency}` : ''}
-                          </span>
-                        </td>
-                        <td className="hidden px-3 py-3 md:table-cell">
-                          <span className="block text-slate-700">{contact?.name || '—'}</span>
-                          <span className="block text-xs text-slate-500">
-                            {contact?.email || client.email}
-                          </span>
-                        </td>
-                        <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
-                          {[
-                            client.address.city,
-                            client.address.country
-                              ? countryName(client.address.country, fmt.locale)
-                              : '',
-                          ]
-                            .filter(Boolean)
-                            .join(', ') || '—'}
-                        </td>
-                        <td className="tabular px-3 py-3 text-end text-slate-600">
-                          {fmt.money(stats.invoiced, currency)}
-                        </td>
-                        <td className="tabular px-5 py-3 text-end">
-                          <span
-                            className={
-                              stats.balance > 0 ? 'font-medium text-slate-900' : 'text-slate-400'
-                            }
-                          >
-                            {fmt.money(stats.balance, currency)}
-                          </span>
-                          {stats.overdue ? (
-                            <Badge tone="red" className="ms-2">
-                              Overdue
-                            </Badge>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-xs font-medium tracking-wide text-slate-500 uppercase">
+                      <th className="px-5 py-3 text-start">{t(copy.column)}</th>
+                      <th className="hidden px-3 py-3 text-start md:table-cell">
+                        {t('Contact person')}
+                      </th>
+                      <th className="hidden px-3 py-3 text-start lg:table-cell">{t('Location')}</th>
+                      <th className="px-3 py-3 text-end">{t(copy.amountLabel)}</th>
+                      <th className="px-5 py-3 text-end">{t(copy.owedLabel)}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filtered.map((row) => {
+                      const { client } = row;
+                      const contact = client.contacts.find((c) => c.primary) ?? client.contacts[0];
+                      return (
+                        <tr
+                          key={client.id}
+                          onClick={() => navigate(`${copy.base}/${client.id}`)}
+                          className="cursor-pointer hover:bg-slate-50"
+                        >
+                          <td className="px-5 py-3">
+                            <Link
+                              to={`${copy.base}/${client.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="hover:text-primary-700 font-medium text-slate-900"
+                            >
+                              {client.name}
+                            </Link>
+                            <span className="block text-xs text-slate-500">
+                              {[client.nameAr, client.number, client.currency]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </span>
+                          </td>
+                          <td className="hidden px-3 py-3 md:table-cell">
+                            <span className="block text-slate-700">{contact?.name || '—'}</span>
+                            <span className="block text-xs text-slate-500">
+                              {contact?.email || client.email}
+                            </span>
+                          </td>
+                          <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
+                            {[
+                              client.address.city,
+                              client.address.country
+                                ? countryName(client.address.country, fmt.locale)
+                                : '',
+                            ]
+                              .filter(Boolean)
+                              .join(', ') || '—'}
+                          </td>
+                          <td className="tabular px-3 py-3 text-end text-slate-600">
+                            {fmt.money(row.invoiced, currencyOf(client))}
+                          </td>
+                          <td className="tabular px-5 py-3 text-end">
+                            <span
+                              className={
+                                row.balance > 0 ? 'font-medium text-slate-900' : 'text-slate-400'
+                              }
+                            >
+                              {fmt.money(row.balance, currencyOf(client))}
+                            </span>
+                            <span className="ms-2 inline-flex gap-1">{badges(row)}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {/* Phones: one card per contact. */}
+              <ul className="divide-y divide-slate-100 sm:hidden">
+                {filtered.map((row) => (
+                  <li key={row.client.id}>
+                    <Link
+                      to={`${copy.base}/${row.client.id}`}
+                      className="flex items-start justify-between gap-3 px-4 py-3 active:bg-slate-50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-slate-900">
+                          {localName(row.client)}
+                        </span>
+                        <span className="block text-xs text-slate-500">{row.client.number}</span>
+                        <span className="mt-1 flex flex-wrap gap-1">{badges(row)}</span>
+                      </span>
+                      <span className="shrink-0 text-end">
+                        <span
+                          className={
+                            row.balance > 0
+                              ? 'tabular block text-sm font-semibold text-slate-900'
+                              : 'tabular block text-sm text-slate-400'
+                          }
+                        >
+                          {fmt.money(row.balance, currencyOf(row.client))}
+                        </span>
+                        <span className="text-xs text-slate-500">{t(copy.owedLabel)}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </Card>
       )}

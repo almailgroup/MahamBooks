@@ -11,6 +11,7 @@ import { Card, CardBody, PageHeader, Spinner } from '@/components/ui/misc';
 import { ClientForm, newContact, validateClient } from '@/features/clients/client-form';
 import { CONTACT_COPY, contactRoles, type ContactKind } from '@/features/clients/contact-kind';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { t } from '@/i18n';
 
 export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKind }) {
   const copy = CONTACT_COPY[kind];
@@ -63,20 +64,20 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
   if (missing) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {copy.singular} could not be found.</p>
+        <p className="text-slate-600">{t(copy.notFound)}</p>
         <Link to={copy.base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {copy.plural}
+          {t(copy.back)}
         </Link>
       </Card>
     );
   }
-  if (!client) return <Spinner className="py-24" label="Loading…" />;
+  if (!client) return <Spinner className="py-24" label={t('Loading…')} />;
 
   const save = async () => {
     const found = validateClient(client);
     setErrors(found);
     if (Object.keys(found).length) {
-      toast.error('Please fix the highlighted fields.');
+      toast.error(t('Please fix the highlighted fields.'));
       return;
     }
     setSaving(true);
@@ -85,11 +86,11 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
         ...client,
         contacts: client.contacts.filter((c) => c.name.trim() || c.email.trim() || c.phone.trim()),
       });
-      toast.success(`${saved.name} saved`);
+      toast.success(t('{name} saved', { name: saved.name }));
       allowNavigation();
       navigate(`${copy.base}/${saved.id}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : `Could not save the ${copy.singular}.`);
+      toast.error(error instanceof Error ? error.message : t(copy.saveError));
       setSaving(false);
     }
   };
@@ -97,15 +98,15 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        breadcrumb={<Link to={copy.base}>{copy.title}</Link>}
-        title={id ? `Edit ${client.name || copy.singular}` : `New ${copy.singular}`}
+        breadcrumb={<Link to={copy.base}>{t(copy.title)}</Link>}
+        title={id && client.name ? t(copy.editTitle, { name: client.name }) : t(copy.newLabel)}
         actions={
           <>
             <Button variant="ghost" onClick={() => navigate(-1)}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
-              Save {copy.singular}
+              {t(copy.saveLabel)}
             </Button>
           </>
         }
@@ -123,10 +124,10 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
       </Card>
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" onClick={() => navigate(-1)}>
-          Cancel
+          {t('Cancel')}
         </Button>
         <Button onClick={save} loading={saving}>
-          Save {copy.singular}
+          {t(copy.saveLabel)}
         </Button>
       </div>
     </div>

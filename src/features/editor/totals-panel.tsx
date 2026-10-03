@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { Charge, InvoiceDocument, TaxLine, TaxRate } from '@/db/types';
+import type { Charge, Client, InvoiceDocument, TaxLine, TaxRate } from '@/db/types';
 import type { CalcResult } from '@/lib/calc';
 import { isPurchaseType, postsToLedger } from '@/lib/document-types';
+import { takesRetention } from '@/lib/document-calc';
+import { contactRetention, validCertificate } from '@/lib/retention';
 import { t } from '@/i18n';
 import { shortId } from '@/lib/ids';
 import { currencyPrecision, round } from '@/lib/money';
@@ -46,6 +49,7 @@ export function TotalsPanel({
   percent,
   taxExempt,
   allowDeposit = doc.type === 'invoice',
+  contact = null,
 }: {
   doc: InvoiceDocument;
   onChange: (patch: Partial<InvoiceDocument>) => void;
@@ -59,8 +63,18 @@ export function TotalsPanel({
   percent: (value: number) => string;
   taxExempt: boolean;
   allowDeposit?: boolean;
+  /** The client or vendor, for the retention they usually hold back. */
+  contact?: Client | null;
 }) {
   const isCredit = doc.type === 'credit' || doc.type === 'vendor_credit';
+  const usual = contactRetention(contact);
+  const [addRetention, setAddRetention] = useState(false);
+  const retention = takesRetention(doc.type);
+  const showRetention = retention && (addRetention || (doc.retentionPercent ?? 0) > 0 || usual > 0);
+  const certificate =
+    usual > 0 && (contact?.retentionKind ?? 'tax') === 'tax'
+      ? validCertificate(contact, doc.issueDate)
+      : null;
   const charged = result.taxes.filter((t) => t.kind !== 'reverse_charge');
   const reverse = result.taxes.filter((t) => t.kind === 'reverse_charge');
   const setCharge = (index: number, patch: Partial<Charge>) =>
@@ -157,6 +171,55 @@ export function TotalsPanel({
         </Button>
       </div>
 
+      {showRetention ? (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-slate-600">{t('Retention')}</span>
+            <div className="flex items-center gap-3">
+              <div className="flex w-28 items-center gap-1">
+                <NumberInput
+                  aria-label={t('Retention (%)')}
+                  value={doc.retentionPercent ?? 0}
+                  onValueChange={(value) =>
+                    onChange({
+                      retentionPercent: Math.min(Math.max(value, 0), 100),
+                      retentionKind: doc.retentionKind ?? contact?.retentionKind ?? 'tax',
+                    })
+                  }
+                  allowNegative={false}
+                />
+                <span className="text-sm text-slate-500">%</span>
+              </div>
+              <span className="tabular min-w-16 text-end text-sm text-slate-600">
+                {result.retention ? money(-result.retention) : '—'}
+              </span>
+            </div>
+          </div>
+          {certificate ? (
+            <p className="text-xs text-emerald-700">
+              {t(
+                'Clearance certificate {number} is valid on this date: nothing needs to be held.',
+                {
+                  number: certificate.number,
+                },
+              )}
+            </p>
+          ) : usual > 0 && usual !== (doc.retentionPercent ?? 0) ? (
+            <p className="text-xs text-slate-500">
+              {t('Usually {percent} for this contact.', { percent: percent(usual) })}
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500">
+              {t('Held back until released; not part of the balance due.')}
+            </p>
+          )}
+        </div>
+      ) : retention ? (
+        <Button variant="ghost" size="sm" onClick={() => setAddRetention(true)}>
+          <Plus /> {t('Add retention')}
+        </Button>
+      ) : null}
+
       <div className="border-t border-slate-100 pt-3">
         {!doc.pricesIncludeTax
           ? charged.map((tax) => (
@@ -192,9 +255,14 @@ export function TotalsPanel({
             value={money(tax.amount)}
           />
         ))}
-        {postsToLedger(doc.type) && result.paid !== 0 ? (
+        {result.retentionHeld !== 0 ? (
+          <Row label={t('Retention held')} value={money(-result.retentionHeld)} />
+        ) : null}
+        {postsToLedger(doc.type) && (result.paid !== 0 || result.retentionHeld !== 0) ? (
           <>
-            <Row label={isCredit ? t('Applied') : t('Paid')} value={money(-result.paid)} />
+            {result.paid !== 0 ? (
+              <Row label={isCredit ? t('Applied') : t('Paid')} value={money(-result.paid)} />
+            ) : null}
             <Row
               label={isCredit ? t('Remaining credit') : t('Balance due')}
               value={money(result.balance)}

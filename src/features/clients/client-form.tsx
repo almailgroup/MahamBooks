@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Select, Switch, Textarea } from '@/components/ui/form';
 import { AddressFields, CurrencySelect } from '@/components/fields';
 import { isCustomer, isVendor } from '@/db/purchases';
+import { RETENTION_KINDS, TAX_RETENTION_PERCENT, contactRetention } from '@/lib/retention';
 import type { ContactKind } from './contact-kind';
 
 export function newContact(primary = false): ClientContact {
@@ -337,6 +338,111 @@ export function ClientForm({
                 description={t('You record their bills and pay them.')}
               />
             </div>
+            {customer ? (
+              <fieldset className="space-y-3 rounded-lg border border-slate-200 p-3 sm:col-span-2">
+                <legend className="px-1 text-sm font-semibold text-slate-900">
+                  {t('Credit control')}
+                </legend>
+                <Switch
+                  checked={value.creditLimit !== null && value.creditLimit !== undefined}
+                  onChange={(on) => set({ creditLimit: on ? (value.creditLimit ?? 0) : null })}
+                  label={t('Set a credit limit')}
+                  description={t(
+                    'You are warned before an invoice or sales order takes them over it.',
+                  )}
+                />
+                {value.creditLimit !== null && value.creditLimit !== undefined ? (
+                  <Field
+                    label={t('Credit limit')}
+                    hint={t('Open balance plus cheques not yet cleared, in {currency}.', {
+                      currency: company.currency,
+                    })}
+                    className="sm:max-w-xs"
+                  >
+                    {(id) => (
+                      <NumberInput
+                        id={id}
+                        value={value.creditLimit ?? 0}
+                        onValueChange={(creditLimit) => set({ creditLimit })}
+                        allowNegative={false}
+                      />
+                    )}
+                  </Field>
+                ) : null}
+                <Switch
+                  checked={Boolean(value.creditHold)}
+                  onChange={(creditHold) => set({ creditHold })}
+                  label={t('Credit hold')}
+                  description={t('New invoices and sales orders need an override.')}
+                />
+              </fieldset>
+            ) : null}
+            <fieldset className="space-y-3 rounded-lg border border-slate-200 p-3 sm:col-span-2">
+              <legend className="px-1 text-sm font-semibold text-slate-900">
+                {t('Retention')}
+              </legend>
+              <Switch
+                checked={contactRetention(value) > 0}
+                onChange={(on) =>
+                  set(
+                    on
+                      ? {
+                          retentionPercent: TAX_RETENTION_PERCENT,
+                          retentionKind: value.retentionKind ?? 'tax',
+                        }
+                      : { retentionPercent: null },
+                  )
+                }
+                label={
+                  customer && !vendor
+                    ? t('This client holds back a retention')
+                    : vendor && !customer
+                      ? t('You hold back a retention from this vendor')
+                      : t('Hold back a retention')
+                }
+                description={t(
+                  'A share of each invoice or bill is held until a clearance certificate or the handover.',
+                )}
+              />
+              {contactRetention(value) > 0 ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label={t('Retention (%)')}>
+                    {(id) => (
+                      <NumberInput
+                        id={id}
+                        value={value.retentionPercent ?? 0}
+                        onValueChange={(percent) =>
+                          set({ retentionPercent: Math.min(Math.max(percent, 0), 100) })
+                        }
+                        allowNegative={false}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label={t('Held until')}
+                    hint={t(
+                      RETENTION_KINDS.find((k) => k.value === (value.retentionKind ?? 'tax'))!.hint,
+                    )}
+                  >
+                    {(id) => (
+                      <Select
+                        id={id}
+                        value={value.retentionKind ?? 'tax'}
+                        onChange={(e) =>
+                          set({ retentionKind: e.target.value as Client['retentionKind'] })
+                        }
+                      >
+                        {RETENTION_KINDS.map((k) => (
+                          <option key={k.value} value={k.value}>
+                            {t(k.label)}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                </div>
+              ) : null}
+            </fieldset>
             <Field
               label={t('Internal notes')}
               className="sm:col-span-2"

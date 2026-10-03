@@ -82,6 +82,12 @@ export interface LedgerContext {
   documents: Map<ID, InvoiceDocument>;
   /** Missing until the company tracks stock. */
   stock?: StockLedgerContext;
+  /**
+   * 1110 Retentions receivable and 2010 Retentions payable (looked up by
+   * spec, they have no role). Without one, a retention stays on the
+   * receivable (payable).
+   */
+  retentionAccounts?: { receivable?: ID | null; payable?: ID | null };
 }
 
 /** Accounts and items the stock postings need (see lib/inventory/accounts.ts). */
@@ -245,6 +251,8 @@ function weighDocument(
   const p = ctx.precision;
 
   const total = toMinor(dec(result.total).times(rate), p);
+  // Held back by the customer (or from the vendor) until it is released.
+  const retention = toMinor(dec(result.retention).times(rate), p);
   const taxes = result.taxes.map((t) => ({ ...t, minor: toMinor(dec(t.amount).times(rate), p) }));
   // Reverse charge is not part of the total: it never reduces the income.
   const chargedTaxes = taxes.filter((t) => t.kind !== 'reverse_charge');
@@ -291,7 +299,7 @@ function weighDocument(
       label: charge.label,
     });
   });
-  return { exempt, total, chargedTaxes, reverseTaxes, income, entries };
+  return { exempt, total, retention, chargedTaxes, reverseTaxes, income, entries };
 }
 
 /**
@@ -403,14 +411,29 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     contactId: doc.clientId || null,
   };
   const noun = rule.noun;
+  // A retention held back by the customer (or from the vendor) is not due
+  // yet: it waits in retentions receivable (payable) until it is released.
+  const retentionAccount = usable(
+    ctx,
+    sales ? ctx.retentionAccounts?.receivable : ctx.retentionAccounts?.payable,
+  );
+  const retained = retentionAccount ? Math.min(w.retention, w.total) : 0;
   const lines: LedgerLine[] = [
     {
       ...base,
       accountId: role(ctx, rule.partner),
-      amount: sign * w.total,
+      amount: sign * (w.total - retained),
       description: `${noun} ${doc.number}`,
     },
   ];
+  if (retained > 0 && retentionAccount) {
+    lines.push({
+      ...base,
+      accountId: retentionAccount,
+      amount: sign * retained,
+      description: `Retention ${doc.number}`,
+    });
+  }
   const entries = [...groups.values()];
   const amounts = parts
     ? entries.map((g) => g.minor)

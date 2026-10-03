@@ -52,6 +52,49 @@ describe('buildRenderModel: totals in Kuwaiti dinars', () => {
   });
 });
 
+describe('buildRenderModel: retention', () => {
+  it('shows the retention held and leaves it out of the amount due', () => {
+    // 5% of 1,355.500 is 67.775.
+    const m = model('ar-en', { retentionPercent: 5 });
+    const retention = m.totals.find((t) => t.kind === 'retention')!;
+    expect(retention).toMatchObject({
+      label: 'محتجزات (5%)',
+      secondary: 'Retention held (5%)',
+      value: `-${kd('67.775')}`,
+    });
+    expect(m.totals.at(-1)).toMatchObject({ kind: 'balance', value: kd('1,287.725') });
+    expect(m.amountDue.value).toBe(kd('1,287.725'));
+    expect(
+      model('en', { retentionPercent: 5 }).totals.find((t) => t.kind === 'retention'),
+    ).toMatchObject({ label: 'Retention held (5%)', secondary: '' });
+  });
+
+  it('is gone once released, and never shows on a quote', () => {
+    const released = model('en', {
+      retentionPercent: 5,
+      retentionReleases: [
+        {
+          id: 'r',
+          date: '2026-01-01',
+          amount: 67.775,
+          basis: 'handover',
+          reference: '',
+          journalId: 'j',
+        },
+      ],
+    });
+    expect(released.totals.some((t) => t.kind === 'retention')).toBe(false);
+    expect(released.amountDue.value).toBe(kd('1,355.500'));
+    const c = company;
+    const quote = sampleDocument(c, client, 'quote', { retentionPercent: 5 }, 'en');
+    expect(
+      buildRenderModel(quote, c, client, { language: 'en' }).totals.some(
+        (t) => t.kind === 'retention',
+      ),
+    ).toBe(false);
+  });
+});
+
 describe('buildRenderModel: amount in words', () => {
   it('is English in English documents', () => {
     expect(model('en').amountInWords).toEqual([WORDS_EN]);

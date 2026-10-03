@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { useMemo, type ReactNode } from 'react';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Archive,
   ArchiveRestore,
+  Ban,
+  CircleCheck,
   Mail,
   MoreHorizontal,
   Pencil,
@@ -16,21 +18,31 @@ import { db } from '@/db/db';
 import { deleteClient, saveClient } from '@/db/records';
 import { paymentMethodLabel } from '@/db/payments';
 import { isCustomer, isVendor } from '@/db/purchases';
-import type { DocumentType } from '@/db/types';
-import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
+import { returnedCheques } from '@/db/cheques';
+import { setCreditHold } from '@/db/credit';
+import { heldRetention } from '@/db/retention';
+import type { DocumentType, InvoiceDocument, Payment } from '@/db/types';
+import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
 import { CONTACT_COPY, type ContactKind } from '@/features/clients/contact-kind';
+import { ContactSummary } from '@/features/clients/contact-summary';
+import { RetentionPanel } from '@/features/clients/retention-panel';
+import { StatementPanel } from '@/features/statements/statement-panel';
 import { formatAddressLines, isAddressEmpty } from '@/lib/geo';
-import { displayStatus } from '@/lib/status';
-import { today } from '@/lib/dates';
+import { CHEQUE_STATUS_META, displayStatus } from '@/lib/status';
+import { contactPosition } from '@/lib/statements';
+import { contactRetention, retentionKindLabel } from '@/lib/retention';
+import { daysBetween, today } from '@/lib/dates';
+import { isPosted } from '@/lib/accounting/ledger';
+import { t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Badge,
   Card,
   CardBody,
   CardHeader,
+  EmptyState,
   Segmented,
   Spinner,
-  Stat,
   StatusBadge,
 } from '@/components/ui/misc';
 import {
@@ -42,82 +54,164 @@ import {
   useConfirm,
 } from '@/components/ui/overlay';
 
-type Tab = DocumentType | 'payments' | 'expenses';
+type Tab = 'overview' | 'documents' | 'payments' | 'statement' | 'retentions';
 
-/** Tabs for each kind: the documents first, then money moved. */
-const TABS: Record<ContactKind, { value: Tab; label: string }[]> = {
-  customer: [
-    { value: 'invoice', label: 'Invoices' },
-    { value: 'quote', label: 'Quotes' },
-    { value: 'credit', label: 'Credit notes' },
-    { value: 'payments', label: 'Payments' },
-  ],
-  vendor: [
-    { value: 'bill', label: 'Bills' },
-    { value: 'vendor_credit', label: 'Vendor credits' },
-    { value: 'payments', label: 'Payments' },
-    { value: 'expenses', label: 'Expenses' },
-  ],
+/** Document types listed on each kind of contact, in this order. */
+const DOC_TYPES: Record<ContactKind, DocumentType[]> = {
+  customer: ['invoice', 'quote', 'credit', 'proforma', 'sales_order', 'delivery_note'],
+  vendor: ['bill', 'vendor_credit', 'purchase_order'],
 };
+
+function DocumentRow({ doc, now }: { doc: InvoiceDocument; now: string }) {
+  const fmt = useFormat();
+  const priced = doc.type !== 'delivery_note';
+  const held = doc.totals.retention ? heldRetention(doc) : 0;
+  const open = isPosted(doc) && doc.totals.balance > 0;
+  return (
+    <li>
+      <Link
+        to={`${DOCUMENT_ROUTES[doc.type]}/${doc.id}`}
+        className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-slate-800">
+            {doc.number}
+            {doc.vendorReference ? (
+              <span className="ms-2 font-normal text-slate-500">{doc.vendorReference}</span>
+            ) : null}
+          </span>
+          <span className="text-xs text-slate-500">
+            {[
+              t(DOCUMENT_LABELS[doc.type].singular),
+              fmt.date(doc.issueDate),
+              doc.dueDate && open ? t('Due {date}', { date: fmt.date(doc.dueDate) }) : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
+          {priced ? (
+            <span className="tabular text-end text-sm font-semibold text-slate-900">
+              {fmt.money(open ? doc.totals.balance : doc.totals.total, doc.currency)}
+              {open && doc.totals.balance !== doc.totals.total ? (
+                <span className="block text-xs font-normal text-slate-500">
+                  {t('of {amount}', { amount: fmt.money(doc.totals.total, doc.currency) })}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          <span className="flex items-center gap-1">
+            {held > 0 ? (
+              <Badge tone="violet">
+                {t('{amount} held', { amount: fmt.money(held, doc.currency) })}
+              </Badge>
+            ) : null}
+            <StatusBadge status={displayStatus(doc, now)} />
+          </span>
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function PaymentRow({ payment, href, out }: { payment: Payment; href: string; out: boolean }) {
+  const fmt = useFormat();
+  const cheque = payment.method === 'cheque' ? payment.cheque : null;
+  const status = cheque ? CHEQUE_STATUS_META[cheque.status] : null;
+  return (
+    <li>
+      <Link
+        to={href}
+        className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-slate-800">
+            {payment.number} · {fmt.date(payment.date)}
+          </span>
+          <span className="text-xs text-slate-500">
+            {paymentMethodLabel(payment.method)}
+            {cheque ? ` ${cheque.number}` : payment.reference ? ` · ${payment.reference}` : ''}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {status && (cheque?.status !== 'cleared' || payment.voided) ? (
+            <Badge tone={status.tone}>{t(status.label)}</Badge>
+          ) : null}
+          <span
+            className={
+              payment.voided
+                ? 'tabular text-sm text-slate-400 line-through'
+                : out
+                  ? 'tabular text-sm font-semibold text-slate-900'
+                  : 'tabular text-sm font-semibold text-emerald-700'
+            }
+          >
+            {fmt.money(payment.amount, payment.currency)}
+          </span>
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function Detail({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">{label}</p>
+      <div className="text-slate-700">{children}</div>
+    </div>
+  );
+}
 
 export default function ClientDetailPage({ kind = 'customer' }: { kind?: ContactKind }) {
   const copy = CONTACT_COPY[kind];
   const vendorView = kind === 'vendor';
+  const side = vendorView ? 'vendor' : 'customer';
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
-  const [tab, setTab] = useState<Tab>(TABS[kind][0].value);
 
   const client = useLiveQuery(() => db.clients.get(id), [id]);
   const docs = useLiveQuery(() => db.documents.where('clientId').equals(id).toArray(), [id]);
   const allPayments = useLiveQuery(() => db.payments.where('clientId').equals(id).toArray(), [id]);
   const expenses = useLiveQuery(() => db.expenses.where('vendorId').equals(id).toArray(), [id]);
+  const returned = useLiveQuery(() => returnedCheques(id), [id]);
   const payments = useMemo(
-    () => allPayments?.filter((p) => (p.direction === 'out') === vendorView) ?? allPayments,
+    () =>
+      allPayments?.filter(
+        (p) => (p.direction === 'out') === vendorView && p.method !== 'credit_note',
+      ),
     [allPayments, vendorView],
   );
 
-  const currency = client?.currency ?? company.currency;
-  const stats = useMemo(() => {
-    if (!docs) return null;
-    const now = today();
-    const invoices = docs.filter(
-      (d) =>
-        d.type === copy.docType &&
-        d.status !== 'draft' &&
-        d.status !== 'void' &&
-        d.currency === currency,
-    );
-    const creditType = vendorView ? 'vendor_credit' : 'credit';
-    const credits = docs.filter(
-      (d) =>
-        d.type === creditType &&
-        (d.status === 'sent' || d.status === 'partial') &&
-        d.currency === currency,
-    );
-    return {
-      invoiced: invoices.reduce((s, d) => s + d.totals.total, 0),
-      paid: invoices.reduce((s, d) => s + d.totals.paid, 0),
-      outstanding: invoices
-        .filter((d) => d.status === 'sent' || d.status === 'partial')
-        .reduce((s, d) => s + d.totals.balance, 0),
-      overdue: invoices
-        .filter((d) => displayStatus(d, now) === 'overdue')
-        .reduce((s, d) => s + d.totals.balance, 0),
-      credit: credits.reduce((s, d) => s + d.totals.balance, 0),
-    };
-  }, [docs, currency, copy.docType, vendorView]);
+  const position = useMemo(
+    () =>
+      client && docs && allPayments
+        ? contactPosition({
+            side,
+            client,
+            documents: docs,
+            payments: allPayments,
+            companyCurrency: company.currency,
+            todayIso: today(),
+          })
+        : null,
+    [client, docs, allPayments, side, company.currency],
+  );
 
-  if (client === undefined || !docs || !payments || !expenses)
-    return <Spinner className="py-24" label="Loading…" />;
+  if (client === undefined || !docs || !payments || !allPayments || !expenses || !position) {
+    return <Spinner className="py-24" label={t('Loading…')} />;
+  }
   if (!client || client.companyId !== company.id) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This {copy.singular} could not be found.</p>
+        <p className="text-slate-600">{t(copy.notFound)}</p>
         <Link to={copy.base} className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to {copy.plural}
+          {t(copy.back)}
         </Link>
       </Card>
     );
@@ -134,17 +228,34 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
   }
 
   const now = today();
-  const listed =
-    tab === 'payments' || tab === 'expenses'
-      ? []
-      : docs.filter((d) => d.type === tab).sort((a, b) => b.issueDate.localeCompare(a.issueDate));
-  const count = (value: Tab) =>
-    value === 'payments'
-      ? payments.length
-      : value === 'expenses'
-        ? expenses.length
-        : docs.filter((d) => d.type === value).length;
-  // The same contact can be both; link to the other side when it is.
+  const types = DOC_TYPES[kind];
+  const ownDocs = docs.filter((d) => types.includes(d.type));
+  const showRetentions =
+    contactRetention(client) > 0 ||
+    (client.clearanceCertificates ?? []).length > 0 ||
+    ownDocs.some((d) => (d.totals.retention ?? 0) > 0);
+  const tabs: { value: Tab; label: string; count?: number }[] = [
+    { value: 'overview', label: t('Overview') },
+    { value: 'documents', label: t('Documents'), count: ownDocs.length },
+    { value: 'payments', label: t('Payments'), count: payments.length },
+    { value: 'statement', label: t('Statement') },
+    ...(showRetentions ? [{ value: 'retentions' as const, label: t('Retentions') }] : []),
+  ];
+  const requested = params.get('tab') as Tab | null;
+  const tab: Tab = tabs.some((x) => x.value === requested) ? requested! : 'overview';
+  const setTab = (next: Tab) =>
+    setParams(
+      (p) => {
+        if (next === 'overview') p.delete('tab');
+        else p.set('tab', next);
+        return p;
+      },
+      { replace: true },
+    );
+  const docFilter = (params.get('type') as DocumentType | null) ?? types[0];
+  const shownType = types.includes(docFilter) ? docFilter : types[0];
+  const listFilter = params.get('list') === 'expenses' && vendorView ? 'expenses' : 'payments';
+
   const otherKind: ContactKind | null = vendorView
     ? isCustomer(client)
       ? 'customer'
@@ -153,29 +264,48 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
       ? 'vendor'
       : null;
   const paymentsBase = vendorView ? '/payments-made' : '/payments';
+  const editHref = `${copy.base}/${client.id}/edit`;
+  const currency = client.currency ?? company.currency;
+  const returnedCount = returned?.length ?? 0;
 
   const toggleArchive = async () => {
     await saveClient({ ...client, archived: !client.archived });
-    toast.success(client.archived ? `${copy.column} restored` : `${copy.column} archived`);
+    toast.success(client.archived ? t(copy.restored) : t(copy.archived));
+  };
+
+  const toggleHold = async () => {
+    const hold = !client.creditHold;
+    if (hold) {
+      const ok = await confirm({
+        title: t('Put {name} on credit hold?', { name: client.name }),
+        description: t(
+          'New invoices and sales orders for them need an override until the hold is lifted.',
+        ),
+        confirmLabel: t('Put on hold'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    await setCreditHold(client.id, hold);
+    toast.success(hold ? t('Credit hold on') : t('Credit hold lifted'));
   };
 
   const remove = async () => {
     const ok = await confirm({
-      title: `Delete ${client.name}?`,
-      description:
+      title: t('Delete {name}?', { name: client.name }),
+      description: t(
         'This cannot be undone. Contacts with documents, payments or expenses can only be archived.',
-      confirmLabel: 'Delete',
+      ),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
     try {
       await deleteClient(client.id);
-      toast.success(`${copy.column} deleted`);
+      toast.success(t(copy.deleted));
       navigate(copy.base);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : `Could not delete the ${copy.singular}.`,
-      );
+      toast.error(error instanceof Error ? error.message : t(copy.deleteError));
     }
   };
 
@@ -184,6 +314,335 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
     client.shippingAddress && !isAddressEmpty(client.shippingAddress)
       ? formatAddressLines(client.shippingAddress, fmt.locale)
       : [];
+  const mainType = copy.docType;
+  const open = docs
+    .filter((d) => d.type === mainType && isPosted(d) && d.totals.balance > 0)
+    .sort((a, b) => (a.dueDate ?? a.issueDate).localeCompare(b.dueDate ?? b.issueDate));
+  const recent = [...ownDocs]
+    .sort(
+      (a, b) => b.issueDate.localeCompare(a.issueDate) || b.createdAt.localeCompare(a.createdAt),
+    )
+    .slice(0, 5);
+  const percent = contactRetention(client);
+
+  const details = (
+    <Card>
+      <CardHeader
+        title={t('Details')}
+        actions={
+          <ButtonLink to={editHref} variant="ghost" size="sm">
+            <Pencil /> {t('Edit')}
+          </ButtonLink>
+        }
+      />
+      <CardBody className="space-y-5 text-sm">
+        {client.contacts.length > 0 ? (
+          <div className="space-y-3">
+            {client.contacts.map((c) => (
+              <div key={c.id}>
+                <p className="font-medium text-slate-800">
+                  {c.name || t('Contact person')}
+                  {c.primary && client.contacts.length > 1 ? (
+                    <span className="ms-2 text-xs font-normal text-slate-400">
+                      {t('Primary contact')}
+                    </span>
+                  ) : null}
+                </p>
+                {c.email ? (
+                  <a
+                    href={`mailto:${c.email}`}
+                    className="text-primary-700 flex items-center gap-1.5 hover:underline"
+                  >
+                    <Mail className="size-3.5" aria-hidden /> <span dir="ltr">{c.email}</span>
+                  </a>
+                ) : null}
+                {c.phone ? (
+                  <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-slate-600">
+                    <Phone className="size-3.5" aria-hidden /> <span dir="ltr">{c.phone}</span>
+                  </a>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {address.length ? (
+          <Detail label={vendorView ? t('Address') : t('Billing address')}>
+            <p className="whitespace-pre-line">{address.join('\n')}</p>
+          </Detail>
+        ) : null}
+        {shipping.length ? (
+          <Detail label={t('Shipping address')}>
+            <p className="whitespace-pre-line">{shipping.join('\n')}</p>
+          </Detail>
+        ) : null}
+        {client.taxId ? (
+          <Detail label={company.taxIdLabel || t('Tax ID')}>{client.taxId}</Detail>
+        ) : null}
+        {client.civilId ? (
+          <Detail label={t('Civil ID')}>
+            <span dir="ltr">{client.civilId}</span>
+          </Detail>
+        ) : null}
+        <Detail label={t('Payment terms')}>
+          {tp(
+            client.paymentTermsDays ?? company.defaults.paymentTermsDays,
+            '{count} day',
+            '{count} days',
+          )}
+        </Detail>
+        {!vendorView ? (
+          <Detail label={t('Credit limit')}>
+            {client.creditLimit !== null && client.creditLimit !== undefined
+              ? fmt.money(client.creditLimit)
+              : t('No credit limit')}
+          </Detail>
+        ) : null}
+        {percent ? (
+          <Detail label={t('Retention')}>
+            {t('{kind} of {percent}', {
+              kind: t(retentionKindLabel(client.retentionKind)),
+              percent: fmt.percent(percent),
+            })}
+          </Detail>
+        ) : null}
+        {client.notes ? (
+          <p className="rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
+            {client.notes}
+          </p>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+
+  const docList = (list: InvoiceDocument[]) => (
+    <ul className="divide-y divide-slate-100">
+      {list.map((d) => (
+        <DocumentRow key={d.id} doc={d} now={now} />
+      ))}
+    </ul>
+  );
+
+  let body: ReactNode;
+  if (tab === 'overview') {
+    body = (
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-6">
+          <Card>
+            <CardHeader
+              title={vendorView ? t('Open bills') : t('Open invoices')}
+              description={
+                open.length
+                  ? tp(
+                      open.length,
+                      '{count} document still to pay',
+                      '{count} documents still to pay',
+                    )
+                  : undefined
+              }
+            />
+            {open.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-slate-500">{t('Nothing is due.')}</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {open.map((d) => {
+                  const late = d.dueDate ? daysBetween(d.dueDate, now) : 0;
+                  return (
+                    <li key={d.id}>
+                      <Link
+                        to={`${DOCUMENT_ROUTES[d.type]}/${d.id}`}
+                        className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-800">
+                            {d.number}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {d.dueDate
+                              ? t('Due {date}', { date: fmt.date(d.dueDate) })
+                              : fmt.date(d.issueDate)}
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                          {late > 0 ? (
+                            <Badge tone="red">
+                              {tp(late, '{count} day late', '{count} days late')}
+                            </Badge>
+                          ) : null}
+                          <span className="tabular text-sm font-semibold text-slate-900">
+                            {fmt.money(d.totals.balance, d.currency)}
+                          </span>
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Card>
+          <Card>
+            <CardHeader
+              title={t('Recent documents')}
+              actions={
+                ownDocs.length > recent.length ? (
+                  <Button variant="ghost" size="sm" onClick={() => setTab('documents')}>
+                    {t('View all')}
+                  </Button>
+                ) : null
+              }
+            />
+            {recent.length === 0 ? (
+              <EmptyState
+                className="py-10"
+                title={t('No documents yet')}
+                description={
+                  vendorView
+                    ? t('Bills from this vendor show here.')
+                    : t('Quotes, invoices and credit notes for this client show here.')
+                }
+              />
+            ) : (
+              docList(recent)
+            )}
+          </Card>
+        </div>
+        {details}
+      </div>
+    );
+  } else if (tab === 'documents') {
+    const listed = docs
+      .filter((d) => d.type === shownType)
+      .sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+    body = (
+      <Card>
+        <div className="border-b border-slate-100 p-4">
+          <Segmented
+            size="sm"
+            value={shownType}
+            onChange={(type) =>
+              setParams(
+                (p) => {
+                  p.set('type', type);
+                  return p;
+                },
+                { replace: true },
+              )
+            }
+            options={types.map((type) => ({
+              value: type,
+              label: t(DOCUMENT_LABELS[type].plural),
+              count: docs.filter((d) => d.type === type).length,
+            }))}
+          />
+        </div>
+        {listed.length === 0 ? (
+          <div className="px-6 py-12 text-center text-sm text-slate-500">
+            {t('Nothing here yet.')}{' '}
+            <Link
+              to={`${DOCUMENT_ROUTES[shownType]}/new?client=${client.id}`}
+              className="text-primary-700 font-medium"
+            >
+              {t('Create one')}
+            </Link>
+          </div>
+        ) : (
+          docList(listed)
+        )}
+      </Card>
+    );
+  } else if (tab === 'payments') {
+    body = (
+      <Card>
+        {vendorView ? (
+          <div className="border-b border-slate-100 p-4">
+            <Segmented
+              size="sm"
+              value={listFilter}
+              onChange={(list) =>
+                setParams(
+                  (p) => {
+                    p.set('list', list);
+                    return p;
+                  },
+                  { replace: true },
+                )
+              }
+              options={[
+                { value: 'payments', label: t('Payments'), count: payments.length },
+                { value: 'expenses', label: t('Expenses'), count: expenses.length },
+              ]}
+            />
+          </div>
+        ) : null}
+        {listFilter === 'expenses' ? (
+          expenses.length === 0 ? (
+            <p className="px-6 py-12 text-center text-sm text-slate-500">{t('No expenses yet.')}</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {[...expenses]
+                .sort((a, b) => b.date.localeCompare(a.date))
+                .map((e) => (
+                  <li key={e.id}>
+                    <Link
+                      to={`/expenses?open=${e.id}`}
+                      className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-slate-800">
+                          {e.number} · {fmt.date(e.date)}
+                        </span>
+                        <span className="text-xs text-slate-500">{e.description || '—'}</span>
+                      </span>
+                      <span className="tabular text-sm font-semibold text-slate-900">
+                        {fmt.money(e.amount, e.currency)}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+          )
+        ) : payments.length === 0 ? (
+          <EmptyState
+            className="py-10"
+            title={t('No payments yet.')}
+            action={
+              <ButtonLink
+                to={`${paymentsBase}/new?client=${client.id}`}
+                size="sm"
+                variant="outline"
+              >
+                <Plus /> {t('Record payment')}
+              </ButtonLink>
+            }
+          />
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {[...payments]
+              .sort(
+                (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+              )
+              .map((p) => (
+                <PaymentRow
+                  key={p.id}
+                  payment={p}
+                  href={`${paymentsBase}/${p.id}`}
+                  out={vendorView}
+                />
+              ))}
+          </ul>
+        )}
+      </Card>
+    );
+  } else if (tab === 'statement') {
+    body = (
+      <Card>
+        <CardBody>
+          <StatementPanel client={client} side={side} documents={docs} payments={allPayments} />
+        </CardBody>
+      </Card>
+    );
+  } else {
+    body = <RetentionPanel client={client} side={side} documents={docs} editHref={editHref} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -191,43 +650,60 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
         <div className="min-w-0">
           <p className="mb-1 text-sm text-slate-500">
             <Link to={copy.base} className="hover:text-slate-700">
-              {copy.title}
+              {t(copy.title)}
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{client.name}</h1>
-            {client.archived ? <Badge tone="slate">Archived</Badge> : null}
-            {client.taxExempt ? <Badge tone="amber">Tax exempt</Badge> : null}
+            {client.archived ? <Badge tone="slate">{t('Archived')}</Badge> : null}
+            {client.creditHold && !vendorView ? (
+              <Badge tone="red">{t('On credit hold')}</Badge>
+            ) : null}
+            {returnedCount > 0 && !vendorView ? (
+              <button type="button" onClick={() => setTab('payments')} className="rounded-full">
+                <Badge tone="red">
+                  {tp(returnedCount, '{count} returned cheque', '{count} returned cheques')}
+                </Badge>
+              </button>
+            ) : null}
+            {percent ? (
+              <Badge tone="violet">
+                {t('{percent} retention', { percent: fmt.percent(percent) })}
+              </Badge>
+            ) : null}
+            {client.taxExempt ? <Badge tone="amber">{t('Tax exempt')}</Badge> : null}
             {client.currency ? <Badge tone="blue">{client.currency}</Badge> : null}
             {otherKind ? (
               <Link to={`${CONTACT_COPY[otherKind].base}/${client.id}`}>
-                <Badge tone="violet">Also a {CONTACT_COPY[otherKind].singular}</Badge>
+                <Badge tone="violet">{t(copy.alsoOther)}</Badge>
               </Link>
             ) : null}
           </div>
-          <p className="mt-1 text-sm text-slate-500">{client.number}</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {[client.nameAr, client.number].filter(Boolean).join(' · ')}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {vendorView ? (
             <ButtonLink to={`/bills/new?client=${client.id}`}>
-              <Plus /> New bill
+              <Plus /> {t('New bill')}
             </ButtonLink>
           ) : (
             <>
               <ButtonLink to={`/quotes/new?client=${client.id}`} variant="outline">
-                New quote
+                {t('New quote')}
               </ButtonLink>
               <ButtonLink to={`/invoices/new?client=${client.id}`}>
-                <Plus /> New invoice
+                <Plus /> {t('New invoice')}
               </ButtonLink>
             </>
           )}
-          <Button variant="outline" onClick={() => navigate(`${copy.base}/${client.id}/edit`)}>
-            <Pencil /> Edit
+          <Button variant="outline" onClick={() => navigate(editHref)}>
+            <Pencil /> {t('Edit')}
           </Button>
           <DropdownMenu>
             <DropdownTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="More actions">
+              <Button variant="outline" size="icon" aria-label={t('More actions')}>
                 <MoreHorizontal />
               </Button>
             </DropdownTrigger>
@@ -238,243 +714,71 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
                   navigate(`${vendorView ? '/vendor-credits' : '/credits'}/new?client=${client.id}`)
                 }
               >
-                {vendorView ? 'New vendor credit' : 'New credit note'}
+                {vendorView ? t('New vendor credit') : t('New credit note')}
               </DropdownItem>
+              {!vendorView ? (
+                <DropdownItem
+                  icon={<Plus />}
+                  onSelect={() => navigate(`/sales-orders/new?client=${client.id}`)}
+                >
+                  {t('New sales order')}
+                </DropdownItem>
+              ) : null}
               <DropdownItem
                 icon={<Plus />}
                 onSelect={() => navigate(`${paymentsBase}/new?client=${client.id}`)}
               >
-                Record payment
+                {t('Record payment')}
               </DropdownItem>
               {vendorView ? (
                 <DropdownItem
                   icon={<Plus />}
                   onSelect={() => navigate(`/expenses?new=1&vendor=${client.id}`)}
                 >
-                  Record expense
+                  {t('Record expense')}
                 </DropdownItem>
-              ) : null}
+              ) : (
+                <DropdownItem
+                  icon={client.creditHold ? <CircleCheck /> : <Ban />}
+                  onSelect={() => void toggleHold()}
+                >
+                  {client.creditHold ? t('Lift credit hold') : t('Put on credit hold')}
+                </DropdownItem>
+              )}
               <DropdownSeparator />
               <DropdownItem
                 icon={client.archived ? <ArchiveRestore /> : <Archive />}
                 onSelect={() => void toggleArchive()}
               >
-                {client.archived ? 'Restore' : 'Archive'}
+                {client.archived ? t('Restore') : t('Archive')}
               </DropdownItem>
               <DropdownItem icon={<Trash2 />} danger onSelect={() => void remove()}>
-                Delete
+                {t('Delete')}
               </DropdownItem>
             </DropdownContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {stats ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat label={copy.amountLabel} value={fmt.money(stats.invoiced, currency)} />
-          <Stat
-            label="Paid"
-            value={fmt.money(stats.paid, currency)}
-            tone={stats.paid > 0 ? 'success' : 'default'}
-          />
-          <Stat
-            label={vendorView ? 'You owe' : 'Outstanding'}
-            value={fmt.money(stats.outstanding, currency)}
-          />
-          <Stat
-            label="Overdue"
-            value={fmt.money(stats.overdue, currency)}
-            tone={stats.overdue > 0 ? 'danger' : 'default'}
-            hint={
-              stats.credit > 0 ? `${fmt.money(stats.credit, currency)} unused credit` : undefined
-            }
-          />
-        </div>
+      <ContactSummary
+        side={side}
+        position={position}
+        currency={company.currency}
+        onHold={Boolean(client.creditHold)}
+        paymentsHref={paymentsBase}
+      />
+      {currency !== company.currency ? (
+        <p className="-mt-3 text-xs text-slate-500">
+          {t('Amounts in {currency}, at each document’s exchange rate.', {
+            currency: company.currency,
+          })}
+        </p>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card>
-          <div className="border-b border-slate-100 p-4">
-            <Segmented
-              value={tab}
-              onChange={setTab}
-              options={TABS[kind].map((t) => ({ ...t, count: count(t.value) }))}
-            />
-          </div>
-          {tab === 'expenses' ? (
-            expenses.length === 0 ? (
-              <p className="px-6 py-12 text-center text-sm text-slate-500">No expenses yet.</p>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {[...expenses]
-                  .sort((a, b) => b.date.localeCompare(a.date))
-                  .map((e) => (
-                    <li key={e.id}>
-                      <Link
-                        to={`/expenses?open=${e.id}`}
-                        className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
-                      >
-                        <span>
-                          <span className="block text-sm font-medium text-slate-800">
-                            {e.number} · {fmt.date(e.date)}
-                          </span>
-                          <span className="text-xs text-slate-500">{e.description || '—'}</span>
-                        </span>
-                        <span className="tabular text-sm font-semibold text-slate-900">
-                          {fmt.money(e.amount, e.currency)}
-                        </span>
-                      </Link>
-                    </li>
-                  ))}
-              </ul>
-            )
-          ) : tab === 'payments' ? (
-            payments.length === 0 ? (
-              <p className="px-6 py-12 text-center text-sm text-slate-500">No payments yet.</p>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {[...payments]
-                  .sort((a, b) => b.date.localeCompare(a.date))
-                  .map((p) => (
-                    <li key={p.id}>
-                      <Link
-                        to={`${paymentsBase}/${p.id}`}
-                        className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
-                      >
-                        <span>
-                          <span className="block text-sm font-medium text-slate-800">
-                            {p.number} · {fmt.date(p.date)}
-                          </span>
-                          <span className="text-xs text-slate-500">
-                            {paymentMethodLabel(p.method)}
-                            {p.reference ? ` · ${p.reference}` : ''}
-                          </span>
-                        </span>
-                        <span
-                          className={
-                            vendorView
-                              ? 'tabular text-sm font-semibold text-slate-900'
-                              : 'tabular text-sm font-semibold text-emerald-700'
-                          }
-                        >
-                          {fmt.money(p.amount, p.currency)}
-                        </span>
-                      </Link>
-                    </li>
-                  ))}
-              </ul>
-            )
-          ) : listed.length === 0 ? (
-            <div className="px-6 py-12 text-center text-sm text-slate-500">
-              Nothing here yet.{' '}
-              <Link
-                to={`${DOCUMENT_ROUTES[tab]}/new?client=${client.id}`}
-                className="text-primary-700 font-medium"
-              >
-                Create one
-              </Link>
-            </div>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {listed.map((d) => (
-                <li key={d.id}>
-                  <Link
-                    to={`${DOCUMENT_ROUTES[d.type]}/${d.id}`}
-                    className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50"
-                  >
-                    <span>
-                      <span className="block text-sm font-medium text-slate-800">{d.number}</span>
-                      <span className="text-xs text-slate-500">
-                        {fmt.date(d.issueDate)}
-                        {d.dueDate ? ` · due ${fmt.date(d.dueDate)}` : ''}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="tabular text-sm font-semibold text-slate-900">
-                        {fmt.money(d.totals.total, d.currency)}
-                      </span>
-                      <StatusBadge status={displayStatus(d, now)} />
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader title="Details" />
-          <CardBody className="space-y-5 text-sm">
-            {client.contacts.length > 0 ? (
-              <div className="space-y-3">
-                {client.contacts.map((c) => (
-                  <div key={c.id}>
-                    <p className="font-medium text-slate-800">
-                      {c.name || 'Contact'}
-                      {c.primary && client.contacts.length > 1 ? (
-                        <span className="ms-2 text-xs font-normal text-slate-400">Primary</span>
-                      ) : null}
-                    </p>
-                    {c.email ? (
-                      <a
-                        href={`mailto:${c.email}`}
-                        className="text-primary-700 flex items-center gap-1.5 hover:underline"
-                      >
-                        <Mail className="size-3.5" /> {c.email}
-                      </a>
-                    ) : null}
-                    {c.phone ? (
-                      <a
-                        href={`tel:${c.phone}`}
-                        className="flex items-center gap-1.5 text-slate-600"
-                      >
-                        <Phone className="size-3.5" /> {c.phone}
-                      </a>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {address.length ? (
-              <div>
-                <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  {vendorView ? 'Address' : 'Billing address'}
-                </p>
-                <p className="whitespace-pre-line text-slate-700">{address.join('\n')}</p>
-              </div>
-            ) : null}
-            {shipping.length ? (
-              <div>
-                <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  Shipping address
-                </p>
-                <p className="whitespace-pre-line text-slate-700">{shipping.join('\n')}</p>
-              </div>
-            ) : null}
-            {client.taxId ? (
-              <div>
-                <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  {company.taxIdLabel || 'Tax ID'}
-                </p>
-                <p className="text-slate-700">{client.taxId}</p>
-              </div>
-            ) : null}
-            {client.paymentTermsDays !== null ? (
-              <div>
-                <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  Payment terms
-                </p>
-                <p className="text-slate-700">{client.paymentTermsDays} days</p>
-              </div>
-            ) : null}
-            {client.notes ? (
-              <p className="rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
-                {client.notes}
-              </p>
-            ) : null}
-          </CardBody>
-        </Card>
+      <div role="group" aria-label={t('Sections')} className="max-w-full">
+        <Segmented value={tab} onChange={setTab} options={tabs} />
       </div>
+      {body}
     </div>
   );
 }
