@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { createRecurring } from '@/db/defaults';
@@ -11,7 +12,7 @@ import { useCompany, useFormat } from '@/app/company';
 import { computeDocument } from '@/lib/document-calc';
 import { FREQUENCIES, occurrenceDate, today } from '@/lib/dates';
 import { currencySymbol, formatUnitPrice } from '@/lib/format';
-import { DATE_PLACEHOLDERS } from '@/lib/placeholders';
+import { datePlaceholderExamples, placeholderLocale } from '@/lib/placeholders';
 import { TEMPLATE_META } from '@/pdf/template-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
@@ -25,6 +26,8 @@ import { TotalsPanel } from '@/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { isCustomer } from '@/db/purchases';
+import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 export default function RecurringEditorPage() {
   const { id } = useParams();
@@ -100,14 +103,16 @@ export default function RecurringEditorPage() {
     [profile, clients],
   );
   const nextDate = profile ? (profile.nextIssueDate ?? profile.startDate) : today();
+  // Month names follow the document language: the client's, else the company's.
+  const locale = placeholderLocale(client?.language ?? company.language, company.locale);
 
   // The invoice the profile will produce next, with placeholders filled in.
   const preview = useMemo(
-    () => (profile ? invoiceFromProfile(profile, nextDate, company.locale) : null),
-    [profile, nextDate, company.locale],
+    () => (profile ? invoiceFromProfile(profile, nextDate, locale) : null),
+    [profile, nextDate, locale],
   );
   const pdf = useLivePdf(
-    preview ? { ...preview, number: 'Next' } : null,
+    preview ? { ...preview, number: t('Next') } : null,
     company,
     client,
     profile?.template.templateId ?? company.branding.templateId,
@@ -119,15 +124,15 @@ export default function RecurringEditorPage() {
   if (missing) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This recurring invoice could not be found.</p>
+        <p className="text-slate-600">{t('This recurring invoice could not be found.')}</p>
         <Link to="/recurring" className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back
+          {t('Back')}
         </Link>
       </Card>
     );
   }
   if (!profile || !preview || !clients || !products || !taxRates)
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
 
   const set = (patch: Partial<RecurringProfile>) => setProfile((p) => (p ? { ...p, ...patch } : p));
   const setTemplate = (patch: Partial<RecurringProfile['template']>) =>
@@ -156,11 +161,11 @@ export default function RecurringEditorPage() {
   };
 
   const save = async () => {
-    if (!profile.clientId) return toast.error('Choose a client.');
+    if (!profile.clientId) return toast.error(t('Choose a client.'));
     if (
       !profile.template.items.some((i) => i.kind === 'item' && (i.name.trim() || i.unitPrice !== 0))
     ) {
-      return toast.error('Add at least one item.');
+      return toast.error(t('Add at least one item.'));
     }
     setSaving(true);
     try {
@@ -168,13 +173,17 @@ export default function RecurringEditorPage() {
       const created = await generateDueInvoices(company.id);
       toast.success(
         created.length
-          ? `Saved — ${created.length} invoice${created.length === 1 ? '' : 's'} created now`
-          : `Saved — next invoice on ${fmt.date(profile.nextIssueDate)}`,
+          ? tp(
+              created.length,
+              'Saved — {count} invoice created now',
+              'Saved — {count} invoices created now',
+            )
+          : t('Saved — next invoice on {date}', { date: fmt.date(profile.nextIssueDate) }),
       );
       allowNavigation();
       navigate('/recurring');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save.');
+      toast.error(error instanceof Error ? error.message : t('Could not save.'));
       setSaving(false);
     }
   };
@@ -184,15 +193,19 @@ export default function RecurringEditorPage() {
   return (
     <div>
       <PageHeader
-        breadcrumb={<Link to="/recurring">Recurring invoices</Link>}
-        title={id ? `Edit ${profile.name || 'recurring invoice'}` : 'New recurring invoice'}
+        breadcrumb={<Link to="/recurring">{t('Recurring invoices')}</Link>}
+        title={
+          id
+            ? t('Edit {name}', { name: profile.name || t('recurring invoice') })
+            : t('New recurring invoice')
+        }
         actions={
           <>
             <Button variant="ghost" onClick={() => navigate(-1)}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
-              Save
+              {t('Save')}
             </Button>
           </>
         }
@@ -201,11 +214,13 @@ export default function RecurringEditorPage() {
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader
-              title="Schedule"
-              description={`${FREQUENCY_LABEL[profile.frequency]} · next invoice ${fmt.date(profile.nextIssueDate) || '—'}`}
+              title={t('Schedule')}
+              description={`${t(FREQUENCY_LABEL[profile.frequency])} · ${t('Next invoice {date}', {
+                date: fmt.date(profile.nextIssueDate) || '—',
+              })}`}
             />
             <CardBody className="grid gap-4 md:grid-cols-2">
-              <Field label="Name" hint="Only for you, e.g. “Monthly retainer”.">
+              <Field label={t('Name')} hint={t('Only for you, e.g. “Monthly retainer”.')}>
                 {(fid) => (
                   <Input
                     id={fid}
@@ -214,7 +229,7 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="Client">
+              <Field label={t('Client')}>
                 {(fid) => (
                   <Combobox
                     id={fid}
@@ -226,14 +241,14 @@ export default function RecurringEditorPage() {
                     }}
                     options={clients
                       .filter((c) => (!c.archived && isCustomer(c)) || c.id === profile.clientId)
-                      .map((c) => ({ value: c.id, label: c.name, detail: c.number }))}
-                    placeholder="Choose a client…"
+                      .map((c) => ({ value: c.id, label: localName(c), detail: c.number }))}
+                    placeholder={t('Choose a client…')}
                     onCreate={(name) => setClientDialog({ open: true, name })}
-                    createLabel="New client"
+                    createLabel={t('New client')}
                   />
                 )}
               </Field>
-              <Field label="Frequency">
+              <Field label={t('Frequency')}>
                 {(fid) => (
                   <Select
                     id={fid}
@@ -242,13 +257,13 @@ export default function RecurringEditorPage() {
                   >
                     {FREQUENCIES.map((f) => (
                       <option key={f.value} value={f.value}>
-                        {f.label}
+                        {t(FREQUENCY_LABEL[f.value])}
                       </option>
                     ))}
                   </Select>
                 )}
               </Field>
-              <Field label="First invoice date">
+              <Field label={t('First invoice date')}>
                 {(fid) => (
                   <Input
                     id={fid}
@@ -258,7 +273,7 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="Ends">
+              <Field label={t('Ends')}>
                 {(fid) => (
                   <div className="flex gap-2">
                     <Select
@@ -274,13 +289,13 @@ export default function RecurringEditorPage() {
                       }
                       className="w-36"
                     >
-                      <option value="never">Never</option>
-                      <option value="after">After</option>
+                      <option value="never">{t('Never')}</option>
+                      <option value="after">{t('After')}</option>
                     </Select>
                     {ends === 'after' ? (
                       <div className="flex items-center gap-2">
                         <NumberInput
-                          aria-label="Number of invoices left"
+                          aria-label={t('Number of invoices left')}
                           value={profile.remainingCycles ?? 1}
                           onValueChange={(n) =>
                             set({
@@ -294,13 +309,13 @@ export default function RecurringEditorPage() {
                           allowNegative={false}
                           className="w-20"
                         />
-                        <span className="text-sm text-slate-500">more</span>
+                        <span className="text-sm text-slate-500">{t('more invoices')}</span>
                       </div>
                     ) : null}
                   </div>
                 )}
               </Field>
-              <Field label="Payment due (days after issue)">
+              <Field label={t('Payment due (days after issue)')}>
                 {(fid) => (
                   <NumberInput
                     id={fid}
@@ -310,7 +325,7 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="Currency">
+              <Field label={t('Currency')}>
                 {(fid) => (
                   <CurrencySelect
                     id={fid}
@@ -319,17 +334,17 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="Template">
+              <Field label={t('Template')}>
                 {(fid) => (
                   <Select
                     id={fid}
                     value={profile.template.templateId ?? ''}
                     onChange={(e) => setTemplate({ templateId: e.target.value || null })}
                   >
-                    <option value="">Company default</option>
-                    {TEMPLATE_META.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
+                    <option value="">{t('Company default')}</option>
+                    {TEMPLATE_META.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {t(template.name)}
                       </option>
                     ))}
                   </Select>
@@ -339,15 +354,19 @@ export default function RecurringEditorPage() {
                 <Switch
                   checked={profile.markSent}
                   onChange={(markSent) => set({ markSent })}
-                  label="Mark new invoices as sent"
-                  description="Otherwise they are created as drafts for you to review and send."
+                  label={t('Mark new invoices as sent')}
+                  description={t(
+                    'Otherwise they are created as drafts for you to review and send.',
+                  )}
                 />
                 {profile.status !== 'completed' ? (
                   <Switch
                     checked={profile.status === 'active'}
                     onChange={(on) => set({ status: on ? 'active' : 'paused' })}
-                    label="Active"
-                    description="Pause to stop creating invoices without deleting the schedule."
+                    label={t('Active')}
+                    description={t(
+                      'Pause to stop creating invoices without deleting the schedule.',
+                    )}
                   />
                 ) : null}
               </div>
@@ -356,11 +375,24 @@ export default function RecurringEditorPage() {
 
           <Card>
             <CardHeader
-              title="Items"
+              title={t('Items')}
               description={
                 <>
-                  Use {DATE_PLACEHOLDERS.map((p) => p.token).join(', ')} in text to insert the
-                  invoice’s period.
+                  {t('Placeholders in the text fill in the invoice’s period. On the next invoice:')}
+                  <span className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                    {datePlaceholderExamples(nextDate, locale).map((p) => (
+                      <span key={p.token} className="inline-flex items-center gap-1">
+                        <code
+                          dir="ltr"
+                          className="rounded bg-slate-100 px-1 font-mono text-xs text-slate-700"
+                        >
+                          {p.token}
+                        </code>
+                        <ArrowRight className="size-3 text-slate-400" aria-hidden />
+                        {p.example}
+                      </span>
+                    ))}
+                  </span>
                 </>
               }
             />
@@ -383,7 +415,7 @@ export default function RecurringEditorPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Totals" />
+            <CardHeader title={t('Totals')} />
             <CardBody>
               <TotalsPanel
                 doc={templateDoc}
@@ -412,9 +444,9 @@ export default function RecurringEditorPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Notes & terms" />
+            <CardHeader title={t('Notes & terms')} />
             <CardBody className="space-y-4">
-              <Field label="Notes">
+              <Field label={t('Notes')}>
                 {(fid) => (
                   <Textarea
                     id={fid}
@@ -424,7 +456,7 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="Terms & conditions">
+              <Field label={t('Terms & conditions')}>
                 {(fid) => (
                   <Textarea
                     id={fid}
@@ -434,7 +466,7 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
-              <Field label="PO / reference" optional>
+              <Field label={t('PO / reference')} optional>
                 {(fid) => (
                   <Input
                     id={fid}
@@ -450,7 +482,7 @@ export default function RecurringEditorPage() {
         <aside className="hidden xl:block">
           <div className="sticky top-20 space-y-3">
             <p className="text-sm font-medium text-slate-700">
-              Next invoice ({fmt.date(nextDate)})
+              {t('Next invoice ({date})', { date: fmt.date(nextDate) })}
             </p>
             <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-xl bg-slate-200/60 p-4">
               <PdfPreview blob={pdf.blob} loading={pdf.loading} error={pdf.error} />

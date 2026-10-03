@@ -1,6 +1,7 @@
 import type { ISODate } from '@/db/types';
 import { isISODate } from '@/lib/dates';
 import { normalizeDigits } from '@/lib/money';
+import { msg } from '@/i18n';
 
 /**
  * Bank statements as exported by online banking: CSV (any layout, mapped by
@@ -74,9 +75,10 @@ export type DateFormat =
   | 'd MMM yyyy'
   | 'yyyyMMdd';
 
+/** Translate the label where it is shown: `t(format.label)`. */
 export const DATE_FORMATS: { value: DateFormat; label: string }[] = [
-  { value: 'dd/MM/yyyy', label: '31/12/2026 (day first)' },
-  { value: 'MM/dd/yyyy', label: '12/31/2026 (month first)' },
+  { value: 'dd/MM/yyyy', label: msg('31/12/2026 (day first)') },
+  { value: 'MM/dd/yyyy', label: msg('12/31/2026 (month first)') },
   { value: 'yyyy-MM-dd', label: '2026-12-31' },
   { value: 'dd.MM.yyyy', label: '31.12.2026' },
   { value: 'dd-MM-yyyy', label: '31-12-2026' },

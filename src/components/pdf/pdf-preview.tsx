@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Spinner } from '@/components/ui/misc';
+import { t } from '@/i18n';
 
 type PdfJs = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 
@@ -77,7 +78,7 @@ export function PdfPreview({
           canvas.height = Math.floor(viewport.height);
           canvas.className =
             'block w-full rounded-sm bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_8px_24px_-8px_rgba(15,23,42,0.18)]';
-          canvas.setAttribute('aria-label', `Page ${n}`);
+          canvas.setAttribute('aria-label', t('Page {number}', { number: n }));
           await page.render({ canvas, viewport }).promise;
           if (cancelled) return;
           canvases.push(canvas);
@@ -88,7 +89,7 @@ export function PdfPreview({
         setRenderError(null);
       } catch (e) {
         if (!cancelled)
-          setRenderError(e instanceof Error ? e.message : 'Could not display the PDF.');
+          setRenderError(e instanceof Error ? e.message : t('Could not display the PDF.'));
       }
     })();
 
@@ -105,12 +106,12 @@ export function PdfPreview({
       <div ref={container} className="flex flex-col gap-4" />
       {!rendered && !message ? (
         <div className="flex aspect-[1/1.414] w-full items-center justify-center rounded-sm bg-white shadow-sm">
-          <Spinner label="Preparing preview…" />
+          <Spinner label={t('Preparing preview…')} />
         </div>
       ) : null}
       {loading && rendered ? (
-        <div className="absolute top-3 right-3 rounded-full bg-white/90 px-3 py-1.5 shadow-sm ring-1 ring-slate-200">
-          <Spinner label="Updating…" />
+        <div className="absolute end-3 top-3 rounded-full bg-white/90 px-3 py-1.5 shadow-sm ring-1 ring-slate-200">
+          <Spinner label={t('Updating…')} />
         </div>
       ) : null}
       {message ? (

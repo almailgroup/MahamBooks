@@ -36,6 +36,9 @@ import { parseISODate, today } from '@/lib/dates';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
+import { isRtl, msg, t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
+import { tr } from '@/i18n/provider';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, CardBody, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, Switch } from '@/components/ui/form';
@@ -50,28 +53,31 @@ import {
 type VatStatus = 'filed' | 'open' | 'ready' | 'overdue';
 
 const STATUS: Record<VatStatus, { label: string; tone: 'green' | 'gray' | 'amber' | 'red' }> = {
-  filed: { label: 'Filed', tone: 'green' },
-  open: { label: 'In progress', tone: 'gray' },
-  ready: { label: 'Ready to file', tone: 'amber' },
-  overdue: { label: 'Overdue', tone: 'red' },
+  filed: { label: msg('Filed'), tone: 'green' },
+  open: { label: msg('In progress'), tone: 'gray' },
+  ready: { label: msg('Ready to file'), tone: 'amber' },
+  overdue: { label: msg('Overdue'), tone: 'red' },
 };
 
 const OFFICE: Record<VatSettings['format'], string> = {
-  uk: 'Submit the figures to HMRC with your Making Tax Digital software or HMRC online services, then mark the return as filed here.',
-  ae: 'Submit the figures on the FTA EmaraTax portal, then mark the return as filed here.',
-  generic: 'Submit the figures to your tax office, then mark the return as filed here.',
+  uk: msg(
+    'Submit the figures to HMRC with your Making Tax Digital software or HMRC online services, then mark the return as filed here.',
+  ),
+  ae: msg('Submit the figures on the FTA EmaraTax portal, then mark the return as filed here.'),
+  generic: msg('Submit the figures to your tax office, then mark the return as filed here.'),
 };
 
+/** "October 2026", or "Jul – Sep 2026" for a quarter, in the interface language. */
 function periodName(period: VatPeriod, locale: string): string {
   const start = parseISODate(period.start);
   const end = parseISODate(period.end);
-  const month = new Intl.DateTimeFormat(locale, { month: 'short' });
   if (period.start.slice(0, 7) === period.end.slice(0, 7)) {
     return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(start);
   }
-  return start.getFullYear() === end.getFullYear()
-    ? `${month.format(start)} – ${month.format(end)} ${end.getFullYear()}`
-    : `${month.format(start)} ${start.getFullYear()} – ${month.format(end)} ${end.getFullYear()}`;
+  return new Intl.DateTimeFormat(locale, { month: 'short', year: 'numeric' }).formatRange(
+    start,
+    end,
+  );
 }
 
 function statusOf(
@@ -128,13 +134,15 @@ function useMinor() {
 function NotRegistered() {
   return (
     <div>
-      <PageHeader title="VAT returns" />
+      <PageHeader title={t('VAT returns')} />
       <Card>
         <EmptyState
           icon={<Landmark />}
-          title="VAT returns are off"
-          description="If your business is registered for VAT, turn returns on and choose how often you file."
-          action={<ButtonLink to="/settings/accounting">Set up VAT returns</ButtonLink>}
+          title={t('VAT returns are off')}
+          description={t(
+            'If your business is registered for VAT, turn returns on and choose how often you file.',
+          )}
+          action={<ButtonLink to="/settings/accounting">{t('Set up VAT returns')}</ButtonLink>}
         />
       </Card>
     </div>
@@ -172,32 +180,34 @@ function VatReturnList() {
       .reverse();
   }, [ledger, records, ctx, settings, now]);
 
-  if (!rows) return <Spinner className="py-24" label="Loading…" />;
+  if (!rows) return <Spinner className="py-24" label={t('Loading…')} />;
   const next = [...rows].reverse().find((r) => r.status === 'ready' || r.status === 'overdue');
 
   return (
     <div>
       <PageHeader
-        title="VAT returns"
-        description="Worked out from your invoices, bills and expenses."
+        title={t('VAT returns')}
+        description={t('Worked out from your invoices, bills and expenses.')}
         actions={
           <ButtonLink to="/settings/accounting" variant="outline">
-            VAT settings
+            {t('VAT settings')}
           </ButtonLink>
         }
       />
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-sm text-blue-900">
         <Info className="mt-0.5 size-4 shrink-0" />
-        <p>{OFFICE[settings.format]}</p>
+        <p>{t(OFFICE[settings.format])}</p>
       </div>
       {next ? (
         <Card className="mb-6">
           <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-slate-500">Next return to file</p>
+              <p className="text-sm text-slate-500">{t('Next return to file')}</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">
                 {periodName(next.period, fmt.locale)} ·{' '}
-                {next.net >= 0 ? `${money(next.net)} to pay` : `${money(-next.net)} to reclaim`}
+                {next.net >= 0
+                  ? t('{amount} to pay', { amount: money(next.net) })
+                  : t('{amount} to reclaim', { amount: money(-next.net) })}
               </p>
               <p
                 className={cn(
@@ -205,10 +215,10 @@ function VatReturnList() {
                   next.status === 'overdue' ? 'font-medium text-red-600' : 'text-slate-500',
                 )}
               >
-                Due {fmt.date(next.due)}
+                {t('Due {date}', { date: fmt.date(next.due) })}
               </p>
             </div>
-            <ButtonLink to={`/vat/${next.period.start}`}>Review return</ButtonLink>
+            <ButtonLink to={`/vat/${next.period.start}`}>{t('Review return')}</ButtonLink>
           </CardBody>
         </Card>
       ) : null}
@@ -217,10 +227,10 @@ function VatReturnList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                <th className="px-5 py-3">Period</th>
-                <th className="hidden px-3 py-3 sm:table-cell">Due</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-5 py-3 text-end">VAT</th>
+                <th className="px-4 py-3 sm:px-5">{t('Period')}</th>
+                <th className="hidden px-3 py-3 sm:table-cell">{t('Due')}</th>
+                <th className="px-3 py-3">{t('Status')}</th>
+                <th className="px-4 py-3 text-end sm:px-5">{t('VAT')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -230,7 +240,7 @@ function VatReturnList() {
                   onClick={() => navigate(`/vat/${r.period.start}`)}
                   className="cursor-pointer hover:bg-slate-50"
                 >
-                  <td className="px-5 py-3">
+                  <td className="px-4 py-3 sm:px-5">
                     <Link
                       to={`/vat/${r.period.start}`}
                       onClick={(e) => e.stopPropagation()}
@@ -247,7 +257,7 @@ function VatReturnList() {
                         r.status === 'overdue' ? 'font-medium text-red-600' : 'text-slate-500',
                       )}
                     >
-                      Due {fmt.date(r.due)}
+                      {t('Due {date}', { date: fmt.date(r.due) })}
                     </span>
                   </td>
                   <td
@@ -259,17 +269,17 @@ function VatReturnList() {
                     {fmt.date(r.due)}
                   </td>
                   <td className="px-3 py-3">
-                    <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+                    <Badge tone={STATUS[r.status].tone}>{t(STATUS[r.status].label)}</Badge>
                     {r.record ? (
                       <span className="ms-2 hidden text-xs text-slate-500 md:inline">
                         {fmt.date(r.record.filedOn)}
                       </span>
                     ) : null}
                   </td>
-                  <td className="tabular px-5 py-3 text-end whitespace-nowrap">
+                  <td className="tabular px-4 py-3 text-end whitespace-nowrap sm:px-5">
                     <span className="font-medium text-slate-900">{money(Math.abs(r.net))}</span>
                     <span className="block text-xs text-slate-500">
-                      {r.net >= 0 ? 'to pay' : 'to reclaim'}
+                      {r.net >= 0 ? t('to pay') : t('to reclaim')}
                     </span>
                   </td>
                 </tr>
@@ -304,22 +314,24 @@ function FileDialog({
     setSaving(true);
     try {
       await fileVatReturn(company.id, period, { filedOn, reference, lock });
-      toast.success('Return marked as filed');
+      toast.success(t('Return marked as filed'));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not file the return.');
+      toast.error(error instanceof Error ? error.message : t('Could not file the return.'));
       setSaving(false);
     }
   };
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        title="Mark as filed"
-        description="Record that you submitted this return. The VAT for the period moves to your VAT liability account."
+        title={t('Mark as filed')}
+        description={t(
+          'Record that you submitted this return. The VAT for the period moves to your VAT liability account.',
+        )}
       >
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Filed on">
+            <Field label={t('Filed on')}>
               {(id) => (
                 <Input
                   id={id}
@@ -329,13 +341,13 @@ function FileDialog({
                 />
               )}
             </Field>
-            <Field label="Reference" optional>
+            <Field label={t('Reference')} optional>
               {(id) => (
                 <Input
                   id={id}
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
-                  placeholder="Submission receipt"
+                  placeholder={t('Submission receipt')}
                 />
               )}
             </Field>
@@ -343,16 +355,18 @@ function FileDialog({
           <Switch
             checked={lock}
             onChange={setLock}
-            label="Lock the period"
-            description={`Nothing dated on or before ${fmt.date(period.end)} can be changed afterwards.`}
+            label={t('Lock the period')}
+            description={t('Nothing dated on or before {date} can be changed afterwards.', {
+              date: fmt.date(period.end),
+            })}
           />
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={() => void save()} loading={saving}>
-            Mark as filed
+            {t('Mark as filed')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -369,26 +383,30 @@ function PaymentDialog({ record, onClose }: { record: VatReturnRecord; onClose: 
   const pay = record.net > 0;
   const save = async () => {
     const bank = accountId ?? accounts?.find((a) => a.role === 'bank')?.id;
-    if (!bank) return toast.error('Choose the bank account.');
+    if (!bank) return toast.error(t('Choose the bank account.'));
     setSaving(true);
     try {
       await recordVatPayment(record.id, { date, accountId: bank });
-      toast.success(pay ? 'VAT payment recorded' : 'VAT refund recorded');
+      toast.success(pay ? t('VAT payment recorded') : t('VAT refund recorded'));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not record it.');
+      toast.error(error instanceof Error ? error.message : t('Could not record it.'));
       setSaving(false);
     }
   };
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        title={pay ? 'Record VAT payment' : 'Record VAT refund'}
-        description={`${money(Math.abs(record.net))} ${pay ? 'paid to' : 'received from'} the tax office.`}
+        title={pay ? t('Record VAT payment') : t('Record VAT refund')}
+        description={
+          pay
+            ? t('{amount} paid to the tax office.', { amount: money(Math.abs(record.net)) })
+            : t('{amount} received from the tax office.', { amount: money(Math.abs(record.net)) })
+        }
       >
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Date">
+            <Field label={t('Date')}>
               {(id) => (
                 <Input
                   id={id}
@@ -398,7 +416,7 @@ function PaymentDialog({ record, onClose }: { record: VatReturnRecord; onClose: 
                 />
               )}
             </Field>
-            <Field label={pay ? 'Paid from' : 'Received into'}>
+            <Field label={pay ? t('Paid from') : t('Received into')}>
               {(id) => (
                 <MoneyAccountSelect
                   id={id}
@@ -413,10 +431,10 @@ function PaymentDialog({ record, onClose }: { record: VatReturnRecord; onClose: 
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={() => void save()} loading={saving}>
-            {pay ? 'Record payment' : 'Record refund'}
+            {pay ? t('Record payment') : t('Record refund')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -448,7 +466,7 @@ function VatReturnDetail({ start }: { start: string }) {
     [ledger, ctx, period, settings.format],
   );
   if (!live || !records || !ledger || !ctx || !clients || payment === undefined)
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
 
   const record = records.find((r) => r.periodStart === period.start);
   const now = today();
@@ -469,7 +487,7 @@ function VatReturnDetail({ start }: { start: string }) {
     : [];
   const hasVat = boxes.some((b) => b.vat !== undefined);
   const net = record ? record.net : live.net;
-  const names = new Map(clients.map((c) => [c.id, c.name]));
+  const names = new Map(clients.map((c) => [c.id, localName(c)]));
   const problems = ledger.problems.filter((p) =>
     ledger.lines.some(
       (l) => l.sourceId === p.sourceId && l.date >= period.start && l.date <= period.end,
@@ -488,28 +506,31 @@ function VatReturnDetail({ start }: { start: string }) {
   const exportCsv = () =>
     downloadCsv(
       `vat-return-${period.start}_${period.end}`,
-      hasVat ? ['Box', 'Description', 'Amount', 'VAT'] : ['Box', 'Description', 'Amount'],
+      hasVat
+        ? [t('Box'), t('Description'), t('Amount'), t('VAT')]
+        : [t('Box'), t('Description'), t('Amount')],
       boxes.map((b) =>
         hasVat
-          ? [b.id, b.label, major(b.amount), b.vat === undefined ? '' : major(b.vat)]
-          : [b.id, b.label, major(b.amount)],
+          ? [b.id, t(b.label), major(b.amount), b.vat === undefined ? '' : major(b.vat)]
+          : [b.id, t(b.label), major(b.amount)],
       ),
     );
 
   const undo = async () => {
     const ok = await confirm({
-      title: 'Undo this filing?',
-      description:
-        'The return goes back to "ready to file" and its closing entry (and any payment recorded) is removed.',
-      confirmLabel: 'Undo filing',
+      title: t('Undo this filing?'),
+      description: t(
+        'The return goes back to “ready to file” and its closing entry (and any payment recorded) is removed.',
+      ),
+      confirmLabel: t('Undo filing'),
       danger: true,
     });
     if (!ok || !record) return;
     try {
       await undoVatReturn(record.id);
-      toast.success('Filing undone');
+      toast.success(t('Filing undone'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not undo the filing.');
+      toast.error(error instanceof Error ? error.message : t('Could not undo the filing.'));
     }
   };
 
@@ -519,34 +540,44 @@ function VatReturnDetail({ start }: { start: string }) {
         <div>
           <p className="mb-1 text-sm text-slate-500">
             <Link to="/vat" className="hover:text-slate-700">
-              VAT returns
+              {t('VAT returns')}
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              VAT return · {periodName(period, fmt.locale)}
+              {t('VAT return · {period}', { period: periodName(period, fmt.locale) })}
             </h1>
-            <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
+            <Badge tone={STATUS[status].tone}>{t(STATUS[status].label)}</Badge>
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {fmt.date(period.start)} – {fmt.date(period.end)} · due {fmt.date(due)}
-            {record
-              ? ` · filed ${fmt.date(record.filedOn)}${record.reference ? `, ref. ${record.reference}` : ''}`
-              : ''}
+            {[
+              `${fmt.date(period.start)} – ${fmt.date(period.end)}`,
+              t('Due {date}', { date: fmt.date(due) }),
+              record
+                ? record.reference
+                  ? t('Filed {date}, ref. {reference}', {
+                      date: fmt.date(record.filedOn),
+                      reference: record.reference,
+                    })
+                  : t('Filed {date}', { date: fmt.date(record.filedOn) })
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={exportCsv}>
-            <Download /> Export CSV
+            <Download /> {t('Export CSV')}
           </Button>
           {record ? (
             <>
               <Button variant="outline" onClick={() => void undo()}>
-                <Undo2 /> Undo filing
+                <Undo2 /> {t('Undo filing')}
               </Button>
               {net !== 0 && !payment ? (
                 <Button onClick={() => setDialog('pay')}>
-                  {net > 0 ? 'Record payment' : 'Record refund'}
+                  {net > 0 ? t('Record payment') : t('Record refund')}
                 </Button>
               ) : null}
             </>
@@ -554,9 +585,13 @@ function VatReturnDetail({ start }: { start: string }) {
             <Button
               onClick={() => setDialog('file')}
               disabled={period.end >= now}
-              title={period.end >= now ? `You can file after ${fmt.date(period.end)}.` : undefined}
+              title={
+                period.end >= now
+                  ? t('You can file after {date}.', { date: fmt.date(period.end) })
+                  : undefined
+              }
             >
-              Mark as filed
+              {t('Mark as filed')}
             </Button>
           )}
         </div>
@@ -565,24 +600,33 @@ function VatReturnDetail({ start }: { start: string }) {
       <div className="space-y-4">
         {changed.length ? (
           <Notice tone="amber">
-            The books changed after this return was filed (box{changed.length > 1 ? 'es' : ''}{' '}
-            {changed.map((b) => b.id).join(', ')}). Correct the difference in your next return or
-            with the tax office.
+            {tp(
+              changed.length,
+              'The books changed after this return was filed (box {boxes}). Correct the difference in your next return or with the tax office.',
+              'The books changed after this return was filed (boxes {boxes}). Correct the difference in your next return or with the tax office.',
+              {
+                boxes: new Intl.ListFormat(fmt.locale, { type: 'conjunction' }).format(
+                  changed.map((b) => b.id),
+                ),
+              },
+            )}
           </Notice>
         ) : null}
         {untaxed.length ? (
           <Notice tone="amber">
-            {untaxed.length} {untaxed.length === 1 ? 'document has' : 'documents have'} lines
-            without a tax rate:{' '}
-            {untaxed.map((l, i) => (
-              <Fragment key={l.sourceId}>
-                {i > 0 ? ', ' : ''}
-                <Link to={sourceLink(l)} className="font-medium underline">
-                  {l.number}
-                </Link>
-              </Fragment>
-            ))}
-            . Choose a rate (zero-rated, exempt…) so they are reported correctly.
+            {tr(
+              'Lines without a tax rate in {documents}. Choose a rate (zero-rated, exempt…) so they are reported correctly.',
+              {
+                documents: untaxed.map((l, i) => (
+                  <Fragment key={l.sourceId}>
+                    {i > 0 ? (isRtl() ? '، ' : ', ') : ''}
+                    <Link to={sourceLink(l)} className="font-medium underline">
+                      <bdi>{l.number}</bdi>
+                    </Link>
+                  </Fragment>
+                )),
+              },
+            )}
           </Notice>
         ) : null}
         {problems.length ? (
@@ -593,10 +637,12 @@ function VatReturnDetail({ start }: { start: string }) {
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50/60">
               <tr className="text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                <th className="w-20 px-5 py-3">Box</th>
-                <th className="px-3 py-3">Description</th>
-                <th className="px-3 py-3 text-end">Amount</th>
-                {hasVat ? <th className="px-5 py-3 text-end">VAT</th> : null}
+                <th className="py-3 ps-4 pe-2 sm:w-20 sm:px-5">{t('Box')}</th>
+                <th className="px-3 py-3">{t('Description')}</th>
+                <th className="px-3 py-3 text-end">{t('Amount')}</th>
+                {hasVat ? (
+                  <th className="hidden px-5 py-3 text-end sm:table-cell">{t('VAT')}</th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -615,13 +661,13 @@ function VatReturnDetail({ start }: { start: string }) {
                       )}
                       onClick={expandable ? () => toggle(b.id) : undefined}
                     >
-                      <td className="px-5 py-3 whitespace-nowrap text-slate-500">
+                      <td className="py-3 ps-4 pe-2 whitespace-nowrap text-slate-500 sm:px-5">
                         {expandable ? (
                           <button
                             type="button"
                             className="inline-flex items-center gap-1"
                             aria-expanded={isOpen}
-                            aria-label={`Box ${b.id} transactions`}
+                            aria-label={t('Box {box} transactions', { box: b.id })}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggle(b.id);
@@ -638,21 +684,26 @@ function VatReturnDetail({ start }: { start: string }) {
                           <span className="ps-[18px]">{b.id}</span>
                         )}
                       </td>
-                      <td className="px-3 py-3 text-slate-800">{b.label}</td>
+                      <td className="px-3 py-3 text-slate-800">{t(b.label)}</td>
                       <td className="tabular px-3 py-3 text-end whitespace-nowrap text-slate-900">
                         {b.whole ? whole(b.amount) : money(b.amount)}
+                        {hasVat && b.vat !== undefined ? (
+                          <span className="block text-xs font-normal text-slate-500 sm:hidden">
+                            {t('VAT {amount}', { amount: money(b.vat) })}
+                          </span>
+                        ) : null}
                       </td>
                       {hasVat ? (
-                        <td className="tabular px-5 py-3 text-end whitespace-nowrap text-slate-900">
+                        <td className="tabular hidden px-5 py-3 text-end whitespace-nowrap text-slate-900 sm:table-cell">
                           {b.vat === undefined ? '' : money(b.vat)}
                         </td>
                       ) : null}
                     </tr>
                     {isOpen ? (
                       <tr>
-                        <td colSpan={hasVat ? 4 : 3} className="bg-slate-50/50 px-5 py-3">
+                        <td colSpan={hasVat ? 4 : 3} className="bg-slate-50/50 px-4 py-3 sm:px-5">
                           {lines.length === 0 ? (
-                            <p className="text-sm text-slate-500">Nothing in this box.</p>
+                            <p className="text-sm text-slate-500">{t('Nothing in this box.')}</p>
                           ) : (
                             <BoxLines
                               lines={lines}
@@ -675,7 +726,9 @@ function VatReturnDetail({ start }: { start: string }) {
         <Card>
           <CardBody className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-slate-500">{net >= 0 ? 'VAT to pay' : 'VAT to reclaim'}</p>
+              <p className="text-sm text-slate-500">
+                {net >= 0 ? t('VAT to pay') : t('VAT to reclaim')}
+              </p>
               <p className="tabular text-2xl font-semibold text-slate-900">
                 {money(Math.abs(net))}
               </p>
@@ -683,9 +736,13 @@ function VatReturnDetail({ start }: { start: string }) {
             <p className="text-sm text-slate-500">
               {record
                 ? payment
-                  ? `${net >= 0 ? 'Paid' : 'Received'} on ${fmt.date(payment.date)}.`
-                  : `Recorded in your VAT liability account until ${net >= 0 ? 'paid' : 'refunded'}.`
-                : OFFICE[settings.format]}
+                  ? net >= 0
+                    ? t('Paid on {date}.', { date: fmt.date(payment.date) })
+                    : t('Received on {date}.', { date: fmt.date(payment.date) })
+                  : net >= 0
+                    ? t('Recorded in your VAT liability account until paid.')
+                    : t('Recorded in your VAT liability account until refunded.')
+                : t(OFFICE[settings.format])}
             </p>
           </CardBody>
         </Card>
@@ -732,11 +789,11 @@ function BoxLines({
     <table className="w-full text-xs">
       <thead>
         <tr className="text-start text-slate-500">
-          <th className="py-1.5 pe-3 font-medium">Date</th>
-          <th className="py-1.5 pe-3 font-medium">Transaction</th>
-          <th className="hidden py-1.5 pe-3 font-medium sm:table-cell">Contact</th>
-          <th className="py-1.5 pe-3 text-end font-medium">Amount</th>
-          {showVat ? <th className="py-1.5 text-end font-medium">VAT</th> : null}
+          <th className="py-1.5 pe-3 font-medium">{t('Date')}</th>
+          <th className="py-1.5 pe-3 font-medium">{t('Transaction')}</th>
+          <th className="hidden py-1.5 pe-3 font-medium sm:table-cell">{t('Contact')}</th>
+          <th className="py-1.5 pe-3 text-end font-medium">{t('Amount')}</th>
+          {showVat ? <th className="py-1.5 text-end font-medium">{t('VAT')}</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -745,7 +802,8 @@ function BoxLines({
             <td className="py-1.5 pe-3 whitespace-nowrap text-slate-600">{date(line.date)}</td>
             <td className="py-1.5 pe-3">
               <Link to={sourceLink(line)} className="text-primary-700 font-medium hover:underline">
-                {SOURCE_LABELS[line.source]} {line.number}
+                {t(SOURCE_LABELS[line.source])}{' '}
+                <bdi className="whitespace-nowrap">{line.number}</bdi>
               </Link>
               <span className="block text-slate-500">{line.description}</span>
             </td>

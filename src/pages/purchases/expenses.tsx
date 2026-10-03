@@ -13,6 +13,8 @@ import { Card, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
 import { useAccounts } from '@/features/accounting/account-pickers';
 import { ExpenseDialog, includedTax } from '@/features/purchases/expense-dialog';
+import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 export default function ExpensesPage() {
   const company = useCompany();
@@ -43,18 +45,33 @@ export default function ExpensesPage() {
 
   const rows = useMemo(() => {
     if (!expenses || !clients || !accounts) return null;
-    const vendors = new Map(clients.map((c) => [c.id, c.name]));
-    const names = new Map(accounts.map((a) => [a.id, a.name]));
+    const vendors = new Map(clients.map((c) => [c.id, c]));
+    const byId = new Map(accounts.map((a) => [a.id, a]));
     const bank = accounts.find((a) => a.role === 'bank');
     return expenses
-      .map((e) => ({
-        expense: e,
-        vendor: e.vendorId ? (vendors.get(e.vendorId) ?? '') : '',
-        category: names.get(e.accountId) ?? '—',
-        paidFrom: e.paidFromAccountId
-          ? (names.get(e.paidFromAccountId) ?? '—')
-          : (bank?.name ?? '—'),
-      }))
+      .map((e) => {
+        const vendor = e.vendorId ? vendors.get(e.vendorId) : undefined;
+        const category = byId.get(e.accountId);
+        const paidFrom = e.paidFromAccountId ? byId.get(e.paidFromAccountId) : bank;
+        return {
+          expense: e,
+          vendor: localName(vendor),
+          category: localName(category) || '—',
+          paidFrom: localName(paidFrom) || '—',
+          // Search finds English and Arabic names alike.
+          search: [
+            e.number,
+            e.description,
+            e.reference,
+            vendor?.name,
+            vendor?.nameAr,
+            category?.name,
+            category?.nameAr,
+          ]
+            .join(' ')
+            .toLowerCase(),
+        };
+      })
       .sort(
         (a, b) =>
           b.expense.date.localeCompare(a.expense.date) ||
@@ -66,12 +83,7 @@ export default function ExpensesPage() {
     if (!rows) return [];
     const q = query.trim().toLowerCase();
     return rows.filter(
-      (r) =>
-        (!category || r.expense.accountId === category) &&
-        (!q ||
-          `${r.expense.number} ${r.expense.description} ${r.vendor} ${r.category} ${r.expense.reference}`
-            .toLowerCase()
-            .includes(q)),
+      (r) => (!category || r.expense.accountId === category) && (!q || r.search.includes(q)),
     );
   }, [rows, query, category]);
 
@@ -83,7 +95,7 @@ export default function ExpensesPage() {
     return [...map.entries()];
   }, [filtered]);
 
-  if (!rows || !accounts) return <Spinner className="py-24" label="Loading…" />;
+  if (!rows || !accounts) return <Spinner className="py-24" label={t('Loading…')} />;
 
   const newExpense = () =>
     createExpense(company.id, {
@@ -109,16 +121,16 @@ export default function ExpensesPage() {
     downloadCsv(
       `expenses-${today()}`,
       [
-        'Number',
-        'Date',
-        'Description',
-        'Category',
-        'Vendor',
-        'Paid from',
-        'Reference',
-        'Currency',
-        'Amount',
-        'Tax included',
+        t('Number'),
+        t('Date'),
+        t('Description'),
+        t('Category'),
+        t('Vendor'),
+        t('Paid from'),
+        t('Reference'),
+        t('Currency'),
+        t('Amount'),
+        t('Tax included'),
       ],
       filtered.map((r) => [
         r.expense.number,
@@ -139,17 +151,17 @@ export default function ExpensesPage() {
   return (
     <div>
       <PageHeader
-        title="Expenses"
-        description="Receipts and costs paid straight away, without a bill."
+        title={t('Expenses')}
+        description={t('Receipts and costs paid straight away, without a bill.')}
         actions={
           <>
             {rows.length > 0 ? (
               <Button variant="outline" onClick={exportCsv}>
-                <Download /> Export CSV
+                <Download /> {t('Export CSV')}
               </Button>
             ) : null}
             <Button onClick={startNew}>
-              <Plus /> Record expense
+              <Plus /> {t('Record expense')}
             </Button>
           </>
         }
@@ -159,11 +171,13 @@ export default function ExpensesPage() {
         <Card>
           <EmptyState
             icon={<Wallet />}
-            title="No expenses yet"
-            description="Snap a receipt and record what you spent; it goes straight into your books."
+            title={t('No expenses yet')}
+            description={t(
+              'Snap a receipt and record what you spent; it goes straight into your books.',
+            )}
             action={
               <Button onClick={startNew}>
-                <Plus /> Record expense
+                <Plus /> {t('Record expense')}
               </Button>
             }
           />
@@ -175,12 +189,12 @@ export default function ExpensesPage() {
               <Select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                aria-label="Filter by category"
+                aria-label={t('Filter by category')}
               >
-                <option value="">All categories</option>
+                <option value="">{t('All categories')}</option>
                 {usedCategories.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.code} {a.name}
+                    {a.code} {localName(a)}
                   </option>
                 ))}
               </Select>
@@ -190,24 +204,26 @@ export default function ExpensesPage() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search expenses…"
+                placeholder={t('Search expenses…')}
                 className="ps-9"
-                aria-label="Search expenses"
+                aria-label={t('Search expenses')}
               />
             </div>
           </div>
           {filtered.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-slate-500">No expenses match.</p>
+            <p className="px-6 py-12 text-center text-sm text-slate-500">
+              {t('No expenses match.')}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
-                    <th className="px-5 py-3">Expense</th>
-                    <th className="px-3 py-3">Category</th>
-                    <th className="hidden px-3 py-3 md:table-cell">Vendor</th>
-                    <th className="hidden px-3 py-3 lg:table-cell">Paid from</th>
-                    <th className="px-5 py-3 text-end">Amount</th>
+                    <th className="px-4 py-3 sm:px-5">{t('Expense')}</th>
+                    <th className="hidden px-3 py-3 sm:table-cell">{t('Category')}</th>
+                    <th className="hidden px-3 py-3 md:table-cell">{t('Vendor')}</th>
+                    <th className="hidden px-3 py-3 lg:table-cell">{t('Paid from')}</th>
+                    <th className="px-4 py-3 text-end sm:px-5">{t('Amount')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -217,7 +233,7 @@ export default function ExpensesPage() {
                       onClick={() => setParams({ open: r.expense.id }, { replace: true })}
                       className="cursor-pointer hover:bg-slate-50"
                     >
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3 sm:px-5">
                         <button
                           type="button"
                           className="hover:text-primary-700 text-start font-medium text-slate-900"
@@ -231,20 +247,23 @@ export default function ExpensesPage() {
                         <span className="block text-xs text-slate-500">
                           {fmt.date(r.expense.date)} · {r.expense.number}
                         </span>
+                        <span className="block text-xs text-slate-500 sm:hidden">{r.category}</span>
                       </td>
-                      <td className="px-3 py-3 text-slate-600">{r.category}</td>
+                      <td className="hidden px-3 py-3 text-slate-600 sm:table-cell">
+                        {r.category}
+                      </td>
                       <td className="hidden max-w-48 truncate px-3 py-3 text-slate-600 md:table-cell">
                         {r.vendor || '—'}
                       </td>
                       <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
                         {r.paidFrom}
                       </td>
-                      <td className="tabular px-5 py-3 text-end font-medium whitespace-nowrap text-slate-900">
+                      <td className="tabular px-4 py-3 text-end font-medium whitespace-nowrap text-slate-900 sm:px-5">
                         {withFiles?.has(r.expense.id) ? (
                           <Paperclip
                             className="me-1.5 inline size-3.5 text-slate-400"
                             role="img"
-                            aria-label="Receipt attached"
+                            aria-label={t('Receipt attached')}
                           />
                         ) : null}
                         {fmt.money(r.expense.amount, r.expense.currency)}
@@ -256,13 +275,12 @@ export default function ExpensesPage() {
             </div>
           )}
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
-            <span>
-              {filtered.length} {filtered.length === 1 ? 'expense' : 'expenses'}
-            </span>
+            <span>{tp(filtered.length, '{count} expense', '{count} expenses')}</span>
             <span className="tabular flex flex-wrap gap-x-4">
               {totals.map(([currency, amount]) => (
                 <span key={currency}>
-                  Total <strong className="text-slate-900">{fmt.money(amount, currency)}</strong>
+                  {t('Total')}{' '}
+                  <strong className="text-slate-900">{fmt.money(amount, currency)}</strong>
                 </span>
               ))}
             </span>

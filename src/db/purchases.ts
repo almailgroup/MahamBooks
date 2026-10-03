@@ -8,6 +8,7 @@ import { newId } from '@/lib/ids';
 import { today } from '@/lib/dates';
 import { currencyPrecision, round } from '@/lib/money';
 import { formatMoney } from '@/lib/format';
+import { msg, t } from '@/i18n';
 
 /** Older records have no role flags: they are clients. */
 export function isCustomer(contact: Pick<Client, 'isCustomer'>): boolean {
@@ -49,14 +50,16 @@ export class ExpenseError extends Error {}
 export async function saveExpense(input: Expense): Promise<Expense> {
   return db.transaction('rw', [db.expenses, db.companies, db.accounts, db.activities], async () => {
     const company = await db.companies.get(input.companyId);
-    if (!company) throw new Error('Company not found');
+    if (!company) throw new Error(t('Company not found'));
     const existing = await db.expenses.get(input.id);
     assertUnlocked(company, input.date, existing?.date);
     const currency = input.currency || company.currency;
     const amount = round(input.amount, currencyPrecision(currency));
-    if (!(amount > 0)) throw new ExpenseError('Enter the amount paid.');
+    if (!(amount > 0)) throw new ExpenseError(t('Enter the amount paid.'));
     const account = input.accountId ? await db.accounts.get(input.accountId) : undefined;
-    if (!account || account.companyId !== company.id) throw new ExpenseError('Choose a category.');
+    if (!account || account.companyId !== company.id) {
+      throw new ExpenseError(t('Choose a category.'));
+    }
 
     let expense: Expense = {
       ...input,
@@ -81,13 +84,12 @@ export async function saveExpense(input: Expense): Promise<Expense> {
     }
     if (!existing) expense.createdAt = expense.updatedAt;
     await db.expenses.put(expense);
-    await logActivity(
-      company.id,
-      'expense',
-      expense.id,
-      existing ? 'updated' : 'created',
-      `Expense ${expense.number} of ${formatMoney(amount, currency, company.locale)} ${existing ? 'updated' : 'recorded'}`,
-    );
+    await logActivity(company.id, 'expense', expense.id, existing ? 'updated' : 'created', {
+      text: existing
+        ? msg('Expense {number} of {amount} updated')
+        : msg('Expense {number} of {amount} recorded'),
+      vars: { number: expense.number, amount: formatMoney(amount, currency, company.locale) },
+    });
     return expense;
   });
 }
@@ -103,13 +105,10 @@ export async function deleteExpense(id: ID): Promise<void> {
       if (company) assertUnlocked(company, expense.date);
       await db.attachments.where('ownerId').equals(id).delete();
       await db.expenses.delete(id);
-      await logActivity(
-        expense.companyId,
-        'expense',
-        id,
-        'deleted',
-        `Expense ${expense.number} deleted`,
-      );
+      await logActivity(expense.companyId, 'expense', id, 'deleted', {
+        text: msg('Expense {number} deleted'),
+        vars: { number: expense.number },
+      });
     },
   );
 }

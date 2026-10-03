@@ -16,6 +16,8 @@ import {
   type StatementLine,
 } from '@/lib/banking/statement';
 import { cn } from '@/lib/cn';
+import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Field, Select, Switch } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
@@ -25,6 +27,16 @@ type Loaded =
   | { kind: 'ofx'; name: string; lines: StatementLine[] };
 
 const MAX_BYTES = 5 * 1024 * 1024;
+
+/** A statement's text: UTF-8, or Windows-1256, which older Arabic exports use. */
+async function readText(file: File): Promise<string> {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1256').decode(bytes);
+  }
+}
 
 /** Imports a CSV or OFX statement into one bank, cash or card account. */
 export function ImportStatementDialog({
@@ -47,17 +59,17 @@ export function ImportStatementDialog({
 
   const read = async (file: File | undefined) => {
     if (!file) return;
-    if (file.size > MAX_BYTES) return toast.error('Please choose a file smaller than 5 MB.');
-    const text = await file.text();
+    if (file.size > MAX_BYTES) return toast.error(t('Choose a file smaller than 5 MB.'));
+    const text = await readText(file);
     if (isOfx(text)) {
       const { lines } = parseOfx(text);
-      if (!lines.length) return toast.error('No transactions were found in this file.');
+      if (!lines.length) return toast.error(t('No transactions were found in this file.'));
       setLoaded({ kind: 'ofx', name: file.name, lines });
       setMapping(null);
       return;
     }
     const rows = parseCsvRows(text);
-    if (rows.length < 1) return toast.error('This file has no rows.');
+    if (rows.length < 1) return toast.error(t('This file has no rows.'));
     setLoaded({ kind: 'csv', name: file.name, rows });
     setMapping(guessMapping(rows, preferDayFirst));
   };
@@ -75,8 +87,8 @@ export function ImportStatementDialog({
     return Array.from({ length: width }, (_, i) => ({
       value: i,
       label: mapping?.header
-        ? first[i] || `Column ${i + 1}`
-        : `Column ${i + 1} (${first[i] ?? ''})`,
+        ? first[i] || t('Column {number}', { number: i + 1 })
+        : t('Column {number} ({sample})', { number: i + 1, sample: first[i] ?? '' }),
     }));
   }, [loaded, mapping?.header]);
 
@@ -103,7 +115,7 @@ export function ImportStatementDialog({
           value={value === null ? '' : String(value)}
           onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
         >
-          {optional ? <option value="">None</option> : null}
+          {optional ? <option value="">{t('None')}</option> : null}
           {columns.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label}
@@ -115,7 +127,7 @@ export function ImportStatementDialog({
   );
 
   const save = async () => {
-    if (!parsed?.lines.length) return toast.error('There is nothing to import.');
+    if (!parsed?.lines.length) return toast.error(t('There is nothing to import.'));
     setSaving(true);
     try {
       const { added, duplicates } = await importStatement(
@@ -125,11 +137,18 @@ export function ImportStatementDialog({
         loaded?.name ?? '',
       );
       toast.success(
-        `${added} ${added === 1 ? 'line' : 'lines'} imported${duplicates ? `, ${duplicates} already there` : ''}`,
+        duplicates
+          ? tp(
+              added,
+              '{count} line imported, {duplicates} already there',
+              '{count} lines imported, {duplicates} already there',
+              { duplicates },
+            )
+          : tp(added, '{count} line imported', '{count} lines imported'),
       );
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not import the statement.');
+      toast.error(error instanceof Error ? error.message : t('Could not import the statement.'));
       setSaving(false);
     }
   };
@@ -139,24 +158,26 @@ export function ImportStatementDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        title="Import a bank statement"
-        description="Download a statement from your online banking as CSV or OFX, then choose it here."
+        title={t('Import a bank statement')}
+        description={t(
+          'Download a statement from your online banking as CSV or OFX, then choose it here.',
+        )}
         size="xl"
       >
         <DialogBody>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Account">
+            <Field label={t('Account')}>
               {(id) => (
                 <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.code} {a.name}
+                      {a.code} {localName(a)}
                     </option>
                   ))}
                 </Select>
               )}
             </Field>
-            <Field label="Statement file">
+            <Field label={t('Statement file')}>
               {() => (
                 <div className="flex items-center gap-3">
                   <input
@@ -165,14 +186,14 @@ export function ImportStatementDialog({
                     accept=".csv,.txt,.ofx,.qfx,text/csv,application/x-ofx"
                     className="sr-only"
                     tabIndex={-1}
-                    aria-label="Statement file"
+                    aria-label={t('Statement file')}
                     onChange={(e) => void read(e.target.files?.[0])}
                   />
                   <Button variant="outline" onClick={() => input.current?.click()}>
-                    <FileUp /> Choose file
+                    <FileUp /> {t('Choose file')}
                   </Button>
                   <span className="truncate text-sm text-slate-500">
-                    {loaded?.name ?? 'CSV, OFX or QFX'}
+                    {loaded?.name ?? t('CSV, OFX or QFX')}
                   </span>
                 </div>
               )}
@@ -184,11 +205,11 @@ export function ImportStatementDialog({
               <Switch
                 checked={mapping.header}
                 onChange={(header) => set({ header })}
-                label="The first row has column names"
+                label={t('The first row has column names')}
               />
               <div className="grid gap-4 sm:grid-cols-3">
-                {columnSelect('Date', mapping.date, (date) => date !== null && set({ date }))}
-                <Field label="Date format">
+                {columnSelect(t('Date'), mapping.date, (date) => date !== null && set({ date }))}
+                <Field label={t('Date format')}>
                   {(id) => (
                     <Select
                       id={id}
@@ -199,19 +220,20 @@ export function ImportStatementDialog({
                     >
                       {DATE_FORMATS.map((f) => (
                         <option key={f.value} value={f.value}>
-                          {f.label}
-                          {dateFormats.includes(f.value) ? '' : ' — doesn’t fit'}
+                          {dateFormats.includes(f.value)
+                            ? t(f.label)
+                            : t('{format} — doesn’t fit', { format: t(f.label) })}
                         </option>
                       ))}
                     </Select>
                   )}
                 </Field>
                 {columnSelect(
-                  'Description',
+                  t('Description'),
                   mapping.description,
                   (description) => description !== null && set({ description }),
                 )}
-                <Field label="Amounts">
+                <Field label={t('Amounts')}>
                   {(id) => (
                     <Select
                       id={id}
@@ -230,22 +252,24 @@ export function ImportStatementDialog({
                             })
                       }
                     >
-                      <option value="single">One column (minus for money out)</option>
-                      <option value="split">Money in and money out columns</option>
+                      <option value="single">{t('One column (minus for money out)')}</option>
+                      <option value="split">{t('Money in and money out columns')}</option>
                     </Select>
                   )}
                 </Field>
                 {split ? (
                   <>
-                    {columnSelect('Money in', mapping.moneyIn, (moneyIn) => set({ moneyIn }))}
-                    {columnSelect('Money out', mapping.moneyOut, (moneyOut) => set({ moneyOut }))}
+                    {columnSelect(t('Money in'), mapping.moneyIn, (moneyIn) => set({ moneyIn }))}
+                    {columnSelect(t('Money out'), mapping.moneyOut, (moneyOut) =>
+                      set({ moneyOut }),
+                    )}
                   </>
                 ) : (
-                  columnSelect('Amount', mapping.amount, (amount) => set({ amount }))
+                  columnSelect(t('Amount'), mapping.amount, (amount) => set({ amount }))
                 )}
-                {columnSelect('Balance', mapping.balance, (balance) => set({ balance }), true)}
+                {columnSelect(t('Balance'), mapping.balance, (balance) => set({ balance }), true)}
                 {columnSelect(
-                  'Reference',
+                  t('Reference'),
                   mapping.reference,
                   (reference) => set({ reference }),
                   true,
@@ -254,8 +278,8 @@ export function ImportStatementDialog({
               <Switch
                 checked={mapping.invert}
                 onChange={(invert) => set({ invert })}
-                label="Flip the signs"
-                description="For card statements that show spending as positive amounts."
+                label={t('Flip the signs')}
+                description={t('For card statements that show spending as positive amounts.')}
               />
             </div>
           ) : null}
@@ -263,26 +287,39 @@ export function ImportStatementDialog({
           {parsed ? (
             <div>
               <p className="mb-2 text-sm text-slate-600">
-                {parsed.lines.length} {parsed.lines.length === 1 ? 'line' : 'lines'} to import
+                {tp(parsed.lines.length, '{count} line to import', '{count} lines to import')}
                 {parsed.skipped
-                  ? ` · ${parsed.skipped} ${parsed.skipped === 1 ? 'row' : 'rows'} without a date or amount left out`
+                  ? ` · ${tp(
+                      parsed.skipped,
+                      '{count} row without a date or amount left out',
+                      '{count} rows without a date or amount left out',
+                    )}`
                   : ''}
               </p>
               <div className="max-h-56 overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-slate-50 text-start text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 font-medium">Date</th>
-                      <th className="px-3 py-2 font-medium">Description</th>
-                      <th className="px-3 py-2 text-end font-medium">Amount</th>
-                      <th className="px-3 py-2 text-end font-medium">Balance</th>
+                      <th className="hidden px-3 py-2 font-medium sm:table-cell">{t('Date')}</th>
+                      <th className="px-3 py-2 font-medium">{t('Description')}</th>
+                      <th className="px-3 py-2 text-end font-medium">{t('Amount')}</th>
+                      <th className="hidden px-3 py-2 text-end font-medium sm:table-cell">
+                        {t('Balance')}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {parsed.lines.slice(0, 50).map((l, i) => (
                       <tr key={i} className="border-t border-slate-100">
-                        <td className="px-3 py-1.5 whitespace-nowrap">{fmt.date(l.date)}</td>
-                        <td className="max-w-80 truncate px-3 py-1.5">{l.description}</td>
+                        <td className="hidden px-3 py-1.5 whitespace-nowrap sm:table-cell">
+                          {fmt.date(l.date)}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <span className="block max-w-40 truncate sm:max-w-80">
+                            {l.description}
+                          </span>
+                          <span className="block text-slate-500 sm:hidden">{fmt.date(l.date)}</span>
+                        </td>
                         <td
                           className={cn(
                             'tabular px-3 py-1.5 text-end whitespace-nowrap',
@@ -291,7 +328,7 @@ export function ImportStatementDialog({
                         >
                           {fmt.money(l.amount)}
                         </td>
-                        <td className="tabular px-3 py-1.5 text-end whitespace-nowrap text-slate-500">
+                        <td className="tabular hidden px-3 py-1.5 text-end whitespace-nowrap text-slate-500 sm:table-cell">
                           {l.balance === null ? '' : fmt.money(l.balance)}
                         </td>
                       </tr>
@@ -304,11 +341,12 @@ export function ImportStatementDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={() => void save()} loading={saving} disabled={!parsed?.lines.length}>
-            Import {parsed?.lines.length ? parsed.lines.length : ''}{' '}
-            {parsed?.lines.length === 1 ? 'line' : 'lines'}
+            {parsed?.lines.length
+              ? tp(parsed.lines.length, 'Import {count} line', 'Import {count} lines')
+              : t('Import')}
           </Button>
         </DialogFooter>
       </DialogContent>

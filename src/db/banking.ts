@@ -8,6 +8,8 @@ import type { BankMatch, BankTransaction, ID, ISODate, ManualJournal, TaxLine } 
 import { fingerprints, type StatementLine } from '@/lib/banking/statement';
 import { newId } from '@/lib/ids';
 import { currencyPrecision, round } from '@/lib/money';
+import { msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 export class BankingError extends Error {}
 
@@ -28,7 +30,7 @@ export async function importStatement(
       const company = await db.companies.get(companyId);
       const account = await db.accounts.get(accountId);
       if (!company || !account || account.companyId !== companyId) {
-        throw new BankingError('Choose the account the statement belongs to.');
+        throw new BankingError(t('Choose the account the statement belongs to.'));
       }
       const precision = currencyPrecision(company.currency);
       const keys = fingerprints(accountId, lines);
@@ -61,13 +63,17 @@ export async function importStatement(
         });
       });
       if (rows.length) await db.bankTransactions.bulkAdd(rows);
-      await logActivity(
-        companyId,
-        'bank',
-        importId,
-        'imported',
-        `${rows.length} statement ${rows.length === 1 ? 'line' : 'lines'} imported into ${account.name}${fileName ? ` from ${fileName}` : ''}`,
-      );
+      const vars = { count: rows.length, account: account.name, file: fileName };
+      await logActivity(companyId, 'bank', importId, 'imported', {
+        text: fileName
+          ? rows.length === 1
+            ? msg('{count} statement line imported into {account} from {file}')
+            : msg('{count} statement lines imported into {account} from {file}')
+          : rows.length === 1
+            ? msg('{count} statement line imported into {account}')
+            : msg('{count} statement lines imported into {account}'),
+        vars,
+      });
       return { added: rows.length, duplicates: lines.length - rows.length, transactions: rows };
     },
   );
@@ -75,7 +81,7 @@ export async function importStatement(
 
 async function setMatch(id: ID, match: BankMatch | null, ignored = false) {
   const tx = await db.bankTransactions.get(id);
-  if (!tx) throw new BankingError('Statement line not found.');
+  if (!tx) throw new BankingError(t('Statement line not found.'));
   await db.bankTransactions.put({ ...tx, match, ignored, updatedAt: nowStamp() });
 }
 
@@ -83,7 +89,7 @@ export async function matchTransaction(id: ID, match: BankMatch): Promise<void> 
   const taken = await db.bankTransactions
     .filter((t) => t.id !== id && t.match?.source === match.source && t.match.id === match.id)
     .first();
-  if (taken) throw new BankingError('That transaction is already matched to another line.');
+  if (taken) throw new BankingError(t('That transaction is already matched to another line.'));
   await setMatch(id, match);
 }
 
@@ -108,19 +114,28 @@ export async function saveTransfer(input: {
   amount: number;
   reference?: string;
 }): Promise<ManualJournal> {
-  if (input.from === input.to) throw new BankingError('Choose two different accounts.');
-  if (!(input.amount > 0)) throw new BankingError('Enter the amount transferred.');
+  if (input.from === input.to) throw new BankingError(t('Choose two different accounts.'));
+  if (!(input.amount > 0)) throw new BankingError(t('Enter the amount transferred.'));
   const [from, to] = await db.accounts.bulkGet([input.from, input.to]);
-  if (!from || !to) throw new BankingError('Choose both accounts.');
+  if (!from || !to) throw new BankingError(t('Choose both accounts.'));
+  const names = { from: localName(from), to: localName(to) };
   return saveJournal(
     createJournal(input.companyId, {
       date: input.date,
       kind: 'transfer',
-      reference: input.reference?.trim() || `Transfer from ${from.name} to ${to.name}`,
+      reference: input.reference?.trim() || t('Transfer from {from} to {to}', names),
       status: 'posted',
       lines: [
-        newJournalLine({ accountId: to.id, debit: input.amount, description: `From ${from.name}` }),
-        newJournalLine({ accountId: from.id, credit: input.amount, description: `To ${to.name}` }),
+        newJournalLine({
+          accountId: to.id,
+          debit: input.amount,
+          description: t('From {account}', { account: names.from }),
+        }),
+        newJournalLine({
+          accountId: from.id,
+          credit: input.amount,
+          description: t('To {account}', { account: names.to }),
+        }),
       ],
     }),
   );
@@ -136,20 +151,22 @@ export type CreateAction =
 /** Records the statement line in the books and matches it to what was created. */
 export async function createFromTransaction(id: ID, action: CreateAction): Promise<BankMatch> {
   const tx = await db.bankTransactions.get(id);
-  if (!tx) throw new BankingError('Statement line not found.');
+  if (!tx) throw new BankingError(t('Statement line not found.'));
   const company = await db.companies.get(tx.companyId);
-  if (!company) throw new Error('Company not found');
+  if (!company) throw new Error(t('Company not found'));
   const amount = Math.abs(tx.amount);
   const memo = tx.reference || tx.description;
   let match: BankMatch;
 
   if (action.kind === 'document') {
     const doc = await db.documents.get(action.documentId);
-    if (!doc || doc.companyId !== company.id) throw new BankingError('Document not found.');
+    if (!doc || doc.companyId !== company.id) throw new BankingError(t('Document not found.'));
     const out = doc.type === 'bill';
     if (out !== tx.amount < 0) {
       throw new BankingError(
-        out ? 'Bills are paid with money going out.' : 'Invoices are paid with money coming in.',
+        out
+          ? t('Bills are paid with money going out.')
+          : t('Invoices are paid with money coming in.'),
       );
     }
     const payment = await savePayment(
@@ -169,7 +186,7 @@ export async function createFromTransaction(id: ID, action: CreateAction): Promi
     );
     match = { source: 'payment', id: payment.id };
   } else if (action.kind === 'expense') {
-    if (tx.amount >= 0) throw new BankingError('An expense is money going out.');
+    if (tx.amount >= 0) throw new BankingError(t('An expense is money going out.'));
     const expense = await saveExpense(
       createExpense(company.id, {
         date: tx.date,
@@ -200,7 +217,7 @@ export async function createFromTransaction(id: ID, action: CreateAction): Promi
         : await saveJournal(
             createJournal(company.id, {
               date: tx.date,
-              reference: memo.slice(0, 120) || 'Bank transaction',
+              reference: memo.slice(0, 120) || t('Bank transaction'),
               status: 'posted',
               lines: [
                 newJournalLine({

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Table2, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { isRtl, t } from '@/i18n';
 
 export interface ColumnSeries {
   key: string;
@@ -88,7 +89,7 @@ export function ColumnChart({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <ul
           className="flex flex-wrap items-center gap-4 text-sm text-slate-600"
-          aria-label="Legend"
+          aria-label={t('Legend')}
         >
           {series.map((s) => (
             <li key={s.key} className="flex items-center gap-2">
@@ -107,7 +108,7 @@ export function ColumnChart({
           className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700"
         >
           {asTable ? <BarChart3 className="size-3.5" /> : <Table2 className="size-3.5" />}
-          {asTable ? 'Show chart' : 'Show table'}
+          {asTable ? t('Show chart') : t('Show table')}
         </button>
       </div>
 
@@ -117,7 +118,7 @@ export function ColumnChart({
             <caption className="sr-only">{title}</caption>
             <thead>
               <tr className="border-b border-slate-100 text-start text-xs text-slate-500">
-                <th className="py-2 pe-3 font-medium">Month</th>
+                <th className="py-2 pe-3 font-medium">{t('Month')}</th>
                 {series.map((s) => (
                   <th key={s.key} className="py-2 ps-3 text-end font-medium">
                     {s.label}
@@ -219,7 +220,12 @@ export function ColumnChart({
                       fill="transparent"
                       tabIndex={0}
                       role="button"
-                      aria-label={`${label}: ${series.map((s) => `${s.label} ${formatValue(s.values[i] ?? 0)}`).join(', ')}`}
+                      aria-label={t('{label}: {values}', {
+                        label,
+                        values: series
+                          .map((s) => `${s.label} ${formatValue(s.values[i] ?? 0)}`)
+                          .join(isRtl() ? '، ' : ', '),
+                      })}
                       onPointerEnter={() => setActive(i)}
                       onFocus={() => setActive(i)}
                       onBlur={() => setActive(null)}

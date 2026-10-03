@@ -22,6 +22,7 @@ import { addDaysISO } from '@/lib/dates';
 import { formatMoney } from '@/lib/format';
 import { newId } from '@/lib/ids';
 import { currencyPrecision, fromMinor } from '@/lib/money';
+import { msg, t } from '@/i18n';
 
 export class VatError extends Error {}
 
@@ -53,8 +54,9 @@ export async function computeVatReturn(
   });
 }
 
-function periodLabel(period: VatPeriod) {
-  return `${period.start} to ${period.end}`;
+/** The period's first and last day, for messages. */
+function periodVars(period: VatPeriod) {
+  return { start: period.start, end: period.end };
 }
 
 /**
@@ -69,12 +71,12 @@ export async function fileVatReturn(
 ): Promise<VatReturnRecord> {
   return db.transaction('rw', FILING_TABLES(), async () => {
     const company = await db.companies.get(companyId);
-    if (!company) throw new Error('Company not found');
+    if (!company) throw new Error(t('Company not found'));
     const filed = await db.vatReturns
       .where('[companyId+periodStart]')
       .equals([company.id, period.start])
       .first();
-    if (filed) throw new VatError('This period has already been filed.');
+    if (filed) throw new VatError(t('This period has already been filed.'));
 
     const { accounts, lines } = await loadLedger(company);
     const roles = roleMap(accounts);
@@ -87,7 +89,7 @@ export async function fileVatReturn(
     });
     const { output, input } = vatAccountTotals(lines, period, roles);
     if (!roles.output_tax || !roles.input_tax || !roles.tax_settlement) {
-      throw new VatError('The chart of accounts has no VAT accounts set up.');
+      throw new VatError(t('The chart of accounts has no VAT accounts set up.'));
     }
 
     const id = newId();
@@ -99,9 +101,9 @@ export async function fileVatReturn(
         credit: minor < 0 ? fromMinor(-minor, precision) : 0,
       });
     const journalLines = [
-      entry(roles.output_tax, output, 'VAT on sales'),
-      entry(roles.input_tax, -input, 'VAT on purchases'),
-      entry(roles.tax_settlement, input - output, 'VAT for the period'),
+      entry(roles.output_tax, output, t('VAT on sales')),
+      entry(roles.input_tax, -input, t('VAT on purchases')),
+      entry(roles.tax_settlement, input - output, t('VAT for the period')),
     ].filter((l) => l.debit !== 0 || l.credit !== 0);
 
     let journalId: ID | null = null;
@@ -112,8 +114,10 @@ export async function fileVatReturn(
       const journal = await saveJournal(
         createJournal(company.id, {
           date,
-          reference: `VAT return ${periodLabel(period)}`,
-          notes: options.reference ? `Reference ${options.reference}` : '',
+          reference: t('VAT return {start} to {end}', periodVars(period)),
+          notes: options.reference
+            ? t('Reference {reference}', { reference: options.reference })
+            : '',
           status: 'posted',
           vatReturnId: id,
           lines: journalLines,
@@ -158,17 +162,20 @@ export async function fileVatReturn(
         });
       }
     }
-    await logActivity(
-      company.id,
-      'vat_return',
-      id,
-      'filed',
-      `VAT return ${periodLabel(period)} filed: ${formatMoney(
-        fromMinor(Math.abs(result.net), precision),
-        company.currency,
-        company.locale,
-      )} ${result.net >= 0 ? 'to pay' : 'to reclaim'}`,
-    );
+    await logActivity(company.id, 'vat_return', id, 'filed', {
+      text:
+        result.net >= 0
+          ? msg('VAT return {start} to {end} filed: {amount} to pay')
+          : msg('VAT return {start} to {end} filed: {amount} to reclaim'),
+      vars: {
+        ...periodVars(period),
+        amount: formatMoney(
+          fromMinor(Math.abs(result.net), precision),
+          company.currency,
+          company.locale,
+        ),
+      },
+    });
     return record;
   });
 }
@@ -192,18 +199,17 @@ export async function undoVatReturn(id: ID): Promise<void> {
         assertUnlocked(company, record.periodEnd, ...journals.map((j) => j.date));
       } catch {
         throw new VatError(
-          'This period is locked. Remove or move the lock date (Settings → Accounting) to undo the return.',
+          t(
+            'This period is locked. Remove or move the lock date (Settings → Accounting) to undo the return.',
+          ),
         );
       }
       await db.journals.bulkDelete(journals.map((j) => j.id));
       await db.vatReturns.delete(id);
-      await logActivity(
-        record.companyId,
-        'vat_return',
-        id,
-        'deleted',
-        `VAT return ${periodLabel({ start: record.periodStart, end: record.periodEnd })} undone`,
-      );
+      await logActivity(record.companyId, 'vat_return', id, 'deleted', {
+        text: msg('VAT return {start} to {end} undone'),
+        vars: { start: record.periodStart, end: record.periodEnd },
+      });
     },
   );
 }
@@ -218,22 +224,26 @@ export async function recordVatPayment(
     [db.vatReturns, db.journals, db.companies, db.accounts, db.activities],
     async () => {
       const record = await db.vatReturns.get(id);
-      if (!record) throw new VatError('Return not found.');
+      if (!record) throw new VatError(t('Return not found.'));
       if (record.paymentJournalId && (await db.journals.get(record.paymentJournalId))) {
-        throw new VatError('The payment for this return is already recorded.');
+        throw new VatError(t('The payment for this return is already recorded.'));
       }
       const accounts = await db.accounts.where('companyId').equals(record.companyId).toArray();
       const settlement = roleMap(accounts).tax_settlement;
-      if (!settlement) throw new VatError('The chart of accounts has no VAT liability account.');
+      if (!settlement) {
+        throw new VatError(t('The chart of accounts has no VAT liability account.'));
+      }
       const precision = currencyPrecision(record.currency);
       const amount = fromMinor(Math.abs(record.net), precision);
-      if (amount === 0) throw new VatError('There is nothing to pay for this return.');
+      if (amount === 0) throw new VatError(t('There is nothing to pay for this return.'));
       const pay = record.net > 0;
-      const label = { start: record.periodStart, end: record.periodEnd };
+      const vars = { start: record.periodStart, end: record.periodEnd };
       const journal = await saveJournal(
         createJournal(record.companyId, {
           date: options.date,
-          reference: `${pay ? 'VAT payment' : 'VAT refund'} ${periodLabel(label)}`,
+          reference: pay
+            ? t('VAT payment {start} to {end}', vars)
+            : t('VAT refund {start} to {end}', vars),
           status: 'posted',
           lines: [
             newJournalLine({

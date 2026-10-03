@@ -1,13 +1,15 @@
 import { useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { FileText, Paperclip, X } from 'lucide-react';
+import { Camera, FileText, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { addAttachment, removeAttachment } from '@/db/purchases';
 import type { ID } from '@/db/types';
 import { receiptFromFile } from '@/lib/image';
 import { newId } from '@/lib/ids';
+import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
+import { t } from '@/i18n';
 
 /** A file shown in an attachment list, stored or not yet saved. */
 export interface AttachedFile {
@@ -58,35 +60,43 @@ export function useDraftAttachments(ownerId: ID) {
   };
 }
 
-/** Thumbnails of receipts and scanned bills, with an "Attach file" button. */
+/**
+ * Thumbnails of receipts and scanned bills, with an "Attach file" button.
+ * With `camera`, phones also get a "Take photo" button that opens the camera.
+ */
 export function AttachmentList({
   files,
   onAdd,
   onRemove,
   emptyText,
+  camera = false,
 }: {
   files: AttachedFile[];
   onAdd: (file: AttachedFile) => void | Promise<unknown>;
   onRemove: (id: ID) => void | Promise<unknown>;
   emptyText?: string;
+  camera?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const photo = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
-  const pick = async (list: FileList | null) => {
-    const file = list?.[0];
+  const pick = async (target: HTMLInputElement) => {
+    const file = target.files?.[0];
     if (!file) return;
     setBusy(true);
     try {
       const { dataUrl, type } = await receiptFromFile(file);
       await onAdd({ id: newId(), name: file.name, type, dataUrl });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not read the file.');
+      toast.error(error instanceof Error ? error.message : t('Could not read the file.'));
     } finally {
       setBusy(false);
-      if (input.current) input.current.value = '';
+      target.value = '';
     }
   };
+  // The camera is the quickest way to add a receipt on a phone.
+  const firstPhoto = camera && files.length === 0;
 
   return (
     <div className="space-y-3">
@@ -101,7 +111,7 @@ export function AttachmentList({
                 type="button"
                 onClick={() => openAttachment(f)}
                 className="flex min-w-0 flex-1 items-center gap-3 text-start"
-                title="Open"
+                title={t('Open {name}', { name: f.name })}
               >
                 {f.type.startsWith('image/') ? (
                   <img
@@ -119,14 +129,14 @@ export function AttachmentList({
                     {f.name}
                   </span>
                   <span className="text-xs text-slate-500">
-                    {f.type === 'application/pdf' ? 'PDF' : 'Photo'}
+                    {f.type === 'application/pdf' ? t('PDF') : t('Photo')}
                   </span>
                 </span>
               </button>
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={`Remove ${f.name}`}
+                aria-label={t('Remove {name}', { name: f.name })}
                 onClick={() => void onRemove(f.id)}
               >
                 <X />
@@ -137,18 +147,50 @@ export function AttachmentList({
       ) : emptyText ? (
         <p className="text-sm text-slate-500">{emptyText}</p>
       ) : null}
+      {camera ? (
+        <input
+          ref={photo}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="sr-only"
+          tabIndex={-1}
+          aria-label={t('Take a photo')}
+          onChange={(e) => void pick(e.currentTarget)}
+        />
+      ) : null}
       <input
         ref={input}
         type="file"
         accept="image/*,application/pdf"
         className="sr-only"
         tabIndex={-1}
-        aria-label="Attach a file"
-        onChange={(e) => void pick(e.target.files)}
+        aria-label={t('Attach a file')}
+        onChange={(e) => void pick(e.currentTarget)}
       />
-      <Button variant="outline" size="sm" loading={busy} onClick={() => input.current?.click()}>
-        <Paperclip /> Attach file
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        {camera ? (
+          // Only where there is a camera to open: phones and tablets.
+          <Button
+            variant={firstPhoto ? 'primary' : 'outline'}
+            size={firstPhoto ? 'md' : 'sm'}
+            className="hidden flex-1 sm:flex-none pointer-coarse:inline-flex"
+            loading={busy}
+            onClick={() => photo.current?.click()}
+          >
+            <Camera /> {t('Take photo')}
+          </Button>
+        ) : null}
+        <Button
+          variant="outline"
+          size={firstPhoto ? 'md' : 'sm'}
+          className={cn(camera && 'max-sm:flex-1')}
+          loading={busy}
+          onClick={() => input.current?.click()}
+        >
+          <Paperclip /> {camera ? t('Choose file') : t('Attach file')}
+        </Button>
+      </div>
     </div>
   );
 }

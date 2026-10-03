@@ -41,6 +41,8 @@ import {
 import { isMoneyAccount } from '@/lib/accounting/account-types';
 import { currencyPrecision, fromMinor, sameAmount, toMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
+import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Select } from '@/components/ui/form';
@@ -95,21 +97,23 @@ function BankingOverview() {
   const { money } = useMinorMoney();
   const [dialog, setDialog] = useState<'import' | 'transfer' | null>(null);
 
-  if (!ledger || !transactions) return <Spinner className="py-24" label="Loading…" />;
+  if (!ledger || !transactions) return <Spinner className="py-24" label={t('Loading…')} />;
 
   return (
     <div>
       <PageHeader
-        title="Banking"
-        description="Import statements, match them to your books and keep every account reconciled."
+        title={t('Banking')}
+        description={t(
+          'Import statements, match them to your books and keep every account reconciled.',
+        )}
         actions={
           moneyAccounts.length ? (
             <>
               <Button variant="outline" onClick={() => setDialog('transfer')}>
-                <ArrowLeftRight /> Transfer money
+                <ArrowLeftRight /> {t('Transfer money')}
               </Button>
               <Button onClick={() => setDialog('import')}>
-                <FileUp /> Import statement
+                <FileUp /> {t('Import statement')}
               </Button>
             </>
           ) : null
@@ -119,18 +123,18 @@ function BankingOverview() {
         <Card>
           <EmptyState
             icon={<Banknote />}
-            title="No bank accounts yet"
-            description="Add your bank, cash and card accounts in the chart of accounts."
-            action={<ButtonLink to="/accounts">Open chart of accounts</ButtonLink>}
+            title={t('No bank accounts yet')}
+            description={t('Add your bank, cash and card accounts in the chart of accounts.')}
+            action={<ButtonLink to="/accounts">{t('Open chart of accounts')}</ButtonLink>}
           />
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {moneyAccounts.map((account) => {
-            const own = transactions.filter((t) => t.accountId === account.id);
+            const own = transactions.filter((tx) => tx.accountId === account.id);
             const keys = new Set(bookEntries(ledger.lines, account.id).map(matchKey));
             const unmatched = own.filter(
-              (t) => !t.ignored && (!t.match || !keys.has(matchKey(t.match))),
+              (tx) => !tx.ignored && (!tx.match || !keys.has(matchKey(tx.match))),
             ).length;
             const balance = ledger.lines
               .filter((l) => l.accountId === account.id)
@@ -146,7 +150,7 @@ function BankingOverview() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">{account.name}</p>
+                    <p className="truncate font-semibold text-slate-900">{localName(account)}</p>
                     <p className="text-xs text-slate-500">
                       {account.code}
                       {account.bank?.institution ? ` · ${account.bank.institution}` : ''}
@@ -160,17 +164,23 @@ function BankingOverview() {
                   {money(account.type === 'liability_credit_card' ? -balance : balance)}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {account.type === 'liability_credit_card' ? 'Owed on the card' : 'In your books'}
+                  {account.type === 'liability_credit_card'
+                    ? t('Owed on the card')
+                    : t('In your books')}
                 </p>
-                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-sm">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-sm">
                   <span className="text-slate-500">
-                    {last ? `Statement to ${fmt.date(last.date)}` : 'No statement imported'}
+                    {last
+                      ? t('Statement to {date}', { date: fmt.date(last.date) })
+                      : t('No statement imported')}
                   </span>
                   {own.length ? (
                     unmatched ? (
-                      <Badge tone="amber">{unmatched} to match</Badge>
+                      <Badge tone="amber">
+                        {tp(unmatched, '{count} to match', '{count} to match')}
+                      </Badge>
                     ) : (
-                      <Badge tone="green">All matched</Badge>
+                      <Badge tone="green">{t('All matched')}</Badge>
                     )
                   ) : null}
                 </div>
@@ -241,30 +251,34 @@ function BankAccountPage({ accountId }: { accountId: string }) {
   );
 
   if (!ledger || !transactions || !accounts || !clients || !openDocs || !taxRates)
-    return <Spinner className="py-24" label="Loading…" />;
+    return <Spinner className="py-24" label={t('Loading…')} />;
   const account = accounts.find((a) => a.id === accountId);
   if (!account || account.companyId !== company.id) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-600">This account could not be found.</p>
+        <p className="text-slate-600">{t('This account could not be found.')}</p>
         <Link to="/banking" className="text-primary-700 mt-4 inline-block text-sm font-medium">
-          Back to banking
+          {t('Back to banking')}
         </Link>
       </Card>
     );
   }
 
-  const names = new Map(clients.map((c) => [c.id, c.name]));
+  const names = new Map(clients.map((c) => [c.id, localName(c)]));
+  // Matching looks for either of a contact's names in the bank's description.
+  const matchNames = new Map(clients.map((c) => [c.id, `${c.name} ${c.nameAr ?? ''}`.trim()]));
   const byKey = new Map(entries.map((e) => [matchKey(e), e]));
-  const matchedTo = (t: BankTransaction) => (t.match ? byKey.get(matchKey(t.match)) : undefined);
-  const taken = new Set(transactions.filter((t) => matchedTo(t)).map((t) => matchKey(t.match!)));
+  const matchedTo = (tx: BankTransaction) => (tx.match ? byKey.get(matchKey(tx.match)) : undefined);
+  const taken = new Set(
+    transactions.filter((tx) => matchedTo(tx)).map((tx) => matchKey(tx.match!)),
+  );
   const sorted = [...transactions].sort(
     (a, b) => b.date.localeCompare(a.date) || b.position - a.position,
   );
   const lists: Record<Tab, BankTransaction[]> = {
-    match: sorted.filter((t) => !t.ignored && !matchedTo(t)),
-    matched: sorted.filter((t) => !t.ignored && matchedTo(t)),
-    ignored: sorted.filter((t) => t.ignored),
+    match: sorted.filter((tx) => !tx.ignored && !matchedTo(tx)),
+    matched: sorted.filter((tx) => !tx.ignored && matchedTo(tx)),
+    ignored: sorted.filter((tx) => tx.ignored),
   };
   const rec = reconciliation(transactions, ledger.lines, accountId, minor);
   const card = account.type === 'liability_credit_card';
@@ -276,7 +290,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
       toast.success(message);
       setOpen(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong.');
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     }
   };
 
@@ -286,12 +300,14 @@ function BankAccountPage({ accountId }: { accountId: string }) {
         <div>
           <p className="mb-1 text-sm text-slate-500">
             <Link to="/banking" className="hover:text-slate-700">
-              Banking
+              {t('Banking')}
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{account.name}</h1>
-            {reconciled ? <Badge tone="green">Reconciled</Badge> : null}
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+              {localName(account)}
+            </h1>
+            {reconciled ? <Badge tone="green">{t('Reconciled')}</Badge> : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {account.code}
@@ -300,10 +316,10 @@ function BankAccountPage({ accountId }: { accountId: string }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setDialog('transfer')}>
-            <ArrowLeftRight /> Transfer
+            <ArrowLeftRight /> {t('Transfer')}
           </Button>
           <Button onClick={() => setDialog('import')}>
-            <FileUp /> Import statement
+            <FileUp /> {t('Import statement')}
           </Button>
         </div>
       </div>
@@ -311,7 +327,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Card className="p-5">
           <p className="text-sm text-slate-500">
-            Statement balance
+            {t('Statement balance')}
             {rec.statementDate ? ` · ${fmt.date(rec.statementDate)}` : ''}
           </p>
           <p className="tabular mt-1 text-2xl font-semibold text-slate-900">
@@ -322,7 +338,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
         </Card>
         <Card className="p-5">
           <p className="text-sm text-slate-500">
-            In your books
+            {t('In your books')}
             {rec.statementDate ? ` · ${fmt.date(rec.statementDate)}` : ''}
           </p>
           <p className="tabular mt-1 text-2xl font-semibold text-slate-900">
@@ -330,7 +346,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
           </p>
         </Card>
         <Card className="p-5">
-          <p className="text-sm text-slate-500">Difference</p>
+          <p className="text-sm text-slate-500">{t('Difference')}</p>
           <p
             className={cn(
               'tabular mt-1 text-2xl font-semibold',
@@ -341,12 +357,16 @@ function BankAccountPage({ accountId }: { accountId: string }) {
           </p>
           <p className="text-xs text-slate-500">
             {rec.difference === null
-              ? 'Shown once a statement with balances is imported.'
+              ? t('Shown once a statement with balances is imported.')
               : rec.unmatched
-                ? `${rec.unmatched} statement ${rec.unmatched === 1 ? 'line' : 'lines'} to match`
+                ? tp(
+                    rec.unmatched,
+                    '{count} statement line to match',
+                    '{count} statement lines to match',
+                  )
                 : rec.difference
-                  ? 'Check for missing or duplicated transactions.'
-                  : 'Your books agree with the bank.'}
+                  ? t('Check for missing or duplicated transactions.')
+                  : t('Your books agree with the bank.')}
           </p>
         </Card>
       </div>
@@ -355,25 +375,27 @@ function BankAccountPage({ accountId }: { accountId: string }) {
         <div className="border-b border-slate-100 p-4">
           <Segmented
             value={tab}
-            onChange={(t) => {
-              setTab(t);
+            onChange={(value) => {
+              setTab(value);
               setOpen(null);
             }}
             options={[
-              { value: 'match', label: 'To match', count: lists.match.length },
-              { value: 'matched', label: 'Matched', count: lists.matched.length },
-              { value: 'ignored', label: 'Ignored', count: lists.ignored.length },
+              { value: 'match', label: t('To match'), count: lists.match.length },
+              { value: 'matched', label: t('Matched'), count: lists.matched.length },
+              { value: 'ignored', label: t('Ignored'), count: lists.ignored.length },
             ]}
           />
         </div>
         {transactions.length === 0 ? (
           <EmptyState
             icon={<FileUp />}
-            title="No statement yet"
-            description="Import a CSV or OFX statement from your online banking to match it to your books."
+            title={t('No statement yet')}
+            description={t(
+              'Import a CSV or OFX statement from your online banking to match it to your books.',
+            )}
             action={
               <Button onClick={() => setDialog('import')}>
-                <FileUp /> Import statement
+                <FileUp /> {t('Import statement')}
               </Button>
             }
           />
@@ -381,55 +403,61 @@ function BankAccountPage({ accountId }: { accountId: string }) {
           <div className="flex flex-col items-center px-6 py-12 text-center">
             <CheckCircle2 className="size-8 text-emerald-500" />
             <p className="mt-2 text-sm text-slate-600">
-              {tab === 'match' ? 'Everything is matched.' : 'Nothing here.'}
+              {tab === 'match' ? t('Everything is matched.') : t('Nothing here.')}
             </p>
           </div>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {lists[tab].map((t) => {
-              const entry = matchedTo(t);
-              const isOpen = open === t.id;
+            {lists[tab].map((tx) => {
+              const entry = matchedTo(tx);
+              const isOpen = open === tx.id;
               return (
-                <li key={t.id}>
+                <li key={tx.id}>
                   <div
                     className={cn(
-                      'flex items-center gap-3 px-5 py-3',
+                      'flex items-center gap-3 px-4 py-3 sm:px-5',
                       tab === 'match' && 'cursor-pointer hover:bg-slate-50',
                       isOpen && 'bg-slate-50',
                     )}
-                    onClick={tab === 'match' ? () => setOpen(isOpen ? null : t.id) : undefined}
+                    onClick={tab === 'match' ? () => setOpen(isOpen ? null : tx.id) : undefined}
                   >
-                    <div className="w-24 shrink-0 text-sm text-slate-600">{fmt.date(t.date)}</div>
+                    <div className="hidden w-24 shrink-0 text-sm text-slate-600 sm:block">
+                      {fmt.date(tx.date)}
+                    </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-slate-800">
-                        {t.description || '—'}
+                        {tx.description || '—'}
                       </p>
+                      <p className="text-xs text-slate-500 sm:hidden">{fmt.date(tx.date)}</p>
                       {entry ? (
                         <Link
                           to={sourceLink({ source: entry.source, sourceId: entry.id })}
-                          className="text-primary-700 inline-flex items-center gap-1 text-xs hover:underline"
+                          className="text-primary-700 inline-flex max-w-full items-center gap-1 text-xs hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Link2 className="size-3" /> {SOURCE_LABELS[entry.source]} {entry.number}
-                          {entry.contactId && names.get(entry.contactId)
-                            ? ` · ${names.get(entry.contactId)}`
-                            : ''}
+                          <Link2 className="size-3 shrink-0" />
+                          <span className="min-w-0 truncate">
+                            {t(SOURCE_LABELS[entry.source])} <bdi>{entry.number}</bdi>
+                            {entry.contactId && names.get(entry.contactId)
+                              ? ` · ${names.get(entry.contactId)}`
+                              : ''}
+                          </span>
                         </Link>
-                      ) : t.match ? (
+                      ) : tx.match ? (
                         <p className="text-xs text-amber-700">
-                          What it was matched to has been deleted.
+                          {t('What it was matched to has been deleted.')}
                         </p>
-                      ) : t.reference ? (
-                        <p className="truncate text-xs text-slate-500">{t.reference}</p>
+                      ) : tx.reference ? (
+                        <p className="truncate text-xs text-slate-500">{tx.reference}</p>
                       ) : null}
                     </div>
                     <div
                       className={cn(
                         'tabular shrink-0 text-end text-sm font-semibold',
-                        t.amount > 0 ? 'text-emerald-700' : 'text-slate-900',
+                        tx.amount > 0 ? 'text-emerald-700' : 'text-slate-900',
                       )}
                     >
-                      {fmt.money(t.amount)}
+                      {fmt.money(tx.amount)}
                     </div>
                     <div onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
@@ -437,7 +465,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`Actions for ${t.description}`}
+                            aria-label={t('Actions for {name}', { name: tx.description })}
                           >
                             <MoreHorizontal />
                           </Button>
@@ -447,39 +475,39 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                             <DropdownItem
                               icon={<Undo2 />}
                               onSelect={() =>
-                                void run(() => unmatchTransaction(t.id), 'Match removed')
+                                void run(() => unmatchTransaction(tx.id), t('Match removed'))
                               }
                             >
-                              Unmatch
+                              {t('Unmatch')}
                             </DropdownItem>
                           ) : null}
                           {tab === 'ignored' ? (
                             <DropdownItem
                               icon={<Undo2 />}
                               onSelect={() =>
-                                void run(() => ignoreTransaction(t.id, false), 'Line restored')
+                                void run(() => ignoreTransaction(tx.id, false), t('Line restored'))
                               }
                             >
-                              Restore
+                              {t('Restore')}
                             </DropdownItem>
                           ) : (
                             <DropdownItem
                               icon={<EyeOff />}
                               onSelect={() =>
-                                void run(() => ignoreTransaction(t.id, true), 'Line ignored')
+                                void run(() => ignoreTransaction(tx.id, true), t('Line ignored'))
                               }
                             >
-                              Ignore
+                              {t('Ignore')}
                             </DropdownItem>
                           )}
                           <DropdownItem
                             icon={<Trash2 />}
                             danger
                             onSelect={() =>
-                              void run(() => deleteTransaction(t.id), 'Statement line deleted')
+                              void run(() => deleteTransaction(tx.id), t('Statement line deleted'))
                             }
                           >
-                            Delete line
+                            {t('Delete line')}
                           </DropdownItem>
                         </DropdownContent>
                       </DropdownMenu>
@@ -487,17 +515,17 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                   </div>
                   {isOpen ? (
                     <MatchPanel
-                      transaction={t}
+                      transaction={tx}
                       candidates={suggestMatches(
                         {
-                          date: t.date,
-                          amount: minor(t.amount),
-                          description: t.description,
-                          reference: t.reference,
+                          date: tx.date,
+                          amount: minor(tx.amount),
+                          description: tx.description,
+                          reference: tx.reference,
                         },
                         entries,
                         taken,
-                        names,
+                        matchNames,
                         30,
                       )}
                       names={names}
@@ -508,12 +536,12 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                       money={money}
                       onMatch={(entry) =>
                         void run(
-                          () => matchTransaction(t.id, { source: entry.source, id: entry.id }),
-                          'Matched',
+                          () => matchTransaction(tx.id, { source: entry.source, id: entry.id }),
+                          t('Line matched'),
                         )
                       }
                       onCreate={(action, message) =>
-                        void run(() => createFromTransaction(t.id, action), message)
+                        void run(() => createFromTransaction(tx.id, action), message)
                       }
                     />
                   ) : null}
@@ -581,21 +609,21 @@ function MatchPanel({
   const exactDoc = docs.find((d) => sameAmount(d.totals.balance, amount, d.currency));
   const recipes: { value: Recipe; label: string }[] = into
     ? [
-        { value: 'document', label: 'Invoice payment' },
-        { value: 'transfer', label: 'Transfer' },
-        { value: 'account', label: 'Other' },
+        { value: 'document', label: t('Invoice payment') },
+        { value: 'transfer', label: t('Transfer') },
+        { value: 'account', label: t('Other') },
       ]
     : [
-        { value: 'expense', label: 'Expense' },
-        { value: 'document', label: 'Bill payment' },
-        { value: 'transfer', label: 'Transfer' },
-        { value: 'account', label: 'Other' },
+        { value: 'expense', label: t('Expense') },
+        { value: 'document', label: t('Bill payment') },
+        { value: 'transfer', label: t('Transfer') },
+        { value: 'account', label: t('Other') },
       ];
-  // Good first guesses from the bank's description.
+  // Good first guesses from the bank's description, in English or Arabic.
   const text = `${transaction.description} ${transaction.reference}`;
   const looksLikeTransfer =
-    moneyAccounts.length > 0 && /transfer|repayment|top.?up|tfr/i.test(text);
-  const looksLikeFee = /\bfees?\b|charges?|commission|interest/i.test(text);
+    moneyAccounts.length > 0 && /transfer|repayment|top.?up|tfr|تحويل|سداد/i.test(text);
+  const looksLikeFee = /\bfees?\b|charges?|commission|interest|رسوم|عمولة|فوائد|فائدة/i.test(text);
   const [recipe, setRecipe] = useState<Recipe>(
     exactDoc ? 'document' : looksLikeTransfer ? 'transfer' : into ? 'account' : 'expense',
   );
@@ -607,7 +635,7 @@ function MatchPanel({
   const [taxes, setTaxes] = useState<TaxLine[]>([]);
   const [documentId, setDocumentId] = useState(exactDoc?.id ?? docs[0]?.id ?? '');
   const [otherMoney, setOtherMoney] = useState(
-    (/card/i.test(text)
+    (/card|بطاقة/i.test(text)
       ? moneyAccounts.find((a) => a.type === 'liability_credit_card')?.id
       : undefined) ??
       moneyAccounts[0]?.id ??
@@ -618,14 +646,14 @@ function MatchPanel({
   const otherOptions = accounts
     .filter((a) => !a.archived && a.id !== transaction.accountId)
     .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
-    .map((a) => ({ value: a.id, label: `${a.code} ${a.name}` }));
+    .map((a) => ({ value: a.id, label: `${a.code} ${localName(a)}` }));
 
   return (
-    <div className="space-y-5 border-t border-slate-100 bg-slate-50/70 px-5 py-4">
+    <div className="space-y-5 border-t border-slate-100 bg-slate-50/70 px-4 py-4 sm:px-5">
       {candidates.length ? (
         <div>
           <p className="mb-2 text-xs font-medium tracking-wide text-slate-500 uppercase">
-            Found in your books
+            {t('Found in your books')}
           </p>
           <ul className="space-y-2">
             {candidates.slice(0, 4).map(({ entry }) => (
@@ -635,7 +663,8 @@ function MatchPanel({
               >
                 <span className="min-w-0 text-sm">
                   <span className="font-medium text-slate-800">
-                    {SOURCE_LABELS[entry.source]} {entry.number}
+                    {t(SOURCE_LABELS[entry.source])}{' '}
+                    <bdi className="whitespace-nowrap">{entry.number}</bdi>
                   </span>
                   <span className="block truncate text-xs text-slate-500">
                     {fmt.date(entry.date)}
@@ -648,7 +677,7 @@ function MatchPanel({
                 <span className="flex shrink-0 items-center gap-3">
                   <span className="tabular text-sm font-semibold">{money(entry.amount)}</span>
                   <Button size="sm" onClick={() => onMatch(entry)}>
-                    Match
+                    {t('Match')}
                   </Button>
                 </span>
               </li>
@@ -659,7 +688,7 @@ function MatchPanel({
 
       <div>
         <p className="mb-2 text-xs font-medium tracking-wide text-slate-500 uppercase">
-          {candidates.length ? 'Or record it as' : 'Record it as'}
+          {candidates.length ? t('Or record it as') : t('Record it as')}
         </p>
         <Segmented value={recipe} onChange={setRecipe} options={recipes} />
         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -667,43 +696,56 @@ function MatchPanel({
             docs.length ? (
               <label className="flex-1 text-sm">
                 <span className="mb-1 block text-xs font-medium text-slate-500">
-                  {into ? 'Invoice' : 'Bill'}
+                  {into ? t('Invoice') : t('Bill')}
                 </span>
                 <Select
                   value={documentId}
                   onChange={(e) => setDocumentId(e.target.value)}
-                  aria-label={into ? 'Invoice' : 'Bill'}
+                  aria-label={into ? t('Invoice') : t('Bill')}
                 >
-                  {docs.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.number} · {names.get(d.clientId) ?? '—'} · balance{' '}
-                      {fmt.money(d.totals.balance, d.currency)}
-                      {sameAmount(d.totals.balance, amount, d.currency) ? ' · same amount' : ''}
-                    </option>
-                  ))}
+                  {docs.map((d) => {
+                    const vars = {
+                      number: d.number,
+                      name: names.get(d.clientId) ?? '—',
+                      amount: fmt.money(d.totals.balance, d.currency),
+                    };
+                    return (
+                      <option key={d.id} value={d.id}>
+                        {sameAmount(d.totals.balance, amount, d.currency)
+                          ? t('{number} · {name} · balance {amount} · same amount', vars)
+                          : t('{number} · {name} · balance {amount}', vars)}
+                      </option>
+                    );
+                  })}
                 </Select>
               </label>
             ) : (
               <p className="flex-1 text-sm text-slate-500">
-                No open {into ? 'invoices' : 'bills'} in {fmt.currency}.
+                {into
+                  ? t('No open invoices in {currency}.', { currency: fmt.currency })
+                  : t('No open bills in {currency}.', { currency: fmt.currency })}
               </p>
             )
           ) : null}
           {recipe === 'expense' ? (
             <>
               <label className="flex-1 text-sm">
-                <span className="mb-1 block text-xs font-medium text-slate-500">Category</span>
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  {t('Category')}
+                </span>
                 <Combobox
-                  ariaLabel="Expense category"
+                  ariaLabel={t('Expense category')}
                   value={category || null}
                   onChange={setCategory}
                   options={categoryOptions(accounts, [category])}
-                  placeholder="Choose a category…"
-                  searchPlaceholder="Search accounts…"
+                  placeholder={t('Choose a category…')}
+                  searchPlaceholder={t('Search accounts…')}
                 />
               </label>
               <label className="text-sm sm:w-44">
-                <span className="mb-1 block text-xs font-medium text-slate-500">Tax included</span>
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  {t('Tax included')}
+                </span>
                 <TaxSelect value={taxes} onChange={setTaxes} rates={taxRates} />
               </label>
             </>
@@ -712,34 +754,34 @@ function MatchPanel({
             moneyAccounts.length ? (
               <label className="flex-1 text-sm">
                 <span className="mb-1 block text-xs font-medium text-slate-500">
-                  {into ? 'From' : 'To'}
+                  {into ? t('From') : t('To')}
                 </span>
                 <Select
                   value={otherMoney}
                   onChange={(e) => setOtherMoney(e.target.value)}
-                  aria-label={into ? 'Transfer from' : 'Transfer to'}
+                  aria-label={into ? t('Transfer from') : t('Transfer to')}
                 >
                   {moneyAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.code} {a.name}
+                      {a.code} {localName(a)}
                     </option>
                   ))}
                 </Select>
               </label>
             ) : (
-              <p className="flex-1 text-sm text-slate-500">No other bank or cash account.</p>
+              <p className="flex-1 text-sm text-slate-500">{t('No other bank or cash account.')}</p>
             )
           ) : null}
           {recipe === 'account' ? (
             <label className="flex-1 text-sm">
-              <span className="mb-1 block text-xs font-medium text-slate-500">Account</span>
+              <span className="mb-1 block text-xs font-medium text-slate-500">{t('Account')}</span>
               <Combobox
-                ariaLabel="Other account"
+                ariaLabel={t('Other account')}
                 value={otherAccount || null}
                 onChange={setOtherAccount}
                 options={otherOptions}
-                placeholder="Choose an account…"
-                searchPlaceholder="Search accounts…"
+                placeholder={t('Choose an account…')}
+                searchPlaceholder={t('Search accounts…')}
               />
             </label>
           ) : null}
@@ -752,21 +794,22 @@ function MatchPanel({
             }
             onClick={() => {
               if (recipe === 'document')
-                onCreate({ kind: 'document', documentId }, 'Payment recorded and matched');
+                onCreate({ kind: 'document', documentId }, t('Payment recorded and matched'));
               else if (recipe === 'expense')
                 onCreate(
                   { kind: 'expense', accountId: category, taxes, vendorId: null },
-                  'Expense recorded and matched',
+                  t('Expense recorded and matched'),
                 );
               else if (recipe === 'transfer')
                 onCreate(
                   { kind: 'transfer', otherAccountId: otherMoney },
-                  'Transfer recorded and matched',
+                  t('Transfer recorded and matched'),
                 );
-              else onCreate({ kind: 'account', accountId: otherAccount }, 'Recorded and matched');
+              else
+                onCreate({ kind: 'account', accountId: otherAccount }, t('Recorded and matched'));
             }}
           >
-            Record and match
+            {t('Record and match')}
           </Button>
         </div>
       </div>

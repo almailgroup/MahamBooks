@@ -3,7 +3,11 @@ import { db } from './db';
 import { createClient, createRecurring } from './defaults';
 import { generateDueInvoices } from './recurring';
 import { saveClient, setupCompany } from './records';
-import { replaceDatePlaceholders } from '@/lib/placeholders';
+import {
+  datePlaceholderExamples,
+  placeholderLocale,
+  replaceDatePlaceholders,
+} from '@/lib/placeholders';
 
 beforeEach(async () => {
   await db.delete();
@@ -19,6 +23,20 @@ describe('date placeholders', () => {
     expect(replaceDatePlaceholders(':QUARTER :YEAR-1', '2026-08-01')).toBe('Q3 2025');
     expect(replaceDatePlaceholders(':MONTHYEAR', '2026-10-02', 'en-GB')).toBe('October 2026');
     expect(replaceDatePlaceholders('Time: 10:30', '2026-10-02')).toBe('Time: 10:30');
+  });
+
+  it('writes month names in the document language', () => {
+    const arabic = placeholderLocale('ar', 'en-KW');
+    expect(replaceDatePlaceholders(':MONTHYEAR · :QUARTER', '2026-10-02', arabic)).toBe(
+      'أكتوبر 2026 · الربع 4',
+    );
+    expect(placeholderLocale('ar-en', 'en-GB')).toBe('en-GB');
+    expect(placeholderLocale('en', 'fr-FR')).toBe('en');
+    expect(placeholderLocale('fr', 'en-KW')).toBe('fr');
+    expect(datePlaceholderExamples('2026-10-02', 'en-GB')).toContainEqual({
+      token: ':MONTH+1',
+      example: 'November',
+    });
   });
 });
 
@@ -75,6 +93,40 @@ describe('recurring invoices', () => {
       nextIssueDate: null,
     });
     expect(await generateDueInvoices(company.id, '2026-12-31')).toHaveLength(0);
+  });
+
+  it('fills in Arabic month names for a client who gets Arabic documents', async () => {
+    const company = await setupCompany({ name: 'Acme', currency: 'KWD', locale: 'en-KW' });
+    const client = await saveClient(createClient(company.id, { name: 'Client', language: 'ar' }));
+    const base = createRecurring(company.id);
+    await db.recurring.put(
+      createRecurring(company.id, {
+        clientId: client.id,
+        startDate: '2026-02-01',
+        nextIssueDate: '2026-02-01',
+        remainingCycles: 1,
+        template: {
+          ...base.template,
+          items: [
+            {
+              id: 'i1',
+              kind: 'item',
+              productId: null,
+              name: 'دعم فني — :MONTH :YEAR',
+              description: '',
+              quantity: 1,
+              unit: '',
+              unitPrice: 50,
+              discount: 0,
+              discountType: 'percent',
+              taxes: [],
+            },
+          ],
+        },
+      }),
+    );
+    const [invoice] = await generateDueInvoices(company.id, '2026-02-10');
+    expect(invoice.items[0].name).toBe('دعم فني — فبراير 2026');
   });
 
   it('skips paused profiles and future dates', async () => {

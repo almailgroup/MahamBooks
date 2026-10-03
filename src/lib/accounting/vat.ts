@@ -1,6 +1,7 @@
 import type { AccountRole, ID, ISODate, VatFormat } from '@/db/types';
 import { addDaysISO, parseISODate, toISODate } from '@/lib/dates';
 import type { LedgerLine } from './ledger';
+import { msg } from '@/i18n';
 
 /**
  * VAT returns, worked out from the ledger: tax boxes from the movements on
@@ -11,10 +12,11 @@ import type { LedgerLine } from './ledger';
 
 export type { VatFormat };
 
+/** Translate labels where they are shown: `t(format.label)`; the same for box labels. */
 export const VAT_FORMATS: { value: VatFormat; label: string }[] = [
-  { value: 'uk', label: 'United Kingdom (VAT return, boxes 1–9)' },
-  { value: 'ae', label: 'United Arab Emirates (VAT 201)' },
-  { value: 'generic', label: 'Summary (any country)' },
+  { value: 'uk', label: msg('United Kingdom (VAT return, boxes 1–9)') },
+  { value: 'ae', label: msg('United Arab Emirates (VAT 201)') },
+  { value: 'generic', label: msg('Summary (any country)') },
 ];
 
 export function vatFormatFor(country: string): VatFormat {
@@ -25,13 +27,48 @@ export function vatFormatFor(country: string): VatFormat {
 }
 
 export const EMIRATES = [
-  { code: 'AZ', name: 'Abu Dhabi', match: /abu\s*dhabi|al\s*ain/i },
-  { code: 'DU', name: 'Dubai', match: /dubai/i },
-  { code: 'SH', name: 'Sharjah', match: /sharjah/i },
-  { code: 'AJ', name: 'Ajman', match: /ajman/i },
-  { code: 'UQ', name: 'Umm Al Quwain', match: /umm\s*al\s*quwain/i },
-  { code: 'RK', name: 'Ras Al Khaimah', match: /ras\s*al\s*khaimah/i },
-  { code: 'FU', name: 'Fujairah', match: /fujairah/i },
+  {
+    code: 'AZ',
+    name: msg('Abu Dhabi'),
+    supplies: msg('Standard rated supplies in Abu Dhabi'),
+    match: /abu\s*dhabi|al\s*ain/i,
+  },
+  {
+    code: 'DU',
+    name: msg('Dubai'),
+    supplies: msg('Standard rated supplies in Dubai'),
+    match: /dubai/i,
+  },
+  {
+    code: 'SH',
+    name: msg('Sharjah'),
+    supplies: msg('Standard rated supplies in Sharjah'),
+    match: /sharjah/i,
+  },
+  {
+    code: 'AJ',
+    name: msg('Ajman'),
+    supplies: msg('Standard rated supplies in Ajman'),
+    match: /ajman/i,
+  },
+  {
+    code: 'UQ',
+    name: msg('Umm Al Quwain'),
+    supplies: msg('Standard rated supplies in Umm Al Quwain'),
+    match: /umm\s*al\s*quwain/i,
+  },
+  {
+    code: 'RK',
+    name: msg('Ras Al Khaimah'),
+    supplies: msg('Standard rated supplies in Ras Al Khaimah'),
+    match: /ras\s*al\s*khaimah/i,
+  },
+  {
+    code: 'FU',
+    name: msg('Fujairah'),
+    supplies: msg('Standard rated supplies in Fujairah'),
+    match: /fujairah/i,
+  },
 ] as const;
 
 export type EmirateCode = (typeof EMIRATES)[number]['code'];
@@ -242,48 +279,53 @@ export function vatReturn(
     const box4 = amount('4');
     net = box1 - box4;
     boxes = [
-      { id: '1', label: 'VAT due on sales and other outputs', amount: box1 },
+      { id: '1', label: msg('VAT due on sales and other outputs'), amount: box1 },
       {
         id: '2',
-        label: 'VAT due on acquisitions of goods made in Northern Ireland from EU member states',
+        label: msg(
+          'VAT due on acquisitions of goods made in Northern Ireland from EU member states',
+        ),
         amount: 0,
       },
-      { id: '3', label: 'Total VAT due (box 1 + box 2)', amount: box1, total: true },
+      { id: '3', label: msg('Total VAT due (box 1 + box 2)'), amount: box1, total: true },
       {
         id: '4',
-        label:
+        label: msg(
           'VAT reclaimed on purchases and other inputs (including acquisitions in Northern Ireland from EU member states)',
+        ),
         amount: box4,
       },
       {
         id: '5',
-        label: 'Net VAT to pay to HMRC or reclaim (difference between box 3 and box 4)',
+        label: msg('Net VAT to pay to HMRC or reclaim (difference between box 3 and box 4)'),
         amount: Math.abs(net),
         total: true,
       },
       {
         id: '6',
-        label: 'Total value of sales and all other outputs excluding any VAT',
+        label: msg('Total value of sales and all other outputs excluding any VAT'),
         amount: whole(amount('6'), ctx.precision),
         whole: true,
       },
       {
         id: '7',
-        label: 'Total value of purchases and all other inputs excluding any VAT',
+        label: msg('Total value of purchases and all other inputs excluding any VAT'),
         amount: whole(amount('7'), ctx.precision),
         whole: true,
       },
       {
         id: '8',
-        label:
+        label: msg(
           'Total value of dispatches of goods and related costs (excluding VAT) from Northern Ireland to EU member states',
+        ),
         amount: 0,
         whole: true,
       },
       {
         id: '9',
-        label:
+        label: msg(
           'Total value of acquisitions of goods and related costs (excluding VAT) made in Northern Ireland from EU member states',
+        ),
         amount: 0,
         whole: true,
       },
@@ -292,7 +334,7 @@ export function vatReturn(
     const home = ctx.emirate ?? 'DU';
     const rows = EMIRATES.map((e, i) => ({
       id: `1${'abcdefg'[i]}`,
-      label: `Standard rated supplies in ${e.name}`,
+      label: e.supplies,
       amount: e.code === home ? amount('1') : 0,
       vat: e.code === home ? vat('1') : 0,
     }));
@@ -300,20 +342,20 @@ export function vatReturn(
       ...rows,
       {
         id: '2',
-        label: 'Tax refunds provided to tourists under the tax refunds for tourists scheme',
+        label: msg('Tax refunds provided to tourists under the tax refunds for tourists scheme'),
         amount: 0,
         vat: 0,
       },
       {
         id: '3',
-        label: 'Supplies subject to the reverse charge provisions',
+        label: msg('Supplies subject to the reverse charge provisions'),
         amount: amount('3'),
         vat: vat('3'),
       },
-      { id: '4', label: 'Zero rated supplies', amount: amount('4') },
-      { id: '5', label: 'Exempt supplies', amount: amount('5') },
-      { id: '6', label: 'Goods imported into the UAE', amount: 0, vat: 0 },
-      { id: '7', label: 'Adjustments to goods imported into the UAE', amount: 0, vat: 0 },
+      { id: '4', label: msg('Zero rated supplies'), amount: amount('4') },
+      { id: '5', label: msg('Exempt supplies'), amount: amount('5') },
+      { id: '6', label: msg('Goods imported into the UAE'), amount: 0, vat: 0 },
+      { id: '7', label: msg('Adjustments to goods imported into the UAE'), amount: 0, vat: 0 },
     ];
     const box8 = {
       amount: outputs.reduce((s, b) => s + b.amount, 0),
@@ -322,13 +364,13 @@ export function vatReturn(
     const inputs: VatBox[] = [
       {
         id: '9',
-        label: 'Standard rated expenses',
+        label: msg('Standard rated expenses'),
         amount: amount('9'),
         vat: vat('9'),
       },
       {
         id: '10',
-        label: 'Supplies subject to the reverse charge provisions',
+        label: msg('Supplies subject to the reverse charge provisions'),
         amount: amount('10'),
         vat: vat('10'),
       },
@@ -340,17 +382,22 @@ export function vatReturn(
     net = box8.vat - box11.vat;
     boxes = [
       ...outputs,
-      { id: '8', label: 'Totals', ...box8, total: true },
+      { id: '8', label: msg('Totals'), ...box8, total: true },
       ...inputs,
-      { id: '11', label: 'Totals', ...box11, total: true },
-      { id: '12', label: 'Total value of due tax for the period', amount: box8.vat, total: true },
+      { id: '11', label: msg('Totals'), ...box11, total: true },
+      {
+        id: '12',
+        label: msg('Total value of due tax for the period'),
+        amount: box8.vat,
+        total: true,
+      },
       {
         id: '13',
-        label: 'Total value of recoverable tax for the period',
+        label: msg('Total value of recoverable tax for the period'),
         amount: box11.vat,
         total: true,
       },
-      { id: '14', label: 'Payable tax for the period', amount: net, total: true },
+      { id: '14', label: msg('Payable tax for the period'), amount: net, total: true },
     ];
   } else {
     const output = sum(lines, (l) => (l.accountId === ctx.roles.output_tax ? -l.amount : 0));
@@ -359,33 +406,33 @@ export function vatReturn(
     boxes = [
       {
         id: 'sales-taxed',
-        label: 'Taxable sales',
+        label: msg('Taxable sales'),
         amount: amount('sales-taxed'),
         vat: vat('sales-taxed'),
       },
-      { id: 'sales-zero', label: 'Zero-rated sales', amount: amount('sales-zero') },
-      { id: 'sales-exempt', label: 'Exempt sales', amount: amount('sales-exempt') },
-      { id: 'sales-none', label: 'Sales without a tax rate', amount: amount('sales-none') },
+      { id: 'sales-zero', label: msg('Zero-rated sales'), amount: amount('sales-zero') },
+      { id: 'sales-exempt', label: msg('Exempt sales'), amount: amount('sales-exempt') },
+      { id: 'sales-none', label: msg('Sales without a tax rate'), amount: amount('sales-none') },
       {
         id: 'purchases-taxed',
-        label: 'Taxable purchases',
+        label: msg('Taxable purchases'),
         amount: amount('purchases-taxed'),
         vat: vat('purchases-taxed'),
       },
       {
         id: 'purchases-other',
-        label: 'Purchases without tax',
+        label: msg('Purchases without tax'),
         amount: amount('purchases-other'),
       },
       {
         id: 'reverse',
-        label: 'Purchases under reverse charge (tax due and reclaimed)',
+        label: msg('Purchases under reverse charge (tax due and reclaimed)'),
         amount: amount('reverse'),
         vat: vat('reverse'),
       },
-      { id: 'output', label: 'Tax on sales (output tax)', amount: output, total: true },
-      { id: 'input', label: 'Tax on purchases (input tax)', amount: input, total: true },
-      { id: 'net', label: 'Net tax to pay', amount: net, total: true },
+      { id: 'output', label: msg('Tax on sales (output tax)'), amount: output, total: true },
+      { id: 'input', label: msg('Tax on purchases (input tax)'), amount: input, total: true },
+      { id: 'net', label: msg('Net tax to pay'), amount: net, total: true },
     ];
   }
   return { format, period, boxes, net, untaxed };

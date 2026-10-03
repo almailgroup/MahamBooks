@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Trash2 } from 'lucide-react';
+import { ChevronDown, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteExpense, isVendor, saveExpense } from '@/db/purchases';
@@ -8,6 +8,9 @@ import type { Expense, TaxLine } from '@/db/types';
 import { isReverseCharge } from '@/lib/calc';
 import { useCompany, useFormat } from '@/app/company';
 import { currencyPrecision, dec } from '@/lib/money';
+import { cn } from '@/lib/cn';
+import { t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
@@ -76,42 +79,49 @@ export function ExpenseDialog({
     [company.id],
   );
 
+  // On phones a new expense starts with the receipt, amount and category; the rest folds away.
+  const [more, setMore] = useState(!isNew);
+  const detailsId = useId();
   const set = (patch: Partial<Expense>) => setDraft((d) => ({ ...d, ...patch }));
   const currency = draft.currency || company.currency;
   const tax = includedTax(draft.amount, draft.taxes, currency);
   const reverse = reverseChargeTax(draft.amount, draft.taxes, currency);
   const vendorOptions = (clients ?? [])
     .filter((c) => (isVendor(c) && !c.archived) || c.id === draft.vendorId)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ value: c.id, label: c.name, detail: c.number }));
+    .sort((a, b) => localName(a).localeCompare(localName(b)))
+    .map((c) => ({ value: c.id, label: localName(c), detail: c.number }));
 
   const save = async () => {
     setSaving(true);
     try {
       const saved = await saveExpense(draft);
       await attachments.commit(company.id);
-      toast.success(`Expense ${saved.number} ${isNew ? 'recorded' : 'saved'}`);
+      toast.success(
+        isNew
+          ? t('Expense {number} recorded', { number: saved.number })
+          : t('Expense {number} saved', { number: saved.number }),
+      );
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save the expense.');
+      toast.error(error instanceof Error ? error.message : t('Could not save the expense.'));
       setSaving(false);
     }
   };
 
   const remove = async () => {
     const ok = await confirm({
-      title: `Delete expense ${draft.number}?`,
-      description: 'Its receipt is deleted too. This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: t('Delete expense {number}?', { number: draft.number }),
+      description: t('Its receipt is deleted too. This cannot be undone.'),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
     try {
       await deleteExpense(draft.id);
-      toast.success('Expense deleted');
+      toast.success(t('Expense deleted'));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not delete the expense.');
+      toast.error(error instanceof Error ? error.message : t('Could not delete the expense.'));
     }
   };
 
@@ -119,42 +129,31 @@ export function ExpenseDialog({
     <>
       <Dialog open onOpenChange={(open) => !open && onClose()}>
         <DialogContent
-          title={isNew ? 'Record expense' : `Expense ${draft.number}`}
-          description="Something paid straight away, without a bill to pay later."
+          title={isNew ? t('Record expense') : t('Expense {number}', { number: draft.number })}
+          description={t('Something paid straight away, without a bill to pay later.')}
           size="lg"
         >
           <DialogBody>
+            <section aria-label={t('Receipt')}>
+              <p className="mb-2 text-sm font-medium text-slate-700">{t('Receipt')}</p>
+              <AttachmentList
+                files={attachments.files}
+                onAdd={attachments.add}
+                onRemove={attachments.remove}
+                camera
+              />
+            </section>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Date">
-                {(id) => (
-                  <Input
-                    id={id}
-                    type="date"
-                    value={draft.date}
-                    onChange={(e) => e.target.value && set({ date: e.target.value })}
-                  />
-                )}
-              </Field>
-              <Field label="Category">
-                {(id) => (
-                  <Combobox
-                    id={id}
-                    value={draft.accountId || null}
-                    onChange={(accountId) => set({ accountId })}
-                    options={categoryOptions(accounts ?? [], [draft.accountId])}
-                    placeholder="Choose a category…"
-                    searchPlaceholder="Search accounts…"
-                  />
-                )}
-              </Field>
               <Field
-                label="Amount paid"
+                label={t('Amount paid')}
                 hint={
                   reverse
-                    ? `Reverse charge: ${fmt.money(reverse, currency)} VAT due and reclaimed on your return`
+                    ? t('Reverse charge: {amount} VAT due and reclaimed on your return', {
+                        amount: fmt.money(reverse, currency),
+                      })
                     : tax
-                      ? `Includes ${fmt.money(tax, currency)} tax`
-                      : 'The total on the receipt, tax included.'
+                      ? t('Includes {amount} tax', { amount: fmt.money(tax, currency) })
+                      : t('The total on the receipt, tax included.')
                 }
               >
                 {(id) => (
@@ -164,10 +163,49 @@ export function ExpenseDialog({
                     onValueChange={(amount) => set({ amount })}
                     allowNegative={false}
                     blankZero
+                    inputMode="decimal"
+                    className="max-sm:h-12 max-sm:text-xl max-sm:font-semibold"
                   />
                 )}
               </Field>
-              <Field label="Tax included">
+              <Field label={t('Category')}>
+                {(id) => (
+                  <Combobox
+                    id={id}
+                    value={draft.accountId || null}
+                    onChange={(accountId) => set({ accountId })}
+                    options={categoryOptions(accounts ?? [], [draft.accountId])}
+                    placeholder={t('Choose a category…')}
+                    searchPlaceholder={t('Search accounts…')}
+                  />
+                )}
+              </Field>
+            </div>
+            <button
+              type="button"
+              className="text-primary-700 flex items-center gap-1 text-sm font-medium sm:hidden"
+              aria-expanded={more}
+              aria-controls={detailsId}
+              onClick={() => setMore((open) => !open)}
+            >
+              <ChevronDown className={cn('size-4 transition-transform', more && 'rotate-180')} />
+              {more ? t('Fewer details') : t('More details')}
+            </button>
+            <div
+              id={detailsId}
+              className={cn('grid gap-4 sm:grid-cols-2', !more && 'max-sm:hidden')}
+            >
+              <Field label={t('Date')}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    type="date"
+                    value={draft.date}
+                    onChange={(e) => e.target.value && set({ date: e.target.value })}
+                  />
+                )}
+              </Field>
+              <Field label={t('Tax included')}>
                 {(id) => (
                   <TaxSelect
                     id={id}
@@ -177,7 +215,7 @@ export function ExpenseDialog({
                   />
                 )}
               </Field>
-              <Field label="Currency">
+              <Field label={t('Currency')}>
                 {(id) => (
                   <CurrencySelect
                     id={id}
@@ -186,7 +224,7 @@ export function ExpenseDialog({
                   />
                 )}
               </Field>
-              <Field label="Paid from">
+              <Field label={t('Paid from')}>
                 {(id) => (
                   <MoneyAccountSelect
                     id={id}
@@ -199,7 +237,7 @@ export function ExpenseDialog({
               </Field>
               {currency !== company.currency ? (
                 <Field
-                  label="Exchange rate"
+                  label={t('Exchange rate')}
                   hint={`1 ${currency} = ${draft.exchangeRate || '?'} ${company.currency}`}
                 >
                   {(id) => (
@@ -212,41 +250,41 @@ export function ExpenseDialog({
                   )}
                 </Field>
               ) : null}
-              <Field label="Vendor" optional>
+              <Field label={t('Vendor')} optional>
                 {(id) => (
                   <Combobox
                     id={id}
                     value={draft.vendorId}
                     onChange={(vendorId) => set({ vendorId })}
                     options={vendorOptions}
-                    placeholder="Who was paid?"
-                    searchPlaceholder="Search vendors…"
+                    placeholder={t('Who was paid?')}
+                    searchPlaceholder={t('Search vendors…')}
                     onCreate={(name) => setVendorDialog({ open: true, name })}
-                    createLabel="New vendor"
+                    createLabel={t('New vendor')}
                   />
                 )}
               </Field>
-              <Field label="Reference" optional>
+              <Field label={t('Reference')} optional>
                 {(id) => (
                   <Input
                     id={id}
                     value={draft.reference}
                     onChange={(e) => set({ reference: e.target.value })}
-                    placeholder="Receipt or transaction number"
+                    placeholder={t('Receipt or transaction number')}
                   />
                 )}
               </Field>
-              <Field label="Description" className="sm:col-span-2">
+              <Field label={t('Description')} className="sm:col-span-2">
                 {(id) => (
                   <Input
                     id={id}
                     value={draft.description}
                     onChange={(e) => set({ description: e.target.value })}
-                    placeholder="e.g. Train to client meeting"
+                    placeholder={t('e.g. Taxi to a client meeting')}
                   />
                 )}
               </Field>
-              <Field label="Notes" optional className="sm:col-span-2">
+              <Field label={t('Notes')} optional className="sm:col-span-2">
                 {(id) => (
                   <Textarea
                     id={id}
@@ -257,14 +295,6 @@ export function ExpenseDialog({
                 )}
               </Field>
             </div>
-            <div>
-              <p className="mb-2 text-sm font-medium text-slate-700">Receipt</p>
-              <AttachmentList
-                files={attachments.files}
-                onAdd={attachments.add}
-                onRemove={attachments.remove}
-              />
-            </div>
           </DialogBody>
           <DialogFooter>
             {!isNew ? (
@@ -273,14 +303,14 @@ export function ExpenseDialog({
                 className="me-auto text-red-600 hover:bg-red-50"
                 onClick={() => void remove()}
               >
-                <Trash2 /> Delete
+                <Trash2 /> {t('Delete')}
               </Button>
             ) : null}
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button onClick={() => void save()} loading={saving}>
-              {isNew ? 'Record expense' : 'Save'}
+              {isNew ? t('Record expense') : t('Save')}
             </Button>
           </DialogFooter>
         </DialogContent>

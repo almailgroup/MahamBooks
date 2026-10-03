@@ -4,10 +4,14 @@ import { markSent, saveDocument } from './documents';
 import { logActivity } from './activity';
 import type { ID, InvoiceDocument, ISODate, RecurringProfile } from './types';
 import { addDaysISO, occurrenceDate, today } from '@/lib/dates';
-import { replaceDatePlaceholders } from '@/lib/placeholders';
+import { placeholderLocale, replaceDatePlaceholders } from '@/lib/placeholders';
 import { shortId } from '@/lib/ids';
+import { msg } from '@/i18n';
 
-/** Builds (without saving) the invoice a profile produces for `issueDate`. */
+/**
+ * Builds (without saving) the invoice a profile produces for `issueDate`.
+ * `locale` writes month names in the document's language (`placeholderLocale`).
+ */
 export function invoiceFromProfile(
   profile: RecurringProfile,
   issueDate: ISODate,
@@ -66,7 +70,10 @@ export async function issueNow(profileId: ID): Promise<InvoiceDocument | null> {
   const company = await db.companies.get(profile.companyId);
   if (!company) return null;
   const issueDate = profile.nextIssueDate <= today() ? profile.nextIssueDate : today();
-  const invoice = await saveDocument(invoiceFromProfile(profile, issueDate, company.locale));
+  const client = profile.clientId ? await db.clients.get(profile.clientId) : undefined;
+  // The client's document language, else the company's.
+  const locale = placeholderLocale(client?.language ?? company.language, company.locale);
+  const invoice = await saveDocument(invoiceFromProfile(profile, issueDate, locale));
   if (profile.markSent) await markSent(invoice.id);
   await db.recurring.put(advanceProfile(profile));
   await logActivity(
@@ -74,7 +81,12 @@ export async function issueNow(profileId: ID): Promise<InvoiceDocument | null> {
     'recurring',
     profile.id,
     'issued',
-    `Recurring invoice ${invoice.number} created from “${profile.name || 'recurring profile'}”`,
+    profile.name
+      ? {
+          text: msg('Recurring invoice {number} created from “{name}”'),
+          vars: { number: invoice.number, name: profile.name },
+        }
+      : { text: msg('Recurring invoice {number} created'), vars: { number: invoice.number } },
     {
       clientId: profile.clientId || null,
       documentId: invoice.id,
@@ -109,12 +121,13 @@ export async function generateDueInvoices(
   return created;
 }
 
+/** Translate where shown: `t(FREQUENCY_LABEL[frequency])`. */
 export const FREQUENCY_LABEL: Record<RecurringProfile['frequency'], string> = {
-  weekly: 'Weekly',
-  biweekly: 'Every 2 weeks',
-  monthly: 'Monthly',
-  bimonthly: 'Every 2 months',
-  quarterly: 'Quarterly',
-  semiannually: 'Every 6 months',
-  yearly: 'Yearly',
+  weekly: msg('Weekly'),
+  biweekly: msg('Every 2 weeks'),
+  monthly: msg('Monthly'),
+  bimonthly: msg('Every 2 months'),
+  quarterly: msg('Quarterly'),
+  semiannually: msg('Every 6 months'),
+  yearly: msg('Yearly'),
 };

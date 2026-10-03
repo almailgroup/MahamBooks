@@ -5,6 +5,8 @@ import { useCompany } from '@/app/company';
 import { ACCOUNT_TYPES, isPurchaseCategory } from '@/lib/accounting/account-types';
 import type { ComboOption } from '@/components/ui/combobox';
 import { Select } from '@/components/ui/form';
+import { t } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 const byCode = (a: Account, b: Account) =>
   a.code.localeCompare(b.code, undefined, { numeric: true });
@@ -23,11 +25,15 @@ export function categoryOptions(accounts: Account[], keep: (ID | null | undefine
   return accounts
     .filter((a) => (isPurchaseCategory(a) && !a.archived) || keep.includes(a.id))
     .sort(byCode)
-    .map((a): ComboOption => ({
-      value: a.id,
-      label: `${a.code} ${a.name}`,
-      keywords: ACCOUNT_TYPES[a.type].label,
-    }));
+    .map((a): ComboOption => {
+      const type = ACCOUNT_TYPES[a.type].label;
+      return {
+        value: a.id,
+        label: `${a.code} ${localName(a)}`,
+        // Either name and the type find the account, whatever the interface language.
+        keywords: [a.name, a.nameAr ?? '', type, t(type)].join(' '),
+      };
+    });
 }
 
 /**
@@ -74,17 +80,19 @@ export function MoneyAccountSelect({
     accounts.find((a) => a.role === defaultRole) ?? accounts.find((a) => a.role === 'bank');
   const option = (a: Account) => (
     <option key={a.id} value={a.id}>
-      {a.code} {a.name}
+      {a.code} {localName(a)}
     </option>
   );
 
   return (
     <Select id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
-      <option value="">{auto ? `${auto.name} (default)` : 'Default account'}</option>
+      <option value="">
+        {auto ? t('{name} (default)', { name: localName(auto) }) : t('Default account')}
+      </option>
       {owner.length ? (
         <>
-          <optgroup label="Bank, cash and cards">{money.map(option)}</optgroup>
-          <optgroup label="Paid by the owner or a loan">{owner.map(option)}</optgroup>
+          <optgroup label={t('Bank, cash and cards')}>{money.map(option)}</optgroup>
+          <optgroup label={t('Paid by the owner or a loan')}>{owner.map(option)}</optgroup>
         </>
       ) : (
         money.map(option)

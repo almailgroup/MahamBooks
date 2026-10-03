@@ -1,4 +1,5 @@
 import type { LedgerLine, LedgerSource } from '@/lib/accounting/ledger';
+import { msg } from '@/i18n';
 
 const SOURCE_ROUTES: Record<LedgerSource, string> = {
   invoice: '/invoices',
@@ -10,14 +11,15 @@ const SOURCE_ROUTES: Record<LedgerSource, string> = {
   journal: '/journals',
 };
 
+/** Translate where shown: `t(SOURCE_LABELS[source])`. */
 export const SOURCE_LABELS: Record<LedgerSource, string> = {
-  invoice: 'Invoice',
-  credit: 'Credit note',
-  bill: 'Bill',
-  vendor_credit: 'Vendor credit',
-  payment: 'Payment',
-  expense: 'Expense',
-  journal: 'Journal',
+  invoice: msg('Invoice'),
+  credit: msg('Credit note'),
+  bill: msg('Bill'),
+  vendor_credit: msg('Vendor credit'),
+  payment: msg('Payment'),
+  expense: msg('Expense'),
+  journal: msg('Journal'),
 };
 
 /** Where the document behind a ledger line is shown. */
