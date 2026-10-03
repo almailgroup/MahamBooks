@@ -8,7 +8,7 @@ export default {
   Compliance: 'الامتثال',
   'Compliance sections': 'أقسام الامتثال',
   Calendar: 'التقويم',
-  Documents: 'الوثائق',
+  Documents: 'المستندات',
   Document: 'الوثيقة',
   'Deadlines, licences and staff papers that need renewing.':
     'المواعيد النظامية والتراخيص ووثائق الموظفين التي تحتاج إلى تجديد.',
@@ -25,7 +25,7 @@ export default {
   Bank: 'البنك',
   Category: 'الفئة',
   Company: 'الشركة',
-  Current: 'الحاليون',
+  'Current employees': 'الموظفون الحاليون',
   Delete: 'حذف',
   Details: 'التفاصيل',
   Done: 'تم',

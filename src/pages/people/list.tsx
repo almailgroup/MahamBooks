@@ -280,7 +280,7 @@ export default function EmployeeListPage() {
                 value={view}
                 onChange={setView}
                 options={[
-                  { value: 'current', label: t('Current'), count: current.length },
+                  { value: 'current', label: t('Current employees'), count: current.length },
                   { value: 'left', label: t('Left'), count: employees.length - current.length },
                   { value: 'all', label: t('All'), count: employees.length },
                 ]}

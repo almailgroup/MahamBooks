@@ -6,6 +6,7 @@ import { useCompany } from '@/app/company';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/misc';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { t } from '@/i18n';
 
 /** Local editable copy of the company with save/reset and a leave guard. */
 export function useCompanyDraft() {
@@ -24,8 +25,11 @@ export function useCompanyDraft() {
   }
 
   /** Saves the draft with `patch` applied (also used for one-click changes). */
-  const saveWith = async (patch: Partial<Company> = {}, message = 'Settings saved') => {
-    const next = { ...draft, ...patch };
+  const saveWith = async (
+    patch: Partial<Company> | ((draft: Company) => Company) = {},
+    message = t('Settings saved'),
+  ) => {
+    const next = typeof patch === 'function' ? patch(draft) : { ...draft, ...patch };
     setDraft(next);
     setSaving(true);
     try {
@@ -34,7 +38,7 @@ export function useCompanyDraft() {
       setBase(saved);
       toast.success(message);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save settings.');
+      toast.error(error instanceof Error ? error.message : t('Could not save settings.'));
     } finally {
       setSaving(false);
     }
@@ -57,22 +61,25 @@ export function SettingsSection({
   description,
   children,
   actions,
+  id,
 }: {
   title: ReactNode;
   description?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
+  /** Lets other pages link straight to the section (`?section=id`). */
+  id?: string;
 }) {
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-4">
-        <div>
+    <Card id={id} className="scroll-mt-20">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-slate-100 px-4 py-4 sm:px-6">
+        <div className="min-w-0 flex-1 basis-64">
           <h2 className="text-base font-semibold text-slate-900">{title}</h2>
           {description ? <p className="mt-0.5 text-sm text-slate-500">{description}</p> : null}
         </div>
-        {actions}
+        {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
       </div>
-      <div className="space-y-5 p-6">{children}</div>
+      <div className="space-y-5 p-4 sm:p-6">{children}</div>
     </Card>
   );
 }
@@ -90,14 +97,18 @@ export function SaveBar({
 }) {
   if (!dirty) return null;
   return (
-    <div className="sticky bottom-4 z-10 mt-6 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white/95 px-5 py-3 shadow-lg backdrop-blur">
-      <p className="text-sm text-slate-600">You have unsaved changes.</p>
+    <div
+      role="region"
+      aria-label={t('Unsaved changes')}
+      className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur sm:px-5"
+    >
+      <p className="text-sm text-slate-600">{t('You have unsaved changes.')}</p>
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onReset} disabled={saving}>
-          Discard
+          {t('Discard')}
         </Button>
         <Button onClick={onSave} loading={saving}>
-          Save changes
+          {t('Save changes')}
         </Button>
       </div>
     </div>

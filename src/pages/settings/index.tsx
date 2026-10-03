@@ -1,10 +1,11 @@
-import { lazy, Suspense } from 'react';
-import { Navigate, NavLink, Route, Routes } from 'react-router';
+import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router';
 import {
   BookOpen,
   Building2,
   Database,
   FileCog,
+  FileUp,
   Hash,
   Languages,
   Layers,
@@ -13,6 +14,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { msg, t } from '@/i18n';
 import { PageHeader, Spinner } from '@/components/ui/misc';
 
 const CompanySettings = lazy(() => import('./company'));
@@ -23,54 +25,105 @@ const AccountingSettings = lazy(() => import('./accounting'));
 const PaymentSettingsPage = lazy(() => import('./payments'));
 const EmailSettings = lazy(() => import('./emails'));
 const LabelSettings = lazy(() => import('./labels'));
+const ImportSettings = lazy(() => import('./import'));
 const DataSettings = lazy(() => import('./data'));
 const CompaniesSettings = lazy(() => import('./companies'));
 
-const SECTIONS = [
-  { path: 'company', label: 'Company profile', icon: <Building2 /> },
-  { path: 'documents', label: 'Invoice defaults', icon: <FileCog /> },
-  { path: 'numbering', label: 'Numbering', icon: <Hash /> },
-  { path: 'taxes', label: 'Taxes', icon: <Percent /> },
-  { path: 'accounting', label: 'Accounting', icon: <BookOpen /> },
-  { path: 'payments', label: 'Payment details', icon: <Wallet /> },
-  { path: 'emails', label: 'Email templates', icon: <Mail /> },
-  { path: 'labels', label: 'Language & wording', icon: <Languages /> },
-  { path: 'data', label: 'Backup & data', icon: <Database /> },
-  { path: 'companies', label: 'Companies', icon: <Layers /> },
+const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
+  {
+    title: msg('Business'),
+    items: [
+      { path: 'company', label: msg('Company profile'), icon: <Building2 /> },
+      { path: 'companies', label: msg('Companies'), icon: <Layers /> },
+    ],
+  },
+  {
+    title: msg('Documents'),
+    items: [
+      { path: 'documents', label: msg('Invoice defaults'), icon: <FileCog /> },
+      { path: 'numbering', label: msg('Numbering'), icon: <Hash /> },
+      { path: 'emails', label: msg('Email templates'), icon: <Mail /> },
+      { path: 'labels', label: msg('Language & wording'), icon: <Languages /> },
+    ],
+  },
+  {
+    title: msg('Money'),
+    items: [
+      { path: 'payments', label: msg('Payment details'), icon: <Wallet /> },
+      { path: 'taxes', label: msg('Taxes'), icon: <Percent /> },
+      { path: 'accounting', label: msg('Accounting'), icon: <BookOpen /> },
+    ],
+  },
+  {
+    title: msg('Data'),
+    items: [
+      { path: 'import', label: msg('Import data'), icon: <FileUp /> },
+      { path: 'data', label: msg('Backup & data'), icon: <Database /> },
+    ],
+  },
 ];
 
 export default function SettingsPage() {
+  const { pathname } = useLocation();
+  const row = useRef<HTMLDivElement>(null);
+
+  // On phones the sections scroll sideways: keep the open one in view.
+  useEffect(() => {
+    const el = row.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    el.querySelector('[aria-current="page"]')?.scrollIntoView({
+      block: 'nearest',
+      inline: 'center',
+    });
+  }, [pathname]);
+
   return (
     <div>
       <PageHeader
-        title="Settings"
-        description="Your company details and how your documents are created."
+        title={t('Settings')}
+        description={t('Your company details and how your documents are created.')}
       />
-      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="lg:sticky lg:top-20 lg:self-start">
-          <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-            {SECTIONS.map((s) => (
-              <li key={s.path} className="shrink-0">
-                <NavLink
-                  to={`/settings/${s.path}`}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap [&_svg]:size-4',
-                      isActive
-                        ? 'text-primary-700 [&_svg]:text-primary-600 bg-white shadow-xs ring-1 ring-slate-200'
-                        : 'text-slate-600 hover:bg-white hover:text-slate-900 [&_svg]:text-slate-400',
-                    )
-                  }
-                >
-                  {s.icon}
-                  {s.label}
-                </NavLink>
-              </li>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[230px_minmax(0,1fr)]">
+        <nav
+          aria-label={t('Settings sections')}
+          className="min-w-0 lg:sticky lg:top-20 lg:self-start"
+        >
+          {/* Phones and tablets: one row that scrolls sideways. Desktop: grouped list. */}
+          <div
+            ref={row}
+            className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 lg:flex-col lg:gap-5 lg:overflow-visible lg:pb-0"
+          >
+            {GROUPS.map((group) => (
+              <div key={group.title} className="contents lg:block">
+                <p className="hidden px-3 pb-1.5 text-xs font-semibold tracking-wide text-slate-400 uppercase lg:block">
+                  {t(group.title)}
+                </p>
+                <ul className="contents lg:block lg:space-y-0.5">
+                  {group.items.map((s) => (
+                    <li key={s.path} className="shrink-0">
+                      <NavLink
+                        to={`/settings/${s.path}`}
+                        className={({ isActive }) =>
+                          cn(
+                            'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap [&_svg]:size-4',
+                            isActive
+                              ? 'text-primary-700 [&_svg]:text-primary-600 bg-white shadow-xs ring-1 ring-slate-200'
+                              : 'text-slate-600 hover:bg-white hover:text-slate-900 [&_svg]:text-slate-400',
+                          )
+                        }
+                      >
+                        {s.icon}
+                        {t(s.label)}
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         </nav>
         <div className="min-w-0">
-          <Suspense fallback={<Spinner className="py-24" label="Loading…" />}>
+          <Suspense fallback={<Spinner className="py-24" label={t('Loading…')} />}>
             <Routes>
               <Route index element={<Navigate to="company" replace />} />
               <Route path="company" element={<CompanySettings />} />
@@ -81,6 +134,7 @@ export default function SettingsPage() {
               <Route path="payments" element={<PaymentSettingsPage />} />
               <Route path="emails" element={<EmailSettings />} />
               <Route path="labels" element={<LabelSettings />} />
+              <Route path="import" element={<ImportSettings />} />
               <Route path="data" element={<DataSettings />} />
               <Route path="companies" element={<CompaniesSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />

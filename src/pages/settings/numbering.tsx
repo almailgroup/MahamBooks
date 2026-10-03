@@ -2,21 +2,32 @@ import type { CounterReset, NumberedEntity, NumberingRule } from '@/db/types';
 import { NUMBER_PLACEHOLDERS, previewNumber } from '@/lib/numbering';
 import { defaultNumbering } from '@/db/defaults';
 import { today } from '@/lib/dates';
+import { msg, t } from '@/i18n';
 import { Field, Input, NumberInput, Select } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
 const ENTITIES: { key: NumberedEntity; label: string }[] = [
-  { key: 'invoice', label: 'Invoices' },
-  { key: 'quote', label: 'Quotes' },
-  { key: 'credit', label: 'Credit notes' },
-  { key: 'payment', label: 'Payments received' },
-  { key: 'client', label: 'Clients and vendors' },
-  { key: 'bill', label: 'Bills' },
-  { key: 'vendor_credit', label: 'Vendor credits' },
-  { key: 'payment_made', label: 'Payments made' },
-  { key: 'expense', label: 'Expenses' },
-  { key: 'journal', label: 'Manual journals' },
+  { key: 'invoice', label: msg('Invoices') },
+  { key: 'quote', label: msg('Quotes') },
+  { key: 'credit', label: msg('Credit notes') },
+  { key: 'payment', label: msg('Payments received') },
+  { key: 'client', label: msg('Clients and vendors') },
+  { key: 'bill', label: msg('Bills') },
+  { key: 'vendor_credit', label: msg('Vendor credits') },
+  { key: 'payment_made', label: msg('Payments made') },
+  { key: 'expense', label: msg('Expenses') },
+  { key: 'journal', label: msg('Manual journals') },
 ];
+
+/** What each placeholder stands for (the tokens themselves are never translated). */
+const PLACEHOLDER_TEXT: Record<string, string> = {
+  '{counter}': msg('Sequential counter, zero padded (required)'),
+  '{year}': msg('Year of the document date, e.g. 2026'),
+  '{yy}': msg('Two-digit year, e.g. 26'),
+  '{month}': msg('Two-digit month, e.g. 09'),
+  '{day}': msg('Two-digit day, e.g. 05'),
+  '{client}': msg("The client's number"),
+};
 
 export default function NumberingSettings() {
   const { draft, update, dirty, saving, save, reset } = useCompanyDraft();
@@ -28,18 +39,21 @@ export default function NumberingSettings() {
   return (
     <div className="space-y-6">
       <SettingsSection
-        title="Number formats"
-        description="How new numbers are built. Numbers already used are skipped automatically."
+        title={t('Number formats')}
+        description={t('How new numbers are built. Numbers already used are skipped.')}
       >
         <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
-          <p className="mb-2 font-medium text-slate-700">Placeholders</p>
+          <p className="mb-2 font-medium text-slate-700">{t('Placeholders')}</p>
           <ul className="grid gap-1 sm:grid-cols-2">
             {NUMBER_PLACEHOLDERS.map((p) => (
               <li key={p.token}>
-                <code className="text-primary-700 rounded bg-white px-1.5 py-0.5 text-xs ring-1 ring-slate-200">
+                <code
+                  dir="ltr"
+                  className="text-primary-700 rounded bg-white px-1.5 py-0.5 text-xs ring-1 ring-slate-200"
+                >
                   {p.token}
                 </code>{' '}
-                {p.description}
+                {PLACEHOLDER_TEXT[p.token] ? t(PLACEHOLDER_TEXT[p.token]) : p.description}
               </li>
             ))}
           </ul>
@@ -51,28 +65,30 @@ export default function NumberingSettings() {
             return (
               <div
                 key={key}
-                className="grid gap-4 py-4 first:pt-0 last:pb-0 sm:grid-cols-[140px_minmax(0,1fr)_100px_110px_150px]"
+                className="grid grid-cols-2 gap-4 py-4 first:pt-0 last:pb-0 sm:grid-cols-[140px_minmax(0,1fr)_100px_110px_150px]"
               >
-                <div className="pt-7">
-                  <p className="font-medium text-slate-800">{label}</p>
+                <div className="col-span-2 sm:col-span-1 sm:pt-7">
+                  <p className="font-medium text-slate-800">{t(label)}</p>
                   <p className="tabular mt-0.5 text-xs text-slate-500">
-                    Next: {previewNumber(rule, today())}
+                    {t('Next:')} <span dir="ltr">{previewNumber(rule, today())}</span>
                   </p>
                 </div>
                 <Field
-                  label="Pattern"
-                  error={missingCounter ? '{counter} will be added at the end' : undefined}
+                  label={t('Pattern')}
+                  className="col-span-2 sm:col-span-1"
+                  error={missingCounter ? t('{counter} will be added at the end') : undefined}
                 >
                   {(id) => (
                     <Input
                       id={id}
                       value={rule.pattern}
                       onChange={(e) => setRule(key, { pattern: e.target.value })}
-                      className="font-mono"
+                      dir="ltr"
+                      className="font-mono rtl:text-end"
                     />
                   )}
                 </Field>
-                <Field label="Digits">
+                <Field label={t('Digits')}>
                   {(id) => (
                     <NumberInput
                       id={id}
@@ -84,7 +100,7 @@ export default function NumberingSettings() {
                     />
                   )}
                 </Field>
-                <Field label="Next counter">
+                <Field label={t('Next counter')}>
                   {(id) => (
                     <NumberInput
                       id={id}
@@ -94,7 +110,7 @@ export default function NumberingSettings() {
                     />
                   )}
                 </Field>
-                <Field label="Restart counter">
+                <Field label={t('Restart counter')} className="col-span-2 sm:col-span-1">
                   {(id) => (
                     <Select
                       id={id}
@@ -103,9 +119,9 @@ export default function NumberingSettings() {
                         setRule(key, { reset: e.target.value as CounterReset, period: '' })
                       }
                     >
-                      <option value="never">Never</option>
-                      <option value="yearly">Every year</option>
-                      <option value="monthly">Every month</option>
+                      <option value="never">{t('Never')}</option>
+                      <option value="yearly">{t('Every year')}</option>
+                      <option value="monthly">{t('Every month')}</option>
                     </Select>
                   )}
                 </Field>

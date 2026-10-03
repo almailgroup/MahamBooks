@@ -2,9 +2,21 @@ import { db, setMeta, getMeta, DATA_TABLES } from './db';
 import { createCompany, createTaxRate, nowStamp } from './defaults';
 import { chartAccounts, defaultAccountingSettings } from './chart-setup';
 import { logActivity } from './activity';
-import type { Client, Company, ID, Product, TaxLine, TaxRate } from './types';
+import type {
+  Branding,
+  Client,
+  Company,
+  DocumentDefaults,
+  ID,
+  KuwaitProfile,
+  Product,
+  TaxLine,
+  TaxRate,
+} from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { taxKind } from '@/lib/calc';
+import { kuwaitProfile } from '@/lib/kuwait-rules';
+import { msg } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
 /* Companies                                                                  */
@@ -26,34 +38,61 @@ export async function saveCompany(company: Company): Promise<Company> {
   return updated;
 }
 
-/** Creates a company with optional starter tax rates and makes it current. */
+/**
+ * What the welcome page (or "Add company") collects. Nested settings are
+ * partial: anything not given keeps its default.
+ */
+export interface CompanySetup extends Partial<
+  Omit<Company, 'branding' | 'defaults' | 'kuwait' | 'accounting'>
+> {
+  branding?: Partial<Branding>;
+  defaults?: Partial<DocumentDefaults>;
+  kuwait?: Partial<KuwaitProfile>;
+}
+
+/**
+ * Creates a company and makes it current. Kuwait comes first: KWD, the
+ * bilingual Kuwait chart of accounts and no taxes unless starter tax rates
+ * are given (or `taxesEnabled` is set).
+ */
 export async function setupCompany(
-  partial: Partial<Company>,
+  partial: CompanySetup,
   taxRates: TaxLine[] = [],
 ): Promise<Company> {
   return db.transaction(
     'rw',
     [db.companies, db.taxRates, db.accounts, db.meta, db.activities],
     async () => {
-      const company = createCompany(partial);
+      const { branding, defaults, kuwait, ...rest } = partial;
+      const company = createCompany(rest);
+      company.name = company.name.trim();
+      if (company.nameAr !== undefined) company.nameAr = company.nameAr.trim();
+      company.branding = { ...company.branding, ...branding };
+      const given = Object.entries(kuwait ?? {}).filter(([, v]) => v !== undefined);
+      company.kuwait = { ...kuwaitProfile(company), ...Object.fromEntries(given) };
       company.accounting = defaultAccountingSettings(company.address.country);
       const rates = taxRates
         .filter((t) => t.name.trim())
         .map((t) =>
           createTaxRate(company.id, { name: t.name.trim(), rate: t.rate, kind: taxKind(t) }),
         );
-      company.defaults.defaultTaxRateIds = rates.slice(0, 1).map((r) => r.id);
+      const charges = partial.taxesEnabled ?? rates.length > 0;
+      company.taxesEnabled = charges;
+      company.defaults = {
+        ...company.defaults,
+        ...defaults,
+        defaultTaxRateIds: rates.slice(0, 1).map((r) => r.id),
+      };
+      if (!charges)
+        company.defaults = { ...company.defaults, lineTaxes: false, documentTaxes: false };
       await db.companies.add(company);
       if (rates.length) await db.taxRates.bulkAdd(rates);
       await db.accounts.bulkAdd(chartAccounts(company.id, company.accounting.template));
       await setCurrentCompanyId(company.id);
-      await logActivity(
-        company.id,
-        'company',
-        company.id,
-        'created',
-        `Company ${company.name} created`,
-      );
+      await logActivity(company.id, 'company', company.id, 'created', {
+        text: msg('Company {name} created'),
+        vars: { name: company.name },
+      });
       return company;
     },
   );

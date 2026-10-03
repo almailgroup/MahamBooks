@@ -82,8 +82,45 @@ export function defaultEmailTemplates(): EmailTemplates {
     payment: {
       subject: 'Payment received — thank you',
       body:
-        'Hello {contact},\n\nWe have received your payment of {amount}. Thank you!\n\n' +
+        'Hello {contact},\n\nWe have received your payment of {amount}. Thank you.\n\n' +
         'Kind regards,\n{company}',
+    },
+  };
+}
+
+/** The same messages in Arabic, for businesses that write to their clients in Arabic. */
+export function defaultEmailTemplatesAr(): EmailTemplates {
+  return {
+    invoice: {
+      subject: 'فاتورة رقم {number} من {company}',
+      body:
+        'السادة {client} المحترمين،\n\nمرفق لكم الفاتورة رقم {number} بمبلغ {amount}، ' +
+        'وتاريخ استحقاقها {dueDate}.\n\n{paymentLink}\n\nشكراً لتعاملكم معنا.\n\nمع التحية،\n{company}',
+    },
+    quote: {
+      subject: 'عرض سعر رقم {number} من {company}',
+      body:
+        'السادة {client} المحترمين،\n\nمرفق لكم عرض السعر رقم {number} بمبلغ {amount}، ' +
+        'وهو ساري حتى {dueDate}.\n\nيسعدنا الرد على أي استفسار.\n\nمع التحية،\n{company}',
+    },
+    credit: {
+      subject: 'إشعار دائن رقم {number} من {company}',
+      body:
+        'السادة {client} المحترمين،\n\nمرفق لكم الإشعار الدائن رقم {number} بمبلغ {amount}.\n\n' +
+        'مع التحية،\n{company}',
+    },
+    reminder: {
+      subject: 'تذكير: استحقاق الفاتورة رقم {number}',
+      body:
+        'السادة {client} المحترمين،\n\nنود تذكيركم بأن الفاتورة رقم {number} عليها رصيد مستحق ' +
+        'قدره {balance}، وتاريخ استحقاقها {dueDate}.\n\n{paymentLink}\n\n' +
+        'إذا كنتم قد سددتم المبلغ فنرجو تجاهل هذه الرسالة.\n\nمع التحية،\n{company}',
+    },
+    payment: {
+      subject: 'تم استلام دفعتكم مع الشكر',
+      body:
+        'السادة {client} المحترمين،\n\nنفيدكم باستلام دفعتكم بمبلغ {amount}، ونشكركم على ذلك.\n\n' +
+        'مع التحية،\n{company}',
     },
   };
 }

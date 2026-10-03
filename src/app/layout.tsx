@@ -50,6 +50,7 @@ import { generateDueInvoices } from '@/db/recurring';
 import { LanguageSwitch } from '@/i18n/language-switch';
 import { msg, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
+import { useTaxesEnabled } from '@/features/company/taxes';
 
 interface NavItem {
   to: string;
@@ -194,6 +195,9 @@ function CompanySwitcher() {
 }
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  // VAT returns only matter to businesses that charge tax (none in Kuwait by default).
+  const taxesOn = useTaxesEnabled();
+  const shown = (items: NavItem[]) => items.filter((i) => taxesOn || i.to !== '/vat');
   return (
     <div className="flex h-full flex-col">
       <div className="p-3">
@@ -208,7 +212,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               </p>
             ) : null}
             <ul className="space-y-0.5">
-              {group.items.map((item) => (
+              {shown(group.items).map((item) => (
                 <li key={item.to}>
                   <NavLink
                     to={item.to}

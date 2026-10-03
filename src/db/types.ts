@@ -372,6 +372,31 @@ export interface KuwaitProfile {
   wamdPhone: string;
 }
 
+/**
+ * The bank account printed on documents. `payment.bankDetails` (the text the
+ * documents print) is composed from it; see features/company/bank.ts.
+ */
+export interface CompanyBankAccount {
+  /** First four letters of the SWIFT code of a Kuwaiti bank (KUWAIT_BANKS), or '' for another bank. */
+  bankCode: string;
+  /** Name of a bank that is not in the list. */
+  bankName: string;
+  accountName: string;
+  /** Stored without spaces, upper case. */
+  iban: string;
+  accountNumber: string;
+  swift: string;
+  /** Free text printed after the account details. */
+  extra: string;
+}
+
+/** A public holiday as the company observes it (overrides the official estimates). */
+export interface CompanyHoliday {
+  date: ISODate;
+  name: string;
+  nameAr: string;
+}
+
 export interface Company {
   id: ID;
   name: string;
@@ -407,6 +432,20 @@ export interface Company {
   /** Missing on companies created before accounting existed (see ensureAccounting). */
   accounting?: AccountingSettings;
   kuwait?: KuwaitProfile;
+  /**
+   * The business charges tax (VAT or sales tax). Missing on companies created
+   * before: they charge tax when they have tax rates (see taxesEnabled()).
+   */
+  taxesEnabled?: boolean;
+  /** Bank account printed on documents; missing until set up. */
+  bankAccount?: CompanyBankAccount;
+  /**
+   * Public holidays the company changed. Years without an entry use the
+   * official estimates (kuwaitHolidays).
+   */
+  holidays?: CompanyHoliday[];
+  /** Date the opening balances were imported as at, and the entries that hold them. */
+  openingBalances?: { date: ISODate; journalIds: ID[] };
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
