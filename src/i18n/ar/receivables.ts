@@ -154,6 +154,11 @@ export default {
   'Documents in {currencies} are on their own statement. Pick the currency above.':
     'المستندات بعملة {currencies} لها كشف مستقل. اختر العملة من الأعلى.',
   'Aging on {date}': 'أعمار الديون في {date}',
+  'Not yet due': 'غير مستحق بعد',
+  '1 to 30 days': 'من 1 إلى 30 يوماً',
+  '31 to 60 days': 'من 31 إلى 60 يوماً',
+  '61 to 90 days': 'من 61 إلى 90 يوماً',
+  'Over 90 days': 'أكثر من 90 يوماً',
   'Less credits not yet applied: {amount}': 'يُخصم منها أرصدة دائنة غير مخصصة: {amount}',
   'Retention held, not yet due': 'محتجزات غير مستحقة بعد',
   'Cheques not yet cleared': 'شيكات لم تُحصَّل بعد',
@@ -225,6 +230,8 @@ export default {
   'That is more than the retention still held.': 'هذا المبلغ أكبر من المحتجزات المتبقية.',
   'No account is set up for receivables or payables.': 'لم يُعدّ حساب للذمم المدينة أو الدائنة.',
   'This release was already undone.': 'تم التراجع عن هذا الإفراج من قبل.',
+  'Undo the retention releases on this document first.':
+    'تراجع أولاً عن الإفراج عن محتجزات هذا المستند.',
   'This release has been paid. Remove the payment before undoing it.':
     'تم دفع هذا المبلغ المُفرج عنه. احذف الدفعة قبل التراجع عنه.',
   'Contact not found.': 'تعذر العثور على جهة الاتصال.',

@@ -476,7 +476,9 @@ function RetentionsReport() {
                             .join(' · ')}
                         </span>
                       </Td>
-                      <Td end>{tp(r.age, '{count} day', '{count} days')}</Td>
+                      <Td end>
+                        {r.age > 0 ? tp(r.age, '{count} day', '{count} days') : t('Today')}
+                      </Td>
                       <Td end className="font-semibold text-slate-900">
                         {fmt.money(r.held, r.doc.currency)}
                       </Td>

@@ -330,6 +330,15 @@ export async function suggestNumber(
 
 export class RetentionError extends Error {}
 
+/** Releases not undone: their entries need the document to stay in the books. */
+function hasActiveReleases(doc: Pick<InvoiceDocument, 'retentionReleases'>): boolean {
+  return (doc.retentionReleases ?? []).some((r) => !r.reversedOn);
+}
+
+function releasesFirstError(): RetentionError {
+  return new RetentionError(t('Undo the retention releases on this document first.'));
+}
+
 /**
  * The retention fields as they may be saved: only invoices and bills hold
  * one back, and releases are only ever recorded by the retention module, so
@@ -442,7 +451,14 @@ export async function setDocumentStatus(
 ): Promise<void> {
   await db.transaction(
     'rw',
-    withStockTables([db.documents, db.clients, db.payments, db.companies, db.activities]),
+    withStockTables([
+      db.documents,
+      db.clients,
+      db.payments,
+      db.companies,
+      db.activities,
+      db.accounts,
+    ]),
     async () => {
       const doc = await db.documents.get(id);
       if (!doc) return;
@@ -450,12 +466,21 @@ export async function setDocumentStatus(
       if (company && isPosted(doc) !== isPosted({ type: doc.type, status })) {
         assertUnlocked(company, doc.issueDate);
       }
+      if (hasActiveReleases(doc) && !isPosted({ type: doc.type, status })) {
+        throw releasesFirstError();
+      }
       let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
       if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
       if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
         // Let payments decide between sent / partial / paid.
         const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
         next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
+      }
+      if (company && isPosted(next) && next.totals.retention) {
+        await ensureSpecAccount(
+          company,
+          next.type === 'bill' ? 'retentionsPayable' : 'retentionsReceivable',
+        );
       }
       await db.documents.put(next);
       await syncDocumentStock(doc.companyId, doc.id);
@@ -501,6 +526,7 @@ export async function deleteDocument(id: ID): Promise<void> {
       if (!doc) return;
       const company = await db.companies.get(doc.companyId);
       if (company && isPosted(doc)) assertUnlocked(company, doc.issueDate);
+      if (hasActiveReleases(doc)) throw releasesFirstError();
       await db.attachments.where('ownerId').equals(id).delete();
       const payments = await db.payments.where('documentIds').equals(id).toArray();
       for (const p of payments) {

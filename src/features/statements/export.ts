@@ -1,8 +1,8 @@
 import type { Client, Company } from '@/db/types';
 import type { Statement, StatementEntry, StatementEntryKind } from '@/lib/statements';
-import { formatDate, formatMoney } from '@/lib/format';
+import { formatDate, formatMoney, formatPercent } from '@/lib/format';
 import { fromMinor } from '@/lib/money';
-import { msg, t } from '@/i18n';
+import { interfaceLocale, msg, t } from '@/i18n';
 import { ARABIC_LOCALE } from '@/pdf/model';
 import { STATEMENT_WORDS, type StatementLanguage } from '@/pdf/statement/words';
 
@@ -24,19 +24,35 @@ const VOID_LABELS = {
   voided: msg('Payment voided'),
 };
 
+/** What a statement line is, without its number: "Invoice", "Retention held (5%)"… */
+export function entryKindLabel(entry: StatementEntry, side: Statement['side']): string {
+  if (entry.kind === 'payment') {
+    return side === 'vendor' ? t('Payment made') : t('Payment received');
+  }
+  if (entry.kind === 'payment_void') return t(VOID_LABELS[entry.voidKind ?? 'voided']);
+  const label = t(ENTRY_LABELS[entry.kind]);
+  // Intl keeps "5%" in order inside Arabic text.
+  return entry.kind === 'retention' && entry.percent
+    ? `${label} (${formatPercent(entry.percent, interfaceLocale(undefined))})`
+    : label;
+}
+
 /** "Invoice INV-2026-0001", "Payment received PAY-0003"… in the interface language. */
 export function entryLabel(entry: StatementEntry, side: Statement['side']): string {
-  if (entry.kind === 'payment') {
-    return `${side === 'vendor' ? t('Payment made') : t('Payment received')} ${entry.number}`;
-  }
-  if (entry.kind === 'payment_void') {
-    return `${t(VOID_LABELS[entry.voidKind ?? 'voided'])} ${entry.number}`;
-  }
-  const label = t(ENTRY_LABELS[entry.kind]);
-  return entry.kind === 'retention' && entry.percent
-    ? `${label} (${entry.percent}%) ${entry.number}`
-    : `${label} ${entry.number}`;
+  return `${entryKindLabel(entry, side)} ${entry.number}`;
 }
+
+/**
+ * Aging columns of a statement. Written out ("1 to 30 days") because a
+ * range like "1–30" reads backwards inside Arabic text.
+ */
+export const STATEMENT_AGING = [
+  msg('Not yet due'),
+  msg('1 to 30 days'),
+  msg('31 to 60 days'),
+  msg('61 to 90 days'),
+  msg('Over 90 days'),
+] as const;
 
 /** The statement as CSV rows, amounts with the currency's decimals. */
 export function statementCsv(

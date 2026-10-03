@@ -462,7 +462,9 @@ export function RetentionPanel({
                   <p className="text-xs text-slate-500">
                     {[
                       fmt.date(doc.issueDate),
-                      tp(daysBetween(doc.issueDate, now), '{count} day', '{count} days'),
+                      daysBetween(doc.issueDate, now) > 0
+                        ? tp(daysBetween(doc.issueDate, now), '{count} day', '{count} days')
+                        : t('Today'),
                       doc.retentionPercent ? fmt.percent(doc.retentionPercent) : '',
                       t(retentionKindLabel(doc.retentionKind ?? client.retentionKind)),
                     ]

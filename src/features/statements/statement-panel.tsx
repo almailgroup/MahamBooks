@@ -12,7 +12,6 @@ import {
   type StatementPeriod,
   type StatementSide,
 } from '@/lib/statements';
-import { AGING_BUCKETS } from '@/lib/reports';
 import { bankName } from '@/lib/cheques';
 import { downloadCsv } from '@/lib/csv';
 import { today } from '@/lib/dates';
@@ -28,7 +27,13 @@ import { downloadBlob, printBlob } from '@/pdf/client';
 import { DOCUMENT_LANGUAGES } from '@/pdf/languages';
 import { buildStatementModel } from '@/pdf/statement/model';
 import type { StatementLanguage } from '@/pdf/statement/words';
-import { entryLabel, statementCsv, statementFileName, statementMessage } from './export';
+import {
+  entryKindLabel,
+  statementCsv,
+  statementFileName,
+  statementMessage,
+  STATEMENT_AGING,
+} from './export';
 
 const LANGUAGES = DOCUMENT_LANGUAGES.filter(
   (l): l is { value: StatementLanguage; label: string } =>
@@ -282,7 +287,11 @@ export function StatementPanel({
         </li>
         {statement.entries.map((e) => {
           const href = linkOf(e);
-          const label = entryLabel(e, side);
+          const label = (
+            <>
+              {entryKindLabel(e, side)} <bdi className="whitespace-nowrap">{e.number}</bdi>
+            </>
+          );
           return (
             <li key={e.key} className="px-4 py-2.5">
               <div className="flex items-start justify-between gap-3">
@@ -305,7 +314,7 @@ export function StatementPanel({
                       e.amount < 0 ? 'text-emerald-700' : 'text-slate-900',
                     )}
                   >
-                    {e.debit ? money(e.debit) : `−${money(e.credit)}`}
+                    {e.debit ? money(e.debit) : money(-e.credit)}
                   </span>
                   <span className="tabular text-xs text-slate-500">{money(e.balance)}</span>
                 </span>
@@ -351,7 +360,11 @@ export function StatementPanel({
             ) : null}
             {statement.entries.map((e) => {
               const href = linkOf(e);
-              const label = entryLabel(e, side);
+              const label = (
+                <>
+                  {entryKindLabel(e, side)} <bdi className="whitespace-nowrap">{e.number}</bdi>
+                </>
+              );
               const muted = e.kind === 'retention' || e.voided || e.kind === 'release_undone';
               return (
                 <tr key={e.key} className={muted ? 'text-slate-500' : 'text-slate-800'}>
@@ -406,7 +419,7 @@ export function StatementPanel({
           {t('Aging on {date}', { date: fmt.date(statement.to) })}
         </h3>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {AGING_BUCKETS.map((label, i) => (
+          {STATEMENT_AGING.map((label, i) => (
             <div key={label} className="rounded-lg border border-slate-200 px-3 py-2">
               <dt className="text-xs text-slate-500">{t(label)}</dt>
               <dd

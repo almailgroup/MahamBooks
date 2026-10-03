@@ -141,7 +141,15 @@ export function agingAt(
   const byClient = new Map<string, number[]>();
   for (const d of docs) {
     if (d.type !== type || !counts(d) || d.issueDate > asOf) continue;
-    const owed = dec(d.totals.total).minus(dec(applied.get(d.id) ?? 0));
+    // A retention still held on that date is not owed yet: it waits in
+    // retentions receivable (payable) until it is released.
+    const released = (d.retentionReleases ?? [])
+      .filter((r) => r.date <= asOf && !(r.reversedOn && r.reversedOn <= asOf))
+      .reduce((acc, r) => acc.plus(dec(r.amount)), dec(0));
+    const owed = dec(d.totals.total)
+      .minus(dec(d.totals.retention ?? 0))
+      .plus(released)
+      .minus(dec(applied.get(d.id) ?? 0));
     if (owed.lte(0)) continue;
     const rate = d.currency === companyCurrency ? 1 : d.exchangeRate || 1;
     const minor = toMinor(owed.times(rate), p);

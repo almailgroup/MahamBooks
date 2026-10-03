@@ -636,12 +636,26 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
     body = (
       <Card>
         <CardBody>
-          <StatementPanel client={client} side={side} documents={docs} payments={allPayments} />
+          <StatementPanel
+            key={client.id}
+            client={client}
+            side={side}
+            documents={docs}
+            payments={allPayments}
+          />
         </CardBody>
       </Card>
     );
   } else {
-    body = <RetentionPanel client={client} side={side} documents={docs} editHref={editHref} />;
+    body = (
+      <RetentionPanel
+        key={client.id}
+        client={client}
+        side={side}
+        documents={docs}
+        editHref={editHref}
+      />
+    );
   }
 
   return (

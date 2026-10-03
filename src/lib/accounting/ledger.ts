@@ -417,7 +417,8 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     ctx,
     sales ? ctx.retentionAccounts?.receivable : ctx.retentionAccounts?.payable,
   );
-  const retained = retentionAccount ? Math.min(w.retention, w.total) : 0;
+  const retained =
+    retentionAccount && w.retention > 0 ? Math.min(w.retention, Math.max(w.total, 0)) : 0;
   const lines: LedgerLine[] = [
     {
       ...base,

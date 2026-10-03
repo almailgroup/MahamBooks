@@ -240,6 +240,33 @@ describe('retention on invoices', () => {
     expect(released.totals.balance).toBe(1000);
   });
 
+  it('keeps a document with releases in the books until they are undone', async () => {
+    const { company, client } = await kuwait();
+    const invoice = await issue(company, client, 'invoice', 1000);
+    const released = await releaseRetention(invoice.id, {
+      date: '2026-09-15',
+      amount: 50,
+      basis: 'handover',
+      reference: '',
+    });
+    const { deleteDocument, setDocumentStatus } = await import('./documents');
+    await expect(setDocumentStatus(invoice.id, 'void')).rejects.toBeInstanceOf(RetentionError);
+    await expect(setDocumentStatus(invoice.id, 'draft')).rejects.toBeInstanceOf(RetentionError);
+    await expect(deleteDocument(invoice.id)).rejects.toBeInstanceOf(RetentionError);
+    await undoRetentionRelease(invoice.id, released.retentionReleases![0].id);
+    await setDocumentStatus(invoice.id, 'void');
+    expect((await db.documents.get(invoice.id))!.status).toBe('void');
+    expect((await books(company)).byCode).toEqual({});
+  });
+
+  it('leaves invoices without a retention as they were, negative ones too', async () => {
+    const { company, client } = await kuwait({ retentionPercent: null });
+    await issue(company, client, 'invoice', 250);
+    await issue(company, client, 'invoice', -40);
+    const ledger = await books(company);
+    expect(ledger.byCode).toEqual({ '1100': 210_000, '4000': -210_000 });
+  });
+
   it('cannot shrink below what was already released', async () => {
     const { company, client } = await kuwait();
     const invoice = await issue(company, client, 'invoice', 1000);
@@ -256,6 +283,31 @@ describe('retention on invoices', () => {
     const saved = await saveDocument({ ...invoice, notes: 'Phase 1' });
     expect(saved.retentionReleases).toHaveLength(1);
     expect(saved.totals.balance).toBe(1000);
+  });
+});
+
+describe('retention in other charts', () => {
+  it('creates the retentions account when a draft is sent', async () => {
+    const company = await setupCompany({
+      name: 'Gulf Works Ltd',
+      currency: 'KWD',
+      locale: 'en-GB',
+      address: { line1: '', line2: '', city: '', state: '', postalCode: '', country: 'GB' },
+    });
+    const client = await saveClient(
+      createClient(company.id, { name: 'Ministry', retentionPercent: 5, retentionKind: 'tax' }),
+    );
+    const draft = await draftDocument(company, 'invoice', client);
+    draft.items[0] = { ...draft.items[0], name: 'Works', quantity: 1, unitPrice: 1000, taxes: [] };
+    const saved = await saveDocument(draft);
+    const { markSent } = await import('./documents');
+    await markSent(saved.id);
+    const { accounts, lines } = await books(company);
+    const retention = accounts.find((a) => a.name === 'Retentions receivable')!;
+    expect(retention).toMatchObject({ type: 'asset_current', role: null });
+    expect(lines.filter((l) => l.accountId === retention.id).map((l) => l.amount)).toEqual([
+      50_000,
+    ]);
   });
 });
 
@@ -347,6 +399,9 @@ describe('statement and ledger', () => {
       .filter((l) => l.accountId === receivable && l.contactId === client.id)
       .reduce((s, l) => s + l.amount, 0);
     expect(statement.closing).toBe(owed);
+    // The auditor pack's aging leaves out the retention still held, as the ledger does.
+    const { agingAt } = await import('@/lib/reports');
+    expect(agingAt(documents, payments, [client], '2026-09-30', 'invoice', 'KWD').total).toBe(owed);
     // 1,234.567 − 61.728 − 600 brought forward; 800 − 40 and the release in September.
     expect(statement.opening).toBe(572_839);
     expect(statement.closing).toBe(572_839 + 760_000 + 61_728);
