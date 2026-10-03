@@ -1,4 +1,4 @@
-import type { AccountRole, AccountType, ChartTemplateId } from '@/db/types';
+import type { Account, AccountRole, AccountType, ChartTemplateId } from '@/db/types';
 
 export interface ChartAccount {
   code: string;
@@ -238,7 +238,19 @@ const KUWAIT = bilingual([
   ['1560', 'Leasehold improvements', 'تحسينات على عقارات مستأجرة', 'asset_fixed'],
   ['1570', 'Accumulated depreciation – improvements', 'مجمع إهلاك التحسينات', 'asset_fixed'],
   ['1600', 'Right-of-use assets', 'أصول حق الاستخدام', 'asset_non_current'],
+  [
+    '1610',
+    'Accumulated depreciation – right-of-use assets',
+    'مجمع إهلاك أصول حق الاستخدام',
+    'asset_non_current',
+  ],
   ['1700', 'Intangible assets', 'الأصول غير الملموسة', 'asset_non_current'],
+  [
+    '1710',
+    'Accumulated amortisation – intangible assets',
+    'مجمع إطفاء الأصول غير الملموسة',
+    'asset_non_current',
+  ],
   ['2000', 'Accounts payable', 'الذمم الدائنة', 'liability_payable', 'payable'],
   ['2010', 'Retentions payable', 'محتجزات دائنة', 'liability_current'],
   ['2050', 'Company credit card', 'بطاقة ائتمان الشركة', 'liability_credit_card', 'credit_card'],
@@ -274,6 +286,7 @@ const KUWAIT = bilingual([
   ['4150', 'Contract revenue', 'إيرادات العقود', 'income'],
   ['4200', 'Delivery charges income', 'إيرادات التوصيل', 'income', 'charges'],
   ['4500', 'Other income', 'إيرادات أخرى', 'income_other'],
+  ['4520', 'Gain or loss on disposal of assets', 'أرباح وخسائر استبعاد الأصول', 'income_other'],
   ['5000', 'Cost of sales', 'تكلفة المبيعات', 'expense_direct_cost', 'cost_of_sales'],
   ['5100', 'Subcontractor costs', 'تكاليف مقاولي الباطن', 'expense_direct_cost'],
   ['5200', 'Customs duty and freight', 'الرسوم الجمركية والشحن', 'expense_direct_cost'],
@@ -329,4 +342,156 @@ export function chartTemplateFor(country: string): ChartTemplateId {
   if (country === 'AE') return 'ae';
   if (country === 'KW' || !country) return 'kw';
   return 'generic';
+}
+
+/* -------------------------------------------------------------------------- */
+/* Accounts the app looks up by code                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Accounts some postings and statements need that have no role: reserves,
+ * levies, depreciation. Kuwait charts are matched by code; charts started from
+ * another template by name. When none matches, the account is created.
+ */
+export interface AccountSpec {
+  code: string;
+  name: string;
+  nameAr: string;
+  type: AccountType;
+  /** Recognises the account by its English name in other charts. */
+  match: RegExp;
+}
+
+const spec = (
+  code: string,
+  name: string,
+  nameAr: string,
+  type: AccountType,
+  match: RegExp,
+): AccountSpec => ({ code, name, nameAr, type, match });
+
+export const ACCOUNT_SPECS = {
+  statutoryReserve: spec(
+    '3200',
+    'Statutory reserve',
+    'الاحتياطي الإجباري',
+    'equity',
+    /statutory|legal reserve/i,
+  ),
+  voluntaryReserve: spec(
+    '3210',
+    'Voluntary reserve',
+    'الاحتياطي الاختياري',
+    'equity',
+    /voluntary|general reserve/i,
+  ),
+  depreciation: spec(
+    '6900',
+    'Depreciation',
+    'الإهلاك',
+    'expense_depreciation',
+    /depreciation|amorti[sz]ation/i,
+  ),
+  disposal: spec(
+    '4520',
+    'Gain or loss on disposal of assets',
+    'أرباح وخسائر استبعاد الأصول',
+    'income_other',
+    /disposal|sale of (fixed )?assets/i,
+  ),
+  financeCosts: spec(
+    '7100',
+    'Finance costs',
+    'تكاليف التمويل',
+    'expense_other',
+    /finance cost|interest (expense|paid)|loan interest/i,
+  ),
+  kfas: spec(
+    '7200',
+    'KFAS contribution',
+    'حصة مؤسسة الكويت للتقدم العلمي',
+    'expense_other',
+    /kfas/i,
+  ),
+  kfasPayable: spec(
+    '2500',
+    'KFAS payable',
+    'حصة مؤسسة الكويت للتقدم العلمي المستحقة',
+    'liability_current',
+    /kfas/i,
+  ),
+  zakat: spec('7210', 'Zakat', 'الزكاة', 'expense_other', /zakat/i),
+  zakatPayable: spec('2510', 'Zakat payable', 'الزكاة المستحقة', 'liability_current', /zakat/i),
+  nlst: spec(
+    '7220',
+    'National Labour Support Tax',
+    'ضريبة دعم العمالة الوطنية',
+    'expense_other',
+    /nlst|labou?r support/i,
+  ),
+  nlstPayable: spec(
+    '2520',
+    'NLST payable',
+    'ضريبة دعم العمالة الوطنية المستحقة',
+    'liability_current',
+    /nlst|labou?r support/i,
+  ),
+  incomeTax: spec('7230', 'Income tax', 'ضريبة الدخل', 'expense_other', /income tax/i),
+  incomeTaxPayable: spec(
+    '2530',
+    'Income tax payable',
+    'ضريبة الدخل المستحقة',
+    'liability_current',
+    /income tax/i,
+  ),
+  endOfService: spec(
+    '2700',
+    'End-of-service indemnity provision',
+    'مخصص مكافأة نهاية الخدمة',
+    'liability_non_current',
+    /end.of.service|indemnity|gratuity/i,
+  ),
+} satisfies Record<string, AccountSpec>;
+
+export type AccountSpecKey = keyof typeof ACCOUNT_SPECS;
+
+/**
+ * The company's account for a spec, or undefined. Kuwait charts match by
+ * code (accounts may have been renamed); others by name. Accounts used for
+ * automatic postings (with a role) never match.
+ */
+export function findSpecAccount(
+  accounts: Account[],
+  key: AccountSpecKey,
+  template: ChartTemplateId,
+): Account | undefined {
+  const s: AccountSpec = ACCOUNT_SPECS[key];
+  const candidates = accounts
+    .filter((a) => a.type === s.type && !a.role)
+    .sort((a, b) => Number(a.archived) - Number(b.archived));
+  if (template === 'kw') {
+    const byCode = candidates.find((a) => a.code === s.code);
+    if (byCode) return byCode;
+  }
+  return (
+    candidates.find((a) => a.name.trim().toLowerCase() === s.name.toLowerCase()) ??
+    candidates.find((a) => a.nameAr?.trim() === s.nameAr) ??
+    candidates.find((a) => s.match.test(a.name))
+  );
+}
+
+/** A code for a new account: the spec's own when free, else the next free one after it. */
+export function freeCode(accounts: Pick<Account, 'code'>[], wanted: string): string {
+  const taken = new Set(accounts.map((a) => a.code));
+  if (!taken.has(wanted)) return wanted;
+  const base = Number(wanted);
+  if (!Number.isFinite(base)) {
+    let i = 2;
+    while (taken.has(`${wanted}-${i}`)) i += 1;
+    return `${wanted}-${i}`;
+  }
+  const width = wanted.length;
+  let next = base + 1;
+  while (taken.has(String(next).padStart(width, '0'))) next += 1;
+  return String(next).padStart(width, '0');
 }

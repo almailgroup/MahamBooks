@@ -114,3 +114,39 @@ describe('reports', () => {
     expect(paymentsReport(payments, 'USD', range, 'out').total).toBe(4);
   });
 });
+
+describe('aging at a date', () => {
+  it('counts what was owed then, after payments made by that date', async () => {
+    const { agingAt } = await import('./reports');
+    const doc = (id: string, issueDate: string, dueDate: string, total: number) =>
+      ({
+        id,
+        type: 'invoice',
+        status: 'partial',
+        clientId: 'c1',
+        issueDate,
+        dueDate,
+        currency: 'KWD',
+        totals: { total, paid: 0, balance: total, subtotal: total, discount: 0, taxTotal: 0 },
+      }) as unknown as import('@/db/types').InvoiceDocument;
+    const pay = (date: string, documentId: string, amount: number) =>
+      ({
+        id: `${date}-${documentId}`,
+        date,
+        amount,
+        allocations: [{ documentId, amount }],
+      }) as unknown as import('@/db/types').Payment;
+    const docs = [
+      doc('a', '2026-10-01', '2026-10-31', 100.25),
+      doc('b', '2026-12-01', '2026-12-31', 50),
+      doc('late', '2027-01-05', '2027-02-04', 70),
+    ];
+    const payments = [pay('2026-11-15', 'a', 40), pay('2027-01-10', 'a', 60.25)];
+    const clients = [{ id: 'c1', name: 'Gulf Co' }] as import('@/db/types').Client[];
+    const aging = agingAt(docs, payments, clients, '2026-12-31', 'invoice', 'KWD');
+    // a: 60.250 owed, 61 days late; b: 50.000, due that day.
+    expect(aging.rows[0].buckets).toEqual([50_000, 0, 0, 60_250, 0]);
+    expect(aging.total).toBe(110_250);
+    expect(agingAt(docs, payments, clients, '2027-01-31', 'invoice', 'KWD').total).toBe(120_000);
+  });
+});

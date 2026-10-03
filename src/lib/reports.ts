@@ -1,7 +1,8 @@
 import type { Client, InvoiceDocument, ISODate, Payment } from '@/db/types';
+import { msg } from '@/i18n';
 import { computeDocument } from './document-calc';
 import { daysBetween, toISODate, parseISODate } from './dates';
-import { round, currencyPrecision } from './money';
+import { round, currencyPrecision, dec, toMinor } from './money';
 
 export interface DateRange {
   from: ISODate;
@@ -12,13 +13,13 @@ export type RangePreset =
   'this-month' | 'last-month' | 'this-quarter' | 'last-quarter' | 'this-year' | 'last-year' | 'all';
 
 export const RANGE_PRESETS: { value: RangePreset; label: string }[] = [
-  { value: 'this-month', label: 'This month' },
-  { value: 'last-month', label: 'Last month' },
-  { value: 'this-quarter', label: 'This quarter' },
-  { value: 'last-quarter', label: 'Last quarter' },
-  { value: 'this-year', label: 'This year' },
-  { value: 'last-year', label: 'Last year' },
-  { value: 'all', label: 'All time' },
+  { value: 'this-month', label: msg('This month') },
+  { value: 'last-month', label: msg('Last month') },
+  { value: 'this-quarter', label: msg('This quarter') },
+  { value: 'last-quarter', label: msg('Last quarter') },
+  { value: 'this-year', label: msg('This year') },
+  { value: 'last-year', label: msg('Last year') },
+  { value: 'all', label: msg('All time') },
 ];
 
 export function presetRange(preset: RangePreset, todayIso: ISODate): DateRange {
@@ -53,11 +54,11 @@ const counts = (d: InvoiceDocument) => d.status !== 'draft' && d.status !== 'voi
 /* -------------------------------------------------------------------------- */
 
 export const AGING_BUCKETS = [
-  'Current',
-  '1–30 days',
-  '31–60 days',
-  '61–90 days',
-  '90+ days',
+  msg('Current'),
+  msg('1–30 days'),
+  msg('31–60 days'),
+  msg('61–90 days'),
+  msg('90+ days'),
 ] as const;
 
 export interface AgingRow {
@@ -113,6 +114,53 @@ export function agingReport(
       p,
     ),
   };
+}
+
+/**
+ * Aging at a past date (for the auditor pack), in the company currency at
+ * each document's own rate: what was still owed on invoices or bills issued
+ * by `asOf`, after payments and credits applied by then. Minor units.
+ */
+export function agingAt(
+  docs: InvoiceDocument[],
+  payments: Payment[],
+  clients: Client[],
+  asOf: ISODate,
+  type: 'invoice' | 'bill',
+  companyCurrency: string,
+): { rows: AgingRow[]; totals: number[]; total: number } {
+  const p = currencyPrecision(companyCurrency);
+  const names = new Map(clients.map((c) => [c.id, c.name]));
+  const applied = new Map<string, number>();
+  for (const payment of payments) {
+    if (payment.date > asOf || (payment as Payment & { voided?: boolean }).voided) continue;
+    for (const a of payment.allocations) {
+      applied.set(a.documentId, (applied.get(a.documentId) ?? 0) + a.amount);
+    }
+  }
+  const byClient = new Map<string, number[]>();
+  for (const d of docs) {
+    if (d.type !== type || !counts(d) || d.issueDate > asOf) continue;
+    const owed = dec(d.totals.total).minus(dec(applied.get(d.id) ?? 0));
+    if (owed.lte(0)) continue;
+    const rate = d.currency === companyCurrency ? 1 : d.exchangeRate || 1;
+    const minor = toMinor(owed.times(rate), p);
+    const late = d.dueDate ? daysBetween(d.dueDate, asOf) : 0;
+    const bucket = late <= 0 ? 0 : late <= 30 ? 1 : late <= 60 ? 2 : late <= 90 ? 3 : 4;
+    const row = byClient.get(d.clientId) ?? [0, 0, 0, 0, 0];
+    row[bucket] += minor;
+    byClient.set(d.clientId, row);
+  }
+  const rows = [...byClient.entries()]
+    .map(([clientId, buckets]) => ({
+      clientId,
+      clientName: names.get(clientId) ?? '—',
+      buckets,
+      total: buckets.reduce((s, v) => s + v, 0),
+    }))
+    .sort((a, b) => b.total - a.total);
+  const totals = [0, 1, 2, 3, 4].map((i) => rows.reduce((s, r) => s + r.buckets[i], 0));
+  return { rows, totals, total: totals.reduce((s, v) => s + v, 0) };
 }
 
 /* -------------------------------------------------------------------------- */

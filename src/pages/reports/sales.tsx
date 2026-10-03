@@ -17,10 +17,13 @@ import {
   taxReport,
   type RangePreset,
 } from '@/lib/reports';
+import { msg, t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Card, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
 import { CurrencySelect } from '@/components/fields';
+import { isolate } from '@/features/reports/report-language';
 
 export type SalesReportId =
   'aging' | 'tax' | 'sales' | 'payments' | 'payables' | 'purchases' | 'payments-made';
@@ -38,27 +41,21 @@ const KIND: Record<SalesReportId, 'aging' | 'tax' | 'sales' | 'payments'> = {
 
 const WORDS = {
   in: {
-    party: 'Client',
+    party: msg('Client'),
     partyBase: '/clients',
-    doc: 'invoice',
-    docs: 'invoices',
-    Docs: 'Invoices',
-    amount: 'Invoiced',
+    docs: msg('Invoices'),
+    amount: msg('Invoiced'),
     paymentsBase: '/payments',
-    moved: 'Received',
     agingFile: 'receivables-aging',
     byPartyFile: 'sales-by-client',
     paymentsFile: 'payments-received',
   },
   out: {
-    party: 'Vendor',
+    party: msg('Vendor'),
     partyBase: '/vendors',
-    doc: 'bill',
-    docs: 'bills',
-    Docs: 'Bills',
-    amount: 'Billed',
+    docs: msg('Bills'),
+    amount: msg('Billed'),
     paymentsBase: '/payments-made',
-    moved: 'Paid',
     agingFile: 'payables-aging',
     byPartyFile: 'purchases-by-vendor',
     paymentsFile: 'payments-made',
@@ -129,45 +126,56 @@ export function SalesReports({ report }: { report: SalesReportId }) {
     };
   }, [docs, clients, payments, currency, range, out]);
 
-  if (!data) return <Spinner className="py-24" label="Loading…" />;
+  if (!data || !clients) return <Spinner className="py-24" label={t('Loading…')} />;
   const money = (n: number) => fmt.money(n, currency);
-  const rangeLabel =
-    preset === 'all' ? 'all time' : `${fmt.date(range.from)} – ${fmt.date(range.to)}`;
+  const rangeText =
+    preset === 'all'
+      ? t('at any time')
+      : t('from {from} to {to}', {
+          from: isolate(fmt.date(range.from)),
+          to: isolate(fmt.date(range.to)),
+        });
   const stamp = `${range.from}_${range.to}`.replace(/0000-01-01_9999-12-31/, 'all');
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const contactName = (id: string, fallback = '—') => localName(byId.get(id)) || fallback;
 
   const exportCurrent = () => {
     if (kind === 'aging') {
       downloadCsv(
         `${words.agingFile}-${today()}`,
-        [words.party, ...AGING_BUCKETS, 'Total'],
+        [t(words.party), ...AGING_BUCKETS.map((b) => t(b)), t('Total')],
         [
-          ...data.aging.rows.map((r) => [r.clientName, ...r.buckets, r.total]),
-          ['Total', ...data.aging.totals, data.aging.total],
+          ...data.aging.rows.map((r) => [
+            contactName(r.clientId, r.clientName),
+            ...r.buckets,
+            r.total,
+          ]),
+          [t('Total'), ...data.aging.totals, data.aging.total],
         ],
       );
     } else if (kind === 'tax') {
       downloadCsv(
         `tax-summary-${stamp}`,
-        ['Tax', 'Rate %', 'Taxable amount', 'Tax amount'],
+        [t('Tax'), t('Rate %'), t('Taxable amount'), t('Tax amount')],
         [
           ...data.tax.rows.map((r) => [r.name, r.rate, r.base, r.tax]),
-          ['Total', '', data.tax.net, data.tax.tax],
+          [t('Total'), '', data.tax.net, data.tax.tax],
         ],
       );
     } else if (kind === 'sales') {
       downloadCsv(
         `${words.byPartyFile}-${stamp}`,
-        [words.party, words.Docs, words.amount, 'Paid', 'Outstanding'],
+        [t(words.party), t(words.docs), t(words.amount), t('Paid'), t('Outstanding')],
         [
           ...data.sales.rows.map((r) => [
-            r.clientName,
+            contactName(r.clientId, r.clientName),
             r.invoices,
             r.invoiced,
             r.paid,
             r.outstanding,
           ]),
           [
-            'Total',
+            t('Total'),
             data.sales.totals.invoices,
             data.sales.totals.invoiced,
             data.sales.totals.paid,
@@ -178,7 +186,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
     } else {
       downloadCsv(
         `${words.paymentsFile}-${stamp}`,
-        ['Date', 'Number', 'Method', 'Reference', 'Amount'],
+        [t('Date'), t('Number'), t('Method'), t('Reference'), t('Amount')],
         data.payments.list.map((p) => [
           p.date,
           p.number,
@@ -190,8 +198,6 @@ export function SalesReports({ report }: { report: SalesReportId }) {
     }
   };
 
-  const clientName = (id: string) => clients?.find((c) => c.id === id)?.name ?? '—';
-
   return (
     <div>
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -202,21 +208,21 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                 <Select
                   value={preset}
                   onChange={(e) => setPreset(e.target.value as RangePreset | 'custom')}
-                  aria-label="Date range"
+                  aria-label={t('Date range')}
                 >
                   {RANGE_PRESETS.map((p) => (
                     <option key={p.value} value={p.value}>
-                      {p.label}
+                      {t(p.label)}
                     </option>
                   ))}
-                  <option value="custom">Custom…</option>
+                  <option value="custom">{t('Custom…')}</option>
                 </Select>
               </div>
               {preset === 'custom' ? (
                 <>
                   <Input
                     type="date"
-                    aria-label="From"
+                    aria-label={t('From')}
                     value={custom.from}
                     onChange={(e) =>
                       e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))
@@ -225,7 +231,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                   />
                   <Input
                     type="date"
-                    aria-label="To"
+                    aria-label={t('To')}
                     value={custom.to}
                     onChange={(e) =>
                       e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))
@@ -241,31 +247,37 @@ export function SalesReports({ report }: { report: SalesReportId }) {
           </div>
         </div>
         <Button variant="outline" onClick={exportCurrent}>
-          <Download /> Export CSV
+          <Download /> {t('Export CSV')}
         </Button>
       </div>
 
       {kind === 'aging' ? (
         <Card className="overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3 text-sm text-slate-500">
-            Unpaid {words.docs} by how late they are, as of {fmt.date(today())}.
+            {out
+              ? t('Unpaid bills by how late they are, as at {date}.', {
+                  date: isolate(fmt.date(today())),
+                })
+              : t('Unpaid invoices by how late they are, as at {date}.', {
+                  date: isolate(fmt.date(today())),
+                })}
           </div>
           {data.aging.rows.length === 0 ? (
             <p className="px-6 py-12 text-center text-sm text-slate-500">
-              Nothing outstanding in {currency}. 🎉
+              {t('Nothing outstanding in {currency}.', { currency })}
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="border-b border-slate-100">
                   <tr>
-                    <Th>{words.party}</Th>
+                    <Th>{t(words.party)}</Th>
                     {AGING_BUCKETS.map((b) => (
                       <Th key={b} right>
-                        {b}
+                        {t(b)}
                       </Th>
                     ))}
-                    <Th right>Total</Th>
+                    <Th right>{t('Total')}</Th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -276,7 +288,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                           to={`${words.partyBase}/${r.clientId}`}
                           className="hover:text-primary-700 font-medium text-slate-900"
                         >
-                          {r.clientName}
+                          {contactName(r.clientId, r.clientName)}
                         </Link>
                       </Td>
                       {r.buckets.map((v, i) => (
@@ -298,7 +310,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                 </tbody>
                 <tfoot className="border-t-2 border-slate-200 bg-slate-50/60">
                   <tr>
-                    <Td strong>Total</Td>
+                    <Td strong>{t('Total')}</Td>
                     {data.aging.totals.map((v, i) => (
                       <Td key={i} right strong>
                         {money(v)}
@@ -319,36 +331,40 @@ export function SalesReports({ report }: { report: SalesReportId }) {
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
             <Card className="p-5">
-              <p className="text-sm text-slate-500">Net sales</p>
+              <p className="text-sm text-slate-500">{t('Net sales')}</p>
               <p className="mt-1 text-2xl font-semibold text-slate-900">{money(data.tax.net)}</p>
             </Card>
             <Card className="p-5">
-              <p className="text-sm text-slate-500">Tax collected</p>
+              <p className="text-sm text-slate-500">{t('Tax collected')}</p>
               <p className="mt-1 text-2xl font-semibold text-slate-900">{money(data.tax.tax)}</p>
             </Card>
             <Card className="p-5">
-              <p className="text-sm text-slate-500">Gross</p>
+              <p className="text-sm text-slate-500">{t('Gross')}</p>
               <p className="mt-1 text-2xl font-semibold text-slate-900">{money(data.tax.gross)}</p>
             </Card>
           </div>
           <Card className="overflow-hidden">
             <div className="border-b border-slate-100 px-4 py-3 text-sm text-slate-500">
-              {data.tax.documents} invoices and credit notes issued {rangeLabel} (drafts and void
-              excluded; credit notes deducted).
+              {tp(
+                data.tax.documents,
+                '{count} invoice or credit note issued {range} (drafts and void left out; credit notes deducted).',
+                '{count} invoices and credit notes issued {range} (drafts and void left out; credit notes deducted).',
+                { range: rangeText },
+              )}
             </div>
             {data.tax.rows.length === 0 ? (
               <p className="px-6 py-12 text-center text-sm text-slate-500">
-                No taxed sales in this period.
+                {t('No taxed sales in this period.')}
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="border-b border-slate-100">
                     <tr>
-                      <Th>Tax</Th>
-                      <Th right>Rate</Th>
-                      <Th right>Taxable amount</Th>
-                      <Th right>Tax</Th>
+                      <Th>{t('Tax')}</Th>
+                      <Th right>{t('Rate')}</Th>
+                      <Th right>{t('Taxable amount')}</Th>
+                      <Th right>{t('Tax amount')}</Th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -373,22 +389,24 @@ export function SalesReports({ report }: { report: SalesReportId }) {
       {kind === 'sales' ? (
         <Card className="overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3 text-sm text-slate-500">
-            {out ? `Bills received ${rangeLabel}.` : `Invoices issued ${rangeLabel}.`}
+            {out
+              ? t('Bills received {range}.', { range: rangeText })
+              : t('Invoices issued {range}.', { range: rangeText })}
           </div>
           {data.sales.rows.length === 0 ? (
             <p className="px-6 py-12 text-center text-sm text-slate-500">
-              No {words.docs} in this period.
+              {out ? t('No bills in this period.') : t('No invoices in this period.')}
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="border-b border-slate-100">
                   <tr>
-                    <Th>{words.party}</Th>
-                    <Th right>{words.Docs}</Th>
-                    <Th right>{words.amount}</Th>
-                    <Th right>Paid</Th>
-                    <Th right>Outstanding</Th>
+                    <Th>{t(words.party)}</Th>
+                    <Th right>{t(words.docs)}</Th>
+                    <Th right>{t(words.amount)}</Th>
+                    <Th right>{t('Paid')}</Th>
+                    <Th right>{t('Outstanding')}</Th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -399,10 +417,10 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                           to={`${words.partyBase}/${r.clientId}`}
                           className="hover:text-primary-700 font-medium text-slate-900"
                         >
-                          {r.clientName}
+                          {contactName(r.clientId, r.clientName)}
                         </Link>
                       </Td>
-                      <Td right>{r.invoices}</Td>
+                      <Td right>{fmt.quantity(r.invoices)}</Td>
                       <Td right>{money(r.invoiced)}</Td>
                       <Td right>{money(r.paid)}</Td>
                       <Td right strong>
@@ -413,9 +431,9 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                 </tbody>
                 <tfoot className="border-t-2 border-slate-200 bg-slate-50/60">
                   <tr>
-                    <Td strong>Total</Td>
+                    <Td strong>{t('Total')}</Td>
                     <Td right strong>
-                      {data.sales.totals.invoices}
+                      {fmt.quantity(data.sales.totals.invoices)}
                     </Td>
                     <Td right strong>
                       {money(data.sales.totals.invoiced)}
@@ -438,14 +456,16 @@ export function SalesReports({ report }: { report: SalesReportId }) {
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           <Card className="h-fit p-5">
             <p className="text-sm text-slate-500">
-              {words.moved} {rangeLabel}
+              {out
+                ? t('Paid {range}', { range: rangeText })
+                : t('Received {range}', { range: rangeText })}
             </p>
             <p className="mt-1 text-2xl font-semibold text-slate-900">
               {money(data.payments.total)}
             </p>
             <ul className="mt-4 space-y-2 text-sm">
               {data.payments.byMethod.map(([method, amount]) => (
-                <li key={method} className="flex justify-between">
+                <li key={method} className="flex justify-between gap-3">
                   <span className="text-slate-600">{paymentMethodLabel(method as never)}</span>
                   <span className="tabular font-medium text-slate-900">{money(amount)}</span>
                 </li>
@@ -455,18 +475,18 @@ export function SalesReports({ report }: { report: SalesReportId }) {
           <Card className="overflow-hidden">
             {data.payments.list.length === 0 ? (
               <p className="px-6 py-12 text-center text-sm text-slate-500">
-                No payments in this period.
+                {t('No payments in this period.')}
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="border-b border-slate-100">
                     <tr>
-                      <Th>Date</Th>
-                      <Th>Payment</Th>
-                      <Th>{words.party}</Th>
-                      <Th>Method</Th>
-                      <Th right>Amount</Th>
+                      <Th>{t('Date')}</Th>
+                      <Th>{t('Payment')}</Th>
+                      <Th>{t(words.party)}</Th>
+                      <Th>{t('Method')}</Th>
+                      <Th right>{t('Amount')}</Th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -481,7 +501,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                             {p.number}
                           </Link>
                         </Td>
-                        <Td>{clientName(p.clientId)}</Td>
+                        <Td>{contactName(p.clientId)}</Td>
                         <Td>{paymentMethodLabel(p.method)}</Td>
                         <Td right strong>
                           {money(p.amount)}

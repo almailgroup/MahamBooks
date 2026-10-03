@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Archive, Lock, Pencil, Plus, Search } from 'lucide-react';
+import { Archive, CheckCircle2, Lock, Pencil, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Account, AccountType } from '@/db/types';
 import { accountInUse, createAccount, deleteAccount, saveAccount } from '@/db/accounting';
@@ -14,9 +14,12 @@ import {
   isMoneyAccount,
   type AccountGroup,
 } from '@/lib/accounting/account-types';
+import { bankFromIban, compactIban, formatIban, isValidIban } from '@/lib/kuwait';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
+import { currentLanguage, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, PageHeader, Spinner } from '@/components/ui/misc';
 import { Checkbox, Field, Input, Select, Switch, Textarea } from '@/components/ui/form';
@@ -29,6 +32,13 @@ import {
 } from '@/components/ui/overlay';
 
 const GROUPS: AccountGroup[] = ['asset', 'liability', 'equity', 'income', 'expense'];
+
+/** The account's name in the other language, shown under the main one. */
+function otherName(account: Account): string {
+  const shown = localName(account);
+  const other = currentLanguage() === 'ar' ? account.name : (account.nameAr?.trim() ?? '');
+  return other && other !== shown ? other : '';
+}
 
 function AccountDialog({
   account,
@@ -46,6 +56,12 @@ function AccountDialog({
   const system = Boolean(account.role);
   const update = (patch: Partial<Account>) => setDraft((d) => ({ ...d, ...patch }));
   const bank = draft.bank ?? { institution: '', accountNumber: '', iban: '', bic: '' };
+  const iban = compactIban(bank.iban);
+  const ibanValid = iban ? isValidIban(iban) : true;
+  const known = ibanValid && iban ? bankFromIban(iban) : undefined;
+  const title = isNew
+    ? t('New account')
+    : t('Edit {code} {name}', { code: account.code, name: localName(account) });
 
   const save = async () => {
     setSaving(true);
@@ -54,10 +70,10 @@ function AccountDialog({
         ...draft,
         bank: isMoneyAccount(draft.type) && draft.bank ? draft.bank : null,
       });
-      toast.success(isNew ? 'Account created' : 'Account saved');
+      toast.success(isNew ? t('Account created') : t('Account saved'));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save the account.');
+      toast.error(error instanceof Error ? error.message : t('Could not save the account.'));
     } finally {
       setSaving(false);
     }
@@ -65,37 +81,49 @@ function AccountDialog({
 
   const remove = async () => {
     if (await accountInUse(account)) {
-      toast.error('This account is used by transactions or settings. Archive it instead.');
+      toast.error(t('This account is used by transactions or settings. Archive it instead.'));
       return;
     }
     const ok = await confirm({
-      title: `Delete ${account.code} ${account.name}?`,
-      description: 'The account has never been used, so nothing else changes.',
-      confirmLabel: 'Delete',
+      title: t('Delete {code} {name}?', { code: account.code, name: localName(account) }),
+      description: t('The account has never been used, so nothing else changes.'),
+      confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
     await deleteAccount(account.id);
-    toast.success('Account deleted');
+    toast.success(t('Account deleted'));
     onClose();
+  };
+
+  // A Kuwaiti IBAN names the bank: fill in the bank and its SWIFT code.
+  const tidyIban = () => {
+    if (!iban || !ibanValid) return;
+    const found = bankFromIban(iban);
+    update({
+      bank: {
+        ...bank,
+        iban: formatIban(iban),
+        institution: bank.institution || (found ? found.name[currentLanguage()] : ''),
+        bic: bank.bic || found?.swift || '',
+      },
+    });
   };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        title={isNew ? 'New account' : `Edit ${account.code} ${account.name}`}
-        size="lg"
-      >
+      <DialogContent title={title} size="lg">
         <DialogBody>
           {system ? (
             <p className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
               <Lock className="mt-0.5 size-4 shrink-0 text-slate-400" />
-              AlmailBooks posts to this account automatically, so its type is fixed. You can rename
-              it or change its code.
+              {t(
+                'AlmailBooks posts to this account automatically, so its type is fixed. You can rename it or change its code.',
+              )}
             </p>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
-            <Field label="Code">
+            <Field label={t('Code')}>
               {(id) => (
                 <Input
                   id={id}
@@ -105,7 +133,7 @@ function AccountDialog({
                 />
               )}
             </Field>
-            <Field label="Name">
+            <Field label={t('Name')}>
               {(id) => (
                 <Input
                   id={id}
@@ -115,7 +143,22 @@ function AccountDialog({
               )}
             </Field>
           </div>
-          <Field label="Type" hint={ACCOUNT_TYPES[draft.type].hint}>
+          <Field
+            label={t('Name in Arabic')}
+            optional
+            hint={t('Shown in the Arabic interface and on Arabic reports.')}
+          >
+            {(id) => (
+              <Input
+                id={id}
+                dir="rtl"
+                lang="ar"
+                value={draft.nameAr ?? ''}
+                onChange={(e) => update({ nameAr: e.target.value })}
+              />
+            )}
+          </Field>
+          <Field label={t('Type')} hint={t(ACCOUNT_TYPES[draft.type].hint)}>
             {(id) => (
               <Select
                 id={id}
@@ -124,10 +167,10 @@ function AccountDialog({
                 onChange={(e) => update({ type: e.target.value as AccountType })}
               >
                 {GROUPS.map((group) => (
-                  <optgroup key={group} label={ACCOUNT_GROUP_LABELS[group]}>
-                    {ACCOUNT_TYPE_ORDER.filter((t) => ACCOUNT_TYPES[t].group === group).map((t) => (
-                      <option key={t} value={t}>
-                        {ACCOUNT_TYPES[t].label}
+                  <optgroup key={group} label={t(ACCOUNT_GROUP_LABELS[group])}>
+                    {ACCOUNT_TYPE_ORDER.filter((x) => ACCOUNT_TYPES[x].group === group).map((x) => (
+                      <option key={x} value={x}>
+                        {t(ACCOUNT_TYPES[x].label)}
                       </option>
                     ))}
                   </optgroup>
@@ -135,7 +178,7 @@ function AccountDialog({
               </Select>
             )}
           </Field>
-          <Field label="Description" optional>
+          <Field label={t('Description')} optional>
             {(id) => (
               <Textarea
                 id={id}
@@ -147,8 +190,42 @@ function AccountDialog({
           </Field>
           {isMoneyAccount(draft.type) ? (
             <div className="grid gap-4 rounded-lg border border-slate-200 p-4 sm:grid-cols-2">
-              <p className="text-sm font-medium text-slate-800 sm:col-span-2">Bank details</p>
-              <Field label="Bank" optional>
+              <p className="text-sm font-medium text-slate-800 sm:col-span-2">
+                {t('Bank details')}
+              </p>
+              <Field
+                label={t('IBAN')}
+                optional
+                className="sm:col-span-2"
+                error={
+                  ibanValid
+                    ? undefined
+                    : t('This IBAN is not valid. Check it against a bank statement.')
+                }
+                hint={
+                  known ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-700">
+                      <CheckCircle2 className="size-3.5" /> {known.name[currentLanguage()]}
+                    </span>
+                  ) : (
+                    t('Kuwaiti IBANs have 30 characters and start with KW.')
+                  )
+                }
+              >
+                {(id) => (
+                  <Input
+                    id={id}
+                    dir="ltr"
+                    className="tabular"
+                    placeholder="KW81 CBKU 0000 0000 0000 1234 5601 01"
+                    aria-invalid={!ibanValid || undefined}
+                    value={bank.iban}
+                    onChange={(e) => update({ bank: { ...bank, iban: e.target.value } })}
+                    onBlur={tidyIban}
+                  />
+                )}
+              </Field>
+              <Field label={t('Bank')} optional>
                 {(id) => (
                   <Input
                     id={id}
@@ -157,28 +234,21 @@ function AccountDialog({
                   />
                 )}
               </Field>
-              <Field label="Account number" optional>
+              <Field label={t('Account number')} optional>
                 {(id) => (
                   <Input
                     id={id}
+                    dir="ltr"
                     value={bank.accountNumber}
                     onChange={(e) => update({ bank: { ...bank, accountNumber: e.target.value } })}
                   />
                 )}
               </Field>
-              <Field label="IBAN" optional>
+              <Field label={t('BIC / SWIFT')} optional>
                 {(id) => (
                   <Input
                     id={id}
-                    value={bank.iban}
-                    onChange={(e) => update({ bank: { ...bank, iban: e.target.value } })}
-                  />
-                )}
-              </Field>
-              <Field label="BIC / SWIFT" optional>
-                {(id) => (
-                  <Input
-                    id={id}
+                    dir="ltr"
                     value={bank.bic}
                     onChange={(e) => update({ bank: { ...bank, bic: e.target.value } })}
                   />
@@ -190,8 +260,10 @@ function AccountDialog({
             <Switch
               checked={draft.archived}
               onChange={(archived) => update({ archived })}
-              label="Archived"
-              description="Hidden from lists for new transactions. Its history stays in the reports."
+              label={t('Archived')}
+              description={t(
+                'Hidden from lists for new transactions. Its history stays in the reports.',
+              )}
             />
           ) : null}
         </DialogBody>
@@ -203,16 +275,16 @@ function AccountDialog({
                 className="text-red-600 hover:bg-red-50"
                 onClick={() => void remove()}
               >
-                Delete
+                {t('Delete')}
               </Button>
             ) : null}
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              {t('Cancel')}
             </Button>
-            <Button onClick={() => void save()} loading={saving}>
-              {isNew ? 'Create account' : 'Save'}
+            <Button onClick={() => void save()} loading={saving} disabled={!ibanValid}>
+              {isNew ? t('Create account') : t('Save')}
             </Button>
           </div>
         </DialogFooter>
@@ -242,22 +314,27 @@ export default function ChartOfAccountsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const p = currencyPrecision(company.currency);
+  const lines = ledger?.lines;
 
   const balances = useMemo(() => {
     const map = new Map<string, number>();
-    if (!ledger) return map;
+    if (!lines) return map;
     const now = today();
-    for (const l of ledger.lines)
+    for (const l of lines)
       if (l.date <= now) map.set(l.accountId, (map.get(l.accountId) ?? 0) + l.amount);
     return map;
-  }, [ledger]);
+  }, [lines]);
 
-  if (!ledger) return <Spinner className="py-24" label="Loading…" />;
+  if (!ledger) return <Spinner className="py-24" label={t('Loading…')} />;
   const q = query.trim().toLowerCase();
   const visible = ledger.accounts
     .filter((a) => showArchived || !a.archived)
     .filter(
-      (a) => !q || `${a.code} ${a.name} ${ACCOUNT_TYPES[a.type].label}`.toLowerCase().includes(q),
+      (a) =>
+        !q ||
+        `${a.code} ${a.name} ${a.nameAr ?? ''} ${ACCOUNT_TYPES[a.type].label} ${t(ACCOUNT_TYPES[a.type].label)}`
+          .toLowerCase()
+          .includes(q),
     )
     .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
@@ -269,11 +346,13 @@ export default function ChartOfAccountsPage() {
   return (
     <div>
       <PageHeader
-        title="Chart of accounts"
-        description="Every invoice, payment and journal is recorded in these accounts. Balances are as of today."
+        title={t('Chart of accounts')}
+        description={t(
+          'Every invoice, payment and journal is recorded in these accounts. Balances are as of today.',
+        )}
         actions={
           <Button onClick={startNew}>
-            <Plus /> New account
+            <Plus /> {t('New account')}
           </Button>
         }
       />
@@ -284,26 +363,30 @@ export default function ChartOfAccountsPage() {
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search accounts…"
-              aria-label="Search accounts"
+              placeholder={t('Search accounts…')}
+              aria-label={t('Search accounts')}
               className="ps-9"
             />
           </div>
           <Checkbox
             checked={showArchived}
             onChange={(e) => setShowArchived(e.target.checked)}
-            label="Show archived"
+            label={t('Show archived')}
           />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
               <tr>
-                <th className="w-24 px-4 py-2.5 text-start font-medium">Code</th>
-                <th className="px-3 py-2.5 text-start font-medium">Name</th>
-                <th className="hidden px-3 py-2.5 text-start font-medium md:table-cell">Type</th>
-                <th className="px-3 py-2.5 text-end font-medium">Balance</th>
-                <th className="w-12" />
+                <th className="w-20 px-4 py-2.5 text-start font-medium sm:w-24">{t('Code')}</th>
+                <th className="px-3 py-2.5 text-start font-medium">{t('Name')}</th>
+                <th className="hidden px-3 py-2.5 text-start font-medium md:table-cell">
+                  {t('Type')}
+                </th>
+                <th className="px-3 py-2.5 text-end font-medium">{t('Balance')}</th>
+                <th className="w-12">
+                  <span className="sr-only">{t('Actions')}</span>
+                </th>
               </tr>
             </thead>
             {GROUPS.map((group) => {
@@ -316,18 +399,19 @@ export default function ChartOfAccountsPage() {
                       colSpan={5}
                       className="bg-slate-50/40 px-4 pt-4 pb-2 text-xs font-semibold tracking-wide text-slate-500 uppercase"
                     >
-                      {ACCOUNT_GROUP_LABELS[group]}
+                      {t(ACCOUNT_GROUP_LABELS[group])}
                     </td>
                   </tr>
                   {rows.map((a) => {
                     const raw = balances.get(a.id) ?? 0;
                     const shown = isDebitNormal(a.type) ? raw : -raw;
+                    const other = otherName(a);
                     return (
                       <tr
                         key={a.id}
                         className={cn('hover:bg-slate-50', a.archived && 'text-slate-400')}
                       >
-                        <td className="tabular px-4 py-2 text-slate-500">{a.code}</td>
+                        <td className="tabular px-4 py-2 align-top text-slate-500">{a.code}</td>
                         <td className="px-3 py-2">
                           <Link
                             to={`/reports/general-ledger?account=${a.id}&from=0000-01-01&to=${today()}`}
@@ -336,23 +420,32 @@ export default function ChartOfAccountsPage() {
                               a.archived ? 'text-slate-400' : 'text-slate-900',
                             )}
                           >
-                            {a.name}
+                            {localName(a)}
                           </Link>
                           {a.role ? (
                             <Badge tone="gray" className="ms-2 align-middle">
-                              System
+                              {t('System')}
                             </Badge>
                           ) : null}
                           {a.archived ? (
                             <Badge tone="gray" className="ms-2 align-middle">
-                              <Archive className="size-3" /> Archived
+                              <Archive className="size-3" /> {t('Archived')}
                             </Badge>
+                          ) : null}
+                          {other ? (
+                            <span
+                              className="block text-xs text-slate-400"
+                              dir={currentLanguage() === 'ar' ? 'ltr' : 'rtl'}
+                              lang={currentLanguage() === 'ar' ? 'en' : 'ar'}
+                            >
+                              {other}
+                            </span>
                           ) : null}
                         </td>
                         <td className="hidden px-3 py-2 text-slate-500 md:table-cell">
-                          {ACCOUNT_TYPES[a.type].label}
+                          {t(ACCOUNT_TYPES[a.type].label)}
                         </td>
-                        <td className="tabular px-3 py-2 text-end text-slate-700">
+                        <td className="tabular px-3 py-2 text-end whitespace-nowrap text-slate-700">
                           {raw === 0 ? (
                             <span className="text-slate-300">—</span>
                           ) : (
@@ -363,7 +456,7 @@ export default function ChartOfAccountsPage() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`Edit ${a.name}`}
+                            aria-label={t('Edit {name}', { name: localName(a) })}
                             onClick={() => setEditing(a)}
                           >
                             <Pencil />
@@ -378,7 +471,7 @@ export default function ChartOfAccountsPage() {
           </table>
           {visible.length === 0 ? (
             <p className="px-4 py-10 text-center text-sm text-slate-500">
-              No accounts match your search.
+              {t('No accounts match your search.')}
             </p>
           ) : null}
         </div>

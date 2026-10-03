@@ -39,6 +39,10 @@ const EmployeeDetail = lazy(() => import('@/pages/people/detail'));
 const EmployeeForm = lazy(() => import('@/pages/people/form'));
 const Compliance = lazy(() => import('@/pages/compliance/index'));
 const ComplianceDocuments = lazy(() => import('@/pages/compliance/documents'));
+const Assets = lazy(() => import('@/pages/assets/index'));
+const AssetForm = lazy(() => import('@/pages/assets/form'));
+const AssetDetail = lazy(() => import('@/pages/assets/detail'));
+const YearEnd = lazy(() => import('@/pages/accounting/year-end'));
 const NotFound = lazy(() => import('@/pages/not-found'));
 
 function Root() {
@@ -174,6 +178,11 @@ export const router = createHashRouter([
           { path: 'journals', element: <Journals /> },
           { path: 'journals/new', element: <JournalEditor key="new" /> },
           { path: 'journals/:id', element: <JournalEditor /> },
+          { path: 'assets', element: <Assets /> },
+          { path: 'assets/new', element: <AssetForm key="new" /> },
+          { path: 'assets/:id', element: <AssetDetail /> },
+          { path: 'assets/:id/edit', element: <AssetForm /> },
+          { path: 'year-end', element: <YearEnd /> },
           { path: 'banking', element: <Banking /> },
           { path: 'banking/:accountId', element: <Banking /> },
           { path: 'vat', element: <Vat /> },

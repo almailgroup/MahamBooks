@@ -16,7 +16,7 @@ export default {
   'e.g. Al Mail Trading Co.': 'مثل: Al Mail Trading Co.',
   'Arabic name': 'الاسم بالعربية',
   'Printed on Arabic invoices.': 'يُطبع على الفواتير العربية.',
-  'Legal form': 'الكيان القانوني',
+  'Legal form': 'الشكل القانوني',
   'Business activity': 'النشاط التجاري',
   'Some activities have limits on cash payments.': 'بعض الأنشطة لها حدود على الدفع النقدي.',
   'No tax': 'بدون ضريبة',
@@ -215,7 +215,7 @@ export default {
   '{name} deleted': 'تم حذف {name}',
   'Run several businesses or brands, each with its own clients, numbering and branding.':
     'أدِر عدة شركات أو علامات تجارية، لكل منها عملاؤها وترقيمها وهويتها الخاصة.',
-  Current: 'الحالية',
+  'Current company': 'الشركة الحالية',
   'No country set': 'لم تُحدد الدولة',
   Switch: 'تبديل',
   'Delete {name}': 'حذف {name}',

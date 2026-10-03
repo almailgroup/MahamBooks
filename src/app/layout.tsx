@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
+  Armchair,
   ArrowDownLeft,
   ArrowUpRight,
   Banknote,
@@ -94,6 +95,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
       { to: '/banking', label: msg('Banking'), icon: <Banknote /> },
       { to: '/reports', label: msg('Reports'), icon: <BarChart3 /> },
       { to: '/vat', label: msg('VAT returns'), icon: <Landmark /> },
+      { to: '/assets', label: msg('Fixed assets'), icon: <Armchair /> },
       { to: '/accounts', label: msg('Chart of accounts'), icon: <ListTree /> },
       { to: '/journals', label: msg('Manual journals'), icon: <NotebookPen /> },
     ],

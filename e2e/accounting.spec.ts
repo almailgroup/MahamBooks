@@ -40,7 +40,7 @@ test('a manual journal reaches the accounts and reports', async ({ page }) => {
   ).toBeVisible();
 
   await page.goto('#/reports/balance-sheet');
-  await expect(page.getByText('Fixed assets', { exact: true })).toBeVisible();
+  await expect(page.getByText('Property and equipment', { exact: true })).toBeVisible();
   await expect(page.getByText('Balanced', { exact: true })).toBeVisible();
 });
 

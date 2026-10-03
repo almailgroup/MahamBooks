@@ -1,46 +1,74 @@
 import { Link } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { LockOpen } from 'lucide-react';
+import { CalendarCheck, Info, LockOpen } from 'lucide-react';
 import { db } from '@/db/db';
-import type { AccountRole, VatSettings } from '@/db/types';
+import type { AccountRole, LevyRates, VatSettings } from '@/db/types';
 import { accountingSettings, vatSettings } from '@/db/chart-setup';
 import { EMIRATES, VAT_FORMATS } from '@/lib/accounting/vat';
 import { roleMap } from '@/db/accounting';
 import { CHART_TEMPLATES } from '@/lib/accounting/charts';
 import { fiscalYearEnd, fiscalYearStart } from '@/lib/accounting/statements';
+import { DEFAULT_LEVY_RATES, levyRates } from '@/lib/accounting/year-end';
 import { today } from '@/lib/dates';
 import { useFormat } from '@/app/company';
-import { Button } from '@/components/ui/button';
-import { Field, Input, Select, Switch } from '@/components/ui/form';
+import { interfaceLocale, msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
+import { Button, ButtonLink } from '@/components/ui/button';
+import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
-
-const MONTHS = Array.from({ length: 12 }, (_, i) =>
-  new Date(2024, i, 1).toLocaleString('en', { month: 'long' }),
-);
+import { isolate } from '@/features/reports/report-language';
 
 /** Quarter ends for each stagger (the month a quarter starts in). */
 const STAGGERS = [
-  { startMonth: 1, label: 'March, June, September and December' },
-  { startMonth: 2, label: 'April, July, October and January' },
-  { startMonth: 3, label: 'May, August, November and February' },
+  { startMonth: 1, label: msg('March, June, September and December') },
+  { startMonth: 2, label: msg('April, July, October and January') },
+  { startMonth: 3, label: msg('May, August, November and February') },
 ];
 
 const ROLE_LABELS: Partial<Record<AccountRole, string>> = {
-  receivable: 'Money owed by clients',
-  payable: 'Money owed to vendors',
-  bank: 'Payments in and out (default)',
-  cash: 'Cash payments',
-  credit_card: 'Company card',
-  sales: 'Sales (unless a product says otherwise)',
-  charges: 'Delivery and other charges',
-  expense: 'Purchases (unless a bill line says otherwise)',
-  output_tax: 'Tax charged on sales',
-  input_tax: 'Tax paid on purchases',
-  tax_settlement: 'VAT owed to (or due from) the tax office',
-  fx: 'Exchange gains and losses',
-  capital: 'Owner or share capital',
-  retained_earnings: 'Retained earnings',
+  receivable: msg('Money owed by clients'),
+  payable: msg('Money owed to vendors'),
+  bank: msg('Payments in and out (default)'),
+  cash: msg('Cash payments'),
+  credit_card: msg('Company card'),
+  sales: msg('Sales (unless a product says otherwise)'),
+  charges: msg('Delivery and other charges'),
+  expense: msg('Purchases (unless a bill line says otherwise)'),
+  output_tax: msg('Tax charged on sales'),
+  input_tax: msg('Tax paid on purchases'),
+  tax_settlement: msg('VAT owed to (or due from) the tax office'),
+  fx: msg('Exchange gains and losses'),
+  capital: msg('Owner or share capital'),
+  retained_earnings: msg('Retained earnings'),
 };
+
+const TEMPLATE_NAMES: Record<string, string> = {
+  kw: msg('Kuwait'),
+  generic: msg('Standard chart'),
+  uk: msg('United Kingdom'),
+  ae: msg('United Arab Emirates'),
+};
+
+const LEVY_FIELDS: { key: keyof LevyRates; label: string; hint: string }[] = [
+  {
+    key: 'statutoryReserve',
+    label: msg('Statutory reserve'),
+    hint: msg('Share of the profit moved to the reserve each year (not for sole traders).'),
+  },
+  {
+    key: 'statutoryReserveCap',
+    label: msg('Reserve limit (share of capital)'),
+    hint: msg('Transfers stop once the reserve reaches this share of the paid-up capital.'),
+  },
+  { key: 'kfas', label: msg('KFAS'), hint: msg('Shareholding companies.') },
+  { key: 'zakat', label: msg('Zakat'), hint: msg('Shareholding companies.') },
+  { key: 'nlst', label: msg('NLST'), hint: msg('Listed shareholding companies.') },
+  {
+    key: 'incomeTax',
+    label: msg('Income tax'),
+    hint: msg('On the foreign-owned share of the profit.'),
+  },
+];
 
 export default function AccountingSettings() {
   const fmt = useFormat();
@@ -50,6 +78,9 @@ export default function AccountingSettings() {
     update({ accounting: { ...settings, ...patch } });
   const vat = vatSettings(draft);
   const setVat = (patch: Partial<VatSettings>) => setSettings({ vat: { ...vat, ...patch } });
+  const rates = levyRates(settings);
+  const setRate = (key: keyof LevyRates, value: number) =>
+    setSettings({ levies: { ...rates, [key]: value } });
   const accounts = useLiveQuery(
     () => db.accounts.where('companyId').equals(draft.id).toArray(),
     [draft.id],
@@ -58,15 +89,23 @@ export default function AccountingSettings() {
   const { month, day } = settings.fiscalYearEnd;
   const daysInMonth = new Date(2023, month, 0).getDate();
   const now = today();
+  const months = Array.from({ length: 12 }, (_, i) =>
+    new Intl.DateTimeFormat(interfaceLocale(draft.locale), { month: 'long' }).format(
+      new Date(2024, i, 1),
+    ),
+  );
+  const customRates = JSON.stringify(rates) !== JSON.stringify(DEFAULT_LEVY_RATES);
 
   return (
     <div className="space-y-6">
       <SettingsSection
-        title="Financial year"
-        description="Reports use it for “this year”, and income and expenses start again at zero each year."
+        title={t('Financial year')}
+        description={t(
+          'Reports use it for “this year”, and income and expenses start again at zero each year.',
+        )}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Year ends on (month)">
+          <Field label={t('Year ends on (month)')}>
             {(id) => (
               <Select
                 id={id}
@@ -78,15 +117,15 @@ export default function AccountingSettings() {
                   });
                 }}
               >
-                {MONTHS.map((name, i) => (
-                  <option key={name} value={i + 1}>
+                {months.map((name, i) => (
+                  <option key={i} value={i + 1}>
                     {name}
                   </option>
                 ))}
               </Select>
             )}
           </Field>
-          <Field label="Day">
+          <Field label={t('Day')}>
             {(id) => (
               <Select
                 id={id}
@@ -97,7 +136,7 @@ export default function AccountingSettings() {
               >
                 {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
                   <option key={d} value={d}>
-                    {d}
+                    {fmt.quantity(d)}
                   </option>
                 ))}
               </Select>
@@ -105,17 +144,21 @@ export default function AccountingSettings() {
           </Field>
         </div>
         <p className="text-sm text-slate-500">
-          Current financial year: {fmt.date(fiscalYearStart(now, settings.fiscalYearEnd))} –{' '}
-          {fmt.date(fiscalYearEnd(now, settings.fiscalYearEnd))}
+          {t('Current financial year: {from} – {to}', {
+            from: isolate(fmt.date(fiscalYearStart(now, settings.fiscalYearEnd))),
+            to: isolate(fmt.date(fiscalYearEnd(now, settings.fiscalYearEnd))),
+          })}
         </p>
       </SettingsSection>
 
       <SettingsSection
-        title="Lock date"
-        description="Once a period is reported or filed, lock it so nothing dated on or before the lock date can be added, changed or deleted."
+        title={t('Lock date')}
+        description={t(
+          'Once a period is reported or filed, lock it so nothing dated on or before the lock date can be added, changed or deleted.',
+        )}
       >
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Lock transactions up to and including">
+          <Field label={t('Lock transactions up to and including')}>
             {(id) => (
               <Input
                 id={id}
@@ -128,23 +171,70 @@ export default function AccountingSettings() {
           </Field>
           {settings.lockDate ? (
             <Button variant="outline" onClick={() => setSettings({ lockDate: null })}>
-              <LockOpen /> Remove lock
+              <LockOpen /> {t('Remove lock')}
             </Button>
           ) : null}
         </div>
         <p className="text-sm text-slate-500">
-          Drafts and quotes stay editable. Issued invoices, bills, credit notes, payments, expenses
-          and journals in the locked period are protected.
+          {t(
+            'Drafts and quotes stay editable. Issued invoices, bills, credit notes, payments, expenses and journals in the locked period are protected.',
+          )}
         </p>
       </SettingsSection>
 
       <SettingsSection
-        title="VAT returns"
-        description="AlmailBooks works out each return from your books. You then submit the figures to the tax office."
+        title={t('Year-end close')}
+        description={t(
+          'At the end of each financial year: the statutory reserve, KFAS, Zakat, NLST and income tax on foreign-owned profits.',
+        )}
+        actions={
+          <ButtonLink to="/year-end" variant="outline" size="sm">
+            <CalendarCheck /> {t('Close a year')}
+          </ButtonLink>
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {LEVY_FIELDS.map((field) => (
+            <Field key={field.key} label={`${t(field.label)} (%)`} hint={t(field.hint)}>
+              {(id) => (
+                <NumberInput
+                  id={id}
+                  value={rates[field.key]}
+                  allowNegative={false}
+                  onValueChange={(value) => setRate(field.key, value)}
+                />
+              )}
+            </Field>
+          ))}
+        </div>
+        <div className="flex flex-col gap-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-start gap-2">
+            <Info className="mt-0.5 size-4 shrink-0 text-slate-400" />
+            {t(
+              'The rates follow Kuwaiti law as of 2026. Check them with your auditor; change them only if the law or your auditor says so.',
+            )}
+          </p>
+          {customRates ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSettings({ levies: { ...DEFAULT_LEVY_RATES } })}
+            >
+              {t('Use the legal rates')}
+            </Button>
+          ) : null}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('VAT returns')}
+        description={t(
+          'AlmailBooks works out each return from your books. You then submit the figures to the tax office.',
+        )}
         actions={
           vat.registered ? (
             <Link to="/vat" className="text-primary-700 text-sm font-medium hover:underline">
-              Open VAT returns
+              {t('Open VAT returns')}
             </Link>
           ) : null
         }
@@ -152,12 +242,12 @@ export default function AccountingSettings() {
         <Switch
           checked={vat.registered}
           onChange={(registered) => setVat({ registered })}
-          label="Registered for VAT"
-          description="Shows VAT returns for this company."
+          label={t('Registered for VAT')}
+          description={t('Shows VAT returns for this company. Kuwait has no VAT.')}
         />
         {vat.registered ? (
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Return">
+            <Field label={t('Return')}>
               {(id) => (
                 <Select
                   id={id}
@@ -166,13 +256,13 @@ export default function AccountingSettings() {
                 >
                   {VAT_FORMATS.map((f) => (
                     <option key={f.value} value={f.value}>
-                      {f.label}
+                      {t(f.label)}
                     </option>
                   ))}
                 </Select>
               )}
             </Field>
-            <Field label="You file">
+            <Field label={t('You file')}>
               {(id) => (
                 <Select
                   id={id}
@@ -181,13 +271,16 @@ export default function AccountingSettings() {
                     setVat({ frequency: e.target.value as VatSettings['frequency'] })
                   }
                 >
-                  <option value="quarterly">Every quarter</option>
-                  <option value="monthly">Every month</option>
+                  <option value="quarterly">{t('Every quarter')}</option>
+                  <option value="monthly">{t('Every month')}</option>
                 </Select>
               )}
             </Field>
             {vat.frequency === 'quarterly' ? (
-              <Field label="Your quarters end in" hint="As shown on your VAT registration.">
+              <Field
+                label={t('Your quarters end in')}
+                hint={t('As shown on your VAT registration.')}
+              >
                 {(id) => (
                   <Select
                     id={id}
@@ -196,7 +289,7 @@ export default function AccountingSettings() {
                   >
                     {STAGGERS.map((s) => (
                       <option key={s.startMonth} value={s.startMonth}>
-                        {s.label}
+                        {t(s.label)}
                       </option>
                     ))}
                   </Select>
@@ -204,7 +297,7 @@ export default function AccountingSettings() {
               </Field>
             ) : null}
             {vat.format === 'ae' ? (
-              <Field label="Emirate" hint="Where the business is established.">
+              <Field label={t('Emirate')} hint={t('Where the business is established.')}>
                 {(id) => (
                   <Select
                     id={id}
@@ -225,11 +318,16 @@ export default function AccountingSettings() {
       </SettingsSection>
 
       <SettingsSection
-        title="Chart of accounts"
-        description={`Started from the ${CHART_TEMPLATES[settings.template].name} chart. Rename accounts or add new ones in the chart of accounts.`}
+        title={t('Chart of accounts')}
+        description={t(
+          'Started from the {chart} chart. Rename accounts or add new ones in the chart of accounts.',
+          {
+            chart: t(TEMPLATE_NAMES[settings.template] ?? CHART_TEMPLATES[settings.template].name),
+          },
+        )}
         actions={
           <Link to="/accounts" className="text-primary-700 text-sm font-medium hover:underline">
-            Open chart of accounts
+            {t('Open chart of accounts')}
           </Link>
         }
       >
@@ -238,12 +336,12 @@ export default function AccountingSettings() {
             const account = accounts?.find((a) => a.id === roles[role]);
             return (
               <div key={role} className="flex items-center justify-between gap-4 py-2">
-                <span className="text-slate-600">{ROLE_LABELS[role]}</span>
-                <span className="font-medium text-slate-900">
+                <span className="text-slate-600">{t(ROLE_LABELS[role]!)}</span>
+                <span className="text-end font-medium text-slate-900">
                   {account ? (
                     <>
                       <span className="tabular me-2 text-slate-400">{account.code}</span>
-                      {account.name}
+                      {localName(account)}
                     </>
                   ) : (
                     <span className="text-slate-400">—</span>

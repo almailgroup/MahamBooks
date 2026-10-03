@@ -1,30 +1,43 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { AlertTriangle, CheckCircle2, Download } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { db } from '@/db/db';
 import type { Account, ISODate } from '@/db/types';
-import { useCompany, useFormat } from '@/app/company';
+import { accountingSettings } from '@/db/chart-setup';
+import { useCompany } from '@/app/company';
 import { useLedger } from '@/features/accounting/use-ledger';
 import { sourceLink } from '@/features/accounting/source-link';
+import {
+  buildStatement,
+  modelToCsv,
+  type ReportModel,
+  type StatementData,
+  type StatementId,
+} from '@/features/reports/model';
+import { ReportDocument, statementFigure } from '@/features/reports/report-document';
+import { useReportText } from '@/features/reports/report-language';
+import {
+  ExportButton,
+  PrintButton,
+  ReportLanguageToggle,
+  usePrint,
+} from '@/features/reports/report-toolbar';
 import { addDaysISO, parseISODate, toISODate, today } from '@/lib/dates';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { downloadCsv } from '@/lib/csv';
 import { presetRange } from '@/lib/reports';
 import type { LedgerLine } from '@/lib/accounting/ledger';
 import {
-  balanceSheet,
   fiscalYearEnd,
   fiscalYearStart,
   generalLedger,
-  profitAndLoss,
-  trialBalance,
   type DateRange,
   type FiscalYearEnd,
-  type StatementSection,
 } from '@/lib/accounting/statements';
-import { cn } from '@/lib/cn';
-import { Button } from '@/components/ui/button';
+import { msg, t } from '@/i18n';
 import { Badge, Card, Spinner } from '@/components/ui/misc';
-import { Input, Select } from '@/components/ui/form';
+import { Checkbox, Input, Select } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 
 /* -------------------------------------------------------------------------- */
@@ -41,13 +54,13 @@ type PeriodPreset =
   | 'custom';
 
 const PERIODS: { value: PeriodPreset; label: string }[] = [
-  { value: 'this-year', label: 'This financial year' },
-  { value: 'last-year', label: 'Last financial year' },
-  { value: 'this-quarter', label: 'This quarter' },
-  { value: 'last-quarter', label: 'Last quarter' },
-  { value: 'this-month', label: 'This month' },
-  { value: 'last-month', label: 'Last month' },
-  { value: 'custom', label: 'Custom dates' },
+  { value: 'this-year', label: msg('This financial year') },
+  { value: 'last-year', label: msg('Last financial year') },
+  { value: 'this-quarter', label: msg('This quarter') },
+  { value: 'last-quarter', label: msg('Last quarter') },
+  { value: 'this-month', label: msg('This month') },
+  { value: 'last-month', label: msg('Last month') },
+  { value: 'custom', label: msg('Custom dates') },
 ];
 
 function periodRange(preset: PeriodPreset, yearEnd: FiscalYearEnd, custom: DateRange): DateRange {
@@ -66,14 +79,15 @@ function periodRange(preset: PeriodPreset, yearEnd: FiscalYearEnd, custom: DateR
   }
 }
 
-type AsOfPreset = 'today' | 'last-month' | 'last-quarter' | 'last-year' | 'custom';
+type AsOfPreset = 'today' | 'last-month' | 'last-quarter' | 'last-year' | 'year-end' | 'custom';
 
 const AS_OF: { value: AsOfPreset; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'last-month', label: 'End of last month' },
-  { value: 'last-quarter', label: 'End of last quarter' },
-  { value: 'last-year', label: 'End of last financial year' },
-  { value: 'custom', label: 'Custom date' },
+  { value: 'today', label: msg('Today') },
+  { value: 'last-month', label: msg('End of last month') },
+  { value: 'last-quarter', label: msg('End of last quarter') },
+  { value: 'year-end', label: msg('End of this financial year') },
+  { value: 'last-year', label: msg('End of last financial year') },
+  { value: 'custom', label: msg('Custom date') },
 ];
 
 function asOfDate(preset: AsOfPreset, yearEnd: FiscalYearEnd, custom: ISODate): ISODate {
@@ -85,6 +99,8 @@ function asOfDate(preset: AsOfPreset, yearEnd: FiscalYearEnd, custom: ISODate): 
       return presetRange('last-month', now).to;
     case 'last-quarter':
       return presetRange('last-quarter', now).to;
+    case 'year-end':
+      return fiscalYearEnd(now, yearEnd);
     case 'last-year':
       return addDaysISO(fiscalYearStart(now, yearEnd), -1);
     case 'custom':
@@ -108,34 +124,22 @@ function usePeriod(yearEnd: FiscalYearEnd, initial: { preset: PeriodPreset; cust
 function useAsOf(yearEnd: FiscalYearEnd) {
   const [preset, setPreset] = useState<AsOfPreset>('today');
   const [custom, setCustom] = useState(today());
-  const asOf = asOfDate(preset, yearEnd, custom);
-  return { preset, setPreset, custom, setCustom, asOf };
+  return { preset, setPreset, custom, setCustom, asOf: asOfDate(preset, yearEnd, custom) };
 }
 
-const CALENDAR_YEAR: FiscalYearEnd = { month: 12, day: 31 };
-
-function PeriodPicker({
-  preset,
-  onPreset,
-  custom,
-  onCustom,
-}: {
-  preset: PeriodPreset;
-  onPreset: (p: PeriodPreset) => void;
-  custom: DateRange;
-  onCustom: (r: DateRange) => void;
-}) {
+function PeriodPicker({ period }: { period: ReturnType<typeof usePeriod> }) {
+  const { preset, setPreset, custom, setCustom } = period;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Select
-        aria-label="Period"
+        aria-label={t('Period')}
         value={preset}
-        onChange={(e) => onPreset(e.target.value as PeriodPreset)}
+        onChange={(e) => setPreset(e.target.value as PeriodPreset)}
         className="w-auto"
       >
         {PERIODS.map((p) => (
           <option key={p.value} value={p.value}>
-            {p.label}
+            {t(p.label)}
           </option>
         ))}
       </Select>
@@ -143,17 +147,17 @@ function PeriodPicker({
         <>
           <Input
             type="date"
-            aria-label="From"
+            aria-label={t('From')}
             value={custom.from}
-            onChange={(e) => onCustom({ ...custom, from: e.target.value || custom.from })}
+            onChange={(e) => setCustom({ ...custom, from: e.target.value || custom.from })}
             className="w-auto"
           />
           <span className="text-slate-400">–</span>
           <Input
             type="date"
-            aria-label="To"
+            aria-label={t('To')}
             value={custom.to}
-            onChange={(e) => onCustom({ ...custom, to: e.target.value || custom.to })}
+            onChange={(e) => setCustom({ ...custom, to: e.target.value || custom.to })}
             className="w-auto"
           />
         </>
@@ -162,37 +166,28 @@ function PeriodPicker({
   );
 }
 
-function AsOfPicker({
-  preset,
-  onPreset,
-  custom,
-  onCustom,
-}: {
-  preset: AsOfPreset;
-  onPreset: (p: AsOfPreset) => void;
-  custom: ISODate;
-  onCustom: (d: ISODate) => void;
-}) {
+function AsOfPicker({ picker }: { picker: ReturnType<typeof useAsOf> }) {
+  const { preset, setPreset, custom, setCustom } = picker;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Select
-        aria-label="As of"
+        aria-label={t('As at')}
         value={preset}
-        onChange={(e) => onPreset(e.target.value as AsOfPreset)}
+        onChange={(e) => setPreset(e.target.value as AsOfPreset)}
         className="w-auto"
       >
         {AS_OF.map((p) => (
           <option key={p.value} value={p.value}>
-            {p.label}
+            {t(p.label)}
           </option>
         ))}
       </Select>
       {preset === 'custom' ? (
         <Input
           type="date"
-          aria-label="Date"
+          aria-label={t('Date')}
           value={custom}
-          onChange={(e) => onCustom(e.target.value || custom)}
+          onChange={(e) => setCustom(e.target.value || custom)}
           className="w-auto"
         />
       ) : null}
@@ -204,18 +199,33 @@ function AsOfPicker({
 /* Shared pieces                                                              */
 /* -------------------------------------------------------------------------- */
 
-function useMinorMoney() {
+/** The books, the fixed asset register and depreciation runs, kept up to date. */
+export function useStatementData(): StatementData | undefined {
   const company = useCompany();
-  const fmt = useFormat();
-  const p = currencyPrecision(company.currency);
-  return {
-    money: (minor: number) => fmt.money(fromMinor(minor, p), company.currency),
-    major: (minor: number) => fromMinor(minor, p),
-  };
+  const ledger = useLedger();
+  const assets = useLiveQuery(
+    () => db.assets.where('companyId').equals(company.id).toArray(),
+    [company.id],
+  );
+  const runs = useLiveQuery(
+    () => db.depreciationRuns.where('companyId').equals(company.id).toArray(),
+    [company.id],
+  );
+  const lines = ledger?.lines;
+  const accounts = ledger?.accounts;
+  const journals = ledger?.journals;
+  const problems = ledger?.problems;
+  return useMemo(
+    () =>
+      lines && accounts && journals && problems && assets && runs
+        ? { company, ledger: { lines, accounts, journals, problems }, assets, runs }
+        : undefined,
+    [company, lines, accounts, journals, problems, assets, runs],
+  );
 }
 
-function ledgerLink(account: Account, range?: DateRange) {
-  const params = new URLSearchParams({ account: account.id });
+export function ledgerLink(accountId: string, range?: DateRange) {
+  const params = new URLSearchParams({ account: accountId });
   if (range) {
     params.set('from', range.from);
     params.set('to', range.to);
@@ -223,26 +233,11 @@ function ledgerLink(account: Account, range?: DateRange) {
   return `/reports/general-ledger?${params.toString()}`;
 }
 
-function Toolbar({ children, onExport }: { children: ReactNode; onExport?: () => void }) {
+function Toolbar({ children, actions }: { children: ReactNode; actions: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-      {onExport ? (
-        <Button variant="outline" size="sm" onClick={onExport}>
-          <Download /> Export CSV
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
-function ReportTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  const company = useCompany();
-  return (
-    <div className="px-5 pt-6 pb-2 text-center">
-      <p className="text-sm text-slate-500">{company.name}</p>
-      <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
-      <p className="text-sm text-slate-500">{subtitle}</p>
+    <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">{children}</div>
+      <div className="flex flex-wrap items-center gap-2">{actions}</div>
     </div>
   );
 }
@@ -253,7 +248,7 @@ function Problems() {
   return (
     <div className="mx-5 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
       <p className="flex items-center gap-2 font-medium">
-        <AlertTriangle className="size-4" /> Some transactions need attention
+        <AlertTriangle className="size-4" /> {t('Some transactions need attention')}
       </p>
       <ul className="mt-1 space-y-0.5">
         {ledger.problems.slice(0, 8).map((p) => (
@@ -269,384 +264,148 @@ function Problems() {
   );
 }
 
-function SectionRows({
-  section,
-  range,
-  totalLabel,
-  hideTitle,
-}: {
-  section: StatementSection;
-  range?: DateRange;
-  totalLabel?: string;
-  hideTitle?: boolean;
-}) {
-  const { money } = useMinorMoney();
-  return (
-    <>
-      {!hideTitle ? (
-        <tr>
-          <td colSpan={2} className="px-5 pt-4 pb-1 text-sm font-semibold text-slate-900">
-            {section.label}
-          </td>
-        </tr>
-      ) : null}
-      {section.rows.length === 0 ? (
-        <tr>
-          <td colSpan={2} className="px-5 py-1.5 ps-8 text-sm text-slate-400">
-            No transactions
-          </td>
-        </tr>
-      ) : (
-        section.rows.map((r) => (
-          <tr key={r.account.id} className="hover:bg-slate-50">
-            <td className="py-1.5 ps-8 pe-4 text-sm">
-              <Link
-                to={ledgerLink(r.account, range)}
-                className="hover:text-primary-700 text-slate-700"
-              >
-                <span className="tabular me-2 text-slate-400">{r.account.code}</span>
-                {r.account.name}
-              </Link>
-            </td>
-            <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
-              {money(r.amount)}
-            </td>
-          </tr>
-        ))
-      )}
-      <TotalRow
-        label={totalLabel ?? `Total ${section.label.toLowerCase()}`}
-        amount={section.total}
-      />
-    </>
-  );
-}
-
-function TotalRow({
-  label,
-  amount,
-  strong,
-  tone,
-}: {
-  label: string;
-  amount: number;
-  strong?: boolean;
-  tone?: 'profit';
-}) {
-  const { money } = useMinorMoney();
-  return (
-    <tr
-      className={cn(
-        strong ? 'border-y-2 border-slate-200 bg-slate-50' : 'border-t border-slate-100',
-      )}
-    >
-      <td
-        className={cn(
-          'px-5 py-2 text-sm',
-          strong ? 'font-semibold text-slate-900' : 'font-medium text-slate-700',
-        )}
-      >
-        {label}
-      </td>
-      <td
-        className={cn(
-          'tabular px-5 py-2 text-end text-sm',
-          strong ? 'font-semibold' : 'font-medium',
-          tone === 'profit' ? (amount < 0 ? 'text-red-600' : 'text-emerald-700') : 'text-slate-900',
-        )}
-      >
-        {money(amount)}
-      </td>
-    </tr>
-  );
-}
+/** Figure of the row with `key` in the first column. */
+const valueOf = (model: ReportModel, key: string) =>
+  model.rows.find((r) => r.key === key)?.values[0] ?? 0;
 
 /* -------------------------------------------------------------------------- */
-/* Profit and loss                                                            */
+/* Statements                                                                 */
 /* -------------------------------------------------------------------------- */
 
-export function ProfitAndLossReport() {
-  const ledger = useLedger();
-  const fmt = useFormat();
-  const { major } = useMinorMoney();
-  const period = usePeriod(ledger?.yearEnd ?? CALENDAR_YEAR, { preset: 'this-year' });
+const AS_OF_REPORTS: StatementId[] = ['balance-sheet', 'trial-balance'];
+const COMPARABLE: StatementId[] = [
+  'balance-sheet',
+  'profit-and-loss',
+  'changes-in-equity',
+  'cash-flow',
+];
+const DETAILED: StatementId[] = ['balance-sheet', 'profit-and-loss'];
+
+/**
+ * The IFRS statements, the trial balance and the fixed asset schedule: with
+ * the comparative period, accounts under each caption, and the report in
+ * English, Arabic or both, on screen, printed or exported.
+ */
+export function StatementReport({ id }: { id: StatementId }) {
+  const company = useCompany();
+  const data = useStatementData();
+  const yearEnd = accountingSettings(company).fiscalYearEnd;
+  const period = usePeriod(yearEnd, { preset: 'this-year' });
+  const asOf = useAsOf(yearEnd);
+  const [compare, setCompare] = useState(true);
+  const [detail, setDetail] = useState(false);
+  const { primary, secondary, ready } = useReportText();
+  const { print, portal } = usePrint();
   const range = period.range;
-  const pl = useMemo(
-    () => (ledger ? profitAndLoss(ledger.lines, ledger.accounts, range) : null),
-    [ledger, range],
+  const date = asOf.asOf;
+  const model = useMemo(
+    () =>
+      data
+        ? buildStatement(id, data, {
+            range,
+            asOf: date,
+            compare: compare && COMPARABLE.includes(id),
+            detail: detail || !DETAILED.includes(id),
+          })
+        : null,
+    [data, id, range, date, compare, detail],
   );
-  if (!ledger || !pl) return <Spinner className="py-24" label="Loading…" />;
+  if (!model || !ready) return <Spinner className="py-24" label={t('Loading…')} />;
 
-  const sections = [
-    pl.income,
-    pl.costOfSales,
-    pl.otherIncome,
-    pl.expenses,
-    pl.depreciation,
-    pl.otherExpenses,
-  ];
-  const exportCsv = () =>
-    downloadCsv(
-      `profit-and-loss-${range.from}_${range.to}`,
-      ['Section', 'Code', 'Account', 'Amount'],
-      [
-        ...sections.flatMap((s) =>
-          s.rows.map((r) => [s.label, r.account.code, r.account.name, major(r.amount)]),
-        ),
-        ['Gross profit', '', '', major(pl.grossProfit)],
-        ['Net profit', '', '', major(pl.netProfit)],
-      ],
-    );
+  const p = currencyPrecision(company.currency);
+  const exportCsv = () => {
+    const { headers, rows } = modelToCsv(model, p, primary, secondary);
+    const stamp = AS_OF_REPORTS.includes(id) ? date : `${range.from}_${range.to}`;
+    downloadCsv(`${model.file}-${stamp}`, headers, rows);
+  };
+  const linkRange = AS_OF_REPORTS.includes(id)
+    ? { from: id === 'trial-balance' ? fiscalYearStart(date, yearEnd) : '0000-01-01', to: date }
+    : range;
+
+  let status: ReactNode = null;
+  if (id === 'balance-sheet') {
+    const difference =
+      valueOf(model, 'total-assets') - valueOf(model, 'total-equity-and-liabilities');
+    status =
+      difference === 0 ? (
+        <Badge tone="green">
+          <CheckCircle2 className="size-3" /> {t('Balanced')}
+        </Badge>
+      ) : (
+        <Badge tone="red">
+          {t('Out of balance by {amount}', {
+            amount: statementFigure(difference, 'ledger', primary),
+          })}
+        </Badge>
+      );
+  } else if (id === 'cash-flow') {
+    const difference =
+      valueOf(model, 'operating-total') +
+      valueOf(model, 'investing-total') +
+      valueOf(model, 'financing-total') -
+      valueOf(model, 'net-change');
+    status =
+      difference === 0 ? (
+        <Badge tone="green">
+          <CheckCircle2 className="size-3" /> {t('Agrees with cash and bank')}
+        </Badge>
+      ) : (
+        <Badge tone="red">{t('Does not agree with cash and bank')}</Badge>
+      );
+  } else if (id === 'trial-balance') {
+    const totals = model.rows.at(-1)?.values ?? [];
+    status =
+      totals[0] === totals[1] ? (
+        <Badge tone="green">
+          <CheckCircle2 className="size-3" /> {t('Balanced')}
+        </Badge>
+      ) : null;
+  }
 
   return (
     <Card>
-      <Toolbar onExport={exportCsv}>
-        <PeriodPicker
-          preset={period.preset}
-          onPreset={period.setPreset}
-          custom={period.custom}
-          onCustom={period.setCustom}
-        />
-      </Toolbar>
-      <Problems />
-      <ReportTitle
-        title="Profit and loss"
-        subtitle={`${fmt.date(range.from)} – ${fmt.date(range.to)}`}
-      />
-      <table className="w-full">
-        <tbody>
-          <SectionRows section={pl.income} range={range} />
-          {pl.costOfSales.rows.length ? (
-            <SectionRows section={pl.costOfSales} range={range} />
-          ) : null}
-          <TotalRow label="Gross profit" amount={pl.grossProfit} strong />
-          {pl.otherIncome.rows.length ? (
-            <SectionRows section={pl.otherIncome} range={range} />
-          ) : null}
-          <SectionRows section={pl.expenses} range={range} />
-          {pl.depreciation.rows.length ? (
-            <SectionRows section={pl.depreciation} range={range} />
-          ) : null}
-          {pl.otherExpenses.rows.length ? (
-            <SectionRows section={pl.otherExpenses} range={range} />
-          ) : null}
-          <TotalRow
-            label={pl.netProfit < 0 ? 'Net loss' : 'Net profit'}
-            amount={pl.netProfit}
-            strong
-            tone="profit"
-          />
-        </tbody>
-      </table>
-      <div className="h-4" />
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Balance sheet                                                              */
-/* -------------------------------------------------------------------------- */
-
-export function BalanceSheetReport() {
-  const ledger = useLedger();
-  const fmt = useFormat();
-  const { major, money } = useMinorMoney();
-  const picker = useAsOf(ledger?.yearEnd ?? CALENDAR_YEAR);
-  const asOf = picker.asOf;
-  const bs = useMemo(
-    () => (ledger ? balanceSheet(ledger.lines, ledger.accounts, asOf, ledger.yearEnd) : null),
-    [ledger, asOf],
-  );
-  if (!ledger || !bs) return <Spinner className="py-24" label="Loading…" />;
-
-  const range = { from: '0000-01-01', to: asOf };
-  const exportCsv = () =>
-    downloadCsv(
-      `balance-sheet-${asOf}`,
-      ['Section', 'Code', 'Account', 'Amount'],
-      [
-        ...[...bs.assets, ...bs.liabilities, bs.equity].flatMap((s) =>
-          s.rows.map((r) => [s.label, r.account.code, r.account.name, major(r.amount)]),
-        ),
-        ['Equity', '', 'Current year earnings', major(bs.currentYearEarnings)],
-        ['Equity', '', "Previous years' earnings", major(bs.previousYearsEarnings)],
-        ['Total assets', '', '', major(bs.totalAssets)],
-        ['Total liabilities and equity', '', '', major(bs.totalLiabilities + bs.totalEquity)],
-      ],
-    );
-
-  return (
-    <Card>
-      <Toolbar onExport={exportCsv}>
-        <AsOfPicker
-          preset={picker.preset}
-          onPreset={picker.setPreset}
-          custom={picker.custom}
-          onCustom={picker.setCustom}
-        />
-        {bs.difference === 0 ? (
-          <Badge tone="green">
-            <CheckCircle2 className="size-3" /> Balanced
-          </Badge>
+      <Toolbar
+        actions={
+          <>
+            <ReportLanguageToggle />
+            <PrintButton onClick={() => print(<ReportDocument model={model} mode="print" />)} />
+            <ExportButton onClick={exportCsv} />
+          </>
+        }
+      >
+        {AS_OF_REPORTS.includes(id) ? (
+          <AsOfPicker picker={asOf} />
         ) : (
-          <Badge tone="red">Out of balance by {money(bs.difference)}</Badge>
+          <PeriodPicker period={period} />
         )}
+        {COMPARABLE.includes(id) ? (
+          <Checkbox
+            checked={compare}
+            onChange={(e) => setCompare(e.target.checked)}
+            label={t('Compare with last year')}
+          />
+        ) : null}
+        {DETAILED.includes(id) ? (
+          <Checkbox
+            checked={detail}
+            onChange={(e) => setDetail(e.target.checked)}
+            label={t('Show accounts')}
+          />
+        ) : null}
+        {status}
       </Toolbar>
       <Problems />
-      <ReportTitle title="Balance sheet" subtitle={`As of ${fmt.date(asOf)}`} />
-      <table className="w-full">
-        <tbody>
-          <tr>
-            <td
-              colSpan={2}
-              className="px-5 pt-3 text-xs font-semibold tracking-wide text-slate-500 uppercase"
-            >
-              Assets
-            </td>
-          </tr>
-          {bs.assets
-            .filter((s) => s.rows.length > 0 || s.key === 'cash' || s.key === 'receivable')
-            .map((s) => (
-              <SectionRows key={s.key} section={s} range={range} />
-            ))}
-          <TotalRow label="Total assets" amount={bs.totalAssets} strong />
-          <tr>
-            <td
-              colSpan={2}
-              className="px-5 pt-6 text-xs font-semibold tracking-wide text-slate-500 uppercase"
-            >
-              Liabilities
-            </td>
-          </tr>
-          {bs.liabilities
-            .filter((s) => s.rows.length > 0 || s.key === 'current-liabilities')
-            .map((s) => (
-              <SectionRows key={s.key} section={s} range={range} />
-            ))}
-          <TotalRow label="Total liabilities" amount={bs.totalLiabilities} strong />
-          <tr>
-            <td
-              colSpan={2}
-              className="px-5 pt-6 text-xs font-semibold tracking-wide text-slate-500 uppercase"
-            >
-              Equity
-            </td>
-          </tr>
-          <SectionRows
-            section={bs.equity}
-            range={range}
-            hideTitle
-            totalLabel="Capital and reserves"
-          />
-          <tr className="hover:bg-slate-50">
-            <td className="py-1.5 ps-8 pe-4 text-sm text-slate-700">Current year earnings</td>
-            <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
-              {money(bs.currentYearEarnings)}
-            </td>
-          </tr>
-          {bs.previousYearsEarnings !== 0 ? (
-            <tr className="hover:bg-slate-50">
-              <td className="py-1.5 ps-8 pe-4 text-sm text-slate-700">
-                Previous years&apos; earnings
-              </td>
-              <td className="tabular px-5 py-1.5 text-end text-sm text-slate-700">
-                {money(bs.previousYearsEarnings)}
-              </td>
-            </tr>
-          ) : null}
-          <TotalRow label="Total equity" amount={bs.totalEquity} />
-          <TotalRow
-            label="Total liabilities and equity"
-            amount={bs.totalLiabilities + bs.totalEquity}
-            strong
-          />
-        </tbody>
-      </table>
+      <ReportDocument model={model} accountLink={(accountId) => ledgerLink(accountId, linkRange)} />
+      {id === 'asset-schedule' && model.rows.length <= 1 ? (
+        <p className="px-5 py-6 text-center text-sm text-slate-500">
+          {t('No fixed assets in this period.')}{' '}
+          <Link to="/assets" className="text-primary-700 font-medium hover:underline">
+            {t('Open the fixed asset register')}
+          </Link>
+        </p>
+      ) : null}
       <div className="h-4" />
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Trial balance                                                              */
-/* -------------------------------------------------------------------------- */
-
-export function TrialBalanceReport() {
-  const ledger = useLedger();
-  const fmt = useFormat();
-  const { money, major } = useMinorMoney();
-  const yearEnd = ledger?.yearEnd ?? CALENDAR_YEAR;
-  const picker = useAsOf(yearEnd);
-  const asOf = picker.asOf;
-  const tb = useMemo(
-    () => (ledger ? trialBalance(ledger.lines, ledger.accounts, asOf, ledger.yearEnd) : null),
-    [ledger, asOf],
-  );
-  if (!ledger || !tb) return <Spinner className="py-24" label="Loading…" />;
-
-  const exportCsv = () =>
-    downloadCsv(
-      `trial-balance-${asOf}`,
-      ['Code', 'Account', 'Debit', 'Credit'],
-      [
-        ...tb.rows.map((r) => [r.account?.code ?? '', r.label, major(r.debit), major(r.credit)]),
-        ['', 'Total', major(tb.totalDebit), major(tb.totalCredit)],
-      ],
-    );
-  const range = { from: fiscalYearStart(asOf, yearEnd), to: asOf };
-
-  return (
-    <Card>
-      <Toolbar onExport={exportCsv}>
-        <AsOfPicker
-          preset={picker.preset}
-          onPreset={picker.setPreset}
-          custom={picker.custom}
-          onCustom={picker.setCustom}
-        />
-      </Toolbar>
-      <Problems />
-      <ReportTitle title="Trial balance" subtitle={`As of ${fmt.date(asOf)}`} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="border-y border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
-            <tr>
-              <th className="px-5 py-2.5 text-start font-medium">Account</th>
-              <th className="px-5 py-2.5 text-end font-medium">Debit</th>
-              <th className="px-5 py-2.5 text-end font-medium">Credit</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {tb.rows.map((r) => (
-              <tr key={r.account?.id ?? r.label} className="hover:bg-slate-50">
-                <td className="px-5 py-2">
-                  {r.account ? (
-                    <Link
-                      to={ledgerLink(r.account, range)}
-                      className="hover:text-primary-700 text-slate-700"
-                    >
-                      <span className="tabular me-2 text-slate-400">{r.account.code}</span>
-                      {r.account.name}
-                    </Link>
-                  ) : (
-                    <span className="text-slate-700">{r.label}</span>
-                  )}
-                </td>
-                <td className="tabular px-5 py-2 text-end">{r.debit ? money(r.debit) : ''}</td>
-                <td className="tabular px-5 py-2 text-end">{r.credit ? money(r.credit) : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-y-2 border-slate-200 bg-slate-50 font-semibold text-slate-900">
-              <td className="px-5 py-2.5">Total</td>
-              <td className="tabular px-5 py-2.5 text-end">{money(tb.totalDebit)}</td>
-              <td className="tabular px-5 py-2.5 text-end">{money(tb.totalCredit)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <div className="h-4" />
+      {portal}
     </Card>
   );
 }
@@ -657,39 +416,44 @@ export function TrialBalanceReport() {
 
 export function GeneralLedgerReport() {
   const ledger = useLedger();
-  const fmt = useFormat();
-  const { money, major } = useMinorMoney();
+  const company = useCompany();
+  const { primary, secondary, ready } = useReportText();
   const [params, setParams] = useSearchParams();
   const accountId = params.get('account') ?? '';
   const fromParam = params.get('from');
   const toParam = params.get('to');
-  const period = usePeriod(ledger?.yearEnd ?? CALENDAR_YEAR, {
+  const period = usePeriod(accountingSettings(company).fiscalYearEnd, {
     preset: fromParam && toParam ? 'custom' : 'this-year',
     custom: fromParam && toParam ? { from: fromParam, to: toParam } : undefined,
   });
   const range = period.range;
+  const lines = ledger?.lines;
+  const accounts = ledger?.accounts;
+  const yearEnd = ledger?.yearEnd;
   const data = useMemo(() => {
-    if (!ledger) return null;
+    if (!lines || !accounts || !yearEnd) return null;
     // "From the beginning" links use a placeholder start date.
-    const shown =
-      range.from === '0000-01-01' ? { ...range, from: firstLineDate(ledger.lines) } : range;
+    const shown = range.from === '0000-01-01' ? { ...range, from: firstLineDate(lines) } : range;
     return {
       shown,
-      activity: generalLedger(
-        ledger.lines,
-        ledger.accounts,
-        shown,
-        ledger.yearEnd,
-        accountId || undefined,
-      ),
+      activity: generalLedger(lines, accounts, shown, yearEnd, accountId || undefined),
     };
-  }, [ledger, range, accountId]);
-  if (!ledger || !data) return <Spinner className="py-24" label="Loading…" />;
+  }, [lines, accounts, yearEnd, range, accountId]);
+  if (!ledger || !data || !ready) return <Spinner className="py-24" label={t('Loading…')} />;
   const { shown: shownRange, activity } = data;
+  const p = currencyPrecision(company.currency);
+  const major = (minor: number) => fromMinor(minor, p);
+  const money = (minor: number) => primary.amount(minor);
+  const accountName = (a: Account) =>
+    secondary ? `${primary.name(a)} · ${secondary.name(a)}` : primary.name(a);
 
   const options = [...ledger.accounts]
     .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
-    .map((a) => ({ value: a.id, label: `${a.code} ${a.name}` }));
+    .map((a) => ({
+      value: a.id,
+      label: `${a.code} ${primary.name(a)}`,
+      keywords: `${a.name} ${a.nameAr ?? ''}`,
+    }));
   const setAccount = (id: string) => {
     const next = new URLSearchParams(params);
     if (id) next.set('account', id);
@@ -699,13 +463,21 @@ export function GeneralLedgerReport() {
   const exportCsv = () =>
     downloadCsv(
       `general-ledger-${shownRange.from}_${shownRange.to}`,
-      ['Account', 'Date', 'Number', 'Description', 'Debit', 'Credit', 'Balance'],
+      [
+        primary.t(msg('Account')),
+        primary.t(msg('Date')),
+        primary.t(msg('Number')),
+        primary.t(msg('Description')),
+        primary.t(msg('Debit')),
+        primary.t(msg('Credit')),
+        primary.t(msg('Balance')),
+      ],
       activity.flatMap((a) => [
         [
-          `${a.account.code} ${a.account.name}`,
+          `${a.account.code} ${accountName(a.account)}`,
           shownRange.from,
           '',
-          'Opening balance',
+          primary.t(msg('Opening balance')),
           '',
           '',
           major(a.opening),
@@ -724,43 +496,55 @@ export function GeneralLedgerReport() {
 
   return (
     <Card>
-      <Toolbar onExport={exportCsv}>
-        <div className="w-64">
+      <Toolbar
+        actions={
+          <>
+            <ReportLanguageToggle />
+            <ExportButton onClick={exportCsv} />
+          </>
+        }
+      >
+        <div className="w-full sm:w-64">
           <Combobox
             value={accountId || null}
             onChange={setAccount}
-            options={[{ value: '', label: 'All accounts' }, ...options]}
-            placeholder="All accounts"
-            searchPlaceholder="Search accounts…"
+            options={[{ value: '', label: t('All accounts') }, ...options]}
+            placeholder={t('All accounts')}
+            searchPlaceholder={t('Search accounts…')}
+            ariaLabel={t('Account')}
           />
         </div>
-        <PeriodPicker
-          preset={period.preset}
-          onPreset={period.setPreset}
-          custom={period.custom}
-          onCustom={period.setCustom}
-        />
+        <PeriodPicker period={period} />
       </Toolbar>
       <Problems />
-      <ReportTitle
-        title="General ledger"
-        subtitle={`${fmt.date(shownRange.from)} – ${fmt.date(shownRange.to)}`}
-      />
+      <div className="px-5 pt-6 pb-2 text-center" dir={primary.dir} lang={primary.language}>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+          {primary.t(msg('General ledger'))}
+        </h2>
+        <p className="text-sm text-slate-500">
+          {primary.t(msg('For the period from {from} to {to}'), {
+            from: primary.date(shownRange.from),
+            to: primary.date(shownRange.to),
+          })}
+        </p>
+      </div>
       {activity.length === 0 ? (
         <p className="px-5 py-10 text-center text-sm text-slate-500">
-          No transactions in this period.
+          {t('No transactions in this period.')}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-y border-slate-100 bg-slate-50/60 text-xs tracking-wide text-slate-500 uppercase">
+        <div className="overflow-x-auto" dir={primary.dir} lang={primary.language}>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="border-y border-slate-100 bg-slate-50/60 text-xs text-slate-500">
               <tr>
-                <th className="px-5 py-2.5 text-start font-medium">Date</th>
-                <th className="px-3 py-2.5 text-start font-medium">Number</th>
-                <th className="px-3 py-2.5 text-start font-medium">Description</th>
-                <th className="px-3 py-2.5 text-end font-medium">Debit</th>
-                <th className="px-3 py-2.5 text-end font-medium">Credit</th>
-                <th className="px-5 py-2.5 text-end font-medium">Balance</th>
+                <th className="px-5 py-2.5 text-start font-medium">{primary.t(msg('Date'))}</th>
+                <th className="px-3 py-2.5 text-start font-medium">{primary.t(msg('Number'))}</th>
+                <th className="px-3 py-2.5 text-start font-medium">
+                  {primary.t(msg('Description'))}
+                </th>
+                <th className="px-3 py-2.5 text-end font-medium">{primary.t(msg('Debit'))}</th>
+                <th className="px-3 py-2.5 text-end font-medium">{primary.t(msg('Credit'))}</th>
+                <th className="px-5 py-2.5 text-end font-medium">{primary.t(msg('Balance'))}</th>
               </tr>
             </thead>
             {activity.map((a) => (
@@ -768,7 +552,7 @@ export function GeneralLedgerReport() {
                 <tr className="bg-slate-50/40">
                   <td colSpan={5} className="px-5 pt-3 pb-1.5 font-semibold text-slate-900">
                     <span className="tabular me-2 text-slate-400">{a.account.code}</span>
-                    {a.account.name}
+                    {accountName(a.account)}
                   </td>
                   <td className="tabular px-5 pt-3 pb-1.5 text-end text-slate-500">
                     {money(a.opening)}
@@ -777,7 +561,7 @@ export function GeneralLedgerReport() {
                 {a.lines.map((l, i) => (
                   <tr key={`${l.sourceId}-${i}`} className="hover:bg-slate-50">
                     <td className="px-5 py-1.5 whitespace-nowrap text-slate-600">
-                      {fmt.date(l.date)}
+                      {primary.date(l.date)}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <Link
@@ -801,7 +585,7 @@ export function GeneralLedgerReport() {
                 ))}
                 <tr className="text-slate-900">
                   <td colSpan={3} className="px-5 py-2 font-medium">
-                    Closing balance
+                    {primary.t(msg('Closing balance'))}
                   </td>
                   <td className="tabular px-3 py-2 text-end font-medium">{money(a.debit)}</td>
                   <td className="tabular px-3 py-2 text-end font-medium">{money(a.credit)}</td>
@@ -819,8 +603,7 @@ export function GeneralLedgerReport() {
 
 function firstLineDate(lines: LedgerLine[] | undefined): ISODate {
   if (!lines || lines.length === 0) return today();
-  const first = lines[0].date;
   // Start of that month keeps the heading tidy.
-  const d = parseISODate(first);
+  const d = parseISODate(lines[0].date);
   return toISODate(new Date(d.getFullYear(), d.getMonth(), 1));
 }

@@ -53,7 +53,7 @@ export default {
   'Company settings': 'إعدادات الشركة',
   'Default account': 'الحساب الافتراضي',
   '{account} (default)': '{account} (افتراضي)',
-  'Search accounts…': 'ابحث عن حساب…',
+  'Search accounts…': 'ابحث في الحسابات…',
   'Choose a category.': 'اختر الفئة.',
   'Internal, never printed.': 'داخلية، لا تُطبع أبداً.',
 

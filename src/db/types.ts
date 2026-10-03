@@ -240,13 +240,18 @@ export interface ManualJournal {
   /** Set on the entry that closes a VAT return (see VatReturn). */
   vatReturnId?: ID | null;
   /**
-   * What the entry records when it was made by the app: money moved between
-   * two of the company's own accounts, a cheque clearing, or the reversal of
-   * a clearing when the cheque came back.
+   * Set on entries the app makes itself (see JournalKind): transfers between
+   * the company's own accounts, cheque clearings and returns, payroll,
+   * depreciation, fixed assets and year-end entries. Entries owned by another
+   * part of the app can only be changed there.
    */
-  kind?: 'transfer' | 'cheque_clearing' | 'cheque_return';
+  kind?: JournalKind;
   /** Payment the entry belongs to (cheque clearings and their reversals). */
   paymentId?: ID | null;
+  /** Record the entry was made for (fixed asset, depreciation run, year-end close…). */
+  sourceId?: ID | null;
+  /** Entry this one reverses; reversals keep the history instead of deleting it. */
+  reversalOf?: ID | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -262,6 +267,8 @@ export interface AccountingSettings {
   lockDate: ISODate | null;
   /** Missing until VAT returns are set up; see vatSettings(). */
   vat?: VatSettings;
+  /** Kuwaiti levies and statutory reserve rates; missing means the defaults (see levyRates()). */
+  levies?: LevyRates;
 }
 
 export type VatFormat = 'uk' | 'ae' | 'generic';
@@ -850,7 +857,9 @@ export type ActivityEntity =
   | 'bank'
   | 'employee'
   | 'compliance'
-  | 'cheque';
+  | 'cheque'
+  | 'asset'
+  | 'year_end';
 
 export interface Activity {
   id: ID;
@@ -1098,5 +1107,175 @@ export interface PeopleSettings {
   auditFilingMonths: number;
   /** Day of the following month PIFSS contributions are paid by. */
   pifssDueDay: number;
+  updatedAt: Timestamp;
+}
+/* Fixed assets                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a journal made by the app records: money moved between two of the
+ * company's own accounts, cheques clearing or coming back, payroll, monthly
+ * depreciation, buying, opening or disposing of a fixed asset, or closing a
+ * financial year (levies and transfers to reserves).
+ */
+export type JournalKind =
+  | 'transfer'
+  | 'cheque_clearing'
+  | 'cheque_return'
+  | 'payroll'
+  | 'depreciation'
+  | 'asset_purchase'
+  | 'asset_opening'
+  | 'asset_disposal'
+  | 'year_end';
+
+export type DepreciationMethod = 'straight_line' | 'declining_balance';
+
+/**
+ * How the cost of an asset reached the books: a bill line (posted by the
+ * bill), a purchase paid from a money account, an opening balance for an
+ * asset bought before the company used AlmailBooks, or an entry made some
+ * other way (nothing is posted for it).
+ */
+export type AssetSource = 'bill' | 'purchase' | 'opening' | 'existing';
+
+/** Void assets were entered by mistake; their entries are reversed, never deleted. */
+export type AssetStatus = 'active' | 'disposed' | 'void';
+
+/** Sale or scrapping of an asset (company currency). */
+export interface AssetDisposal {
+  date: ISODate;
+  /** Sale price; 0 when the asset was scrapped or written off. */
+  proceeds: number;
+  /** Bank, cash or receivable account the proceeds went into. */
+  depositAccountId: ID | null;
+  /** Depreciation from the last run up to the disposal date. */
+  depreciation: number;
+  /** Gain (positive) or loss (negative) on disposal. */
+  gain: number;
+  journalId: ID;
+  notes: string;
+}
+
+/** An item of property and equipment (or an intangible asset) in the fixed asset register. */
+export interface FixedAsset {
+  id: ID;
+  companyId: ID;
+  /** e.g. "FA-0001". */
+  number: string;
+  name: string;
+  /** Arabic name, shown in the Arabic interface and Arabic reports. */
+  nameAr?: string;
+  description: string;
+  /** Account holding the cost: the asset category. */
+  assetAccountId: ID;
+  accumulatedAccountId: ID;
+  expenseAccountId: ID;
+  purchaseDate: ISODate;
+  /** Depreciation is charged from this date (when the asset was put to use). */
+  depreciationStart: ISODate;
+  /** Company currency. */
+  cost: number;
+  salvageValue: number;
+  usefulLifeMonths: number;
+  method: DepreciationMethod;
+  /** Declining balance: yearly rate in percent; empty means twice the straight-line rate. */
+  decliningRate?: number | null;
+  /** Depreciation charged before the asset was entered here. */
+  openingDepreciation: number;
+  /** Last day the opening depreciation covers. */
+  openingDepreciationDate: ISODate | null;
+  source: AssetSource;
+  /** Bill (and line) the asset was bought on. */
+  billId: ID | null;
+  billLineId: ID | null;
+  vendorId: ID | null;
+  /** Purchase: the bank, cash or card account it was paid from. */
+  paidFromAccountId: ID | null;
+  /** Journal recording the purchase or the opening balance. */
+  journalId: ID | null;
+  location: string;
+  custodian: string;
+  serialNumber: string;
+  notes: string;
+  status: AssetStatus;
+  disposal: AssetDisposal | null;
+  /** Journal that reversed the purchase or opening balance of a void asset. */
+  voidJournalId?: ID | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** A monthly depreciation run: one journal for every asset up to a month end. */
+export interface DepreciationRun {
+  id: ID;
+  companyId: ID;
+  /** Month, `yyyy-MM`. */
+  period: string;
+  /** Last day of the month: the date of the journal. */
+  date: ISODate;
+  journalId: ID;
+  /** Depreciation charged per asset (company currency). */
+  lines: { assetId: ID; amount: number }[];
+  total: number;
+  /** Journal reversing the run when it was undone. */
+  reversalJournalId: ID | null;
+  reversedAt: Timestamp | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Year-end close                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Rates of the Kuwaiti levies and the statutory reserve, in percent. */
+export interface LevyRates {
+  /** Share of the profit moved to the statutory reserve (10%). */
+  statutoryReserve: number;
+  /** The transfers stop once the reserve reaches this share of the capital (50%). */
+  statutoryReserveCap: number;
+  /** Kuwait Foundation for the Advancement of Sciences, shareholding companies (1%). */
+  kfas: number;
+  /** Zakat, shareholding companies (1%, Law 46/2006). */
+  zakat: number;
+  /** National Labour Support Tax, listed companies (2.5%, Law 19/2000). */
+  nlst: number;
+  /** Income tax on the foreign-owned share of the profit (15%, Law 2/2008). */
+  incomeTax: number;
+}
+
+export type YearEndLineKind =
+  'statutory_reserve' | 'voluntary_reserve' | 'kfas' | 'zakat' | 'nlst' | 'income_tax';
+
+export interface YearEndLine {
+  kind: YearEndLineKind;
+  /** Amount the rate was applied to (company currency). */
+  base: number;
+  /** Percent. */
+  rate: number;
+  amount: number;
+  /** Levy expense or retained earnings. */
+  debitAccountId: ID;
+  /** Levy payable or the reserve. */
+  creditAccountId: ID;
+}
+
+/** A closed financial year: levies, transfers to reserves and the lock date set. */
+export interface YearEndClose {
+  id: ID;
+  companyId: ID;
+  yearStart: ISODate;
+  yearEnd: ISODate;
+  /** Profit before levies and income tax (company currency). */
+  profitBeforeLevies: number;
+  lines: YearEndLine[];
+  journalIds: ID[];
+  /** Lock date set when the year was closed. */
+  lockedTo: ISODate | null;
+  /** A reopened year has its entries reversed. */
+  status: 'closed' | 'reopened';
+  reversalJournalIds: ID[];
+  createdAt: Timestamp;
   updatedAt: Timestamp;
 }

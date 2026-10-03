@@ -54,7 +54,7 @@ export default function CompaniesSettings() {
               <div className="min-w-0 flex-1">
                 <p className="flex min-w-0 items-center gap-2 font-medium text-slate-900">
                   <span className="truncate">{name}</span>
-                  {c.id === company.id ? <Badge tone="blue">{t('Current')}</Badge> : null}
+                  {c.id === company.id ? <Badge tone="blue">{t('Current company')}</Badge> : null}
                 </p>
                 <p className="truncate text-xs text-slate-500">
                   {currencyName(c.currency, language)} ·{' '}
