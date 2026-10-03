@@ -165,7 +165,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
     } else if (kind === 'sales') {
       downloadCsv(
         `${words.byPartyFile}-${stamp}`,
-        [t(words.party), t(words.docs), t(words.amount), t('Paid'), t('Outstanding')],
+        [t(words.party), t(words.docs), t(words.amount), t('Amount paid'), t('Outstanding')],
         [
           ...data.sales.rows.map((r) => [
             contactName(r.clientId, r.clientName),
@@ -405,7 +405,7 @@ export function SalesReports({ report }: { report: SalesReportId }) {
                     <Th>{t(words.party)}</Th>
                     <Th right>{t(words.docs)}</Th>
                     <Th right>{t(words.amount)}</Th>
-                    <Th right>{t('Paid')}</Th>
+                    <Th right>{t('Amount paid')}</Th>
                     <Th right>{t('Outstanding')}</Th>
                   </tr>
                 </thead>

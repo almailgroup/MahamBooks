@@ -132,7 +132,7 @@ export default {
   'Choose a bill line…': 'اختر بنداً من فاتورة…',
   'Choose a bill that has been entered (not a draft or void).':
     'اختر فاتورة مشتريات مسجّلة (ليست مسودة ولا ملغاة).',
-  'Choose a month.': 'اختر شهراً.',
+  'Choose a month.': 'اختر الشهر.',
   'Choose an account on every line.': 'اختر حساباً في كل سطر.',
   'Choose an account…': 'اختر حساباً…',
   'Choose the account the money from the sale went into.':
@@ -453,7 +453,6 @@ export default {
   'Paid from {account}': 'مدفوع من {account}',
   'Paid from': 'الدفع من',
   'Paid {range}': 'المدفوع {range}',
-  Paid: 'المدفوع',
   'Paid-up capital': 'رأس المال المدفوع',
   'Partners’ current accounts': 'الحسابات الجارية للشركاء',
   'Partners’ drawings and contributions': 'مسحوبات الشركاء ومساهماتهم',
@@ -515,7 +514,7 @@ export default {
   'Returned cheque': 'شيك مرتجع',
   Revenue: 'الإيرادات',
   'Reversal of depreciation for {month}': 'عكس إهلاك {month}',
-  'Reversal of {number}': 'عكس {number}',
+  'Reversal of {number}': 'عكس القيد {number}',
   Reversal: 'قيد عكسي',
   'Reversing entries undo the levies and the transfers to reserves. The original entries stay in the books.':
     'تلغي القيود العكسية الاستقطاعات والتحويلات إلى الاحتياطيات، وتبقى القيود الأصلية في الدفاتر.',
@@ -787,4 +786,5 @@ export default {
     },
   'Depreciation method': 'طريقة الإهلاك',
   'Standard chart': 'الدليل القياسي',
+  'Amount paid': 'المبلغ المدفوع',
 } satisfies Dictionary;

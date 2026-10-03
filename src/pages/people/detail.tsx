@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -26,6 +26,9 @@ import { EmployeeDocuments } from '@/features/people/employee-documents';
 import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
+import { EndOfServiceTab, LeaveTab, LoansTab } from '@/features/payroll/employee-tabs';
+import { employeeHasPayroll } from '@/db/payroll';
+import { cn } from '@/lib/cn';
 import { ButtonLink, Button } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import {
@@ -37,7 +40,15 @@ import {
 } from '@/components/ui/overlay';
 import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
-import { t } from '@/i18n';
+import { msg, t } from '@/i18n';
+
+type Tab = 'overview' | 'leave' | 'loans' | 'eos';
+const TABS: { value: Tab; label: string }[] = [
+  { value: 'overview', label: msg('Overview') },
+  { value: 'leave', label: msg('Leave') },
+  { value: 'loans', label: msg('Loans') },
+  { value: 'eos', label: msg('End of service') },
+];
 
 function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
@@ -64,6 +75,8 @@ export default function EmployeeDetailPage() {
   const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
   const employees = useEmployees();
   const settings = usePeopleSettings();
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.find((x) => x.value === params.get('tab'))?.value ?? 'overview';
 
   if (employee === undefined || !records || !renewals || !files || !employees || !settings) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -90,6 +103,10 @@ export default function EmployeeDetailPage() {
     });
     if (!ok) return;
     try {
+      if (await employeeHasPayroll(employee)) {
+        toast.error(t('This employee has payroll records. Mark them as left instead.'));
+        return;
+      }
       await deleteEmployee(employee.id);
       toast.success(t('Employee deleted'));
       navigate('/employees');
@@ -166,179 +183,216 @@ export default function EmployeeDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <EmployeeDocuments
-            employee={employee}
-            records={records}
-            employees={employees}
-            reminderDays={normalizeReminderDays(settings.reminderDays)}
-          />
-          <EosiCard employee={employee} divisor={settings.eosDailyDivisor} />
-          <Card>
-            <CardHeader
-              title={t('Personnel file')}
-              description={t(
-                'Keep copies of the contract, work permit and Civil ID here (Labour Law art. 80).',
-              )}
-            />
-            <CardBody>
-              <FileList
-                files={files}
-                onAdd={async (file) => {
-                  await addAttachment(company.id, employee.id, file);
-                  toast.success(t('File added'));
-                }}
-                onRemove={async (file) => {
-                  const ok = await confirm({
-                    title: t('Remove {name}?', { name: file.name }),
-                    confirmLabel: t('Remove'),
-                    danger: true,
-                  });
-                  if (ok) await removeAttachment(file.id);
-                }}
-                emptyText={t('No files yet.')}
-              />
-            </CardBody>
-          </Card>
-          {history.length > 0 ? (
-            <Card>
-              <CardHeader title={t('Renewals')} />
-              <ul className="divide-y divide-slate-100">
-                {history.map((r) => (
-                  <li
-                    key={r.id}
-                    className="flex flex-col gap-1 px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <p className="font-medium text-slate-900">
-                        {t(DOCUMENT_TYPES[r.type].label)}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {t('Renewed on {date}, valid until {expiry}', {
-                          date: fmt.date(r.renewedOn),
-                          expiry: fmt.date(r.newExpiry),
-                        })}
-                      </p>
-                    </div>
-                    {r.fee > 0 ? (
-                      r.expenseId ? (
-                        <Link
-                          to={`/expenses?open=${r.expenseId}`}
-                          className="tabular text-primary-700 font-medium hover:underline"
-                        >
-                          {fmt.money(r.fee)}
-                        </Link>
-                      ) : (
-                        <span className="tabular text-slate-700">{fmt.money(r.fee)}</span>
-                      )
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ) : null}
-        </div>
+      <div
+        role="tablist"
+        aria-label={t('Employee sections')}
+        className="-mt-2 flex gap-6 overflow-x-auto border-b border-slate-200"
+      >
+        {TABS.map((x) => (
+          <button
+            key={x.value}
+            type="button"
+            role="tab"
+            aria-selected={tab === x.value}
+            onClick={() =>
+              setParams(x.value === 'overview' ? {} : { tab: x.value }, { replace: true })
+            }
+            className={cn(
+              'border-b-2 px-1 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors',
+              tab === x.value
+                ? 'border-primary-600 text-primary-700'
+                : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800',
+            )}
+          >
+            {t(x.label)}
+          </button>
+        ))}
+      </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader title={t('Details')} />
-            <CardBody className="py-2">
-              <dl className="divide-y divide-slate-100">
-                <Row label={t('Nationality')}>{countryName(employee.nationality, fmt.locale)}</Row>
-                <Row label={t('Civil ID number')}>
-                  {employee.civilId ? <span dir="ltr">{employee.civilId}</span> : null}
-                </Row>
-                {needsResidency(employee.category) ? (
-                  <Row label={t('Residency article')}>{article ? t(article.label) : ''}</Row>
-                ) : null}
-                {employee.pifssNumber ? (
-                  <Row label={t('PIFSS number')}>
-                    <span dir="ltr">{employee.pifssNumber}</span>
-                  </Row>
-                ) : null}
-                <Row label={t('Hire date')}>{fmt.date(employee.hireDate)}</Row>
-                {years !== null ? (
-                  <Row label={t('Years of service')}>
-                    <span className="tabular">{fmt.quantity(Math.round(years * 100) / 100)}</span>
-                  </Row>
-                ) : null}
-                {employee.probationEnd ? (
-                  <Row label={t('Probation ends')}>{fmt.date(employee.probationEnd)}</Row>
-                ) : null}
-                <Row label={t('Contract')}>
-                  {employee.contractType === 'fixed' && employee.contractEnd
-                    ? t('Fixed term until {date}', { date: fmt.date(employee.contractEnd) })
-                    : t(CONTRACT_LABELS[employee.contractType])}
-                </Row>
-                {employee.status === 'left' ? (
-                  <Row label={t('Left on')}>
-                    {[
-                      fmt.date(employee.leavingDate),
-                      employee.leavingReason
-                        ? t(LEAVING_REASON_LABELS[employee.leavingReason])
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </Row>
-                ) : null}
-                <Row label={t('Mobile')}>
-                  {employee.phone ? (
-                    <a href={`tel:${employee.phone.replace(/\s/g, '')}`} dir="ltr">
-                      {employee.phone}
-                    </a>
-                  ) : null}
-                </Row>
-                <Row label={t('Email')}>
-                  {employee.email ? (
-                    <a href={`mailto:${employee.email}`} className="break-all">
-                      {employee.email}
-                    </a>
-                  ) : null}
-                </Row>
-              </dl>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title={t('Pay')} />
-            <CardBody className="py-2">
-              <dl className="divide-y divide-slate-100">
-                <Row label={t('Pay basis')}>{t(PAY_BASIS_LABELS[employee.payBasis])}</Row>
-                <Row label={t('Basic salary')}>
-                  <span className="tabular">{fmt.money(employee.basicSalary)}</span>
-                </Row>
-                {employee.allowances.map((a) => (
-                  <Row key={a.id} label={localName(a)}>
-                    <span className="tabular">{fmt.money(a.amount)}</span>
-                  </Row>
-                ))}
-                <Row label={<span className="font-medium text-slate-700">{t('Monthly pay')}</span>}>
-                  <span className="tabular font-semibold">{fmt.money(monthlyPay)}</span>
-                </Row>
-                {bank || employee.iban ? (
-                  <Row label={t('Bank')}>
-                    <span className="block">{bank ? bank.name[language] : employee.bank}</span>
-                    {employee.iban ? (
-                      <span className="block font-mono text-xs text-slate-500" dir="ltr">
-                        {formatIban(employee.iban)}
-                      </span>
-                    ) : null}
-                  </Row>
-                ) : null}
-              </dl>
-            </CardBody>
-          </Card>
-          {employee.notes ? (
+      {tab === 'leave' ? <LeaveTab employee={employee} /> : null}
+      {tab === 'loans' ? <LoansTab employee={employee} /> : null}
+      {tab === 'eos' ? (
+        <EndOfServiceTab employee={employee} divisor={settings.eosDailyDivisor} />
+      ) : null}
+      {tab !== 'overview' ? null : (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <EmployeeDocuments
+              employee={employee}
+              records={records}
+              employees={employees}
+              reminderDays={normalizeReminderDays(settings.reminderDays)}
+            />
+            <EosiCard employee={employee} divisor={settings.eosDailyDivisor} />
             <Card>
-              <CardHeader title={t('Notes')} />
-              <CardBody className="text-sm whitespace-pre-wrap text-slate-700">
-                {employee.notes}
+              <CardHeader
+                title={t('Personnel file')}
+                description={t(
+                  'Keep copies of the contract, work permit and Civil ID here (Labour Law art. 80).',
+                )}
+              />
+              <CardBody>
+                <FileList
+                  files={files}
+                  onAdd={async (file) => {
+                    await addAttachment(company.id, employee.id, file);
+                    toast.success(t('File added'));
+                  }}
+                  onRemove={async (file) => {
+                    const ok = await confirm({
+                      title: t('Remove {name}?', { name: file.name }),
+                      confirmLabel: t('Remove'),
+                      danger: true,
+                    });
+                    if (ok) await removeAttachment(file.id);
+                  }}
+                  emptyText={t('No files yet.')}
+                />
               </CardBody>
             </Card>
-          ) : null}
+            {history.length > 0 ? (
+              <Card>
+                <CardHeader title={t('Renewals')} />
+                <ul className="divide-y divide-slate-100">
+                  {history.map((r) => (
+                    <li
+                      key={r.id}
+                      className="flex flex-col gap-1 px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <p className="font-medium text-slate-900">
+                          {t(DOCUMENT_TYPES[r.type].label)}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {t('Renewed on {date}, valid until {expiry}', {
+                            date: fmt.date(r.renewedOn),
+                            expiry: fmt.date(r.newExpiry),
+                          })}
+                        </p>
+                      </div>
+                      {r.fee > 0 ? (
+                        r.expenseId ? (
+                          <Link
+                            to={`/expenses?open=${r.expenseId}`}
+                            className="tabular text-primary-700 font-medium hover:underline"
+                          >
+                            {fmt.money(r.fee)}
+                          </Link>
+                        ) : (
+                          <span className="tabular text-slate-700">{fmt.money(r.fee)}</span>
+                        )
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ) : null}
+          </div>
+
+          <div className="space-y-6">
+            <Card>
+              <CardHeader title={t('Details')} />
+              <CardBody className="py-2">
+                <dl className="divide-y divide-slate-100">
+                  <Row label={t('Nationality')}>
+                    {countryName(employee.nationality, fmt.locale)}
+                  </Row>
+                  <Row label={t('Civil ID number')}>
+                    {employee.civilId ? <span dir="ltr">{employee.civilId}</span> : null}
+                  </Row>
+                  {needsResidency(employee.category) ? (
+                    <Row label={t('Residency article')}>{article ? t(article.label) : ''}</Row>
+                  ) : null}
+                  {employee.pifssNumber ? (
+                    <Row label={t('PIFSS number')}>
+                      <span dir="ltr">{employee.pifssNumber}</span>
+                    </Row>
+                  ) : null}
+                  <Row label={t('Hire date')}>{fmt.date(employee.hireDate)}</Row>
+                  {years !== null ? (
+                    <Row label={t('Years of service')}>
+                      <span className="tabular">{fmt.quantity(Math.round(years * 100) / 100)}</span>
+                    </Row>
+                  ) : null}
+                  {employee.probationEnd ? (
+                    <Row label={t('Probation ends')}>{fmt.date(employee.probationEnd)}</Row>
+                  ) : null}
+                  <Row label={t('Contract')}>
+                    {employee.contractType === 'fixed' && employee.contractEnd
+                      ? t('Fixed term until {date}', { date: fmt.date(employee.contractEnd) })
+                      : t(CONTRACT_LABELS[employee.contractType])}
+                  </Row>
+                  {employee.status === 'left' ? (
+                    <Row label={t('Left on')}>
+                      {[
+                        fmt.date(employee.leavingDate),
+                        employee.leavingReason
+                          ? t(LEAVING_REASON_LABELS[employee.leavingReason])
+                          : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Row>
+                  ) : null}
+                  <Row label={t('Mobile')}>
+                    {employee.phone ? (
+                      <a href={`tel:${employee.phone.replace(/\s/g, '')}`} dir="ltr">
+                        {employee.phone}
+                      </a>
+                    ) : null}
+                  </Row>
+                  <Row label={t('Email')}>
+                    {employee.email ? (
+                      <a href={`mailto:${employee.email}`} className="break-all">
+                        {employee.email}
+                      </a>
+                    ) : null}
+                  </Row>
+                </dl>
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title={t('Pay')} />
+              <CardBody className="py-2">
+                <dl className="divide-y divide-slate-100">
+                  <Row label={t('Pay basis')}>{t(PAY_BASIS_LABELS[employee.payBasis])}</Row>
+                  <Row label={t('Basic salary')}>
+                    <span className="tabular">{fmt.money(employee.basicSalary)}</span>
+                  </Row>
+                  {employee.allowances.map((a) => (
+                    <Row key={a.id} label={localName(a)}>
+                      <span className="tabular">{fmt.money(a.amount)}</span>
+                    </Row>
+                  ))}
+                  <Row
+                    label={<span className="font-medium text-slate-700">{t('Monthly pay')}</span>}
+                  >
+                    <span className="tabular font-semibold">{fmt.money(monthlyPay)}</span>
+                  </Row>
+                  {bank || employee.iban ? (
+                    <Row label={t('Bank')}>
+                      <span className="block">{bank ? bank.name[language] : employee.bank}</span>
+                      {employee.iban ? (
+                        <span className="block font-mono text-xs text-slate-500" dir="ltr">
+                          {formatIban(employee.iban)}
+                        </span>
+                      ) : null}
+                    </Row>
+                  ) : null}
+                </dl>
+              </CardBody>
+            </Card>
+            {employee.notes ? (
+              <Card>
+                <CardHeader title={t('Notes')} />
+                <CardBody className="text-sm whitespace-pre-wrap text-slate-700">
+                  {employee.notes}
+                </CardBody>
+              </Card>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   FileMinus,
   FileText,
   CalendarClock,
+  HandCoins,
   IdCard,
   Landmark,
   LayoutDashboard,
@@ -104,6 +105,7 @@ const NAV: { title?: string; items: NavItem[] }[] = [
     title: msg('Business'),
     items: [
       { to: '/employees', label: msg('Employees'), icon: <IdCard /> },
+      { to: '/payroll', label: msg('Payroll'), icon: <HandCoins /> },
       { to: '/compliance', label: msg('Compliance'), icon: <CalendarClock /> },
       { to: '/templates', label: msg('Templates'), icon: <Palette /> },
       { to: '/settings', label: msg('Settings'), icon: <Settings /> },

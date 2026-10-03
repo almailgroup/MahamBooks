@@ -24,6 +24,11 @@ import type {
   FixedAsset,
   DepreciationRun,
   YearEndClose,
+  PayRun,
+  PayrollSettings,
+  LeaveRecord,
+  StaffLoan,
+  FinalSettlement,
 } from './types';
 import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -56,6 +61,11 @@ export class InvoiceDatabase extends Dexie {
   assets!: Table<FixedAsset, string>;
   depreciationRuns!: Table<DepreciationRun, string>;
   yearEnds!: Table<YearEndClose, string>;
+  payRuns!: Table<PayRun, string>;
+  payrollSettings!: Table<PayrollSettings, string>;
+  leaveRecords!: Table<LeaveRecord, string>;
+  staffLoans!: Table<StaffLoan, string>;
+  finalSettlements!: Table<FinalSettlement, string>;
   meta!: Table<KeyValue, string>;
 
   constructor(name = APP_NAME) {
@@ -102,6 +112,14 @@ export class InvoiceDatabase extends Dexie {
       complianceMarks: 'id, companyId, [companyId+key]',
       peopleSettings: 'id, companyId',
     });
+    // Payroll: pay runs, leave, staff loans and final settlements.
+    this.version(8).stores({
+      payRuns: 'id, companyId, [companyId+period], status',
+      payrollSettings: 'id, companyId',
+      leaveRecords: 'id, companyId, employeeId',
+      staffLoans: 'id, companyId, employeeId',
+      finalSettlements: 'id, companyId, employeeId',
+    });
     // Fixed asset register, monthly depreciation runs and closed financial years.
     this.version(10).stores({
       assets: 'id, companyId, status, billId',
@@ -135,6 +153,11 @@ export const DATA_TABLES = [
   'assets',
   'depreciationRuns',
   'yearEnds',
+  'payRuns',
+  'payrollSettings',
+  'leaveRecords',
+  'staffLoans',
+  'finalSettlements',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

@@ -26,8 +26,12 @@ export const JOURNAL_KINDS: Record<JournalKind, JournalKindInfo> = {
   year_end: { label: msg('Year-end close'), tone: 'green', owner: msg('Year-end close') },
 };
 
-/** Kinds this part of the app writes; the database refuses other changes to them. */
+/**
+ * Kinds written by the accounting and payroll modules; the database refuses
+ * other changes to them.
+ */
 export const ACCOUNTING_OWNED_KINDS: JournalKind[] = [
+  'payroll',
   'depreciation',
   'asset_purchase',
   'asset_opening',

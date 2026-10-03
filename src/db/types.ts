@@ -859,7 +859,8 @@ export type ActivityEntity =
   | 'compliance'
   | 'cheque'
   | 'asset'
-  | 'year_end';
+  | 'year_end'
+  | 'payroll';
 
 export interface Activity {
   id: ID;
@@ -1276,6 +1277,327 @@ export interface YearEndClose {
   /** A reopened year has its entries reversed. */
   status: 'closed' | 'reopened';
   reversalJournalIds: ID[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Payroll                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Social security contribution rates from a date, in percent of the insured salary. */
+export interface ContributionRates {
+  /** First day the rates apply. */
+  from: ISODate;
+  employer: number;
+  employee: number;
+  /** Highest monthly salary contributions are charged on; null for no limit. */
+  cap: number | null;
+}
+
+/** The home-country scheme of GCC nationals, collected through PIFSS. */
+export interface GccScheme {
+  /** ISO code of the nationality (SA, AE, BH, QA, OM). */
+  country: string;
+  employer: number;
+  employee: number;
+  cap: number | null;
+}
+
+/** Accounts the payroll posts to; see PAYROLL_ACCOUNTS in db/payroll.ts. */
+export type PayrollAccountKey =
+  | 'salaries'
+  | 'allowances'
+  | 'pifssExpense'
+  | 'eosExpense'
+  | 'leaveExpense'
+  | 'salariesPayable'
+  | 'pifssPayable'
+  | 'leaveProvision'
+  | 'eosProvision'
+  | 'advances'
+  | 'otherDeductions';
+
+/** Columns a salary transfer (WPS) file can have. */
+export type SalaryFileColumn =
+  | 'employeeNumber'
+  | 'civilId'
+  | 'nameEn'
+  | 'nameAr'
+  | 'iban'
+  | 'bankCode'
+  | 'swift'
+  | 'amount'
+  | 'currency'
+  | 'period'
+  | 'pamFile'
+  | 'reference';
+
+export type SalaryPeriodFormat = 'yyyymm' | 'yyyy-mm' | 'mm/yyyy';
+
+/** Layout of the salary transfer file; there is no public standard, so it is set per bank. */
+export interface SalaryFileLayout {
+  /** Preset the layout started from, or "custom". */
+  preset: string;
+  columns: SalaryFileColumn[];
+  /** First row holds the column names. */
+  header: boolean;
+  periodFormat: SalaryPeriodFormat;
+}
+
+/** Payroll settings of a company (one row per company, id = companyId). */
+export interface PayrollSettings {
+  id: ID;
+  companyId: ID;
+  /** Working days in a month for the daily rate (26 for a six-day week, art. 67). */
+  dailyDivisor: number;
+  /** Overtime and unpaid days are worked out on the basic salary or the whole wage. */
+  rateBase: 'basic' | 'wage';
+  /** PIFSS rates of Kuwaiti staff, by the date they apply from. */
+  pifss: ContributionRates[];
+  /** Rates of GCC nationals' home schemes; empty until entered. */
+  gcc: GccScheme[];
+  /** Monthly minimum wage of the private sector (company currency). */
+  minimumWage: number;
+  /** Day of the month salaries are paid (the month's last day when shorter). */
+  payDay: number;
+  /** Bank account salaries are paid from; null uses the main bank account. */
+  bankAccountId: ID | null;
+  /** Accounts chosen instead of the ones found by code. */
+  accounts: Partial<Record<PayrollAccountKey, ID>>;
+  /** Post end-of-service and leave salary provisions when a pay run is approved. */
+  provisions: boolean;
+  /** Include staff insured with PIFSS (Kuwaiti and GCC) in the end-of-service provision. */
+  eosForInsured: boolean;
+  /** The company's file number with the Public Authority for Manpower. */
+  pamFileNumber: string;
+  salaryFile: SalaryFileLayout;
+  updatedAt: Timestamp;
+}
+
+/** Rules a pay run was worked out with, copied from the settings when it was prepared. */
+export interface PayRules {
+  dailyDivisor: number;
+  rateBase: 'basic' | 'wage';
+  /** PIFSS rates in force in the month; null when none are set. */
+  pifss: ContributionRates | null;
+  gcc: GccScheme[];
+  minimumWage: number;
+}
+
+export type PayRunStatus = 'draft' | 'approved' | 'paid';
+
+/** An addition to or deduction from one employee's pay, with a note. */
+export interface PayAdjustment {
+  id: ID;
+  type: 'addition' | 'deduction';
+  amount: number;
+  note: string;
+}
+
+/** Part of a staff loan recovered from pay or at settlement. */
+export interface LoanRecovery {
+  loanId: ID;
+  amount: number;
+}
+
+/** Days paid at a reduced rate, such as sick leave at 75% (art. 69). */
+export interface ReducedPayDays {
+  /** Share of the daily wage still paid, in percent. */
+  percent: number;
+  days: number;
+}
+
+export interface PayLineAllowance {
+  id: ID;
+  name: string;
+  nameAr: string;
+  /** Full monthly amount. */
+  monthly: number;
+  /** Amount for the days employed in the month. */
+  amount: number;
+}
+
+/**
+ * One employee's pay in a pay run. The employee's details are copied when
+ * the run is prepared so a run keeps its history; amounts are worked out by
+ * calculatePayLine (lib/hr/payroll.ts) and stored with the run.
+ */
+export interface PayLine {
+  id: ID;
+  employeeId: ID;
+  number: string;
+  name: string;
+  nameAr: string;
+  jobTitle: string;
+  jobTitleAr: string;
+  category: EmployeeCategory;
+  nationality: string;
+  civilId: string;
+  iban: string;
+  hireDate: ISODate | null;
+  leavingDate: ISODate | null;
+  permitSalary: number;
+  monthlyBasic: number;
+  allowances: PayLineAllowance[];
+  /** Calendar days employed in the month (joiners and leavers are paid pro rata). */
+  daysWorked: number;
+  daysInMonth: number;
+  /** Overtime hours on normal days (+25%), rest days (+50%) and public holidays (double). */
+  overtime: { normal: number; restDay: number; holiday: number };
+  /** Unpaid absence entered for the month, in days. */
+  absentDays: number;
+  /** Unpaid leave and sick leave without pay taken in the month (from leave records). */
+  unpaidLeaveDays: number;
+  /** Sick leave paid at a reduced rate in the month (from leave records). */
+  reducedPay: ReducedPayDays[];
+  adjustments: PayAdjustment[];
+  loans: LoanRecovery[];
+  basic: number;
+  allowanceTotal: number;
+  overtimePay: number;
+  /** Pay not earned for unpaid days and reduced-pay sick days. */
+  absenceDeduction: number;
+  additions: number;
+  gross: number;
+  pifssBase: number;
+  pifssEmployee: number;
+  pifssEmployer: number;
+  loanDeduction: number;
+  otherDeductions: number;
+  net: number;
+}
+
+/** One employee's month-end provisions, as a pay run posted them. */
+export interface ProvisionLine {
+  employeeId: ID;
+  /** End-of-service indemnity as at the month end. */
+  eos: number;
+  /** Unused annual leave days and their value. */
+  leaveDays: number;
+  leave: number;
+}
+
+/** A month's payroll: one per company and month. */
+export interface PayRun {
+  id: ID;
+  companyId: ID;
+  /** Month paid, as yyyy-MM. */
+  period: string;
+  status: PayRunStatus;
+  /** Day the salaries are posted: the last day of the month. */
+  date: ISODate;
+  /** Day the salaries are to be paid. */
+  payDate: ISODate;
+  lines: PayLine[];
+  rules: PayRules;
+  /** Account other deductions are credited to; null uses the payroll setting. */
+  deductionAccountId: ID | null;
+  journalId: ID | null;
+  provisionJournalId: ID | null;
+  /** Month-end provisions per employee, as posted; null when none were posted. */
+  provisions: ProvisionLine[] | null;
+  paidOn: ISODate | null;
+  paymentJournalId: ID | null;
+  bankAccountId: ID | null;
+  /** Entries that reversed this run's postings when it was reopened or a payment undone. */
+  reversalJournalIds: ID[];
+  notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type LeaveType = 'annual' | 'sick' | 'maternity' | 'hajj' | 'bereavement' | 'unpaid';
+
+/**
+ * Leave taken by an employee, or a change to the annual leave balance:
+ * "opening" sets the balance on `start` (leave before it is not counted),
+ * "adjustment" adds days (or removes them when negative).
+ */
+export interface LeaveRecord {
+  id: ID;
+  companyId: ID;
+  employeeId: ID;
+  type: LeaveType;
+  kind: 'leave' | 'opening' | 'adjustment';
+  start: ISODate;
+  end: ISODate;
+  /** Days counted (working or calendar days, see LEAVE_TYPES); days added for a balance change. */
+  days: number;
+  status: 'approved' | 'cancelled';
+  notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** An interest-free loan or salary advance to an employee, recovered from pay (art. 59). */
+export interface StaffLoan {
+  id: ID;
+  companyId: ID;
+  employeeId: ID;
+  /** Day the money was paid to the employee. */
+  date: ISODate;
+  amount: number;
+  /** Deducted from each month's pay until the loan is repaid. */
+  instalment: number;
+  /** First month an instalment is deducted, as yyyy-MM. */
+  firstPeriod: string;
+  /** Account the money was paid from; null uses the main bank account. */
+  paidFromAccountId: ID | null;
+  journalId: ID | null;
+  status: 'active' | 'cancelled';
+  /** Entry that reversed the loan when it was cancelled. */
+  cancelJournalId: ID | null;
+  notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** Salary for the last days worked, paid with the final settlement. */
+export interface SettlementSalary {
+  period: string;
+  days: number;
+  daysInMonth: number;
+  basic: number;
+  allowances: number;
+  gross: number;
+  pifssEmployee: number;
+  pifssEmployer: number;
+}
+
+/** What an employee is paid on leaving: indemnity, notice, leave and last salary, less loans. */
+export interface FinalSettlement {
+  id: ID;
+  companyId: ID;
+  employeeId: ID;
+  status: 'posted' | 'paid' | 'reversed';
+  leavingDate: ISODate;
+  reason: LeavingReason;
+  years: number;
+  /** Monthly wage the indemnity is based on. */
+  eosWage: number;
+  /** Indemnity paid, after the art. 53 share and any PIFSS offset. */
+  indemnity: number;
+  pifssOffset: number;
+  noticeMonths: number;
+  noticePay: number;
+  leaveDays: number;
+  leavePay: number;
+  /** Null when the last salary is paid in a pay run. */
+  lastSalary: SettlementSalary | null;
+  loans: LoanRecovery[];
+  otherDeductions: number;
+  deductionNote: string;
+  /** Provisions released for the employee (their share of the last month-end provision). */
+  eosProvision: number;
+  leaveProvision: number;
+  net: number;
+  journalId: ID | null;
+  paidOn: ISODate | null;
+  paymentJournalId: ID | null;
+  bankAccountId: ID | null;
+  reversalJournalIds: ID[];
+  notes: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

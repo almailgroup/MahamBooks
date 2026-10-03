@@ -43,6 +43,14 @@ const Assets = lazy(() => import('@/pages/assets/index'));
 const AssetForm = lazy(() => import('@/pages/assets/form'));
 const AssetDetail = lazy(() => import('@/pages/assets/detail'));
 const YearEnd = lazy(() => import('@/pages/accounting/year-end'));
+const Payroll = lazy(() => import('@/pages/payroll/index'));
+const PayRun = lazy(() => import('@/pages/payroll/run'));
+const PayrollLeave = lazy(() => import('@/pages/payroll/leave'));
+const PayrollLoans = lazy(() => import('@/pages/payroll/loans'));
+const PayrollSettings = lazy(() => import('@/pages/payroll/settings'));
+const Payslips = lazy(() => import('@/pages/payroll/payslips'));
+const Settlement = lazy(() => import('@/pages/payroll/settlement'));
+const SettlementPrint = lazy(() => import('@/pages/payroll/settlement-print'));
 const NotFound = lazy(() => import('@/pages/not-found'));
 
 function Root() {
@@ -153,6 +161,22 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'payroll/runs/:id/payslips',
+        element: (
+          <Bare>
+            <Payslips />
+          </Bare>
+        ),
+      },
+      {
+        path: 'payroll/settlements/:id/print',
+        element: (
+          <Bare>
+            <SettlementPrint />
+          </Bare>
+        ),
+      },
+      {
         element: <AppLayout />,
         errorElement: <RouteError />,
         children: [
@@ -191,6 +215,12 @@ export const router = createHashRouter([
           { path: 'employees/new', element: <EmployeeForm key="new" /> },
           { path: 'employees/:id', element: <EmployeeDetail /> },
           { path: 'employees/:id/edit', element: <EmployeeForm /> },
+          { path: 'employees/:id/settlement', element: <Settlement /> },
+          { path: 'payroll', element: <Payroll /> },
+          { path: 'payroll/runs/:id', element: <PayRun /> },
+          { path: 'payroll/leave', element: <PayrollLeave /> },
+          { path: 'payroll/loans', element: <PayrollLoans /> },
+          { path: 'payroll/settings', element: <PayrollSettings /> },
           { path: 'compliance', element: <Compliance /> },
           { path: 'compliance/documents', element: <ComplianceDocuments /> },
           { path: 'templates', element: <Templates /> },

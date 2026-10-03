@@ -50,6 +50,11 @@ const backupSchema = z.object({
     assets: z.array(ownedRow).default([]),
     depreciationRuns: z.array(ownedRow).default([]),
     yearEnds: z.array(ownedRow).default([]),
+    payRuns: z.array(ownedRow).default([]),
+    payrollSettings: z.array(ownedRow).default([]),
+    leaveRecords: z.array(ownedRow).default([]),
+    staffLoans: z.array(ownedRow).default([]),
+    finalSettlements: z.array(ownedRow).default([]),
   }),
 });
 
