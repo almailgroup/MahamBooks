@@ -5,9 +5,8 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// The app is served from a sub-path on GitHub Pages
-// (https://<owner>.github.io/<repo>/). Routing uses the URL hash, so a
-// relative base works there, on a custom domain, and from any static host.
+// Routing uses the URL hash, so a relative base works at the root of a domain
+// (Vercel), from a sub-path and from any static host.
 export default defineConfig({
   base: './',
   plugins: [

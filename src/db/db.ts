@@ -38,8 +38,8 @@ import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
 
 /**
- * All data lives in the browser's IndexedDB. Nothing is sent to a server,
- * which is what lets the app run from GitHub Pages.
+ * All data lives in the browser's IndexedDB, so the app works offline and
+ * runs from any static host.
  */
 export class InvoiceDatabase extends Dexie {
   companies!: Table<Company, string>;

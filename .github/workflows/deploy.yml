@@ -1,4 +1,4 @@
-name: Build and deploy to GitHub Pages
+name: Test and deploy
 
 on:
   push:
@@ -7,18 +7,14 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
-    outputs:
-      pages_enabled: ${{ steps.pages.outputs.enabled }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,37 +43,53 @@ jobs:
             test-results
           retention-days: 7
 
-      # Deployment needs Pages to be switched on once in the repository
-      # settings (Settings -> Pages -> Source: GitHub Actions). Until then the
-      # build still runs as a check, and deployment is skipped with a notice.
-      - name: Check GitHub Pages configuration
-        id: pages
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          build_type=$(gh api "repos/${{ github.repository }}/pages" --jq '.build_type' 2>/dev/null || true)
-          if [ "$build_type" = "workflow" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=GitHub Pages is not enabled::Open Settings -> Pages and set Source to 'GitHub Actions', then re-run this workflow."
-          fi
-
-      - if: steps.pages.outputs.enabled == 'true'
-        uses: actions/configure-pages@v5
-
-      - if: steps.pages.outputs.enabled == 'true'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
+  # Publishes to Vercel once every check has passed. It needs three repository
+  # secrets (Settings -> Secrets and variables -> Actions): VERCEL_TOKEN (an
+  # access token from Vercel's account settings), VERCEL_ORG_ID (the team ID)
+  # and VERCEL_PROJECT_ID (the project ID). Until they are set, the checks still
+  # run and deployment is skipped with a notice.
   deploy:
-    needs: build
-    if: needs.build.outputs.pages_enabled == 'true'
+    needs: test
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Check the Vercel settings
+        id: vercel
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Vercel is not connected::Add the VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID secrets under Settings -> Secrets and variables -> Actions, then re-run this workflow."
+          fi
+
+      - if: steps.vercel.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.vercel.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - if: steps.vercel.outputs.ready == 'true'
+        name: Build for Vercel
+        run: |
+          npm install --global vercel@62
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+
+      - if: steps.vercel.outputs.ready == 'true'
+        id: deploy
+        name: Deploy to Vercel
+        run: |
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url" >> "$GITHUB_STEP_SUMMARY"

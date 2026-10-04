@@ -5,11 +5,11 @@ Built by AL Mail Group.
 
 <p dir="rtl" lang="ar">برنامج مجاني للمحاسبة والفواتير، مصمم للشركات في الكويت، باللغتين العربية والإنجليزية.</p>
 
-AlmailBooks runs entirely in the browser and is hosted free on GitHub Pages:
-there is no server, no account and no monthly fee. Your records stay on your
-own device.
+AlmailBooks runs in the browser and is hosted on Vercel. Today your records
+stay on your own device; accounts, cloud sync and teams on Supabase are being
+added.
 
-**Open the app:** https://almailgroup.github.io/AlmailBooks/
+**Open the app:** https://almail-books.vercel.app/
 
 ![Invoice editor with live PDF preview](docs/images/editor.png)
 
@@ -123,35 +123,35 @@ English only.
 |                               **Classic**                                |                                **Creative**                                |                                 **Compact**                                  |                                **Gradient**                                |                              **Mono**                              |
 | <img src="public/templates/classic-ar-en.jpg" width="150" alt="Classic"> | <img src="public/templates/creative-ar-en.jpg" width="150" alt="Creative"> |   <img src="public/templates/compact-ar-en.jpg" width="150" alt="Compact">   | <img src="public/templates/gradient-ar-en.jpg" width="150" alt="Gradient"> | <img src="public/templates/mono-ar-en.jpg" width="150" alt="Mono"> |
 
-## Put it online with GitHub Pages (one-time setup)
+## Hosting on Vercel
 
-1. In this repository on GitHub, open **Settings → Pages**.
-2. Under **Build and deployment → Source**, choose **GitHub Actions**.
-3. Open the **Actions** tab, select **Build and deploy to GitHub Pages**, and
-   click **Run workflow**. Pushing any commit to `main` also starts it.
-4. When the run finishes (about 5 minutes), the app is live at
-   https://almailgroup.github.io/AlmailBooks/.
+Every push to `main` runs the checks in GitHub Actions (lint, formatting, type
+check, unit tests, build and browser tests) and, when they pass, publishes the
+new version to Vercel. Vercel's own Git deployments are switched off in
+`vercel.json`, so only tested versions go live.
 
-From then on, every push to `main` runs the checks (lint, formatting, type
-check, unit tests, build and browser tests) and publishes the new version if
-they pass. Before Pages is switched on, the workflow still runs the checks and
-skips the deployment with a notice.
+One-time setup:
 
-To use your own domain (e.g. `books.almailgroup.com`), enter it under
-**Settings → Pages → Custom domain** and follow GitHub's DNS instructions. The
-app uses relative paths, so it works on any domain or sub-path. Browsers keep
-data per site, so **back up before switching to a new domain** and restore the
-backup at the new address.
+1. In Vercel, import this repository as a project (framework preset **Vite**,
+   build command `npm run build`, output directory `dist`).
+2. Create an access token under **Account Settings → Tokens**, and copy the
+   **Project ID** (project settings) and the **Team ID** (team settings).
+3. In this repository on GitHub, add three secrets under **Settings → Secrets
+   and variables → Actions**: `VERCEL_TOKEN`, `VERCEL_ORG_ID` (the team ID) and
+   `VERCEL_PROJECT_ID`.
 
-Renaming the repository changes only the path
-(`almailgroup.github.io/<repository>/`), not the site, so saved data is still
-there at the new address. If you installed the app, install it again from the
-new address.
+Until the secrets are set, the workflow still runs the checks and skips the
+deployment with a notice. `vercel.json` also sets long-term caching for the
+built assets and a few security headers.
+
+The app uses relative paths, so it works on any domain. Browsers keep data per
+site, so **back up before moving to a new address** and restore the backup
+there.
 
 ## Where your data lives
 
 - Everything you enter is stored in your browser (IndexedDB) on the device you
-  use. Nothing is sent to a server; GitHub Pages only delivers the app itself.
+  use. Nothing is sent to a server; Vercel only delivers the app itself.
 - The site is public, but other visitors see an empty app with their own
   storage. They cannot see your records.
 - **Each browser has its own data.** Back up regularly from **Settings → Data
