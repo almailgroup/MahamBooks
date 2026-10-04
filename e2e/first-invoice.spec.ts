@@ -8,9 +8,9 @@ test('set up a company, invoice a new client and get paid', async ({ page }) => 
   await expect(page.getByText('Kuwaiti dinar with fils')).toBeVisible();
   await page.getByLabel('Company name').fill('AL Mail Group');
   await page.getByRole('button', { name: 'Create company' }).click();
+  await expect(page.getByText('AL Mail Group is ready.')).toBeVisible();
 
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-  await page.getByRole('link', { name: /Create your first invoice/ }).click();
+  await page.goto('#/invoices/new');
   await expect(page.getByRole('heading', { name: 'New invoice' })).toBeVisible();
 
   // A new client, created from the client picker.

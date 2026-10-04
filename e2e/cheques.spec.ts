@@ -5,13 +5,13 @@ test.beforeEach(async ({ page }) => {
   await startWithDemoData(page);
 });
 
-/** Creates and sends a fresh invoice; returns its number. */
+/** Creates and sends a fresh invoice to Sadu Interiors; returns its number. */
 async function sentInvoice(page: Page, item: string, price: string): Promise<string> {
   await page.goto('#/invoices/new');
   await chooseOption(page, page.getByLabel('Bill to'), {
     placeholder: 'Search clients…',
-    query: 'Brightside',
-    option: 'Brightside Retail Group',
+    query: 'Sadu',
+    option: 'Sadu Interiors Co.',
   });
   await page.getByLabel('Item 1 name').fill(item);
   await page.getByLabel('Item 1 quantity').fill('1');
@@ -32,14 +32,14 @@ async function payByCheque(page: Page, number: string) {
   await dialog.getByLabel('Method').selectOption('cheque');
   await dialog.getByLabel('Cheque number').fill(number);
   await dialog.getByLabel('Bank', { exact: true }).selectOption('NBOK');
-  await expect(dialog.getByLabel('Drawer', { exact: true })).toHaveValue('Brightside Retail Group');
+  await expect(dialog.getByLabel('Drawer', { exact: true })).toHaveValue('Sadu Interiors Co.');
   await dialog.getByRole('button', { name: 'Record payment' }).click();
   await expect(dialog).toBeHidden();
 }
 
 test('post-dated cheques are tracked until they clear or come back', async ({ page }) => {
   // A cheque that clears.
-  const first = await sentInvoice(page, 'Bulk mailing – October', '250');
+  const first = await sentInvoice(page, 'Showroom lighting – ceiling spots', '250');
   await payByCheque(page, '000123');
   const status = page.getByRole('heading', { level: 1 }).locator('..');
   await expect(status.getByText('Paid', { exact: true })).toBeVisible();
@@ -49,7 +49,7 @@ test('post-dated cheques are tracked until they clear or come back', async ({ pa
   const row = page.getByRole('row', { name: /000123/ });
   await expect(row).toContainText('In hand');
   await expect(row).toContainText('National Bank of Kuwait');
-  await expect(row).toContainText('Brightside Retail Group');
+  await expect(row).toContainText('Sadu Interiors Co.');
   await expect(row).toContainText('Today');
 
   await row.getByRole('button', { name: 'Actions for cheque 000123' }).click();
@@ -63,7 +63,7 @@ test('post-dated cheques are tracked until they clear or come back', async ({ pa
   await expect(page.getByRole('row', { name: /000123/ })).toContainText('Cleared');
 
   // A cheque that comes back unpaid opens the invoice again.
-  const second = await sentInvoice(page, 'Leaflet printing', '80');
+  const second = await sentInvoice(page, 'Extra socket outlets', '80');
   await payByCheque(page, '000124');
   await expect(status.getByText('Paid', { exact: true })).toBeVisible();
 
@@ -95,7 +95,7 @@ test('post-dated cheques are tracked until they clear or come back', async ({ pa
 });
 
 test('the receipt voucher prints in English and Arabic', async ({ page }) => {
-  await sentInvoice(page, 'Courier run', '40');
+  await sentInvoice(page, 'Site visit and survey', '40');
   await payByCheque(page, '000200');
   await page.goto('#/payments');
   await page.getByLabel('Search payments').fill('000200');
@@ -109,5 +109,14 @@ test('the receipt voucher prints in English and Arabic', async ({ page }) => {
   await expect(page.getByText('Receipt voucher', { exact: true })).toBeVisible();
   await expect(page.getByText('سند قبض')).toBeVisible();
   await expect(page.getByText('000200')).toBeVisible();
-  await expect(page.getByText(/pounds/i).first()).toBeVisible();
+  await expect(page.getByText(/dinars/i).first()).toBeVisible();
+});
+
+test('a returned cheque is replaced by a new post-dated one', async ({ page }) => {
+  await page.goto('#/cheques');
+  await expect(page.getByRole('row', { name: /004425/ })).toContainText('In hand');
+  await page.getByRole('tab', { name: 'Returned' }).click();
+  const returned = page.getByRole('row', { name: /004417/ });
+  await expect(returned).toContainText('Returned');
+  await expect(returned).toContainText('Al Naseem Real Estate Co. K.S.C.C.');
 });

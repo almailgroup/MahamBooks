@@ -1,4 +1,4 @@
-import { chooseOption, downloadFrom, expect, test } from './fixtures';
+import { chooseOption, createCompany, downloadFrom, expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 
 /** The month before the current one, as yyyy-MM and as the app writes it ("September 2026"). */
@@ -9,13 +9,6 @@ function lastMonth() {
     period: date.toISOString().slice(0, 7),
     label: date.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
   };
-}
-
-async function createKuwaitCompany(page: Page) {
-  await page.goto('./');
-  await page.getByLabel('Company name').fill('Almail Trading');
-  await page.getByRole('button', { name: 'Create company' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 }
 
 async function addEmployee(
@@ -42,7 +35,7 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
   page,
 }) => {
   const month = lastMonth();
-  await createKuwaitCompany(page);
+  await createCompany(page, 'Almail Trading');
 
   // One Kuwaiti insured with PIFSS above the KD 2,750 cap, one expatriate.
   await addEmployee(page, {
@@ -61,7 +54,7 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
   });
 
   // Prepare the pay run.
-  await page.getByRole('link', { name: 'Payroll' }).click();
+  await page.goto('#/payroll');
   await expect(page.getByText('No pay runs yet')).toBeVisible();
   await page.getByRole('button', { name: 'New pay run' }).first().click();
   const create = page.getByRole('dialog', { name: 'New pay run' });

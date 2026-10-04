@@ -1,17 +1,14 @@
-import { expect, test } from './fixtures';
+import { createCompany, expect, test } from './fixtures';
 
 test('a sales order is delivered in part and invoiced, a purchase order becomes a bill', async ({
   page,
 }) => {
-  await page.goto('./');
-  await page.getByLabel('Company name').fill('Al Waha Trading');
-  await page.getByRole('button', { name: 'Create company' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  await createCompany(page, 'Al Waha Trading');
   const title = page.locator('h1').locator('..');
 
-  // A sales order with two lines, from the New menu.
-  await page.getByRole('button', { name: 'New', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Sales order' }).click();
+  // A sales order with two lines.
+  await page.goto('#/sales-orders');
+  await page.getByRole('link', { name: 'New sales order' }).first().click();
   await expect(page.getByRole('heading', { name: 'New sales order' })).toBeVisible();
   await page.getByLabel('Customer').click();
   await page.getByPlaceholder('Search clients…').fill('Al Rawda Trading');

@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
-import { seedDemoCompany } from './demo';
+import { createClient } from './defaults';
+import { draftDocument, saveDocument } from './documents';
+import { saveClient, setupCompany } from './records';
 import { deleteJournal, JournalError, loadLedger } from './accounting';
 import { computeVatReturn, fileVatReturn, recordVatPayment, undoVatReturn, VatError } from './vat';
-import { vatPeriodOf } from '@/lib/accounting/vat';
+import type { Client, Company, DocumentType, TaxLine } from './types';
+import { vatDueDate, vatPeriodOf } from '@/lib/accounting/vat';
 import { addDaysISO, today } from '@/lib/dates';
 
 beforeEach(async () => {
@@ -11,10 +14,73 @@ beforeEach(async () => {
   await db.open();
 });
 
-/** The demo files every return before the last ended quarter; that one is left to file. */
+const SCHEDULE = { frequency: 'quarterly' as const, startMonth: 1 };
+const VAT: TaxLine = { name: 'VAT', rate: 20, kind: 'standard' };
+
+/** The last quarter that has ended; the one before it is filed already. */
 function latestEnded() {
-  const schedule = { frequency: 'quarterly' as const, startMonth: 1 };
-  return vatPeriodOf(addDaysISO(vatPeriodOf(today(), schedule).start, -1), schedule);
+  return vatPeriodOf(addDaysISO(vatPeriodOf(today(), SCHEDULE).start, -1), SCHEDULE);
+}
+
+async function issue(
+  company: Company,
+  contact: Client,
+  type: DocumentType,
+  issueDate: string,
+  unitPrice: number,
+) {
+  const draft = await draftDocument(company, type, contact);
+  return saveDocument({
+    ...draft,
+    issueDate,
+    dueDate: addDaysISO(issueDate, 30),
+    status: 'sent',
+    items: [{ ...draft.items[0], name: 'Work', quantity: 1, unitPrice, taxes: [VAT] }],
+  });
+}
+
+/**
+ * A UK company registered for VAT (Kuwaiti companies charge no VAT): sales and
+ * purchases in the last two quarters, the earlier one filed and paid.
+ */
+async function vatCompany(): Promise<Company> {
+  const company = await setupCompany(
+    {
+      name: 'Northwind Mail Services',
+      currency: 'GBP',
+      locale: 'en-GB',
+      taxIdLabel: 'VAT No.',
+      taxId: 'GB 123 4567 89',
+      address: {
+        line1: 'Unit 4, Riverside Business Park',
+        line2: '',
+        city: 'Manchester',
+        state: '',
+        postalCode: 'M1 2AB',
+        country: 'GB',
+      },
+    },
+    [VAT],
+  );
+  const client = await saveClient(createClient(company.id, { name: 'Brightside Retail Group' }));
+  const vendor = await saveClient(
+    createClient(company.id, { name: 'PaperMill Supplies Ltd', isCustomer: false, isVendor: true }),
+  );
+  const latest = latestEnded();
+  const earlier = vatPeriodOf(addDaysISO(latest.start, -1), SCHEDULE);
+  for (const period of [earlier, latest]) {
+    await issue(company, client, 'invoice', addDaysISO(period.start, 10), 1200);
+    await issue(company, vendor, 'bill', addDaysISO(period.start, 20), 300);
+  }
+  const accounts = await db.accounts.where('companyId').equals(company.id).toArray();
+  const bank = accounts.find((a) => a.role === 'bank')!;
+  const record = await fileVatReturn(company.id, earlier, {
+    filedOn: addDaysISO(earlier.end, 21),
+    reference: '',
+    lock: false,
+  });
+  await recordVatPayment(record.id, { date: vatDueDate(earlier, 'uk'), accountId: bank.id });
+  return (await db.companies.get(company.id))!;
 }
 
 const balance = (lines: { accountId: string; amount: number }[], accountId: string) =>
@@ -22,10 +88,10 @@ const balance = (lines: { accountId: string; amount: number }[], accountId: stri
 
 describe('filing a VAT return', () => {
   it('keeps the boxes, moves the VAT to the liability account and locks the period', async () => {
-    const company = await seedDemoCompany();
-    // The last full quarter of the demo's activity.
+    const company = await vatCompany();
+    // The last full quarter.
     const period = latestEnded();
-    // Earlier quarters of the demo are already filed and paid.
+    // The quarter before it is already filed and paid.
     const history = await db.vatReturns.toArray();
     expect(history.length).toBeGreaterThan(0);
     expect(history.every((r) => r.periodEnd < period.start)).toBe(true);
@@ -70,7 +136,7 @@ describe('filing a VAT return', () => {
   });
 
   it('records the payment and can be undone once unlocked', async () => {
-    const company = await seedDemoCompany();
+    const company = await vatCompany();
     const period = latestEnded();
     const record = await fileVatReturn(company.id, period, {
       filedOn: today(),
@@ -95,7 +161,7 @@ describe('filing a VAT return', () => {
   });
 
   it('refuses edits to the closing entry', async () => {
-    const company = await seedDemoCompany();
+    const company = await vatCompany();
     const period = latestEnded();
     const record = await fileVatReturn(company.id, period, {
       filedOn: today(),

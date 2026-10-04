@@ -1,10 +1,7 @@
-import { expect, test } from './fixtures';
+import { createCompany, expect, test } from './fixtures';
 
 test('a stock item is bought on a bill, sold on an invoice and costed', async ({ page }) => {
-  await page.goto('./');
-  await page.getByLabel('Company name').fill('Gulf Paper Trading');
-  await page.getByRole('button', { name: 'Create company' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  await createCompany(page, 'Gulf Paper Trading');
 
   // A stock item, sold by the box.
   await page.goto('#/products');

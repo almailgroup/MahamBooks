@@ -13,7 +13,6 @@ import {
 import { toast } from 'sonner';
 import { setMeta } from '@/db/db';
 import { setupCompany } from '@/db/records';
-import { seedDemoCompany } from '@/db/demo';
 import { BackupError, importBackup, LAST_BACKUP_KEY, parseBackup } from '@/db/backup';
 import { countryName, currencyName, emptyAddress } from '@/lib/geo';
 import { normalizeImage } from '@/lib/image';
@@ -181,6 +180,8 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
   const demo = async () => {
     setBusy('demo');
     try {
+      // The demo (with its sample logo and stamp) is only downloaded when asked for.
+      const { seedDemoCompany } = await import('@/db/demo');
       await seedDemoCompany();
       remember(null);
       void requestPersistentStorage();
@@ -527,7 +528,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
               <span>
                 <span className="block">{t('Explore with demo data')}</span>
                 <span className="block text-xs font-normal text-slate-500">
-                  {t('A sample company with invoices and payments.')}
+                  {t('A Kuwaiti trading company with a year of invoices, cheques and payroll.')}
                 </span>
               </span>
             </Button>

@@ -19,11 +19,29 @@ export const test = base.extend<{ pageErrors: string[] }>({
 
 export { expect };
 
+/**
+ * Loading the demo writes a year of work, which takes a few seconds (more
+ * when several tests load it at once): tests that start with it get this
+ * much more time.
+ */
+const DEMO_LOAD_TIME = 60_000;
+
 /** Opens the app on a fresh browser profile and loads the demo company. */
 export async function startWithDemoData(page: Page): Promise<void> {
+  test.info().setTimeout(test.info().timeout + DEMO_LOAD_TIME);
   await page.goto('./');
   await page.getByRole('button', { name: 'Explore with demo data' }).click();
-  await expect(page.getByText('Invoiced vs collected')).toBeVisible();
+  await expect(
+    page.getByText('Demo company created. You can delete it later in Settings.'),
+  ).toBeVisible({ timeout: DEMO_LOAD_TIME });
+}
+
+/** Sets up a company in Kuwait (dinars, no VAT) from the welcome page. */
+export async function createCompany(page: Page, name: string): Promise<void> {
+  await page.goto('./');
+  await page.getByLabel('Company name').fill(name);
+  await page.getByRole('button', { name: 'Create company' }).click();
+  await expect(page.getByText(`${name} is ready.`)).toBeVisible();
 }
 
 /** Runs `action` and returns the file the app downloads because of it. */

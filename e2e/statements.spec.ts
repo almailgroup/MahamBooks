@@ -1,12 +1,9 @@
-import { downloadFrom, expect, test } from './fixtures';
+import { createCompany, downloadFrom, expect, test } from './fixtures';
 
 test('a 5% retention is held, a partial payment shows on the statement, then the retention is released', async ({
   page,
 }) => {
-  await page.goto('./');
-  await page.getByLabel('Company name').fill('Al Mail Contracting');
-  await page.getByRole('button', { name: 'Create company' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  await createCompany(page, 'Al Mail Contracting');
 
   // A ministry that keeps the 5% tax retention until the clearance certificate.
   await page.goto('#/clients/new');
@@ -34,8 +31,8 @@ test('a 5% retention is held, a partial payment shows on the statement, then the
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page).toHaveURL(/#\/invoices\/[0-9a-f-]{36}$/);
   const heading = page.getByRole('heading', { level: 1 });
-  // The editor's heading stays until the saved invoice's page renders.
-  await expect(heading).toHaveText(/^Invoice INV-/);
+  // The saved invoice has its number (the editor's title may linger a moment).
+  await expect(heading).toHaveText(/^Invoice INV-\d{4}-\d{4}$/);
   const number = (await heading.textContent())!.replace(/^Invoice /, '').trim();
   await page.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Mark as sent' }).click();

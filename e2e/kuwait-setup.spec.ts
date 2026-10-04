@@ -26,7 +26,7 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   await expect(phone).toHaveValue('+965 2222 3333');
   await page.getByRole('button', { name: 'إنشاء الشركة' }).click();
 
-  // The dashboard: Arabic name, dinars, and no VAT returns in the menu.
+  // Ready under its Arabic name, with the Kuwaiti chart of accounts and no VAT returns.
   await expect(page.getByText('شركة الميل للتجارة جاهزة.')).toBeVisible();
   const menu = page.getByRole('navigation', { name: 'الرئيسية' });
   // Accounting is a group in the menu; it opens to show its pages.
@@ -37,6 +37,11 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
     'شركة الميل للتجارة',
   );
   await expect(page.getByRole('main')).toContainText(/0\.000.{0,3}د\.ك/);
+  await page.goto('./#/accounts');
+  await expect(page.getByRole('heading', { name: 'دليل الحسابات', level: 1 })).toBeVisible();
+  await expect(page.getByText('حصة صاحب العمل في التأمينات الاجتماعية').first()).toBeVisible();
+  await page.goto('./#/vat');
+  await expect(page.getByText('إقرارات ضريبة القيمة المضافة متوقفة')).toBeVisible();
 
   // Open invoices from the old system, with Arabic column names.
   await page.goto('./#/settings/import');
@@ -56,13 +61,14 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   await expect(page.getByText('تم استيراد فاتورتين').first()).toBeVisible();
 
   // The invoices list shows the balances in dinars.
-  await menu.getByRole('link', { name: 'الفواتير', exact: true }).click();
+  await page.goto('./#/invoices');
   await expect(page.getByText('INV-1001').first()).toBeVisible();
   await expect(page.getByRole('main')).toContainText(/1,250\.750.{0,3}د\.ك/);
   await expect(page.getByRole('main')).toContainText(/1,730\.750.{0,3}د\.ك/);
 
   // Company settings: IBAN checked as typed, stamp saved, everything kept after a reload.
   await page.goto('./#/settings/company');
+  await expect(page.getByLabel('الاسم بالعربية')).toHaveValue('شركة الميل للتجارة');
   const iban = page.getByLabel('رقم الآيبان (IBAN)');
   await iban.fill('KW82 CBKU 0000 0000 0000 1234 5601 01');
   await expect(page.getByText('رقم الآيبان غير صحيح. تحقق من وجود خطأ في الكتابة.')).toBeVisible();

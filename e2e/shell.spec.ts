@@ -8,18 +8,23 @@ test('Ctrl+K finds a customer by name and opens it', async ({ page }) => {
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Search' });
   await expect(palette).toBeVisible();
-  await palette.getByRole('combobox', { name: 'Search' }).fill('brightside');
+  await palette.getByRole('combobox', { name: 'Search' }).fill('sadu');
   // The customer comes before their documents.
-  await expect(palette.getByRole('option').first()).toContainText('Brightside Retail Group');
+  await expect(palette.getByRole('option').first()).toContainText('Sadu Interiors Co.');
   await expect(palette.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Enter');
   await expect(palette).toBeHidden();
   await expect(page).toHaveURL(/#\/clients\/[0-9a-f-]{36}$/);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Brightside Retail Group');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Sadu Interiors Co.');
 
   // It is remembered as a recent item, and "/" opens the palette too.
   await page.keyboard.press('/');
-  await expect(palette.getByRole('option').first()).toContainText('Brightside Retail Group');
+  await expect(palette.getByRole('option').first()).toContainText('Sadu Interiors Co.');
+  // Arabic names are found too, whichever way hamza and ta marbuta are typed.
+  await palette.getByRole('combobox').fill('السدو');
+  await expect(palette.getByRole('option').first()).toContainText('Sadu Interiors Co.');
+  await palette.getByRole('combobox').fill('لولوه الخليج');
+  await expect(palette.getByRole('option').first()).toContainText('Gulf Pearl Hotel');
   await palette.getByRole('combobox').fill('new bill');
   await expect(palette.getByRole('option').first()).toContainText('New bill');
   await page.keyboard.press('Enter');

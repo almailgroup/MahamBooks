@@ -1,8 +1,4 @@
-import { expect, startWithDemoData, test } from './fixtures';
-
-test.beforeEach(async ({ page }) => {
-  await startWithDemoData(page);
-});
+import { createCompany, expect, startWithDemoData, test } from './fixtures';
 
 /** First day of last month, as the date inputs want it (yyyy-MM-dd). */
 function startOfLastMonth(): string {
@@ -12,6 +8,7 @@ function startOfLastMonth(): string {
 }
 
 test('an asset is depreciated for a month and the balance sheet follows', async ({ page }) => {
+  await createCompany(page, 'Al Mail Contracting');
   await page.goto('#/assets');
   await expect(page.getByRole('heading', { name: 'Fixed assets', exact: true })).toBeVisible();
   await expect(page.getByText('No fixed assets yet')).toBeVisible();
@@ -41,7 +38,7 @@ test('an asset is depreciated for a month and the balance sheet follows', async 
   // Bought from the bank: property and equipment goes up.
   await page.goto('#/reports/balance-sheet');
   await expect(page.getByRole('row', { name: /Property and equipment/ })).toContainText(
-    /1,200\.00/,
+    /1,200\.000/,
   );
   await expect(page.getByText('Balanced', { exact: true })).toBeVisible();
 
@@ -55,7 +52,7 @@ test('an asset is depreciated for a month and the balance sheet follows', async 
 
   await page.goto('#/journals');
   const journal = page.getByRole('row', { name: /Depreciation for/ });
-  await expect(journal).toContainText('100.00');
+  await expect(journal).toContainText('100.000');
   await expect(journal.getByText('Depreciation', { exact: true })).toBeVisible();
   // Made by the register, so it can only be changed there.
   await journal.click();
@@ -64,16 +61,24 @@ test('an asset is depreciated for a month and the balance sheet follows', async 
 
   await page.goto('#/reports/balance-sheet');
   await expect(page.getByRole('row', { name: /Property and equipment/ })).toContainText(
-    /1,100\.00/,
+    /1,100\.000/,
   );
   await expect(page.getByText('Balanced', { exact: true })).toBeVisible();
 
   // Running the same month again adds nothing.
   await page.goto('#/assets?tab=runs');
-  await expect(page.getByRole('row', { name: /100\.00/ })).toHaveCount(1);
+  await expect(page.getByRole('row', { name: /100\.000/ })).toHaveCount(1);
 });
 
-test('reports switch to Arabic and the auditor pack downloads', async ({ page }) => {
+test('the demo’s assets are on the schedule, reports switch to Arabic and the auditor pack downloads', async ({
+  page,
+}) => {
+  await startWithDemoData(page);
+  await page.goto('#/assets');
+  await expect(page.getByRole('link', { name: /Toyota Hilux double cab/ }).first()).toBeVisible();
+  await page.goto('#/reports/asset-schedule');
+  await expect(page.getByText('Toyota Hilux double cab').first()).toBeVisible();
+
   await page.goto('#/reports/profit-and-loss');
   await expect(page.getByRole('heading', { name: 'Statement of profit or loss' })).toBeVisible();
   await page.getByRole('tab', { name: 'العربية' }).click();

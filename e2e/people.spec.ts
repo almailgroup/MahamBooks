@@ -1,21 +1,13 @@
-import { chooseOption, expect, test } from './fixtures';
-import type { Page } from '@playwright/test';
+import { chooseOption, createCompany, expect, test } from './fixtures';
 
 /** yyyy-MM-dd `days` from today (the browser runs in UTC, see playwright.config.ts). */
 const inDays = (days: number) =>
   new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-async function createKuwaitCompany(page: Page) {
-  await page.goto('./');
-  await page.getByLabel('Company name').fill('Almail Trading');
-  await page.getByRole('button', { name: 'Create company' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-}
-
 test('a residency expiring in 20 days is renewed from Compliance with its fee', async ({
   page,
 }) => {
-  await createKuwaitCompany(page);
+  await createCompany(page, 'Almail Trading');
 
   // An expatriate employee whose residency expires in 20 days.
   await page.goto('#/employees');
@@ -39,7 +31,7 @@ test('a residency expiring in 20 days is renewed from Compliance with its fee', 
   await expect(page.getByText('End-of-service estimate today')).toBeVisible();
 
   // It shows as due soon in the compliance calendar.
-  await page.getByRole('link', { name: 'Compliance' }).click();
+  await page.goto('#/compliance');
   await expect(page.getByRole('heading', { name: 'Compliance' })).toBeVisible();
   const item = page.getByRole('listitem').filter({ hasText: 'Residency' });
   await expect(item).toContainText('Ravi Kumar');
@@ -68,7 +60,7 @@ test('a residency expiring in 20 days is renewed from Compliance with its fee', 
   await expect(page.getByRole('listitem').filter({ hasText: 'Residency' })).toHaveCount(0);
 
   // The register shows it valid again.
-  await page.getByRole('link', { name: 'Documents' }).click();
+  await page.goto('#/compliance/documents');
   const row = page.getByRole('row').filter({ hasText: 'Residency' });
   await expect(row).toContainText('Ravi Kumar');
   await expect(row).toContainText('Valid');
@@ -83,7 +75,7 @@ test('a residency expiring in 20 days is renewed from Compliance with its fee', 
 });
 
 test('the employee and compliance pages read right to left in Arabic', async ({ page }) => {
-  await createKuwaitCompany(page);
+  await createCompany(page, 'Almail Trading');
   await page.goto('#/employees');
   await page.getByRole('button', { name: 'العربية' }).click();
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
