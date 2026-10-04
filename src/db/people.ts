@@ -153,7 +153,7 @@ export async function saveEmployee(input: Employee): Promise<Employee> {
   });
 }
 
-/** Whether the employee has renewals or register documents that must be kept. */
+/** Whether the employee has renewals or register documents. */
 export async function employeeHasHistory(id: ID): Promise<boolean> {
   const [renewals, documents] = await Promise.all([
     db.renewals.where('employeeId').equals(id).count(),
@@ -163,28 +163,111 @@ export async function employeeHasHistory(id: ID): Promise<boolean> {
 }
 
 /**
- * Deletes an employee added by mistake, with their personnel file. Anyone
- * with renewals or documents on record is marked as left instead, so the
- * history stays.
+ * Whether the employee has payroll history: pay-run lines, leave, staff loans
+ * or a final settlement. These are part of the accounts, so the employee is
+ * marked as left instead of deleted.
+ */
+export async function employeeHasPayrollHistory(employee: Pick<Employee, 'id' | 'companyId'>) {
+  const [runs, loans, leave, settlements] = await Promise.all([
+    db.payRuns
+      .where('companyId')
+      .equals(employee.companyId)
+      .filter((run) => run.lines.some((line) => line.employeeId === employee.id))
+      .count(),
+    db.staffLoans.where('employeeId').equals(employee.id).count(),
+    db.leaveRecords.where('employeeId').equals(employee.id).count(),
+    db.finalSettlements.where('employeeId').equals(employee.id).count(),
+  ]);
+  return runs + loans + leave + settlements > 0;
+}
+
+/** What deleting an employee removes, for the confirmation. */
+export interface EmployeeDeletion {
+  documents: number;
+  renewals: number;
+  files: number;
+  /** Payroll history: the employee can't be deleted, only marked as left. */
+  payroll: boolean;
+}
+
+async function personnelFile(id: ID) {
+  const [documents, renewals] = await Promise.all([
+    db.complianceDocuments.where('employeeId').equals(id).toArray(),
+    db.renewals.where('employeeId').equals(id).toArray(),
+  ]);
+  const owners = [id, ...documents.map((d) => d.id), ...renewals.map((r) => r.id)];
+  const files = await db.attachments.where('ownerId').anyOf(owners).toArray();
+  return { documents, renewals, files, owners };
+}
+
+export async function employeeDeletion(employee: Employee): Promise<EmployeeDeletion> {
+  const [file, payroll] = await Promise.all([
+    personnelFile(employee.id),
+    employeeHasPayrollHistory(employee),
+  ]);
+  return {
+    documents: file.documents.length,
+    renewals: file.renewals.length,
+    files: file.files.length,
+    payroll,
+  };
+}
+
+/**
+ * Deletes an employee and everything about them: their documents and
+ * renewals in the register, every file kept with them or with those, and
+ * the activity entries about them. One entry records the deletion, with
+ * only the employee number. Renewal fees stay in the books as expenses,
+ * with the number in place of the name. Employees with payroll history
+ * can't be deleted (the accounts depend on it): mark them as left.
  */
 export async function deleteEmployee(id: ID): Promise<void> {
   await db.transaction(
     'rw',
-    [db.employees, db.renewals, db.complianceDocuments, db.attachments, db.activities],
+    [
+      db.employees,
+      db.renewals,
+      db.complianceDocuments,
+      db.attachments,
+      db.activities,
+      db.expenses,
+      db.payRuns,
+      db.staffLoans,
+      db.leaveRecords,
+      db.finalSettlements,
+    ],
     async () => {
       const employee = await db.employees.get(id);
       if (!employee) return;
-      if (await employeeHasHistory(id)) {
+      if (await employeeHasPayrollHistory(employee)) {
         throw new EmployeeError(
-          t('This employee has documents or renewals on record. Mark them as left instead.'),
+          t(
+            'This employee has payroll records, which are part of the accounts. Mark them as left instead.',
+          ),
         );
       }
-      await db.attachments.where('ownerId').equals(id).delete();
+      const { documents, renewals, files, owners } = await personnelFile(id);
+      const names = [employee.name, employee.nameAr].filter((n): n is string => Boolean(n?.trim()));
+      for (const renewal of renewals) {
+        if (!renewal.expenseId) continue;
+        const expense = await db.expenses.get(renewal.expenseId);
+        if (!expense) continue;
+        const description = names.reduce(
+          (text, name) => text.split(name).join(employee.number),
+          expense.description,
+        );
+        if (description !== expense.description) {
+          await db.expenses.put({ ...expense, description, updatedAt: nowStamp() });
+        }
+      }
+      await db.attachments.bulkDelete(files.map((f) => f.id));
+      await db.activities.where('entityId').anyOf(owners).delete();
+      await db.renewals.bulkDelete(renewals.map((r) => r.id));
+      await db.complianceDocuments.bulkDelete(documents.map((d) => d.id));
       await db.employees.delete(id);
       await logActivity(employee.companyId, 'employee', id, 'deleted', {
-        text: msg('Employee {name} ({number}) deleted'),
-        vars: { name: employee.name, number: employee.number },
-        arabic: { name: employee.nameAr },
+        text: msg('Employee {number} deleted'),
+        vars: { number: employee.number },
       });
     },
   );

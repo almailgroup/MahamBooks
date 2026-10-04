@@ -31,6 +31,11 @@ import { chooseTheme } from '@/lib/themes';
 import { makeEntry, searchEntries, type SearchEntry, type SearchKind } from './rank';
 import { recordEntries, staticEntries } from './sources';
 import { loadRecent, rememberRecent, type RecentItem } from './recent';
+import { toast } from 'sonner';
+import { useCloud } from '@/cloud/store';
+import { useCloudStatus } from '@/cloud/hooks';
+import { useRoleView } from '@/features/cloud/role-gates';
+import { syncLabel } from '@/features/cloud/sync-status';
 
 const SECTION_LABELS: Record<SearchKind, string> = {
   recent: msg('Recent'),
@@ -80,6 +85,7 @@ const QUICK_ACTIONS = [
 const LANGUAGE_KEY = 'action:language';
 const THEME_KEY = 'action:theme';
 const THEME_SWITCH_KEY = 'action:theme-switch';
+const SYNC_KEY = 'action:sync-now';
 
 interface Section {
   kind: SearchKind;
@@ -145,10 +151,38 @@ function PaletteBody({
   const listId = useId();
 
   const dark = theme.scheme === 'dark';
+  const { peopleHidden } = useRoleView();
+  const sync = useCloudStatus(company.id);
+  const { manager } = useCloud();
+  const syncText = syncLabel(sync);
+  const syncing = sync.kind !== 'local' && sync.kind !== 'removed' && manager !== null;
   const fixed = useMemo(() => {
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
-      ...staticEntries(taxesOn),
+      ...staticEntries(taxesOn, { people: !peopleHidden }),
+      makeEntry({
+        key: 'action:sync-status',
+        kind: 'action',
+        title: t('Sync status'),
+        subtitle: syncText,
+        to: '/settings/cloud',
+        names: [t('Sync status'), 'Sync status'],
+        terms: ['cloud sync offline online status مزامنة سحابة'],
+        boost: 6,
+      }),
+      ...(syncing
+        ? [
+            makeEntry({
+              key: SYNC_KEY,
+              kind: 'action',
+              title: t('Sync now'),
+              to: '',
+              names: [t('Sync now'), 'Sync now'],
+              terms: ['cloud sync refresh مزامنة'],
+              boost: 6,
+            }),
+          ]
+        : []),
       makeEntry({
         key: LANGUAGE_KEY,
         kind: 'action',
@@ -182,7 +216,7 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, language, dark]);
+  }, [taxesOn, language, dark, peopleHidden, syncText, syncing]);
   const records = useLiveQuery(
     () => recordEntries(company, fmt),
     // `language` changes the names and words shown.
@@ -247,6 +281,10 @@ function PaletteBody({
     }
     if (entry.key === THEME_SWITCH_KEY) {
       setPreference(chooseTheme(preference, dark ? preference.light : preference.dark));
+      return;
+    }
+    if (entry.key === SYNC_KEY) {
+      void manager?.syncNow(company.id).then(() => toast.success(t('Sync finished')));
       return;
     }
     rememberRecent(company.id, {

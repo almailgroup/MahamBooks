@@ -38,6 +38,10 @@ import {
   LogoUpload,
 } from '@/components/fields';
 import { ActivitySelect, EmailField, LegalFormSelect, PhoneField } from '@/features/company/fields';
+import { CloudWelcomeCard } from '@/features/cloud/welcome-card';
+import { useCloud } from '@/cloud/store';
+import { startUpload } from '@/cloud/sync';
+import { cloudErrorMessage } from '@/cloud/api';
 
 interface SetupDraft {
   name: string;
@@ -100,6 +104,9 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
   const [draft, setDraft] = useState<SetupDraft>(() => remembered ?? initialDraft());
   const [busy, setBusy] = useState<'create' | 'demo' | 'restore' | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const { configured, user, api } = useCloud();
+  // Signed in: a new company goes to the cloud unless the person says no.
+  const [toCloud, setToCloud] = useState(true);
   const backupInput = useRef<HTMLInputElement>(null);
   const moreId = useId();
   const regionId = useId();
@@ -170,6 +177,11 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
       void requestPersistentStorage();
       toast.success(t('{name} is ready.', { name: localName(company) }));
       navigate('/');
+      if (user && api && toCloud) {
+        void startUpload(company.id, { api, userId: user.id }).catch((error) =>
+          toast.error(cloudErrorMessage(error)),
+        );
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not create the company.'));
     } finally {
@@ -436,6 +448,17 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
         ) : null}
       </section>
 
+      {user ? (
+        <section className="border-t border-slate-100 px-5 py-4 sm:px-6">
+          <Switch
+            checked={toCloud}
+            onChange={setToCloud}
+            label={t('Keep this company in the cloud')}
+            description={t('Safe online, on all your devices and ready for your team.')}
+          />
+        </section>
+      ) : null}
+
       <div className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         {firstRun ? (
           <p className="text-xs text-slate-500">{t('Only the company name is needed to start.')}</p>
@@ -491,9 +514,13 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
             {t('Welcome to {app}', { app: APP_NAME })}
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-base text-pretty text-slate-600">
-            {t(
-              'Invoices, payments and accounts for your business in Kuwait. Set up takes a minute, and your data stays private in this browser.',
-            )}
+            {configured
+              ? t(
+                  'Invoices, payments and accounts for your business in Kuwait. Set up takes a minute, and nothing leaves this browser unless you choose the cloud.',
+                )
+              : t(
+                  'Invoices, payments and accounts for your business in Kuwait. Set up takes a minute, and your data stays private in this browser.',
+                )}
           </p>
           <ul className="mt-5 flex flex-wrap justify-center gap-2">
             {FEATURES.map((f) => (
@@ -506,6 +533,19 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
               </li>
             ))}
           </ul>
+        </div>
+
+        <CloudWelcomeCard />
+
+        <div className="mt-8 mb-4">
+          <h2 className="font-semibold text-slate-900">
+            {user ? t('Set up a new company') : t('Or use on this device only')}
+          </h2>
+          <p className="mt-0.5 text-sm text-slate-600">
+            {user
+              ? t('It is kept in the cloud and on this device.')
+              : t('No account needed. Everything stays in this browser.')}
+          </p>
         </div>
 
         {form}
@@ -560,7 +600,11 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
           </div>
         </div>
         <p className="mt-8 text-center text-xs text-slate-500">
-          {t('Your data never leaves this device. Back it up regularly from Settings.')}
+          {user
+            ? t(
+                'Companies you keep on this device only are not sent anywhere. Back them up from Settings.',
+              )
+            : t('Your data never leaves this device. Back it up regularly from Settings.')}
         </p>
       </main>
     </div>

@@ -36,6 +36,8 @@ import type {
 } from './types';
 import { APP_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
+import { outboxMiddleware } from '@/cloud/outbox';
+import type { CloudLink, FileTask, OutboxEntry, SyncRev } from '@/cloud/types';
 
 /**
  * All data lives in the browser's IndexedDB, so the app works offline and
@@ -75,6 +77,11 @@ export class InvoiceDatabase extends Dexie {
   stockEntries!: Table<StockEntry, string>;
   landedCosts!: Table<LandedCost, string>;
   meta!: Table<KeyValue, string>;
+  // Cloud sync bookkeeping (see src/cloud): never exported or restored.
+  outbox!: Table<OutboxEntry, number>;
+  syncState!: Table<CloudLink, string>;
+  syncRevs!: Table<SyncRev, [string, string]>;
+  fileQueue!: Table<FileTask, number>;
 
   constructor(name = APP_NAME) {
     super(name);
@@ -148,6 +155,16 @@ export class InvoiceDatabase extends Dexie {
       documents:
         'id, companyId, [companyId+type], [companyId+type+number], clientId, issueDate, status, recurringId, sourceId',
     });
+    // Cloud: companies kept in the cloud, changes waiting to be sent, the
+    // server version of each record and files waiting to be removed.
+    this.version(14).stores({
+      outbox: '++seq, companyId, [companyId+parked], [table+id]',
+      syncState: 'companyId',
+      syncRevs: '[table+id], companyId',
+      fileQueue: '++seq, companyId',
+    });
+    // Every change to a company kept in the cloud is queued for the server.
+    this.use(outboxMiddleware(DATA_TABLES));
   }
 }
 

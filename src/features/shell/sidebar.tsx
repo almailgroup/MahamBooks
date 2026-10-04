@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router';
-import { Building2, Check, ChevronDown, ChevronsUpDown, DatabaseBackup, Plus } from 'lucide-react';
+import { NavLink, useLocation, useNavigate } from 'react-router';
+import { Building2, Check, ChevronDown, ChevronsUpDown, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { APP_NAME } from '@/lib/brand';
 import { useCompanyContext } from '@/app/company';
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/overlay';
 import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { AccountMenu } from '@/features/cloud/account-menu';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
 import {
@@ -147,7 +149,8 @@ function useGroupState(active: string | null) {
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const taxesOn = useTaxesEnabled();
   const { pathname } = useLocation();
-  const nav = visibleNav(taxesOn);
+  const { peopleHidden } = useRoleView();
+  const nav = visibleNav(taxesOn, { people: !peopleHidden });
   const { state, toggle } = useGroupState(activeGroupId(pathname, nav));
   const list = useRef<HTMLElement>(null);
   const edges = useScrollEdges(list, 'y');
@@ -212,19 +215,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </li>
           ))}
         </ul>
-        <Link
-          to="/settings/data"
-          onClick={onNavigate}
-          className="group bg-surface/60 hover:bg-surface mt-2 flex items-start gap-2.5 rounded-2xl px-3 py-2.5 text-xs leading-relaxed text-slate-600 ring-1 ring-slate-900/5 transition-colors"
-        >
-          <DatabaseBackup className="mt-0.5 size-3.5 shrink-0 text-slate-500" aria-hidden />
-          <span>
-            {t('Data is stored in this browser.')}{' '}
-            <span className="text-primary-700 font-medium group-hover:underline">
-              {t('Back up')}
-            </span>
-          </span>
-        </Link>
+        <AccountMenu onNavigate={onNavigate} />
       </div>
     </div>
   );

@@ -293,6 +293,19 @@ async function refreshOrdersOf(doc: Pick<InvoiceDocument, 'id' | 'type' | 'sourc
   }
 }
 
+/**
+ * Brings the orders that depend on these documents up to date (after their
+ * changes came from another device).
+ */
+export async function refreshOrdersFor(ids: Iterable<ID>): Promise<void> {
+  await db.transaction('rw', [db.documents], async () => {
+    for (const id of new Set(ids)) {
+      const doc = await db.documents.get(id);
+      if (doc) await refreshOrdersOf(doc);
+    }
+  });
+}
+
 async function takenNumbers(
   companyId: ID,
   type: DocumentType,

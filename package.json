@@ -28,6 +28,7 @@
     "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-tooltip": "^1.2.16",
     "@react-pdf/renderer": "^4.9.0",
+    "@supabase/supabase-js": "^2.117.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "decimal.js-light": "^2.5.1",
@@ -45,6 +46,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@expo-google-fonts/dm-serif-display": "^0.4.2",
     "@expo-google-fonts/ibm-plex-sans": "^0.4.1",

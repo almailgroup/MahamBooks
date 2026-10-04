@@ -15,6 +15,10 @@ import { isTypingTarget } from '@/features/shell/store';
 import { watchScrolling } from '@/features/shell/scrolling';
 import { CommandPalette } from '@/features/search/command-palette';
 import { ThemeMenu } from '@/features/theme/menu';
+import { ReadOnlyContext } from '@/components/ui/read-only';
+import { useRoleView, ViewOnlyBanner } from '@/features/cloud/role-gates';
+import { useCloudLink } from '@/cloud/hooks';
+import { useRuntimeStatus } from '@/cloud/status';
 
 const ItemOpener = lazy(() => import('@/features/search/item-opener'));
 
@@ -24,8 +28,14 @@ const recurringChecked = new Set<string>();
 function useRecurringGeneration() {
   const { company } = useCompanyContext();
   const navigate = useNavigate();
+  const link = useCloudLink(company.id);
+  const runtime = useRuntimeStatus(company.id);
+  // A company kept in the cloud first catches up with the team, so two
+  // devices don't both create the same recurring invoice.
+  const ready =
+    link === null || (link !== undefined && link.status === 'ready' && runtime.syncedOnce === true);
   useEffect(() => {
-    if (recurringChecked.has(company.id)) return;
+    if (!ready || recurringChecked.has(company.id)) return;
     recurringChecked.add(company.id);
     void generateDueInvoices(company.id)
       .then((created) => {
@@ -42,7 +52,7 @@ function useRecurringGeneration() {
       .catch(() => {
         recurringChecked.delete(company.id);
       });
-  }, [company.id, navigate]);
+  }, [company.id, navigate, ready]);
 }
 
 /** Ctrl+K or ⌘K anywhere, and "/" when not typing, open the command palette. */
@@ -80,6 +90,7 @@ export function AppLayout() {
   const [newOpen, setNewOpen] = useState(false);
   const [itemId, setItemId] = useState<string | null>(null);
   const [palette] = useState(() => openPalette(setPaletteOpen));
+  const roles = useRoleView();
   useRecurringGeneration();
   usePaletteShortcut(palette.open, palette.toggle);
   const location = useLocation();
@@ -158,9 +169,12 @@ export function AppLayout() {
               wide ? 'max-w-[1600px]' : 'max-w-7xl',
             )}
           >
-            <Suspense fallback={<Spinner className="py-24" label={t('Loading…')} />}>
-              <Outlet />
-            </Suspense>
+            <ReadOnlyContext.Provider value={roles.readOnly}>
+              <ViewOnlyBanner />
+              <Suspense fallback={<Spinner className="py-24" label={t('Loading…')} />}>
+                <Outlet />
+              </Suspense>
+            </ReadOnlyContext.Provider>
           </main>
         </div>
       </div>

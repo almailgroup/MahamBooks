@@ -2,6 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 import { Link, type LinkProps } from 'react-router';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { useBlockedSave } from './read-only';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'subtle';
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
@@ -53,13 +54,17 @@ export function Button({
   children,
   disabled,
   type = 'button',
+  title,
   ...props
 }: ButtonProps) {
+  // View only (see read-only.tsx): save buttons are off, with the reason.
+  const blocked = useBlockedSave(variant);
   return (
     <button
       type={type}
       className={buttonClass(variant, size, className)}
-      disabled={disabled || loading}
+      disabled={disabled || loading || blocked !== null}
+      title={blocked ?? title}
       {...props}
     >
       {loading ? <Loader2 className="animate-spin" aria-hidden /> : null}

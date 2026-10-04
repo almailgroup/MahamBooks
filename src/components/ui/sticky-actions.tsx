@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { registerStickyActions } from '@/features/shell/store';
+import { ReadOnlyNote, SaveArea } from './read-only';
 
 /**
  * The main buttons of an editor or form (Cancel, Save…). On phones they sit
@@ -26,7 +27,8 @@ export function StickyActions({
         className,
       )}
     >
-      {children}
+      <ReadOnlyNote className="me-auto max-lg:hidden lg:me-0" />
+      <SaveArea>{children}</SaveArea>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { Button } from './button';
+import { ReadOnlyNote, SaveArea } from './read-only';
 
 /* -------------------------------------------------------------------------- */
 /* Dialog                                                                     */
@@ -75,7 +76,8 @@ export function DialogFooter({ className, children }: { className?: string; chil
         className,
       )}
     >
-      {children}
+      <SaveArea>{children}</SaveArea>
+      <ReadOnlyNote className="sm:-order-1 sm:me-auto" />
     </div>
   );
 }

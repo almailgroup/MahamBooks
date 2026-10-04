@@ -6,6 +6,7 @@ import { useCompany } from '@/app/company';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/misc';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { ReadOnlyNote, SaveArea } from '@/components/ui/read-only';
 import { t } from '@/i18n';
 
 /** Local editable copy of the company with save/reset and a leave guard. */
@@ -103,13 +104,16 @@ export function SaveBar({
       className="bg-surface/95 sticky bottom-4 z-10 mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-slate-200 px-4 py-3 shadow-lg backdrop-blur sm:px-5"
     >
       <p className="text-sm text-slate-600">{t('You have unsaved changes.')}</p>
-      <div className="flex gap-2">
-        <Button variant="ghost" onClick={onReset} disabled={saving}>
-          {t('Discard')}
-        </Button>
-        <Button onClick={onSave} loading={saving}>
-          {t('Save changes')}
-        </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <ReadOnlyNote />
+        <SaveArea>
+          <Button variant="ghost" onClick={onReset} disabled={saving}>
+            {t('Discard')}
+          </Button>
+          <Button onClick={onSave} loading={saving}>
+            {t('Save changes')}
+          </Button>
+        </SaveArea>
       </div>
     </div>
   );

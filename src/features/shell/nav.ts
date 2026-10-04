@@ -130,12 +130,19 @@ export const NAV_FOOTER: (NavLink & { icon: LucideIcon })[] = [
   { to: '/settings', label: msg('Settings'), icon: Settings },
 ];
 
-/** The entries shown for this company (VAT returns only when taxes are on). */
-export function visibleNav(taxesOn: boolean): NavEntry[] {
-  return NAV.map((entry) =>
-    entry.kind === 'group'
-      ? { ...entry, children: entry.children.filter((c) => taxesOn || !c.taxesOnly) }
-      : entry,
+/**
+ * The entries shown for this company: VAT returns only when taxes are on,
+ * and People only for roles that see payroll (see src/cloud/roles.ts).
+ */
+export function visibleNav(
+  taxesOn: boolean,
+  { people = true }: { people?: boolean } = {},
+): NavEntry[] {
+  return NAV.filter((entry) => people || entry.kind !== 'group' || entry.id !== 'people').map(
+    (entry) =>
+      entry.kind === 'group'
+        ? { ...entry, children: entry.children.filter((c) => taxesOn || !c.taxesOnly) }
+        : entry,
   );
 }
 

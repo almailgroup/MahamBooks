@@ -6,6 +6,7 @@ import { AppLayout } from './layout';
 import { Spinner } from '@/components/ui/misc';
 import { buttonClass } from '@/components/ui/button';
 import SetupPage from '@/pages/setup';
+import { PeopleGate } from '@/features/cloud/role-gates';
 import type { DocumentType, PurchaseDocumentType } from '@/db/types';
 import { t } from '@/i18n';
 
@@ -61,6 +62,10 @@ const Payslips = lazy(() => import('@/pages/payroll/payslips'));
 const Settlement = lazy(() => import('@/pages/payroll/settlement'));
 const SettlementPrint = lazy(() => import('@/pages/payroll/settlement-print'));
 const NotFound = lazy(() => import('@/pages/not-found'));
+const AuthPage = lazy(() => import('@/pages/account/auth'));
+const AuthCallback = lazy(() => import('@/pages/account/callback'));
+const InvitePage = lazy(() => import('@/pages/account/invite'));
+const CloudCompanies = lazy(() => import('@/pages/account/companies'));
 
 function Root() {
   return (
@@ -141,7 +146,69 @@ const paymentRoutes = (path: string, direction: 'in' | 'out') => [
   { path: `${path}/:id/edit`, element: <PaymentForm key={direction} direction={direction} /> },
 ];
 
+/** Payroll and people pages: not for roles that may not see them. */
+function People({ children }: { children: ReactNode }) {
+  return <PeopleGate>{children}</PeopleGate>;
+}
+
 export const router = createHashRouter([
+  // Account screens work without a company on this device.
+  {
+    path: '/signin',
+    element: (
+      <Bare>
+        <AuthPage key="signin" mode="signin" />
+      </Bare>
+    ),
+  },
+  {
+    path: '/signup',
+    element: (
+      <Bare>
+        <AuthPage key="signup" mode="signup" />
+      </Bare>
+    ),
+  },
+  {
+    path: '/forgot-password',
+    element: (
+      <Bare>
+        <AuthPage key="forgot" mode="forgot" />
+      </Bare>
+    ),
+  },
+  {
+    path: '/reset-password',
+    element: (
+      <Bare>
+        <AuthPage key="reset" mode="reset" />
+      </Bare>
+    ),
+  },
+  {
+    path: '/auth/callback',
+    element: (
+      <Bare>
+        <AuthCallback />
+      </Bare>
+    ),
+  },
+  {
+    path: '/invite/:token',
+    element: (
+      <Bare>
+        <InvitePage />
+      </Bare>
+    ),
+  },
+  {
+    path: '/cloud/companies',
+    element: (
+      <Bare>
+        <CloudCompanies />
+      </Bare>
+    ),
+  },
   {
     path: '/',
     element: <Root />,
@@ -176,7 +243,9 @@ export const router = createHashRouter([
         path: 'payroll/runs/:id/payslips',
         element: (
           <Bare>
-            <Payslips />
+            <People>
+              <Payslips />
+            </People>
           </Bare>
         ),
       },
@@ -184,7 +253,9 @@ export const router = createHashRouter([
         path: 'payroll/settlements/:id/print',
         element: (
           <Bare>
-            <SettlementPrint />
+            <People>
+              <SettlementPrint />
+            </People>
           </Bare>
         ),
       },
@@ -241,16 +312,86 @@ export const router = createHashRouter([
           { path: 'banking/:accountId', element: <Banking /> },
           { path: 'vat', element: <Vat /> },
           { path: 'vat/:start', element: <Vat /> },
-          { path: 'employees', element: <EmployeeList /> },
-          { path: 'employees/new', element: <EmployeeForm key="new" /> },
-          { path: 'employees/:id', element: <EmployeeDetail /> },
-          { path: 'employees/:id/edit', element: <EmployeeForm /> },
-          { path: 'employees/:id/settlement', element: <Settlement /> },
-          { path: 'payroll', element: <Payroll /> },
-          { path: 'payroll/runs/:id', element: <PayRun /> },
-          { path: 'payroll/leave', element: <PayrollLeave /> },
-          { path: 'payroll/loans', element: <PayrollLoans /> },
-          { path: 'payroll/settings', element: <PayrollSettings /> },
+          {
+            path: 'employees',
+            element: (
+              <People>
+                <EmployeeList />
+              </People>
+            ),
+          },
+          {
+            path: 'employees/new',
+            element: (
+              <People>
+                <EmployeeForm key="new" />
+              </People>
+            ),
+          },
+          {
+            path: 'employees/:id',
+            element: (
+              <People>
+                <EmployeeDetail />
+              </People>
+            ),
+          },
+          {
+            path: 'employees/:id/edit',
+            element: (
+              <People>
+                <EmployeeForm />
+              </People>
+            ),
+          },
+          {
+            path: 'employees/:id/settlement',
+            element: (
+              <People>
+                <Settlement />
+              </People>
+            ),
+          },
+          {
+            path: 'payroll',
+            element: (
+              <People>
+                <Payroll />
+              </People>
+            ),
+          },
+          {
+            path: 'payroll/runs/:id',
+            element: (
+              <People>
+                <PayRun />
+              </People>
+            ),
+          },
+          {
+            path: 'payroll/leave',
+            element: (
+              <People>
+                <PayrollLeave />
+              </People>
+            ),
+          },
+          {
+            path: 'payroll/loans',
+            element: (
+              <People>
+                <PayrollLoans />
+              </People>
+            ),
+          },
+          {
+            path: 'payroll/settings',
+            element: (
+              <People>
+                <PayrollSettings />
+              </People>
+            ),
+          },
           { path: 'compliance', element: <Compliance /> },
           { path: 'compliance/documents', element: <ComplianceDocuments /> },
           { path: 'templates', element: <Templates /> },

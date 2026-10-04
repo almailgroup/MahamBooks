@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deleteEmployee } from '@/db/people';
+import { deleteEmployee, employeeDeletion, saveEmployee } from '@/db/people';
 import { addAttachment, removeAttachment } from '@/db/purchases';
 import { useCompany, useFormat } from '@/app/company';
 import {
@@ -27,7 +27,6 @@ import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { EndOfServiceTab, LeaveTab, LoansTab } from '@/features/payroll/employee-tabs';
-import { employeeHasPayroll } from '@/db/payroll';
 import { cn } from '@/lib/cn';
 import { ButtonLink, Button } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
@@ -40,7 +39,7 @@ import {
 } from '@/components/ui/overlay';
 import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
-import { msg, t } from '@/i18n';
+import { msg, t, tp } from '@/i18n';
 
 type Tab = 'overview' | 'leave' | 'loans' | 'eos';
 const TABS: { value: Tab; label: string }[] = [
@@ -93,20 +92,64 @@ export default function EmployeeDetailPage() {
   }
 
   const remove = async () => {
-    const ok = await confirm({
-      title: t('Delete {name}?', { name: localName(employee) }),
-      description: t(
-        'Their personnel file is deleted too. This cannot be undone. Employees with documents or renewals on record can only be marked as left.',
-      ),
-      confirmLabel: t('Delete'),
-      danger: true,
-    });
-    if (!ok) return;
+    const name = localName(employee);
     try {
-      if (await employeeHasPayroll(employee)) {
-        toast.error(t('This employee has payroll records. Mark them as left instead.'));
+      const plan = await employeeDeletion(employee);
+      if (plan.payroll) {
+        // Payroll is part of the accounts: the employee stays, marked as left.
+        if (employee.status === 'left') {
+          toast.info(
+            t(
+              '{name} has payroll records, which are part of the accounts, so they stay marked as left.',
+              {
+                name,
+              },
+            ),
+          );
+          return;
+        }
+        const left = await confirm({
+          title: t('Mark {name} as left?', { name }),
+          description: t(
+            '{name} has payroll records (pay runs, leave, loans or a final settlement). Payroll is part of the accounts, so the employee can’t be deleted. Marked as left, they stay in past payroll and reports.',
+            { name },
+          ),
+          confirmLabel: t('Mark as left'),
+        });
+        if (!left) return;
+        await saveEmployee({ ...employee, status: 'left' });
+        toast.success(t('{name} is marked as left.', { name }));
         return;
       }
+      const ok = await confirm({
+        title: t('Delete {name}?', { name }),
+        description: (
+          <div className="space-y-2">
+            <p>{t('Everything about them is deleted:')}</p>
+            <ul className="list-disc space-y-0.5 ps-5">
+              <li>{t('their personnel file')}</li>
+              <li>
+                {tp(
+                  plan.documents,
+                  '{count} document in the register',
+                  '{count} documents in the register',
+                )}
+              </li>
+              <li>{tp(plan.renewals, '{count} renewal', '{count} renewals')}</li>
+              <li>{tp(plan.files, '{count} file', '{count} files')}</li>
+              <li>{t('the activity entries about them')}</li>
+            </ul>
+            <p>
+              {t(
+                'Only their employee number stays in the activity log. Renewal fees stay in the books. This cannot be undone.',
+              )}
+            </p>
+          </div>
+        ),
+        confirmLabel: t('Delete'),
+        danger: true,
+      });
+      if (!ok) return;
       await deleteEmployee(employee.id);
       toast.success(t('Employee deleted'));
       navigate('/employees');

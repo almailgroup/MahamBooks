@@ -497,6 +497,8 @@ export interface Company {
   holidays?: CompanyHoliday[];
   /** Date the opening balances were imported as at, and the entries that hold them. */
   openingBalances?: { date: ISODate; journalIds: ID[] };
+  /** The demo company: it stays on the device it was made on and never goes to the cloud. */
+  demo?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1057,7 +1059,15 @@ export interface Attachment {
   name: string;
   type: string;
   size: number;
+  /**
+   * The content. Empty for a file kept in the cloud that this device has not
+   * downloaded yet (see storagePath).
+   */
   dataUrl: string;
+  /** Where the content is in cloud storage ({companyId}/{id}), once uploaded. */
+  storagePath?: string;
+  /** SHA-256 of the content in cloud storage. */
+  contentHash?: string;
   createdAt: Timestamp;
 }
 

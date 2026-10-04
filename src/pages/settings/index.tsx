@@ -3,6 +3,9 @@ import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router';
 import {
   BookOpen,
   Building2,
+  Cloud,
+  UserRound,
+  UsersRound,
   Database,
   FileCog,
   FileUp,
@@ -30,6 +33,9 @@ const ImportSettings = lazy(() => import('./import'));
 const DataSettings = lazy(() => import('./data'));
 const CompaniesSettings = lazy(() => import('./companies'));
 const AppearanceSettings = lazy(() => import('./appearance'));
+const AccountSettings = lazy(() => import('./account'));
+const TeamSettings = lazy(() => import('./team'));
+const CloudSettings = lazy(() => import('./cloud'));
 
 const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
   {
@@ -37,6 +43,14 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
     items: [
       { path: 'company', label: msg('Company profile'), icon: <Building2 /> },
       { path: 'companies', label: msg('Companies'), icon: <Layers /> },
+    ],
+  },
+  {
+    title: msg('Account and team'),
+    items: [
+      { path: 'account', label: msg('Your account'), icon: <UserRound /> },
+      { path: 'team', label: msg('Team'), icon: <UsersRound /> },
+      { path: 'cloud', label: msg('Cloud and sync'), icon: <Cloud /> },
     ],
   },
   {
@@ -144,6 +158,9 @@ export default function SettingsPage() {
               <Route path="data" element={<DataSettings />} />
               <Route path="companies" element={<CompaniesSettings />} />
               <Route path="appearance" element={<AppearanceSettings />} />
+              <Route path="account" element={<AccountSettings />} />
+              <Route path="team" element={<TeamSettings />} />
+              <Route path="cloud" element={<CloudSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

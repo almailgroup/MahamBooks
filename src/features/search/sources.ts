@@ -5,7 +5,7 @@ import { displayStatus, STATUS_META } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
-import { NAV, NAV_FOOTER } from '@/features/shell/nav';
+import { NAV_FOOTER, visibleNav } from '@/features/shell/nav';
 import { CREATE_GROUPS } from '@/features/shell/create';
 import { msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
@@ -18,7 +18,7 @@ export interface SearchFormat {
 }
 
 /** Shortcuts that open a page with a filter, found by what people ask for. */
-const SHORTCUTS: { key: string; label: string; to: string; keywords?: string }[] = [
+const SHORTCUTS: { key: string; label: string; to: string; keywords?: string; people?: true }[] = [
   {
     key: 'cheques-week',
     label: msg('Cheques due this week'),
@@ -33,13 +33,13 @@ const SHORTCUTS: { key: string; label: string; to: string; keywords?: string }[]
   { key: 'overdue-invoices', label: msg('Overdue invoices'), to: '/invoices?status=overdue' },
   { key: 'low-stock', label: msg('Low stock'), to: '/products?filter=low', keywords: 'reorder' },
   { key: 'expiring', label: msg('Expiring documents'), to: '/compliance/documents' },
-  { key: 'payroll-leave', label: msg('Leave'), to: '/payroll/leave' },
-  { key: 'payroll-loans', label: msg('Staff loans'), to: '/payroll/loans' },
+  { key: 'payroll-leave', label: msg('Leave'), to: '/payroll/leave', people: true },
+  { key: 'payroll-loans', label: msg('Staff loans'), to: '/payroll/loans', people: true },
   { key: 'stock-count', label: msg('Stock count'), to: '/inventory/count' },
 ];
 
 /** Reports and settings pages, so they can be reached in two keystrokes. */
-const SUB_PAGES: { label: string; to: string; keywords?: string }[] = [
+const SUB_PAGES: { label: string; to: string; keywords?: string; people?: true }[] = [
   { label: msg('Balance sheet'), to: '/reports/balance-sheet' },
   { label: msg('Profit and loss'), to: '/reports/profit-and-loss', keywords: 'income statement' },
   { label: msg('Cash flow'), to: '/reports/cash-flow' },
@@ -56,11 +56,24 @@ const SUB_PAGES: { label: string; to: string; keywords?: string }[] = [
   { label: msg('Email templates'), to: '/settings/emails' },
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },
-  { label: msg('Payroll settings'), to: '/payroll/settings' },
+  { label: msg('Payroll settings'), to: '/payroll/settings', people: true },
+  { label: msg('Your account'), to: '/settings/account', keywords: 'profile password sign out' },
+  { label: msg('Team'), to: '/settings/team', keywords: 'members invite users roles' },
+  {
+    label: msg('Cloud and sync'),
+    to: '/settings/cloud',
+    keywords: 'sync status offline cloud devices',
+  },
 ];
 
-/** Pages and actions: the same for every company, in the interface language. */
-export function staticEntries(taxesOn: boolean): SearchEntry[] {
+/**
+ * Pages and actions: the same for every company, in the interface language.
+ * Without `people`, payroll and people pages are left out (staff and viewers).
+ */
+export function staticEntries(
+  taxesOn: boolean,
+  { people = true }: { people?: boolean } = {},
+): SearchEntry[] {
   const entries: SearchEntry[] = [];
   const page = (to: string, label: string, boost: number, keywords?: string, group?: string) =>
     entries.push(
@@ -75,7 +88,7 @@ export function staticEntries(taxesOn: boolean): SearchEntry[] {
         boost,
       }),
     );
-  for (const entry of NAV) {
+  for (const entry of visibleNav(true, { people })) {
     if (entry.kind === 'link') page(entry.to, entry.label, 30, entry.keywords);
     else
       for (const child of entry.children) {
@@ -84,7 +97,7 @@ export function staticEntries(taxesOn: boolean): SearchEntry[] {
       }
   }
   for (const link of NAV_FOOTER) page(link.to, link.label, 20);
-  for (const sub of SUB_PAGES) page(sub.to, sub.label, 10, sub.keywords);
+  for (const sub of SUB_PAGES) if (people || !sub.people) page(sub.to, sub.label, 10, sub.keywords);
 
   for (const group of CREATE_GROUPS) {
     for (const action of group.actions) {
@@ -102,6 +115,7 @@ export function staticEntries(taxesOn: boolean): SearchEntry[] {
     }
   }
   for (const shortcut of SHORTCUTS) {
+    if (shortcut.people && !people) continue;
     entries.push(
       makeEntry({
         key: `action:${shortcut.key}`,

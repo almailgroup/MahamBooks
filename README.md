@@ -5,9 +5,10 @@ Built by AL Mail Group.
 
 <p dir="rtl" lang="ar">برنامج مجاني للمحاسبة والفواتير، مصمم للشركات في الكويت، باللغتين العربية والإنجليزية.</p>
 
-AlmailBooks runs in the browser and is hosted on Vercel. Today your records
-stay on your own device; accounts, cloud sync and teams on Supabase are being
-added.
+AlmailBooks runs in the browser and is hosted on Vercel. It works on one
+device without an account, or with an account that keeps your companies in the
+cloud (Supabase), on all your devices and with your team, and still works
+offline.
 
 **Open the app:** https://almail-books.vercel.app/
 
@@ -103,6 +104,11 @@ added.
 - 10 PDF templates with your logo, brand colour, stamp and signature, and a
   live preview while you type.
 - Several companies in one app.
+- **Accounts and teams**: keep a company in the cloud, use it on every device
+  and invite your accountant and staff by a link on WhatsApp or email, each
+  with a role (owner, admin, accountant, staff, viewer). Staff and viewers never
+  see payroll. Changes sync in the background and the app keeps working
+  offline.
 - Import contacts, items, opening balances and open invoices from CSV.
 - Works offline and installs like an app on phones and computers.
 - 20 themes, 10 light and 10 dark, chosen per device in **Settings →
@@ -150,16 +156,35 @@ there.
 
 ## Where your data lives
 
-- Everything you enter is stored in your browser (IndexedDB) on the device you
-  use. Nothing is sent to a server; Vercel only delivers the app itself.
-- The site is public, but other visitors see an empty app with their own
-  storage. They cannot see your records.
-- **Each browser has its own data.** Back up regularly from **Settings → Data
-  → Back up**. To move to another computer, open the app there and choose
-  **Restore a backup** on the welcome screen.
-- Clearing your browser's site data deletes the records. The app asks the
-  browser to protect its storage, and installing the app makes this more
-  reliable.
+- **Without an account** (Use on this device only), everything you enter is
+  stored in your browser (IndexedDB) on the device you use. Nothing is sent to
+  a server; Vercel only delivers the app itself. Other visitors of the site see
+  an empty app with their own storage.
+- **With an account**, the companies you choose to keep in the cloud are also
+  stored in AL Mail Group's Supabase project, and synced to every device you
+  sign in on and to the members of your team. The device keeps its own copy, so
+  the app is just as fast and works offline; changes sync when the connection
+  is back. Receipts and scans are kept in private file storage.
+- The database decides who sees what (row-level security), by role: owner,
+  admin, accountant, staff and viewer. Staff and viewers never receive salaries,
+  payroll or employee documents. The app only uses Supabase's public
+  (publishable) key.
+- **Deletes are real**: what you delete is deleted in the cloud and on your
+  team's devices, files included. A marker without any data tells other devices
+  about it for up to 30 days. On Supabase's Pro plan, daily backups keep
+  deleted data for up to 7 days; then it is gone.
+- The demo company always stays on the device it was made on.
+- **Each browser has its own copy.** Without an account, back up regularly
+  from **Settings → Backup & data**; to move to another computer, choose
+  **Restore a backup** on the welcome screen there. With an account, sign in on
+  the other computer and download your companies.
+- Clearing your browser's site data deletes this device's copy (and, for
+  companies on this device only, the records). The app asks the browser to
+  protect its storage, and installing the app makes this more reliable.
+
+Setting up the cloud is described in
+[`docs/supabase-setup.md`](docs/supabase-setup.md); the server, its rules and
+the security checklist in [`supabase/README.md`](supabase/README.md).
 
 ## Offline and installing
 
@@ -198,10 +223,12 @@ src/
   components/   UI building blocks, PDF preview, charts
   db/           IndexedDB schema (Dexie), the records of every module, demo data
   lib/          money, Kuwait data, ledger and financial statements, payroll, inventory
+  cloud/        accounts, sync engine (outbox, push and pull), roles, invitations
   i18n/         translation functions and the Arabic dictionaries (ar/*.ts)
   pdf/          PDF templates (react-pdf), fonts, document wording, statements, PDF worker
 e2e/            browser tests
-docs/           Arabic glossary, screenshots
+supabase/       the cloud database (one SQL migration) and its security notes
+docs/           Arabic glossary, cloud setup guide, screenshots
 scripts/        regenerate fonts, template thumbnails and app icons
 ```
 

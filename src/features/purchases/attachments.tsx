@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Camera, FileText, Paperclip, X } from 'lucide-react';
+import { Camera, FileText, ImageDown, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { addAttachment, removeAttachment } from '@/db/purchases';
@@ -19,13 +19,66 @@ export interface AttachedFile {
   dataUrl: string;
 }
 
-/** Opens a file in a new tab. Browsers refuse to open data: URLs directly. */
-export function openAttachment(file: Pick<AttachedFile, 'dataUrl' | 'type'>) {
-  const base64 = file.dataUrl.slice(file.dataUrl.indexOf(',') + 1);
+function blobUrl(dataUrl: string, type: string): string {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes], { type: file.type }));
-  window.open(url, '_blank', 'noopener');
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return url;
+}
+
+/**
+ * Opens a file in a new tab. Browsers refuse to open data: URLs directly. A
+ * file kept in the cloud that this device doesn't have yet is downloaded
+ * first (the tab opens at once, so it isn't blocked as a pop-up).
+ */
+export function openAttachment(file: Pick<AttachedFile, 'dataUrl' | 'type'> & { id?: string }) {
+  if (file.dataUrl) {
+    window.open(blobUrl(file.dataUrl, file.type), '_blank', 'noopener');
+    return;
+  }
+  if (!file.id) return;
+  const tab = window.open('', '_blank');
+  void import('@/cloud/attachments')
+    .then(({ attachmentContent }) => attachmentContent(file.id!))
+    .then(({ dataUrl, type }) => {
+      const url = blobUrl(dataUrl, type || file.type);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = url;
+      } else {
+        window.open(url, '_blank', 'noopener');
+      }
+    })
+    .catch((error) => {
+      tab?.close();
+      toast.error(error instanceof Error ? error.message : t('Could not open the file.'));
+    });
+}
+
+/** A thumbnail, or an icon for a PDF or a photo still in the cloud. */
+export function FileThumb({ file }: { file: Pick<AttachedFile, 'dataUrl' | 'type'> }) {
+  if (file.type.startsWith('image/') && file.dataUrl) {
+    return (
+      <img
+        src={file.dataUrl}
+        alt=""
+        className="size-11 shrink-0 rounded-md object-cover ring-1 ring-slate-200"
+      />
+    );
+  }
+  if (file.type.startsWith('image/')) {
+    return (
+      <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500">
+        <ImageDown className="size-5" aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-600">
+      <FileText className="size-5" aria-hidden />
+    </span>
+  );
 }
 
 /**
@@ -113,17 +166,7 @@ export function AttachmentList({
                 className="flex min-w-0 flex-1 items-center gap-3 text-start"
                 title={t('Open {name}', { name: f.name })}
               >
-                {f.type.startsWith('image/') ? (
-                  <img
-                    src={f.dataUrl}
-                    alt=""
-                    className="size-11 shrink-0 rounded-md object-cover ring-1 ring-slate-200"
-                  />
-                ) : (
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-600">
-                    <FileText className="size-5" />
-                  </span>
-                )}
+                <FileThumb file={f} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-slate-800">
                     {f.name}

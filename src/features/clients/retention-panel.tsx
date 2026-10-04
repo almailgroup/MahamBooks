@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { FileText, Paperclip, Pencil, Plus, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
+import { openAttachment } from '@/features/purchases/attachments';
 import {
   heldRetention,
   newCertificate,
@@ -532,7 +533,7 @@ export function RetentionPanel({
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
-                    {file ? (
+                    {file?.dataUrl ? (
                       <a
                         href={file.dataUrl}
                         download={downloadName(file.name, `certificate-${c.number}`)}
@@ -540,6 +541,15 @@ export function RetentionPanel({
                       >
                         <Paperclip className="size-3.5" aria-hidden /> {t('Scan')}
                       </a>
+                    ) : file ? (
+                      // Kept in the cloud and not downloaded yet: opened from there.
+                      <button
+                        type="button"
+                        onClick={() => openAttachment(file)}
+                        className="text-primary-700 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-slate-100"
+                      >
+                        <Paperclip className="size-3.5" aria-hidden /> {t('Scan')}
+                      </button>
                     ) : null}
                     <Button
                       size="icon-sm"

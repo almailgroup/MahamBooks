@@ -51,5 +51,7 @@ async function seed(clock: SeedClock): Promise<Company> {
   // Closing last year locks it, so it comes after everything dated in it.
   clock.set(closingDate(calendar));
   await closeLastYear(books);
+  // Marked so it never goes to the cloud.
+  await db.companies.update(books.company.id, { demo: true });
   return books.refresh();
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db, DATA_TABLES, setMeta, getMeta, type DataTable } from './db';
-import { CURRENT_COMPANY_KEY } from './records';
+import { CURRENT_COMPANY_KEY, SYNC_TABLES } from './records';
 import { seedMissingCharts } from './chart-setup';
 import type { Company, ID } from './types';
 import { APP_NAME } from '@/lib/brand';
@@ -147,34 +147,49 @@ export async function importBackup(
       }
     }
   }
-  await db.transaction('rw', [...DATA_TABLES.map((t) => db[t]), db.meta], async () => {
-    if (mode === 'replace') {
-      for (const table of DATA_TABLES) await db[table].clear();
-    }
-    for (const table of DATA_TABLES) {
-      const rows = backup.data[table];
-      // Dexie's typing is per table; the rows were validated above.
-      if (rows.length)
-        await (db[table] as unknown as { bulkPut: (r: unknown[]) => Promise<unknown> }).bulkPut(
-          rows,
-        );
-    }
-    // Backups made before accounting existed have no chart of accounts.
-    await seedMissingCharts(db);
-    const current = await getMeta<string | null>(CURRENT_COMPANY_KEY, null);
-    const exists = current ? await db.companies.get(current) : undefined;
-    if (!exists && companies[0]) await setMeta(CURRENT_COMPANY_KEY, companies[0].id);
-  });
+  await db.transaction(
+    'rw',
+    [...DATA_TABLES.map((t) => db[t]), ...SYNC_TABLES(), db.meta],
+    async () => {
+      if (mode === 'replace') {
+        // Companies kept in the cloud stay there: this device stops syncing them
+        // before its copy is replaced, so nothing is deleted in the cloud.
+        for (const table of SYNC_TABLES()) await table.clear();
+        for (const table of DATA_TABLES) await db[table].clear();
+      }
+      for (const table of DATA_TABLES) {
+        const rows = backup.data[table];
+        // Dexie's typing is per table; the rows were validated above.
+        if (rows.length)
+          await (db[table] as unknown as { bulkPut: (r: unknown[]) => Promise<unknown> }).bulkPut(
+            rows,
+          );
+      }
+      // Backups made before accounting existed have no chart of accounts.
+      await seedMissingCharts(db);
+      const current = await getMeta<string | null>(CURRENT_COMPANY_KEY, null);
+      const exists = current ? await db.companies.get(current) : undefined;
+      if (!exists && companies[0]) await setMeta(CURRENT_COMPANY_KEY, companies[0].id);
+    },
+  );
 }
 
 export async function markBackedUp(): Promise<void> {
   await setMeta(LAST_BACKUP_KEY, new Date().toISOString());
 }
 
-/** Removes every record (all companies) from this browser. */
+/**
+ * Removes every record (all companies) from this browser. Companies kept in
+ * the cloud stay there; this device just stops syncing them.
+ */
 export async function wipeAllData(): Promise<void> {
-  await db.transaction('rw', [...DATA_TABLES.map((t) => db[t]), db.meta], async () => {
-    for (const table of DATA_TABLES) await db[table].clear();
-    await db.meta.clear();
-  });
+  await db.transaction(
+    'rw',
+    [...DATA_TABLES.map((t) => db[t]), ...SYNC_TABLES(), db.meta],
+    async () => {
+      for (const table of SYNC_TABLES()) await table.clear();
+      for (const table of DATA_TABLES) await db[table].clear();
+      await db.meta.clear();
+    },
+  );
 }

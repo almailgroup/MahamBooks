@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { db } from '@/db/db';
 import { deleteCompany } from '@/db/records';
 import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
@@ -19,17 +20,28 @@ export default function CompaniesSettings() {
   const language = currentLanguage();
 
   const remove = async (id: string, name: string) => {
+    // A company kept in the cloud only leaves this device; it is deleted for
+    // everyone from Settings → Team, by its owner.
+    const inCloud = Boolean(await db.syncState.get(id));
     const ok = await confirm({
-      title: t('Delete {name}?', { name }),
-      description: t(
-        'All of its clients, products, invoices, quotes, payments and settings are permanently deleted from this browser. Download a backup first if you may need them.',
-      ),
-      confirmLabel: t('Delete company'),
+      title: inCloud
+        ? t('Remove {name} from this device?', { name })
+        : t('Delete {name}?', { name }),
+      description: inCloud
+        ? t(
+            'It stays in the cloud for you and your team, and you can download it again. To delete it for everyone, the owner uses Settings → Team.',
+          )
+        : t(
+            'All of its clients, products, invoices, quotes, payments and settings are permanently deleted from this browser. Download a backup first if you may need them.',
+          ),
+      confirmLabel: inCloud ? t('Remove from this device') : t('Delete company'),
       danger: true,
     });
     if (!ok) return;
     await deleteCompany(id);
-    toast.success(t('{name} deleted', { name }));
+    toast.success(
+      inCloud ? t('{name} was removed from this device.', { name }) : t('{name} deleted', { name }),
+    );
     navigate('/');
   };
 

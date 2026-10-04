@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
-import { FileText, Paperclip, X } from 'lucide-react';
+import { Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { openAttachment, type AttachedFile } from '@/features/purchases/attachments';
+import { FileThumb, openAttachment, type AttachedFile } from '@/features/purchases/attachments';
 import { receiptFromFile } from '@/lib/image';
 import { newId } from '@/lib/ids';
 import { Button } from '@/components/ui/button';
@@ -67,17 +67,7 @@ export function FileList({
                 className="flex min-w-0 flex-1 items-center gap-3 text-start"
                 title={t('Open {name}', { name: f.name })}
               >
-                {f.type.startsWith('image/') ? (
-                  <img
-                    src={f.dataUrl}
-                    alt=""
-                    className="size-11 shrink-0 rounded-md object-cover ring-1 ring-slate-200"
-                  />
-                ) : (
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-600">
-                    <FileText className="size-5" />
-                  </span>
-                )}
+                <FileThumb file={f} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-slate-800" dir="auto">
                     {f.name}

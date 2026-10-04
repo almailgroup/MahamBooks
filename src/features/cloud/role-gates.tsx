@@ -1,0 +1,81 @@
+import { useMemo, type ReactNode } from 'react';
+import { Link } from 'react-router';
+import { Eye, Lock } from 'lucide-react';
+import { useCompany } from '@/app/company';
+import { t } from '@/i18n';
+import { buttonClass } from '@/components/ui/button';
+import { Card, EmptyState } from '@/components/ui/misc';
+import type { ReadOnlyState } from '@/components/ui/read-only';
+import { useCloudLink } from '@/cloud/hooks';
+import { canSeePeople, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
+
+export interface RoleView {
+  /** Null for a company kept on this device only. */
+  role: MemberRole | null;
+  /** Payroll and people pages are hidden. */
+  peopleHidden: boolean;
+  readOnly: ReadOnlyState;
+}
+
+/** What the person's role in the current company lets them see and do. */
+export function useRoleView(): RoleView {
+  const company = useCompany();
+  const link = useCloudLink(company.id);
+  return useMemo(() => {
+    const role = link?.role ?? null;
+    const removed = link?.status === 'removed';
+    const viewer = role === 'viewer';
+    return {
+      role,
+      peopleHidden: !canSeePeople(role),
+      readOnly: {
+        readOnly: viewer || removed,
+        reason: removed ? t('No longer shared with you') : viewer ? t('View only') : '',
+      },
+    };
+  }, [link]);
+}
+
+/** Payroll and people pages: shown only to roles that may see them. */
+export function PeopleGate({ children }: { children: ReactNode }) {
+  const { peopleHidden, role } = useRoleView();
+  if (!peopleHidden) return <>{children}</>;
+  return (
+    <Card className="mx-auto max-w-xl">
+      <EmptyState
+        icon={<Lock />}
+        title={t('Payroll and people are private')}
+        description={t(
+          'As {role} in this company you don’t see salaries, payroll or employee documents. Ask the owner if you need them.',
+          { role: t(ROLE_LABELS[role ?? 'viewer']) },
+        )}
+        action={
+          <Link to="/" className={buttonClass('outline')}>
+            {t('Go to dashboard')}
+          </Link>
+        }
+      />
+    </Card>
+  );
+}
+
+/** At the top of every page for people who can only look. */
+export function ViewOnlyBanner() {
+  const { readOnly, role } = useRoleView();
+  if (!readOnly.readOnly) return null;
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-600/20"
+    >
+      <Eye className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <p>
+        {role === 'viewer'
+          ? t('You can view this company but not change it. Ask an owner or admin for more access.')
+          : t(
+              'This company is no longer shared with you. Keep it as a company on this device or remove it in Settings → Cloud and sync.',
+            )}
+      </p>
+    </div>
+  );
+}

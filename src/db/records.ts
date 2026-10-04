@@ -22,6 +22,20 @@ import { msg, t } from '@/i18n';
 /* Companies                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/** Local bookkeeping of the cloud copy (outbox, links, versions). */
+export const SYNC_TABLES = () => [db.syncState, db.outbox, db.syncRevs];
+
+/**
+ * Stops syncing a company on this device: its link, unsent changes and
+ * record versions are dropped. Run it first in a transaction that removes
+ * the company's records, so their removal is not sent to the cloud.
+ */
+export async function forgetCloudLink(companyId: ID): Promise<void> {
+  await db.syncState.delete(companyId);
+  await db.outbox.where('companyId').equals(companyId).delete();
+  await db.syncRevs.where('companyId').equals(companyId).delete();
+}
+
 export const CURRENT_COMPANY_KEY = 'currentCompanyId';
 
 export async function getCurrentCompanyId(): Promise<ID | null> {
@@ -99,21 +113,30 @@ export async function setupCompany(
   );
 }
 
-/** Deletes a company and everything that belongs to it. */
+/**
+ * Deletes a company and everything that belongs to it from this device. A
+ * company kept in the cloud is first unlinked here, so nothing is deleted
+ * in the cloud (deleting it there is a separate, owner-only step).
+ */
 export async function deleteCompany(id: ID): Promise<void> {
-  await db.transaction('rw', [...DATA_TABLES.map((t) => db[t]), db.meta], async () => {
-    for (const table of DATA_TABLES) {
-      if (table === 'companies') continue;
-      await db[table].where('companyId').equals(id).delete();
-    }
-    await db.companies.delete(id);
-    const current = await getCurrentCompanyId();
-    if (current === id) {
-      const next = await db.companies.toCollection().first();
-      if (next) await setCurrentCompanyId(next.id);
-      else await db.meta.delete(CURRENT_COMPANY_KEY);
-    }
-  });
+  await db.transaction(
+    'rw',
+    [...DATA_TABLES.map((t) => db[t]), ...SYNC_TABLES(), db.meta],
+    async () => {
+      await forgetCloudLink(id);
+      for (const table of DATA_TABLES) {
+        if (table === 'companies') continue;
+        await db[table].where('companyId').equals(id).delete();
+      }
+      await db.companies.delete(id);
+      const current = await getCurrentCompanyId();
+      if (current === id) {
+        const next = await db.companies.toCollection().first();
+        if (next) await setCurrentCompanyId(next.id);
+        else await db.meta.delete(CURRENT_COMPANY_KEY);
+      }
+    },
+  );
 }
 
 /* -------------------------------------------------------------------------- */

@@ -34,7 +34,7 @@ import {
   type StockSetup,
 } from '@/lib/inventory/sources';
 import { currencyPrecision, round } from '@/lib/money';
-import { newId, shortId } from '@/lib/ids';
+import { newId, shortId, stableId } from '@/lib/ids';
 import { msg, t } from '@/i18n';
 
 /**
@@ -123,6 +123,9 @@ export async function ensureDefaultWarehouse(companyId: ID): Promise<Warehouse> 
     return found;
   }
   const warehouse = createWarehouse(companyId, {
+    // The very first one has the same id on every device, so devices that
+    // each need it at once (a company kept in the cloud) share one.
+    ...(all.length === 0 ? { id: `${companyId}-main-store` } : {}),
     name: 'Main store',
     nameAr: 'المستودع الرئيسي',
     isDefault: true,
@@ -260,11 +263,12 @@ async function replaceMovements(
   const after = planned.filter((m) => !locked(m));
   if (sameKeys(before.map(plannedKey), after.map(plannedKey))) return [];
   const stamp = nowStamp();
+  const ids = movementIds(company.id, after);
   await db.stockMovements.bulkDelete(before.map((m) => m.id));
   await db.stockMovements.bulkAdd(
-    after.map((m) => ({
+    after.map((m, i) => ({
       ...m,
-      id: newId(),
+      id: ids[i],
       companyId: company.id,
       unitCost: 0,
       value: 0,
@@ -273,6 +277,21 @@ async function replaceMovements(
     })),
   );
   return [...new Set([...before, ...after].map((m) => m.productId))];
+}
+
+/**
+ * Ids of planned movements follow from what they are, so two devices that
+ * plan the same source (a company kept in the cloud) make the same movements
+ * and their copies agree instead of adding up.
+ */
+function movementIds(companyId: ID, planned: PlannedMovement[]): string[] {
+  const seen = new Map<string, number>();
+  return planned.map((m) => {
+    const key = `${companyId}|${m.sourceId}|${plannedKey(m)}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return `sm-${stableId(`${key}|${n}`)}`;
+  });
 }
 
 /** Re-costs items at the weighted average, in date order, outside locked periods. */

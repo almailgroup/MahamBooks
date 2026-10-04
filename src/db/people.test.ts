@@ -4,6 +4,7 @@ import {
   createEmployee,
   defaultPeopleSettings,
   deleteEmployee,
+  employeeDeletion,
   EmployeeError,
   getPeopleSettings,
   newAllowance,
@@ -18,6 +19,7 @@ import {
   saveComplianceDocument,
 } from './renewals';
 import { deleteCompany, setupCompany } from './records';
+import { createLeaveRecord, saveLeaveRecord } from './payroll';
 import { exportBackup, importBackup, parseBackup, summarizeBackup } from './backup';
 
 beforeEach(async () => {
@@ -83,26 +85,90 @@ describe('employees', () => {
     expect(back.leavingReason).toBeNull();
   });
 
-  it('can be deleted with their file unless they have documents on record', async () => {
+  it('can be deleted with their file and everything about them', async () => {
     const company = await kuwaitCompany();
-    const a = await saveEmployee(createEmployee(company.id, { name: 'A' }));
-    await addAttachment(company.id, a.id, {
+    const a = await saveEmployee(
+      createEmployee(company.id, {
+        name: 'Rajesh Kumar',
+        nameAr: 'راجيش كومار',
+        civilId: '290010112345',
+        residencyExpiry: '2026-11-30',
+      }),
+    );
+    const contract = await addAttachment(company.id, a.id, {
       name: 'contract.pdf',
       type: 'application/pdf',
       dataUrl: 'data:application/pdf;base64,AAAA',
     });
-    await deleteEmployee(a.id);
-    expect(await db.employees.count()).toBe(0);
-    expect(await db.attachments.count()).toBe(0);
-
-    const b = await saveEmployee(createEmployee(company.id, { name: 'B' }));
-    await saveComplianceDocument(
+    const licence = await saveComplianceDocument(
       createComplianceDocument(company.id, {
         type: 'driving_licence',
         ownerType: 'employee',
-        employeeId: b.id,
+        employeeId: a.id,
+        expiryDate: '2026-12-31',
       }),
     );
+    const scan = await addAttachment(company.id, licence.id, {
+      name: 'licence.jpg',
+      type: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,AAAA',
+    });
+    const { renewal, expense } = await renewDocument({
+      companyId: company.id,
+      key: `emp:${a.id}:residency`,
+      newExpiry: '2027-11-30',
+      renewedOn: '2026-10-01',
+      fee: { amount: 10, accountId: null, paidFromAccountId: null },
+    });
+    const receipt = await addAttachment(company.id, renewal.id, {
+      name: 'receipt.jpg',
+      type: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,AAAA',
+    });
+    // Someone else's file stays.
+    const other = await saveEmployee(createEmployee(company.id, { name: 'Other' }));
+    const kept = await addAttachment(company.id, other.id, {
+      name: 'other.pdf',
+      type: 'application/pdf',
+      dataUrl: 'data:application/pdf;base64,AAAA',
+    });
+
+    expect(await employeeDeletion(a)).toEqual({
+      documents: 1,
+      renewals: 1,
+      files: 3,
+      payroll: false,
+    });
+    await deleteEmployee(a.id);
+
+    expect(await db.employees.get(a.id)).toBeUndefined();
+    expect(await db.complianceDocuments.get(licence.id)).toBeUndefined();
+    expect(await db.renewals.get(renewal.id)).toBeUndefined();
+    for (const file of [contract, scan, receipt])
+      expect(await db.attachments.get(file.id)).toBeUndefined();
+    expect(await db.attachments.get(kept.id)).toBeDefined();
+    // The activity log keeps one entry, with the number only.
+    const log = await db.activities.where('companyId').equals(company.id).toArray();
+    const about = log.filter((e) => [a.id, licence.id, renewal.id].includes(e.entityId));
+    expect(about).toHaveLength(1);
+    expect(about[0]).toMatchObject({ action: 'deleted', messageVars: { number: a.number } });
+    expect(JSON.stringify(log)).not.toContain('Rajesh');
+    expect(JSON.stringify(log)).not.toContain('راجيش');
+    // The renewal fee stays in the books, without the name.
+    const fee = (await db.expenses.get(expense!.id))!;
+    expect(fee.amount).toBe(10);
+    expect(fee.description).not.toContain('Rajesh');
+    expect(fee.description).toContain(a.number);
+    expect(JSON.stringify(await db.employees.toArray())).not.toContain('290010112345');
+  });
+
+  it('with payroll history are kept, to be marked as left', async () => {
+    const company = await kuwaitCompany();
+    const b = await saveEmployee(createEmployee(company.id, { name: 'B', basicSalary: 400 }));
+    await saveLeaveRecord(
+      createLeaveRecord(company.id, b.id, { kind: 'opening', days: 5, start: '2026-01-01' }),
+    );
+    expect((await employeeDeletion(b)).payroll).toBe(true);
     await expect(deleteEmployee(b.id)).rejects.toThrow('Mark them as left instead');
     expect(await db.employees.get(b.id)).toBeDefined();
   });
