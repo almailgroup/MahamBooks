@@ -51,19 +51,15 @@ import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
 import { currentLanguage, t, tp } from '@/i18n';
 
-// Validated categorical slots 1 and 2 (dataviz reference palette, light surface).
-const SERIES_INVOICED = '#2a78d6';
-const SERIES_COLLECTED = '#eb6834';
+// Validated categorical slots 1 and 2 (dataviz reference palette); each
+// theme sets the step for its surface (src/lib/themes.ts).
+const SERIES_INVOICED = 'var(--color-chart-1)';
+const SERIES_COLLECTED = 'var(--color-chart-2)';
 
-// Aging buckets are ordered: one hue, lighter to darker as invoices get older
-// (validated ordinal ramp: monotone lightness, visible steps, light end ≥ 2:1).
-const AGING_COLORS = [
-  'bg-indigo-400',
-  'bg-indigo-500',
-  'bg-indigo-700',
-  'bg-indigo-900',
-  'bg-indigo-950',
-];
+// Aging buckets are ordered: one hue in the theme's accent, lighter to darker
+// as invoices get older on light themes, brighter on dark ones (validated
+// ordinal ramp: monotone lightness, visible steps, nearest end ≥ 2:1).
+const AGING_COLORS = ['bg-aging-1', 'bg-aging-2', 'bg-aging-3', 'bg-aging-4', 'bg-aging-5'];
 
 /** Days ahead the dashboard looks for cheques, deadlines and documents. */
 const CHEQUE_DAYS = 14;
@@ -369,7 +365,7 @@ export default function DashboardPage() {
             <button
               type="button"
               onClick={dismissChecklist}
-              className="ms-auto -me-1 flex size-9 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-700 sm:order-last pointer-coarse:size-11"
+              className="hover:bg-surface ms-auto -me-1 flex size-9 items-center justify-center rounded-md text-slate-500 hover:text-slate-700 sm:order-last pointer-coarse:size-11"
               aria-label={t('Hide the setup steps')}
             >
               <X className="size-4" aria-hidden />
@@ -380,7 +376,7 @@ export default function DashboardPage() {
               <li key={item.to}>
                 <Link
                   to={item.to}
-                  className="hover:border-primary-300 hover:text-primary-800 inline-flex min-h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-xs pointer-coarse:min-h-11"
+                  className="hover:border-primary-300 hover:text-primary-800 bg-surface inline-flex min-h-9 items-center gap-1.5 rounded-full border border-slate-200 px-3 text-sm font-medium text-slate-700 shadow-xs pointer-coarse:min-h-11"
                 >
                   {item.label}
                   <ArrowRight className="size-3.5 text-slate-400" aria-hidden />
@@ -636,7 +632,7 @@ function Kpi({
   return (
     <Link
       to={to}
-      className="group flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs transition-colors hover:border-slate-300 sm:p-5"
+      className="group bg-surface flex min-w-0 flex-col rounded-xl border border-slate-200 p-3.5 shadow-xs transition-colors hover:border-slate-300 sm:p-5"
     >
       <span className="flex items-center gap-2 text-slate-500">
         <Icon className="size-4 shrink-0 text-slate-400" aria-hidden />

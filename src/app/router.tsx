@@ -86,8 +86,8 @@ function RouteError() {
       ? error.message
       : t('Unknown error');
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-slate-50 p-6">
-      <div className="max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+    <div className="bg-page flex min-h-dvh items-center justify-center p-6">
+      <div className="bg-surface max-w-md rounded-xl border border-slate-200 p-8 text-center shadow-sm">
         <AlertTriangle className="mx-auto size-10 text-amber-500" />
         <h1 className="mt-4 text-lg font-semibold text-slate-900">{t('Something went wrong')}</h1>
         <p className="mt-2 text-sm text-slate-600">

@@ -420,8 +420,8 @@ export function ItemDialog({
                       className={cn(
                         'rounded-full px-3 py-1 text-sm ring-1 transition-colors',
                         on
-                          ? 'bg-primary-600 ring-primary-600 text-white'
-                          : 'bg-white text-slate-700 ring-slate-300 hover:ring-slate-400',
+                          ? 'bg-primary-solid ring-primary-solid text-on-primary'
+                          : 'bg-surface text-slate-700 ring-slate-300 hover:ring-slate-400',
                       )}
                       aria-pressed={on}
                     >

@@ -386,7 +386,7 @@ export function LineItemsEditor({
             return (
               <li
                 key={item.id}
-                className="rounded-lg border border-slate-200 bg-white p-3 shadow-xs"
+                className="bg-surface rounded-lg border border-slate-200 p-3 shadow-xs"
               >
                 <div className="grid grid-cols-12 gap-x-3 gap-y-2">
                   <div className="col-span-12 @xl:col-span-7">{nameInput}</div>
@@ -420,7 +420,10 @@ export function LineItemsEditor({
 
           const line = lines[index];
           return (
-            <li key={item.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-xs">
+            <li
+              key={item.id}
+              className="bg-surface rounded-lg border border-slate-200 p-3 shadow-xs"
+            >
               <div className="grid grid-cols-12 gap-x-3 gap-y-2">
                 <div className="col-span-12 @xl:col-span-5">{nameInput}</div>
                 <div className="col-span-4 @xl:col-span-2">

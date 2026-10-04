@@ -14,7 +14,7 @@ import { t } from '@/i18n';
 
 // Touch screens get 44px fields and 16px text (smaller text makes phones zoom in).
 const control =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15 pointer-coarse:text-base';
+  'w-full rounded-lg border border-slate-300 bg-surface px-3 text-sm text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15 pointer-coarse:text-base';
 const height = 'h-9 pointer-coarse:h-11';
 
 export function Input({
@@ -151,7 +151,7 @@ export function Switch({
         onClick={() => onChange(!checked)}
         className={cn(
           'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:opacity-50',
-          checked ? 'bg-primary-600' : 'bg-slate-300',
+          checked ? 'bg-primary-solid' : 'bg-slate-300',
         )}
       >
         <span

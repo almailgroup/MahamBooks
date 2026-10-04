@@ -30,10 +30,10 @@ export function DialogContent({
   const width = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' }[size];
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[1px]" />
+      <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in bg-overlay/40 fixed inset-0 z-50 backdrop-blur-[1px]" />
       <DialogPrimitive.Content
         className={cn(
-          'data-[state=open]:animate-pop-in fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-white shadow-xl',
+          'data-[state=open]:animate-pop-in bg-surface fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl shadow-xl',
           width,
           className,
         )}
@@ -102,7 +102,7 @@ export function DropdownContent({
         align={align}
         sideOffset={6}
         className={cn(
-          'data-[state=open]:animate-fade-in z-50 min-w-48 rounded-lg border border-slate-200 bg-white p-1 shadow-lg',
+          'data-[state=open]:animate-fade-in bg-surface z-50 min-w-48 rounded-lg border border-slate-200 p-1 shadow-lg',
           className,
         )}
       >

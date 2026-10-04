@@ -152,7 +152,7 @@ export default function PaymentVoucherPage({ direction = 'in' }: { direction?: P
       {/* Like payslips, the sheet reads the same in both languages: English on the left. */}
       <article
         dir="ltr"
-        className="relative mx-auto max-w-3xl overflow-hidden bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-10 print:max-w-none print:p-0 print:shadow-none print:ring-0"
+        className="paper relative mx-auto max-w-3xl overflow-hidden bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-10 print:max-w-none print:p-0 print:shadow-none print:ring-0"
       >
         {payment.voided ? (
           <div

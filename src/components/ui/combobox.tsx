@@ -91,7 +91,7 @@ export function Combobox({
           type="button"
           aria-label={ariaLabel}
           className={cn(
-            'focus-visible:border-primary-500 flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-start text-sm shadow-xs transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50',
+            'focus-visible:border-primary-500 bg-surface flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 px-3 text-start text-sm shadow-xs transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50',
             className,
           )}
         >
@@ -109,7 +109,7 @@ export function Combobox({
         <Popover.Content
           align="start"
           sideOffset={4}
-          className="data-[state=open]:animate-fade-in z-50 w-[var(--radix-popover-trigger-width)] min-w-64 rounded-lg border border-slate-200 bg-white shadow-lg"
+          className="data-[state=open]:animate-fade-in bg-surface z-50 w-[var(--radix-popover-trigger-width)] min-w-64 rounded-lg border border-slate-200 shadow-lg"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <div className="flex items-center gap-2 border-b border-slate-100 px-3">

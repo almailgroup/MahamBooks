@@ -245,7 +245,7 @@ export function StatementPanel({
             key={item.label}
             className={cn(
               'rounded-lg border px-4 py-3',
-              item.strong ? 'border-primary-200 bg-primary-50' : 'border-slate-200 bg-white',
+              item.strong ? 'border-primary-200 bg-primary-50' : 'bg-surface border-slate-200',
             )}
           >
             <dt

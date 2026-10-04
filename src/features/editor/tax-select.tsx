@@ -59,7 +59,7 @@ export function TaxSelect({
           type="button"
           title={value.map(label).join(' + ') || placeholder}
           className={cn(
-            'flex h-9 w-full items-center justify-between gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-start text-sm shadow-xs hover:border-slate-400',
+            'bg-surface flex h-9 w-full items-center justify-between gap-1 rounded-lg border border-slate-300 px-2.5 text-start text-sm shadow-xs hover:border-slate-400',
             value.length === 0 && 'text-slate-500',
             className,
           )}
@@ -72,7 +72,7 @@ export function TaxSelect({
         <Popover.Content
           align="end"
           sideOffset={4}
-          className="data-[state=open]:animate-fade-in z-50 w-56 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+          className="data-[state=open]:animate-fade-in bg-surface z-50 w-56 rounded-lg border border-slate-200 p-1 shadow-lg"
         >
           {options.length === 0 ? (
             <p className="px-3 py-3 text-sm text-slate-500">
@@ -91,7 +91,9 @@ export function TaxSelect({
                   <span
                     className={cn(
                       'flex size-4 items-center justify-center rounded border',
-                      on ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-300',
+                      on
+                        ? 'border-primary-solid bg-primary-solid text-on-primary'
+                        : 'border-slate-300',
                     )}
                   >
                     {on ? <Check className="size-3" /> : null}

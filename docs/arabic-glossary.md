@@ -263,6 +263,10 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Address       | العنوان           |
 | Website       | الموقع الإلكتروني |
 | Language      | اللغة             |
+| Appearance    | المظهر            |
+| Theme         | السمة             |
+| Light theme   | سمة فاتحة         |
+| Dark theme    | سمة داكنة         |
 | Currency      | العملة            |
 | Date          | التاريخ           |
 | Description   | الوصف             |

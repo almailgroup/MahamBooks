@@ -147,7 +147,7 @@ function BankingOverview() {
               <Link
                 key={account.id}
                 to={`/banking/${account.id}`}
-                className="hover:border-primary-300 block rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-colors"
+                className="hover:border-primary-300 bg-surface block rounded-xl border border-slate-200 p-5 shadow-xs transition-colors"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -660,7 +660,7 @@ function MatchPanel({
             {candidates.slice(0, 4).map(({ entry }) => (
               <li
                 key={matchKey(entry)}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+                className="bg-surface flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2"
               >
                 <span className="min-w-0 text-sm">
                   <span className="font-medium text-slate-800">

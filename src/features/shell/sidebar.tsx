@@ -59,7 +59,7 @@ export function CompanyLogo({
   return (
     <span
       className={cn(
-        'bg-primary-600 flex size-8 items-center justify-center rounded-lg text-xs font-semibold text-white',
+        'bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg text-xs font-semibold',
         className,
       )}
     >
@@ -80,7 +80,7 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
       <DropdownTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-3 rounded-2xl bg-white p-2 text-start shadow-xs ring-1 ring-slate-900/5 transition-shadow hover:shadow-sm pointer-coarse:min-h-12"
+          className="bg-surface flex w-full items-center gap-3 rounded-2xl p-2 text-start shadow-xs ring-1 ring-slate-900/5 transition-shadow hover:shadow-sm pointer-coarse:min-h-12"
           aria-label={t('Switch company')}
         >
           <CompanyLogo name={company.name} logo={company.branding.logo} />
@@ -125,9 +125,9 @@ const itemBase =
   'flex w-full items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors [&_svg]:size-[1.125rem] [&_svg]:shrink-0';
 const itemHeight = 'h-[2.125rem] pointer-coarse:h-11';
 const itemIdle =
-  'text-slate-700 hover:bg-white/70 hover:text-slate-900 [&_svg]:text-slate-500 hover:[&_svg]:text-slate-600';
+  'text-slate-700 hover:bg-surface/70 hover:text-slate-900 [&_svg]:text-slate-500 hover:[&_svg]:text-slate-600';
 const itemActive =
-  'bg-white text-primary-700 shadow-xs ring-1 ring-slate-900/5 [&_svg]:text-primary-600';
+  'bg-surface text-primary-700 shadow-xs ring-1 ring-slate-900/5 [&_svg]:text-primary-600';
 
 /** Open and closed groups, remembered in this browser. */
 function useGroupState(active: string | null) {
@@ -215,7 +215,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <Link
           to="/settings/data"
           onClick={onNavigate}
-          className="group mt-2 flex items-start gap-2.5 rounded-2xl bg-white/60 px-3 py-2.5 text-xs leading-relaxed text-slate-600 ring-1 ring-slate-900/5 transition-colors hover:bg-white"
+          className="group bg-surface/60 hover:bg-surface mt-2 flex items-start gap-2.5 rounded-2xl px-3 py-2.5 text-xs leading-relaxed text-slate-600 ring-1 ring-slate-900/5 transition-colors"
         >
           <DatabaseBackup className="mt-0.5 size-3.5 shrink-0 text-slate-500" aria-hidden />
           <span>
@@ -280,8 +280,8 @@ function SidebarGroup({
                 cn(
                   'flex h-[1.875rem] items-center rounded-xl ps-[2.625rem] pe-3 text-sm transition-colors pointer-coarse:h-11',
                   isActive
-                    ? 'text-primary-700 bg-white font-medium shadow-xs ring-1 ring-slate-900/5'
-                    : 'text-slate-600 hover:bg-white/70 hover:text-slate-900',
+                    ? 'text-primary-700 bg-surface font-medium shadow-xs ring-1 ring-slate-900/5'
+                    : 'hover:bg-surface/70 text-slate-600 hover:text-slate-900',
                 )
               }
             >

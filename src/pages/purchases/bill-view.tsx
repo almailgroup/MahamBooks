@@ -695,7 +695,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                 <ol className="relative space-y-4 border-s border-slate-200 ps-4">
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
-                      <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
+                      <span className="bg-primary-500 border-surface absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2" />
                       <p className="text-sm text-slate-700">{activityText(a, fmt)}</p>
                       <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
                     </li>

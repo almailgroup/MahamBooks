@@ -359,8 +359,10 @@ export function LogoUpload({
           void handle(e.dataTransfer.files[0]);
         }}
         className={cn(
-          'flex h-20 w-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border-2 border-dashed bg-white p-2 transition-colors',
+          'flex h-20 w-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border-2 border-dashed p-2 transition-colors',
           dragging ? 'border-primary-500 bg-primary-50' : 'border-slate-300 hover:border-slate-400',
+          // A logo shows on white, as on the documents.
+          !dragging && (value ? 'bg-white' : 'bg-surface'),
         )}
         aria-label={value ? t('Replace logo') : t('Upload logo')}
       >
@@ -459,10 +461,11 @@ export function ColorField({
             type="button"
             onClick={() => onChange(c)}
             className={cn(
-              'size-7 rounded-full ring-offset-2 transition-shadow',
+              'ring-offset-surface size-7 rounded-full ring-offset-2 transition-shadow',
               normalizeHex(value) === c
                 ? 'ring-2 ring-slate-900'
-                : 'hover:ring-2 hover:ring-slate-300',
+                : // A swatch as dark as the page keeps an edge in dark themes.
+                  'hover:ring-2 hover:ring-slate-300 dark:inset-ring dark:inset-ring-white/20',
             )}
             style={{ backgroundColor: c }}
             aria-label={t('Use colour {color}', { color: c })}

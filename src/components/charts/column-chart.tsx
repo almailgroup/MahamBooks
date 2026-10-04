@@ -6,7 +6,11 @@ import { isRtl, t } from '@/i18n';
 export interface ColumnSeries {
   key: string;
   label: string;
-  /** Validated categorical slot colour (see dataviz palette). */
+  /**
+   * Validated categorical slot colour (see dataviz palette), usually a theme
+   * variable such as `var(--color-chart-1)`, which has its own step on dark
+   * surfaces.
+   */
   color: string;
   values: number[];
 }
@@ -85,7 +89,7 @@ export function ColumnChart({
   const tooltipLeft = active === null ? 0 : margin.left + band * active + (onRight ? band + 8 : -8);
 
   return (
-    <div className="viz-root" style={{ ['--series-gridline' as string]: '#ecebe8' }}>
+    <div className="viz-root">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <ul
           className="flex flex-wrap items-center gap-4 text-sm text-slate-600"
@@ -157,7 +161,7 @@ export function ColumnChart({
                     x2={width - margin.right}
                     y1={y(t)}
                     y2={y(t)}
-                    stroke="var(--series-gridline)"
+                    stroke="var(--color-chart-grid)"
                     strokeWidth={1}
                     shapeRendering="crispEdges"
                   />
@@ -183,7 +187,7 @@ export function ColumnChart({
                         y={margin.top}
                         width={band}
                         height={plotH}
-                        fill="#f5f5f3"
+                        fill="var(--color-chart-hover)"
                       />
                     ) : null}
                     {series.map((s, si) => {
@@ -236,7 +240,7 @@ export function ColumnChart({
                 x2={width - margin.right}
                 y1={y(0)}
                 y2={y(0)}
-                stroke="#d6d4cf"
+                stroke="var(--color-chart-axis)"
                 strokeWidth={1}
                 shapeRendering="crispEdges"
               />
@@ -247,7 +251,7 @@ export function ColumnChart({
 
           {active !== null ? (
             <div
-              className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-lg"
+              className="bg-surface pointer-events-none absolute top-0 z-10 min-w-40 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-lg"
               style={{
                 left: tooltipLeft,
                 top: margin.top,

@@ -69,7 +69,7 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
   return (
     <article
       dir="ltr"
-      className="mx-auto max-w-3xl break-after-page bg-white p-6 text-xs text-slate-700 shadow-sm ring-1 ring-slate-200 print:max-w-none print:p-0 print:shadow-none print:ring-0"
+      className="paper mx-auto max-w-3xl break-after-page bg-white p-6 text-xs text-slate-700 shadow-sm ring-1 ring-slate-200 print:max-w-none print:p-0 print:shadow-none print:ring-0"
     >
       <PrintHeader
         company={company}

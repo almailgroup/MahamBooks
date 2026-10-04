@@ -10,12 +10,13 @@ const base =
   'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0';
 
 const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-primary-600 text-white shadow-sm hover:bg-primary-700 active:bg-primary-800',
-  secondary: 'bg-slate-900 text-white shadow-sm hover:bg-slate-800',
+  primary:
+    'bg-primary-solid text-on-primary shadow-sm hover:bg-primary-solid-hover active:bg-primary-solid-active',
+  secondary: 'bg-slate-900 text-surface shadow-sm hover:bg-slate-800',
   outline:
-    'border border-slate-300 bg-white text-slate-700 shadow-xs hover:bg-slate-50 hover:text-slate-900',
+    'border border-slate-300 bg-surface text-slate-700 shadow-xs hover:bg-slate-50 hover:text-slate-900',
   ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
-  danger: 'bg-red-600 text-white shadow-sm hover:bg-red-700',
+  danger: 'bg-red-solid text-white shadow-sm hover:bg-red-solid-hover',
   subtle: 'bg-primary-50 text-primary-700 hover:bg-primary-100',
 };
 

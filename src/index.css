@@ -22,10 +22,47 @@
   --color-primary-700: var(--color-indigo-700);
   --color-primary-800: var(--color-indigo-800);
   --color-primary-900: var(--color-indigo-900);
+  --color-primary-950: var(--color-indigo-950);
 
+  /*
+   * Themes (src/lib/themes.ts) set these variables and the palettes above;
+   * the values here are Classic. Use the roles below instead of white or a
+   * fixed shade, so every theme, light or dark, reads the same way:
+   *   bg-surface         panels, cards, inputs, menus, dialogs (not bg-white)
+   *   bg-page            the page behind the cards on phones, and the body
+   *   bg-shell           the tinted backdrop behind the sidebar and the page
+   *   bg-overlay/40      behind dialogs and drawers
+   *   bg-primary-solid   fills behind text-on-primary (buttons, selected days);
+   *                      hover/active: primary-solid-hover, primary-solid-active
+   *   bg-red-solid       fills behind white text for destructive actions
+   *   text-*-600/700     coloured text (light shades in dark themes)
+   * White stays white: keep bg-white for paper, logos, QR codes and images.
+   */
+  --color-surface: #fff;
+  --color-page: var(--color-slate-50);
   /* The app's backdrop behind the sidebar and the page panel: a cool grey
      with a hint of the brand. Slate-600 text on it is 6.8:1 (AA). */
   --color-shell: #eff1f6;
+  --color-overlay: var(--color-slate-900);
+  --color-primary-solid: var(--color-indigo-600);
+  --color-primary-solid-hover: var(--color-indigo-700);
+  --color-primary-solid-active: var(--color-indigo-800);
+  --color-on-primary: #fff;
+  --color-red-solid: var(--color-red-600);
+  --color-red-solid-hover: var(--color-red-700);
+
+  /* Charts: validated categorical slots 1 and 2 (dataviz palette), hairline
+     chrome, and an ordinal ramp for unpaid invoices by age. */
+  --color-chart-1: #2a78d6;
+  --color-chart-2: #eb6834;
+  --color-chart-grid: #ecebe8;
+  --color-chart-axis: #d6d4cf;
+  --color-chart-hover: #f5f5f3;
+  --color-aging-1: var(--color-indigo-400);
+  --color-aging-2: var(--color-indigo-500);
+  --color-aging-3: var(--color-indigo-700);
+  --color-aging-4: var(--color-indigo-900);
+  --color-aging-5: var(--color-indigo-950);
 
   --animate-fade-in: fade-in 150ms ease-out;
   --animate-pop-in: pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -72,6 +109,19 @@
   }
 }
 
+/*
+ * `dark:` is for the rare tweak a dark theme needs beyond its colours, such
+ * as an edge on a swatch that is as dark as the page. Screen only, and never
+ * inside paper previews.
+ */
+@custom-variant dark {
+  @media screen {
+    &:where([data-scheme='dark'] *):not(:where(.paper, .paper *)) {
+      @slot;
+    }
+  }
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
@@ -83,7 +133,7 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-page text-slate-900 antialiased;
     font-feature-settings: 'cv11', 'ss01';
   }
 
@@ -138,10 +188,10 @@
    * Quiet scrollbars: 6px, a rounded thumb on a clear track, no arrow
    * buttons. Barely there at rest, darker on hover and while dragged.
    * Chrome ignores the ::-webkit-scrollbar rules when the standard
-   * properties are set, so those are for Firefox only.
+   * properties are set, so those are for Firefox only. Themes set
+   * --scrollbar-thumb on the root; scrolling boxes inherit it.
    */
-  :root,
-  .scroll-thin {
+  :root {
     --scrollbar-thumb: rgb(203 213 225 / 0.55);
     --scrollbar-thumb-hover: var(--color-slate-300);
     --scrollbar-thumb-active: var(--color-slate-400);

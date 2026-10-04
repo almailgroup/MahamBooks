@@ -53,7 +53,7 @@ export default function NumberingSettings() {
               <li key={p.token}>
                 <code
                   dir="ltr"
-                  className="text-primary-700 rounded bg-white px-1.5 py-0.5 text-xs ring-1 ring-slate-200"
+                  className="text-primary-700 bg-surface rounded px-1.5 py-0.5 text-xs ring-1 ring-slate-200"
                 >
                   {p.token}
                 </code>{' '}

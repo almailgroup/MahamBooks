@@ -105,7 +105,7 @@ export function AttachmentList({
           {files.map((f) => (
             <li
               key={f.id}
-              className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2"
+              className="bg-surface flex items-center gap-2 rounded-lg border border-slate-200 p-2"
             >
               <button
                 type="button"

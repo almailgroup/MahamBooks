@@ -100,7 +100,7 @@ export function SaveBar({
     <div
       role="region"
       aria-label={t('Unsaved changes')}
-      className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur sm:px-5"
+      className="bg-surface/95 sticky bottom-4 z-10 mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-slate-200 px-4 py-3 shadow-lg backdrop-blur sm:px-5"
     >
       <p className="text-sm text-slate-600">{t('You have unsaved changes.')}</p>
       <div className="flex gap-2">

@@ -105,12 +105,12 @@ export function PdfPreview({
     <div className={cn('relative', className)}>
       <div ref={container} className="flex flex-col gap-4" />
       {!rendered && !message ? (
-        <div className="flex aspect-[1/1.414] w-full items-center justify-center rounded-sm bg-white shadow-sm">
+        <div className="paper flex aspect-[1/1.414] w-full items-center justify-center rounded-sm bg-white shadow-sm">
           <Spinner label={t('Preparing preview…')} />
         </div>
       ) : null}
       {loading && rendered ? (
-        <div className="absolute end-3 top-3 rounded-full bg-white/90 px-3 py-1.5 shadow-sm ring-1 ring-slate-200">
+        <div className="bg-surface/90 absolute end-3 top-3 rounded-full px-3 py-1.5 shadow-sm ring-1 ring-slate-200">
           <Spinner label={t('Updating…')} />
         </div>
       ) : null}

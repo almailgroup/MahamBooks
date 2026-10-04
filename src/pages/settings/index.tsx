@@ -10,6 +10,7 @@ import {
   Languages,
   Layers,
   Mail,
+  Palette,
   Percent,
   Wallet,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ const LabelSettings = lazy(() => import('./labels'));
 const ImportSettings = lazy(() => import('./import'));
 const DataSettings = lazy(() => import('./data'));
 const CompaniesSettings = lazy(() => import('./companies'));
+const AppearanceSettings = lazy(() => import('./appearance'));
 
 const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
   {
@@ -60,6 +62,10 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
       { path: 'import', label: msg('Import data'), icon: <FileUp /> },
       { path: 'data', label: msg('Backup & data'), icon: <Database /> },
     ],
+  },
+  {
+    title: msg('This device'),
+    items: [{ path: 'appearance', label: msg('Appearance'), icon: <Palette /> }],
   },
 ];
 
@@ -107,8 +113,8 @@ export default function SettingsPage() {
                           cn(
                             'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap [&_svg]:size-4',
                             isActive
-                              ? 'text-primary-700 [&_svg]:text-primary-600 bg-white shadow-xs ring-1 ring-slate-200'
-                              : 'text-slate-600 hover:bg-white hover:text-slate-900 [&_svg]:text-slate-400',
+                              ? 'text-primary-700 [&_svg]:text-primary-600 bg-surface shadow-xs ring-1 ring-slate-200'
+                              : 'hover:bg-surface text-slate-600 hover:text-slate-900 [&_svg]:text-slate-400',
                           )
                         }
                       >
@@ -137,6 +143,7 @@ export default function SettingsPage() {
               <Route path="import" element={<ImportSettings />} />
               <Route path="data" element={<DataSettings />} />
               <Route path="companies" element={<CompaniesSettings />} />
+              <Route path="appearance" element={<AppearanceSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

@@ -410,7 +410,7 @@ function RetentionsReport() {
       </Card>
       <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {AGE_BANDS.map((band, i) => (
-          <div key={band.label} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <div key={band.label} className="bg-surface rounded-lg border border-slate-200 px-4 py-3">
             <dt className="text-xs text-slate-500">{t(band.label)}</dt>
             <dd className="tabular mt-1 font-semibold text-slate-900">{fmt.money(bands[i])}</dd>
           </div>

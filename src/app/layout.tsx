@@ -14,6 +14,7 @@ import { BottomBar, NewSheet } from '@/features/shell/bottom-bar';
 import { isTypingTarget } from '@/features/shell/store';
 import { watchScrolling } from '@/features/shell/scrolling';
 import { CommandPalette } from '@/features/search/command-palette';
+import { ThemeMenu } from '@/features/theme/menu';
 
 const ItemOpener = lazy(() => import('@/features/search/item-opener'));
 
@@ -117,14 +118,18 @@ export function AppLayout() {
 
       <DialogPrimitive.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in fixed inset-0 z-40 bg-slate-900/40 lg:hidden" />
+          <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in bg-overlay/40 fixed inset-0 z-40 lg:hidden" />
           <DialogPrimitive.Content className="data-[state=open]:animate-drawer-in bg-shell fixed inset-y-0 start-0 z-50 flex w-[min(20rem,calc(100vw-3rem))] flex-col rounded-e-3xl shadow-2xl outline-none lg:hidden">
             <DialogPrimitive.Title className="sr-only">{t('Navigation')}</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
               {t('Main navigation')}
             </DialogPrimitive.Description>
             <div className="flex items-center justify-between gap-2 ps-5 pe-3 pt-[max(0.25rem,env(safe-area-inset-top))]">
-              <span className="text-sm font-semibold text-slate-500">{t('Menu')}</span>
+              <span className="text-sm font-semibold text-slate-600">{t('Menu')}</span>
+              <ThemeMenu
+                className="ms-auto size-11 rounded-full text-slate-500 sm:hidden"
+                onNavigate={() => setDrawerOpen(false)}
+              />
               <DialogPrimitive.Close className="flex size-11 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">
                 <X className="size-5" aria-hidden />
                 <span className="sr-only">{t('Close menu')}</span>
@@ -140,7 +145,7 @@ export function AppLayout() {
       <div className="lg:fixed lg:inset-y-2.5 lg:start-64 lg:end-2.5 print:static">
         <div
           ref={panel}
-          className="scroll-thin min-h-dvh bg-slate-50 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:bg-white lg:shadow-[0_1px_3px_rgb(15_23_42/0.05),0_12px_40px_-16px_rgb(15_23_42/0.18)] lg:ring-1 lg:ring-slate-900/[0.04] print:h-auto print:overflow-visible print:rounded-none print:bg-white print:shadow-none print:ring-0"
+          className="scroll-thin bg-page lg:bg-surface min-h-dvh lg:h-full lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:shadow-[0_1px_3px_rgb(15_23_42/0.05),0_12px_40px_-16px_rgb(15_23_42/0.18)] lg:ring-1 lg:ring-slate-900/[0.04] print:h-auto print:overflow-visible print:rounded-none print:bg-white print:shadow-none print:ring-0"
         >
           <AppHeader
             onMenu={() => setDrawerOpen(true)}

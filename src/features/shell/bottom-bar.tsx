@@ -20,7 +20,7 @@ export function BottomBar({ onMore, onNew }: { onMore: () => void; onNew: () => 
       aria-label={t('Shortcuts')}
       className={cn(
         // A floating rounded bar, clear of the home indicator.
-        'fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 rounded-2xl bg-white/95 shadow-[0_10px_30px_-8px_rgb(15_23_42/0.3)] ring-1 ring-slate-900/5 backdrop-blur-md lg:hidden print:hidden',
+        'bg-surface/95 fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 rounded-2xl shadow-[0_10px_30px_-8px_rgb(15_23_42/0.3)] ring-1 ring-slate-900/5 backdrop-blur-md lg:hidden print:hidden',
         typing && 'hidden',
       )}
     >
@@ -32,7 +32,7 @@ export function BottomBar({ onMore, onNew }: { onMore: () => void; onNew: () => 
             type="button"
             onClick={onNew}
             aria-label={t('Create new')}
-            className="bg-primary-600 hover:bg-primary-700 active:bg-primary-800 shadow-primary-600/30 flex size-12 items-center justify-center rounded-2xl text-white shadow-lg"
+            className="bg-primary-solid hover:bg-primary-solid-hover active:bg-primary-solid-active text-on-primary shadow-primary-solid/30 flex size-12 items-center justify-center rounded-2xl shadow-lg"
           >
             <Plus className="size-6" aria-hidden />
           </button>
@@ -95,9 +95,9 @@ export function NewSheet({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-slate-900/40" />
+        <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in bg-overlay/40 fixed inset-0 z-50" />
         <DialogPrimitive.Content
-          className="data-[state=open]:animate-sheet-up fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col rounded-t-3xl bg-white shadow-2xl outline-none"
+          className="data-[state=open]:animate-sheet-up bg-surface fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col rounded-t-3xl shadow-2xl outline-none"
           aria-describedby={undefined}
         >
           <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">

@@ -105,6 +105,9 @@ own device.
 - Several companies in one app.
 - Import contacts, items, opening balances and open invoices from CSV.
 - Works offline and installs like an app on phones and computers.
+- 20 themes, 10 light and 10 dark, chosen per device in **Settings →
+  Appearance** or from the header, or following the device's light and dark
+  setting. Documents always print on white paper.
 - Backup and restore to a single file.
 
 ![Dashboard](docs/images/dashboard.png)

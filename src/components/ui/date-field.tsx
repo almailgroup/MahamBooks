@@ -18,7 +18,7 @@ import { KUWAIT_WEEKEND } from '@/lib/kuwait';
 import { currentLanguage, t, tp } from '@/i18n';
 
 const control =
-  'h-9 w-full rounded-lg border border-slate-300 bg-white ps-3 pe-10 text-sm pointer-coarse:h-11 pointer-coarse:text-base text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15';
+  'h-9 w-full rounded-lg border border-slate-300 bg-surface ps-3 pe-10 text-sm pointer-coarse:h-11 pointer-coarse:text-base text-slate-900 shadow-xs transition-colors placeholder:text-slate-400 focus:border-primary-500 focus:ring-3 focus:ring-primary-500/15 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:border-red-400 aria-invalid:ring-red-500/15';
 
 export interface DateFieldProps {
   id?: string;
@@ -168,7 +168,7 @@ export function DateField({
             e.preventDefault();
             inputRef.current?.focus();
           }}
-          className="data-[state=open]:animate-fade-in z-50 w-[19rem] rounded-xl border border-slate-200 bg-white p-3 shadow-lg"
+          className="data-[state=open]:animate-fade-in bg-surface z-50 w-[19rem] rounded-xl border border-slate-200 p-3 shadow-lg"
         >
           <Calendar
             value={valid}
@@ -312,7 +312,7 @@ function Calendar({
                     className={cn(
                       'tabular mx-auto flex size-9 items-center justify-center rounded-full text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-30',
                       selected
-                        ? 'bg-primary-600 font-semibold text-white'
+                        ? 'bg-primary-solid text-on-primary font-semibold'
                         : d === now
                           ? 'text-primary-700 ring-primary-300 font-semibold ring-1 ring-inset hover:bg-slate-100'
                           : inMonth

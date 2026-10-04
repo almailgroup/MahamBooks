@@ -44,7 +44,7 @@ export default function StockCountPrintPage() {
           <Printer /> {t('Print')}
         </Button>
       </div>
-      <article className="mx-auto max-w-4xl bg-white p-4 text-sm shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0">
+      <article className="paper mx-auto max-w-4xl bg-white p-4 text-sm shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0">
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs text-slate-500">{localName(company)}</p>

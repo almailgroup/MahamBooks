@@ -87,7 +87,7 @@ export function ItemNameInput({
               setOpen(false);
             }
           }}
-          className="focus:border-primary-500 focus:ring-primary-500/15 h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-xs placeholder:font-normal placeholder:text-slate-400 focus:ring-3"
+          className="focus:border-primary-500 focus:ring-primary-500/15 bg-surface h-9 w-full rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-900 shadow-xs placeholder:font-normal placeholder:text-slate-400 focus:ring-3"
         />
       </Popover.Anchor>
       <Popover.Portal>
@@ -96,7 +96,7 @@ export function ItemNameInput({
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => e.preventDefault()}
-          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-72 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+          className="bg-surface z-50 w-[var(--radix-popover-trigger-width)] min-w-72 rounded-lg border border-slate-200 p-1 shadow-lg"
         >
           <p className="px-2.5 pt-1.5 pb-1 text-xs font-medium text-slate-500">
             {t('Products & services')}

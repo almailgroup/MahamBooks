@@ -350,13 +350,13 @@ export default function ImportSettings() {
                   'flex items-start gap-3 rounded-xl border p-4 text-start transition-colors',
                   active
                     ? 'border-primary-500 bg-primary-50/60 ring-primary-500/20 ring-3'
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+                    : 'bg-surface border-slate-200 hover:border-slate-300 hover:bg-slate-50',
                 )}
               >
                 <span
                   className={cn(
                     'flex size-9 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4.5',
-                    active ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-500',
+                    active ? 'bg-primary-solid text-on-primary' : 'bg-slate-100 text-slate-500',
                   )}
                 >
                   {k.icon}
@@ -486,7 +486,7 @@ export default function ImportSettings() {
               'flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors',
               dragging
                 ? 'border-primary-500 bg-primary-50'
-                : 'border-slate-300 bg-white hover:border-slate-400',
+                : 'bg-surface border-slate-300 hover:border-slate-400',
             )}
           >
             <span className="bg-primary-50 text-primary-600 flex size-11 items-center justify-center rounded-full">

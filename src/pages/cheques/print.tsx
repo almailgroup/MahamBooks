@@ -178,7 +178,7 @@ export default function ChequeRegisterPrintPage() {
       {/* Like payslips, the sheet reads the same in both languages: English on the left. */}
       <article
         dir="ltr"
-        className="mx-auto max-w-5xl bg-white p-4 text-xs shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0"
+        className="paper mx-auto max-w-5xl bg-white p-4 text-xs shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0"
       >
         <header className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b-2 border-slate-800 pb-3">
           <div dir="ltr">

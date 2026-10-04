@@ -11,6 +11,60 @@
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <title>AlmailBooks</title>
+    <script>
+      // Paints the saved theme's background before the app loads, so a dark
+      // theme never flashes white (src/app/theme.ts applies the rest). The
+      // colours come from src/lib/themes.ts; a test keeps them in step.
+      (function () {
+        var themes = {
+          gulf: ['light', '#f8fafc', '#155dfc'],
+          sky: ['light', '#f8fafc', '#0069a8'],
+          turquoise: ['light', '#f8fafc', '#00786f'],
+          oasis: ['light', '#f9fafb', '#008236'],
+          sand: ['light', '#fafaf9', '#a65f00'],
+          sunset: ['light', '#fbfaf9', '#ca3500'],
+          rose: ['light', '#fafafa', '#c6005c'],
+          lavender: ['light', '#fafafa', '#7f22fe'],
+          graphite: ['light', '#fafafa', '#18181b'],
+          midnight: ['dark', '#0d1220', '#0d1220'],
+          'deep-sea': ['dark', '#031527', '#031527'],
+          lagoon: ['dark', '#021619', '#021619'],
+          'oasis-night': ['dark', '#0d1310', '#0d1310'],
+          'desert-night': ['dark', '#16120d', '#16120d'],
+          ember: ['dark', '#140f0e', '#140f0e'],
+          'rose-night': ['dark', '#160f12', '#160f12'],
+          amethyst: ['dark', '#15101d', '#15101d'],
+          charcoal: ['dark', '#121212', '#121212'],
+          black: ['dark', '#000000', '#000000'],
+        };
+        try {
+          var raw = localStorage.getItem('almailbooks.theme') || '';
+          var p = {};
+          if (raw.charAt(0) === '{') p = JSON.parse(raw);
+          else if (themes[raw]) p = { mode: themes[raw][0], light: raw, dark: raw };
+          var dark =
+            p.mode === 'dark' ||
+            (p.mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          var id = dark ? p.dark : p.light;
+          var theme = themes[id];
+          if (!theme || theme[0] !== (dark ? 'dark' : 'light')) {
+            id = dark ? 'midnight' : 'classic';
+            theme = themes[id];
+          }
+          if (!theme) return;
+          var paint = ':root{color-scheme:' + theme[0] + '}:root,body{background:' + theme[1] + '}';
+          var style = document.createElement('style');
+          style.id = 'theme';
+          style.textContent = '@media screen{' + paint + '}';
+          document.head.appendChild(style);
+          document.documentElement.setAttribute('data-theme', id);
+          document.documentElement.setAttribute('data-scheme', theme[0]);
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', theme[2]);
+        } catch (e) {
+          // Storage blocked or a bad value: the app applies Classic.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

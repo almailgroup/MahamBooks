@@ -474,15 +474,15 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
   }
 
   return (
-    <div className="from-primary-50 min-h-dvh bg-gradient-to-b via-white to-slate-50">
+    <div className="from-primary-50 via-surface to-page min-h-dvh bg-gradient-to-b">
       <header className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <span className="flex items-center gap-2 font-semibold text-slate-900">
-          <span className="bg-primary-600 flex size-8 items-center justify-center rounded-lg text-white">
+          <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
             <FileText className="size-4.5" aria-hidden />
           </span>
           {APP_NAME}
         </span>
-        <LanguageSwitch className="bg-white shadow-xs ring-1 ring-slate-200" />
+        <LanguageSwitch className="bg-surface shadow-xs ring-1 ring-slate-200" />
       </header>
 
       <main className="mx-auto max-w-2xl px-4 pt-6 pb-12 sm:pt-10">
@@ -499,7 +499,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
             {FEATURES.map((f) => (
               <li
                 key={f}
-                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-xs ring-1 ring-slate-200"
+                className="bg-surface inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-slate-700 shadow-xs ring-1 ring-slate-200"
               >
                 <Check className="size-3.5 text-emerald-600" aria-hidden />
                 {t(f)}

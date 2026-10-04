@@ -132,7 +132,7 @@ export default function CompanySettings() {
             onClick={() =>
               document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
             }
-            className="shrink-0 rounded-full bg-white px-3 py-1 text-sm font-medium whitespace-nowrap text-slate-600 shadow-xs ring-1 ring-slate-200 hover:text-slate-900 hover:ring-slate-300"
+            className="bg-surface shrink-0 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap text-slate-600 shadow-xs ring-1 ring-slate-200 hover:text-slate-900 hover:ring-slate-300"
           >
             {t(s.label)}
           </button>

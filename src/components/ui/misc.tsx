@@ -14,7 +14,7 @@ import { STATUS_META, type DisplayStatus, type StatusTone } from '@/lib/status';
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('rounded-xl border border-slate-200 bg-white shadow-xs', className)}
+      className={cn('bg-surface rounded-xl border border-slate-200 shadow-xs', className)}
       {...props}
     />
   );
@@ -240,7 +240,7 @@ export function Segmented<T extends string>({
               ? 'px-2 py-1 text-xs pointer-coarse:min-h-9'
               : 'px-3 py-1.5 text-sm pointer-coarse:min-h-10',
             value === o.value
-              ? 'bg-white text-slate-900 shadow-sm'
+              ? 'bg-surface text-slate-900 shadow-sm'
               : 'text-slate-600 hover:text-slate-900',
           )}
         >

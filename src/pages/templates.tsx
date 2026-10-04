@@ -209,8 +209,8 @@ export default function TemplatesPage() {
                   loading="lazy"
                   className="absolute inset-x-0 top-0 w-full transition-transform duration-300 group-hover:scale-[1.02]"
                 />
-                <span className="absolute inset-0 flex items-center justify-center bg-slate-900/0 opacity-0 transition group-hover:bg-slate-900/30 group-hover:opacity-100 group-focus-visible:bg-slate-900/30 group-focus-visible:opacity-100">
-                  <span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow">
+                <span className="bg-overlay/0 group-hover:bg-overlay/30 group-focus-visible:bg-overlay/30 absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <span className="bg-surface flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-slate-900 shadow">
                     <Eye className="size-4" /> {t('Preview with my details')}
                   </span>
                 </span>

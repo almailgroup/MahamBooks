@@ -10,8 +10,11 @@ import {
   FileText,
   IdCard,
   Languages,
+  Moon,
   Package,
+  Palette,
   Search,
+  Sun,
   Truck,
   Users,
   Zap,
@@ -23,6 +26,8 @@ import { NAV, NAV_FOOTER } from '@/features/shell/nav';
 import { CREATE_GROUPS } from '@/features/shell/create';
 import { useLanguage } from '@/i18n/provider';
 import { msg, t, tp } from '@/i18n';
+import { useTheme } from '@/features/theme/provider';
+import { chooseTheme } from '@/lib/themes';
 import { makeEntry, searchEntries, type SearchEntry, type SearchKind } from './rank';
 import { recordEntries, staticEntries } from './sources';
 import { loadRecent, rememberRecent, type RecentItem } from './recent';
@@ -73,6 +78,8 @@ const QUICK_ACTIONS = [
 ];
 
 const LANGUAGE_KEY = 'action:language';
+const THEME_KEY = 'action:theme';
+const THEME_SWITCH_KEY = 'action:theme-switch';
 
 interface Section {
   kind: SearchKind;
@@ -103,9 +110,9 @@ export function CommandPalette({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[2px]" />
+        <DialogPrimitive.Overlay className="data-[state=open]:animate-fade-in bg-overlay/40 fixed inset-0 z-50 backdrop-blur-[2px]" />
         <DialogPrimitive.Content
-          className="data-[state=open]:animate-fade-in fixed inset-0 z-50 flex flex-col bg-white shadow-2xl outline-none sm:inset-x-4 sm:top-[12vh] sm:bottom-auto sm:mx-auto sm:max-h-[min(36rem,76vh)] sm:max-w-xl sm:rounded-xl sm:ring-1 sm:ring-slate-900/10"
+          className="data-[state=open]:animate-fade-in bg-surface fixed inset-0 z-50 flex flex-col shadow-2xl outline-none sm:inset-x-4 sm:top-[12vh] sm:bottom-auto sm:mx-auto sm:max-h-[min(36rem,76vh)] sm:max-w-xl sm:rounded-xl sm:ring-1 sm:ring-slate-900/10"
           aria-describedby={undefined}
         >
           <DialogPrimitive.Title className="sr-only">{t('Search')}</DialogPrimitive.Title>
@@ -130,12 +137,14 @@ function PaletteBody({
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
   const { language, setLanguage } = useLanguage();
+  const { preference, theme, setPreference } = useTheme();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [recent] = useState<RecentItem[]>(() => loadRecent(company.id));
   const deferred = useDeferredValue(query);
   const listId = useId();
 
+  const dark = theme.scheme === 'dark';
   const fixed = useMemo(() => {
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
@@ -149,9 +158,31 @@ function PaletteBody({
         terms: ['language arabic english لغة عربي'],
         boost: 5,
       }),
+      makeEntry({
+        key: THEME_KEY,
+        kind: 'action',
+        title: t('Change theme'),
+        subtitle: t('Appearance'),
+        to: '/settings/appearance',
+        names: [t('Change theme'), 'Change theme', t('Appearance')],
+        terms: ['theme appearance colour color dark light mode سمة مظهر ألوان داكن فاتح'],
+        boost: 4,
+      }),
+      makeEntry({
+        key: THEME_SWITCH_KEY,
+        kind: 'action',
+        title: dark ? t('Switch to light theme') : t('Switch to dark theme'),
+        to: '',
+        names: [
+          dark ? t('Switch to light theme') : t('Switch to dark theme'),
+          dark ? 'Switch to light theme' : 'Switch to dark theme',
+        ],
+        terms: ['theme dark light mode night سمة داكن فاتح ليلي'],
+        boost: 4,
+      }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, language]);
+  }, [taxesOn, language, dark]);
   const records = useLiveQuery(
     () => recordEntries(company, fmt),
     // `language` changes the names and words shown.
@@ -212,6 +243,10 @@ function PaletteBody({
     onClose();
     if (entry.key === LANGUAGE_KEY) {
       void setLanguage(language === 'ar' ? 'en' : 'ar');
+      return;
+    }
+    if (entry.key === THEME_SWITCH_KEY) {
+      setPreference(chooseTheme(preference, dark ? preference.light : preference.dark));
       return;
     }
     rememberRecent(company.id, {
@@ -306,7 +341,15 @@ function PaletteBody({
                 const i = index;
                 const Icon =
                   ICONS.get(entry.key) ??
-                  (entry.key === LANGUAGE_KEY ? Languages : KIND_ICONS[entry.kind]);
+                  (entry.key === LANGUAGE_KEY
+                    ? Languages
+                    : entry.key === THEME_KEY
+                      ? Palette
+                      : entry.key === THEME_SWITCH_KEY
+                        ? dark
+                          ? Sun
+                          : Moon
+                        : KIND_ICONS[entry.kind]);
                 return (
                   <div
                     key={entry.key}
@@ -324,7 +367,7 @@ function PaletteBody({
                       className={cn(
                         'flex size-8 shrink-0 items-center justify-center rounded-md [&_svg]:size-4',
                         i === current
-                          ? 'text-primary-700 bg-white shadow-xs ring-1 ring-slate-200'
+                          ? 'text-primary-700 bg-surface shadow-xs ring-1 ring-slate-200'
                           : 'bg-slate-100 text-slate-500',
                       )}
                       aria-hidden

@@ -4,6 +4,7 @@ import { Menu as MenuIcon, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { LanguageSwitch } from '@/i18n/language-switch';
+import { ThemeMenu } from '@/features/theme/menu';
 import { useCompany } from '@/app/company';
 import { localName } from '@/i18n/names';
 import { shortcutLabel } from '@/features/search/command-palette';
@@ -25,7 +26,7 @@ export function AppHeader({
   return (
     <header
       className={cn(
-        'sticky top-0 z-20 flex h-14 items-center gap-2 bg-white/85 px-3 backdrop-blur-md transition-shadow duration-200 sm:px-6 lg:h-16 lg:px-8 print:hidden',
+        'bg-surface/85 sticky top-0 z-20 flex h-14 items-center gap-2 px-3 backdrop-blur-md transition-shadow duration-200 sm:px-6 lg:h-16 lg:px-8 print:hidden',
         scrolled && 'shadow-[0_10px_24px_-18px_rgb(15_23_42/0.35)]',
       )}
     >
@@ -55,7 +56,7 @@ export function AppHeader({
         <span className="flex-1 text-start">{t('Search')}</span>
         <kbd
           dir="ltr"
-          className="rounded-md bg-white px-1.5 py-0.5 font-sans text-xs text-slate-500 shadow-xs ring-1 ring-slate-900/5"
+          className="bg-surface rounded-md px-1.5 py-0.5 font-sans text-xs text-slate-500 shadow-xs ring-1 ring-slate-900/5"
         >
           {shortcutLabel()}
         </kbd>
@@ -71,6 +72,7 @@ export function AppHeader({
       >
         <Search />
       </Button>
+      <ThemeMenu className="hidden sm:inline-flex" />
       <LanguageSwitch />
       <NewMenu />
     </header>
@@ -113,7 +115,7 @@ function NewMenu() {
         <Menu.Content
           align="end"
           sideOffset={6}
-          className="data-[state=open]:animate-fade-in z-50 grid w-[30rem] max-w-[calc(100vw-1.5rem)] grid-cols-2 gap-x-1 rounded-2xl bg-white p-1.5 shadow-xl ring-1 ring-slate-900/5"
+          className="data-[state=open]:animate-fade-in bg-surface z-50 grid w-[30rem] max-w-[calc(100vw-1.5rem)] grid-cols-2 gap-x-1 rounded-2xl p-1.5 shadow-xl ring-1 ring-slate-900/5"
         >
           {column([sales, accounting])}
           {column([purchases, contacts])}

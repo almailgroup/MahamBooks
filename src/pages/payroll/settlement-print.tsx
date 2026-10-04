@@ -98,7 +98,7 @@ export default function SettlementPrintPage() {
       />
       <article
         dir="ltr"
-        className="mx-auto max-w-3xl bg-white p-6 text-xs text-slate-700 shadow-sm ring-1 ring-slate-200 print:max-w-none print:p-0 print:shadow-none print:ring-0"
+        className="paper mx-auto max-w-3xl bg-white p-6 text-xs text-slate-700 shadow-sm ring-1 ring-slate-200 print:max-w-none print:p-0 print:shadow-none print:ring-0"
       >
         <PrintHeader company={company} title={L.title} />
         <dl className="mb-4 grid grid-cols-1 gap-x-8 sm:grid-cols-2 print:grid-cols-2">
