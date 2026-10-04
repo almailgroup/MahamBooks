@@ -203,7 +203,9 @@ export default function InvitePage() {
         { api, userId: user.id },
       );
       toast.success(t('You joined {company}.', { company: joined.companyName }));
-      navigate('/cloud/companies', { replace: true });
+      navigate(`/cloud/companies?continue=1&open=${encodeURIComponent(joined.companyId)}`, {
+        replace: true,
+      });
     } catch (err) {
       setError(cloudErrorMessage(err));
     } finally {

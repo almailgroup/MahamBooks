@@ -31,7 +31,7 @@ export default function AuthCallbackPage() {
     if (!ready || !user || done.current) return;
     done.current = true;
     toast.success(t('You are signed in.'));
-    navigate(next ?? '/cloud/companies', { replace: true });
+    navigate(next ?? '/cloud/companies?continue=1', { replace: true });
   }, [ready, user, next, navigate]);
 
   // A failed link leaves ?code=… behind: remove it so a reload doesn't try again.

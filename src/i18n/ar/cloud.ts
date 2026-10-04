@@ -428,4 +428,7 @@ export default {
   'This employee has payroll records, which are part of the accounts. Mark them as left instead.':
     'لدى هذا الموظف سجلات رواتب وهي جزء من الحسابات. سجّل تركه للعمل بدلاً من ذلك.',
   'Employee {number} deleted': 'تم حذف الموظف {number}',
+  'Getting it ready…': 'جارٍ تجهيزها…',
+  'Removed from this device': 'أُزيلت من هذا الجهاز',
+  'Opening your company…': 'جارٍ فتح شركتك…',
 } satisfies Dictionary;

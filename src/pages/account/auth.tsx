@@ -72,7 +72,7 @@ function SignIn({ next, preset }: { next: string | null; preset: string }) {
       await connectCloud();
       const user = await signIn(email, password);
       toast.success(t('Signed in as {email}', { email: user.email ?? email }));
-      navigate(next ?? '/cloud/companies');
+      navigate(next ?? '/cloud/companies?continue=1');
       // Your language follows you to every device.
       const profile = await loadProfile(user.id);
       if (profile && profile.language !== currentLanguage()) {
@@ -205,7 +205,7 @@ function SignUp({ next, preset }: { next: string | null; preset: string }) {
         next: callback,
       });
       if (confirm) setSent(true);
-      else navigate(next ?? '/cloud/companies');
+      else navigate(next ?? '/cloud/companies?continue=1');
     } catch (err) {
       setError(message(err));
     } finally {

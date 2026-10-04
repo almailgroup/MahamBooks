@@ -26,11 +26,20 @@ async function companyInTheCloud(page: Page, name: string) {
   await signIn(page, OWNER.email, OWNER.password);
   await expect(page.getByRole('heading', { name: 'Your companies' })).toBeVisible();
   await page.getByRole('button', { name: 'Keep in the cloud' }).click();
-  await expect(page.getByText('Synced', { exact: true })).toBeVisible({ timeout: 30_000 });
-  await page.getByRole('button', { name: 'Continue to the app' }).click();
+  // Once it is in the cloud, the app opens on it by itself.
   const account = page.getByRole('button', { name: `Account: ${OWNER.name}` });
   await expect(account).toContainText('Synced', { timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'Switch company' })).toContainText(name);
   return { account, companyId: [...cloud.companies.keys()][0] };
+}
+
+async function signOutRemovingCompanies(page: Page, account: ReturnType<Page['getByRole']>) {
+  await account.click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sign out?' });
+  await dialog.getByText('Remove them from this device').click();
+  await dialog.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
 }
 
 test('creating an account asks to confirm the email address', async ({ page }) => {
@@ -89,15 +98,29 @@ test('signing in keeps a company of this device in the cloud and syncs changes',
 
 test('signing out can remove the cloud companies from a shared computer', async ({ page }) => {
   const { account, companyId } = await companyInTheCloud(page, 'Desert Rose Trading');
-  await account.click();
-  await page.getByRole('menuitem', { name: 'Sign out' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Sign out?' });
-  await dialog.getByText('Remove them from this device').click();
-  await dialog.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
+  await signOutRemovingCompanies(page, account);
   expect(cloud.requests.some((r) => r.path === '/auth/v1/logout')).toBe(true);
   // Removed here, still in the cloud.
   expect(cloud.rows(companyId, 'companies')).toHaveLength(1);
+});
+
+test('signing in on another device brings the companies and opens the app by itself', async ({
+  page,
+}) => {
+  const { account } = await companyInTheCloud(page, 'Desert Rose Trading');
+  // A device that has nothing yet.
+  await signOutRemovingCompanies(page, account);
+
+  await page.goto('#/signin');
+  await signIn(page, OWNER.email, OWNER.password);
+  await expect(page.getByRole('button', { name: 'Switch company' })).toContainText(
+    'Desert Rose Trading',
+    { timeout: 30_000 },
+  );
+  await expect(page.getByRole('button', { name: `Account: ${OWNER.name}` })).toContainText(
+    'Synced',
+    { timeout: 30_000 },
+  );
 });
 
 test('an invitation link says who invites whom, then joins and downloads the company', async ({
@@ -127,12 +150,7 @@ test('an invitation link says who invites whom, then joins and downloads the com
   );
 
   // On a shared computer: sign out and leave nothing behind.
-  await account.click();
-  await page.getByRole('menuitem', { name: 'Sign out' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Sign out?' });
-  await dialog.getByText('Remove them from this device').click();
-  await dialog.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
+  await signOutRemovingCompanies(page, account);
 
   // The invitee opens the link.
   await page.goto(link);
@@ -147,11 +165,10 @@ test('an invitation link says who invites whom, then joins and downloads the com
 
   await expect(page.getByRole('heading', { name: 'Join Al Mail Trading' })).toBeVisible();
   await page.getByRole('button', { name: 'Accept and download' }).click();
-  await expect(page.getByRole('heading', { name: 'Your companies' })).toBeVisible();
-  await expect(page.getByText('Synced', { exact: true })).toBeVisible({ timeout: 30_000 });
-  await page.getByRole('button', { name: 'Continue to the app' }).click();
+  // The company arrives and the app opens on it.
   await expect(page.getByRole('button', { name: 'Switch company' })).toContainText(
     'Al Mail Trading',
+    { timeout: 30_000 },
   );
   await expect(page.getByRole('button', { name: 'Account: Yousef Al-Kandari' })).toContainText(
     'Synced',

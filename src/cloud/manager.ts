@@ -3,6 +3,7 @@ import { onLocalChange } from './outbox';
 import { syncStatus } from './status';
 import { applyRole, downloadMissingFiles, syncCompany, type SyncContext } from './sync';
 import { EAGER_DOWNLOAD_BYTES } from './files';
+import { downloadAccountCompanies } from './auto-download';
 import { db } from '@/db/db';
 
 /**
@@ -10,7 +11,9 @@ import { db } from '@/db/db';
  * comes back online or into view, every minute while it is open, and when
  * the cloud says a company changed. Failures are retried with growing
  * pauses (up to five minutes); changes are never dropped in between. Only
- * one tab syncs a company at a time.
+ * one tab syncs a company at a time. The account's companies that aren't on
+ * this device yet (new, or joined on another device) are downloaded by
+ * themselves when the app starts and every few minutes.
  */
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -23,6 +26,8 @@ export interface ManagerOptions {
   /** Runs `fn` while holding a lock shared by the tabs of this browser. */
   lock?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
   intervalMs?: number;
+  /** Download the account's companies that aren't on this device (default true). */
+  autoDownload?: boolean;
 }
 
 const MINUTE = 60_000;
@@ -62,6 +67,7 @@ export class SyncManager {
       random: options.random ?? Math.random,
       lock: options.lock ?? webLock,
       intervalMs: options.intervalMs ?? MINUTE,
+      autoDownload: options.autoDownload ?? true,
     };
   }
 
@@ -95,7 +101,10 @@ export class SyncManager {
     }
     const tick = () => {
       if (this.stopped) return;
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') this.syncAll();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        this.syncAll();
+        void this.refreshMembership(5 * MINUTE);
+      }
       interval = this.o.setTimeout(tick, this.o.intervalMs);
     };
     let interval = this.o.setTimeout(tick, this.o.intervalMs);
@@ -165,7 +174,10 @@ export class SyncManager {
     await Promise.all(ids.map((id) => this.run(id)));
   }
 
-  /** Brings roles up to date and notices companies this account has left. */
+  /**
+   * Brings roles up to date, notices companies this account has left, and
+   * downloads the ones it has that aren't on this device yet.
+   */
   async refreshMembership(throttle = 0): Promise<void> {
     const now = this.o.now();
     if (throttle && now - this.lastMembership < throttle) return;
@@ -192,8 +204,11 @@ export class SyncManager {
           this.schedule(link.companyId, 0);
         }
       }
+      if (this.o.autoDownload && !this.stopped) {
+        await downloadAccountCompanies([...cloud.values()], this.ctx);
+      }
     } catch {
-      // Offline: roles are checked again later.
+      // Offline: roles are checked, and companies downloaded, again later.
     }
   }
 

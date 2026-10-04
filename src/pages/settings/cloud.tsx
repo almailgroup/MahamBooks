@@ -25,6 +25,7 @@ import { useConfirm } from '@/components/ui/overlay';
 import { ReadOnlyContext } from '@/components/ui/read-only';
 import { CLOUD_ERROR_MESSAGES, cloudErrorMessage } from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
+import { keepOffDevice } from '@/cloud/kept-off';
 import { useCloudStatus } from '@/cloud/hooks';
 import { PARKED_REASONS, RECORD_LABELS } from '@/cloud/labels';
 import { ROLE_LABELS } from '@/cloud/roles';
@@ -139,7 +140,11 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
     if (!ok) return;
     await run(
       'remove',
-      () => deleteCompany(company.id),
+      async () => {
+        // Removed on purpose: it doesn't come back to this device by itself.
+        if (user) await keepOffDevice(user.id, company.id);
+        await deleteCompany(company.id);
+      },
       t('{name} was removed from this device.', { name }),
     );
     if (current) navigate('/');

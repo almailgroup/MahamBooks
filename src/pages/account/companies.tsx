@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Building2, CloudDownload, CloudUpload, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { setCurrentCompanyId } from '@/db/records';
+import { getCurrentCompanyId, setCurrentCompanyId } from '@/db/records';
 import type { Company } from '@/db/types';
 import { t } from '@/i18n';
 import { tr } from '@/i18n/provider';
@@ -17,39 +17,57 @@ import { useCloud } from '@/cloud/store';
 import { useCloudStatus } from '@/cloud/hooks';
 import { ROLE_LABELS } from '@/cloud/roles';
 import { isDemoCompany, startDownload, startUpload } from '@/cloud/sync';
+import { arrivals, downloadAccountCompanies } from '@/cloud/auto-download';
+import { allowOnDevice } from '@/cloud/kept-off';
 import type { CloudLink } from '@/cloud/types';
 import { AuthShell, FormError } from '@/features/cloud/auth-shell';
 import { SyncStatusLine } from '@/features/cloud/sync-status';
 
 /**
- * After signing in: the companies on this device can go to the cloud, and
- * the account's companies can come to this device.
+ * After signing in: the account's companies come to this device by
+ * themselves (with their progress), and the companies already on this
+ * device can go to the cloud. With `?continue=1` (after signing in or
+ * joining a company) the app opens as soon as everything has arrived and
+ * nothing needs a decision; `open` picks the company to open.
  */
 export default function CloudCompaniesPage() {
   const { ready, user, api } = useCloud();
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const [params] = useSearchParams();
   const local = useLiveQuery(() => db.companies.toArray(), []);
   const links = useLiveQuery(() => db.syncState.toArray(), []);
   const [cloud, setCloud] = useState<CloudCompany[] | null>(null);
+  const [starting, setStarting] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const userId = user?.id;
+  const arrival = useLiveQuery(
+    () => (cloud && userId ? arrivals(cloud, userId) : undefined),
+    [cloud, userId],
+  );
 
   useEffect(() => {
-    if (!api || !user) return;
+    if (!api || !userId) return;
     let cancelled = false;
-    api
-      .myCompanies()
-      .then((list) => !cancelled && setCloud(list))
-      .catch((err) => {
+    void (async () => {
+      try {
+        const list = await api.myCompanies();
         if (cancelled) return;
-        setCloud([]);
+        setCloud(list);
+        await downloadAccountCompanies(list, { api, userId });
+      } catch (err) {
+        if (cancelled) return;
+        setCloud((current) => current ?? []);
         setError(cloudErrorMessage(err));
-      });
+      } finally {
+        if (!cancelled) setStarting(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [api, user]);
+  }, [api, userId]);
 
   if (!ready) return <Spinner className="min-h-dvh" label={t('Loading…')} />;
   if (!user) return <Navigate to="/signin?next=/cloud/companies" replace />;
@@ -57,11 +75,28 @@ export default function CloudCompaniesPage() {
 
   const linkOf = new Map(links.map((l) => [l.companyId, l]));
   const here = new Set(local.map((c) => c.id));
-  const toDownload = (cloud ?? []).filter(
-    (c) => !here.has(c.id) && linkOf.get(c.id)?.status !== 'downloading',
-  );
+  const arriving = (cloud ?? []).filter((c) => arrival?.get(c.id) === 'auto');
+  const toDownload = (cloud ?? []).filter((c) => {
+    const how = arrival?.get(c.id);
+    return how === 'kept_off' || how === 'replace';
+  });
   const downloading = links.filter((l) => l.status === 'downloading' && l.userId === user.id);
   const ctx = api ? { api, userId: user.id } : null;
+  const undecided = local.some((company) => {
+    const link = linkOf.get(company.id);
+    return (
+      !isDemoCompany(company) && (!link || link.status === 'removed' || link.userId !== user.id)
+    );
+  });
+  const settled =
+    cloud !== null &&
+    arrival !== undefined &&
+    !starting &&
+    arriving.length === 0 &&
+    downloading.length === 0;
+  const openId = params.get('open');
+  const autoContinue =
+    params.get('continue') === '1' && settled && !undecided && local.length > 0 && !error;
 
   const upload = async (company: Company) => {
     if (!ctx) return;
@@ -94,6 +129,7 @@ export default function CloudCompaniesPage() {
     setBusy(company.id);
     setError('');
     try {
+      await allowOnDevice(ctx.userId, company.id);
       await startDownload(company, ctx);
     } catch (err) {
       setError(cloudErrorMessage(err));
@@ -130,6 +166,14 @@ export default function CloudCompaniesPage() {
       }
     >
       <div className="space-y-6">
+        {autoContinue ? (
+          <OpenWhenReady
+            openId={openId}
+            cloudIds={(cloud ?? []).map((c) => c.id)}
+            here={here}
+            fallback={local[0].id}
+          />
+        ) : null}
         <FormError>{error}</FormError>
         {nothing ? (
           <EmptyState
@@ -147,7 +191,7 @@ export default function CloudCompaniesPage() {
 
         {cloud === null ? <Spinner className="py-4" label={t('Loading your companies…')} /> : null}
 
-        {toDownload.length > 0 || downloading.length > 0 ? (
+        {toDownload.length > 0 || downloading.length > 0 || arriving.length > 0 ? (
           <section aria-labelledby="in-account">
             <h2 id="in-account" className="text-sm font-semibold text-slate-900">
               {t('In your account')}
@@ -156,6 +200,18 @@ export default function CloudCompaniesPage() {
               {downloading.map((link) => (
                 <Row key={link.companyId} name={link.name} link={link} />
               ))}
+              {arriving.map((company) => (
+                <li key={company.id} className="flex flex-wrap items-center gap-3 p-3">
+                  <CloudDownload className="size-5 shrink-0 text-slate-400" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <p dir="auto" className="truncate font-medium text-slate-900">
+                      {company.name}
+                    </p>
+                    <p className="text-xs text-slate-500">{t('Getting it ready…')}</p>
+                  </div>
+                  <Spinner className="size-5" label={t('Getting it ready…')} />
+                </li>
+              ))}
               {toDownload.map((company) => (
                 <li key={company.id} className="flex flex-wrap items-center gap-3 p-3">
                   <CloudDownload className="size-5 shrink-0 text-slate-400" aria-hidden />
@@ -163,7 +219,11 @@ export default function CloudCompaniesPage() {
                     <p dir="auto" className="truncate font-medium text-slate-900">
                       {company.name}
                     </p>
-                    <p className="text-xs text-slate-500">{t(ROLE_LABELS[company.role])}</p>
+                    <p className="text-xs text-slate-500">
+                      {arrival?.get(company.id) === 'kept_off'
+                        ? t('Removed from this device')
+                        : t(ROLE_LABELS[company.role])}
+                    </p>
                   </div>
                   <Button
                     size="sm"
@@ -221,6 +281,43 @@ export default function CloudCompaniesPage() {
       </div>
     </AuthShell>
   );
+}
+
+/**
+ * Opens the app once everything has arrived: on the company asked for, else
+ * on the current one if it belongs to the account, else on the account's
+ * first company on this device.
+ */
+function OpenWhenReady({
+  openId,
+  cloudIds,
+  here,
+  fallback,
+}: {
+  openId: string | null;
+  cloudIds: string[];
+  here: Set<string>;
+  fallback: string;
+}) {
+  const navigate = useNavigate();
+  const done = useRef(false);
+  const target =
+    openId && here.has(openId) ? openId : (cloudIds.find((id) => here.has(id)) ?? null);
+  useEffect(() => {
+    if (done.current) return;
+    done.current = true;
+    void (async () => {
+      const current = await getCurrentCompanyId();
+      const keepCurrent =
+        !(openId && here.has(openId)) &&
+        current !== null &&
+        here.has(current) &&
+        cloudIds.includes(current);
+      await setCurrentCompanyId(keepCurrent ? current : (target ?? fallback));
+      navigate('/', { replace: true });
+    })();
+  }, [openId, cloudIds, here, target, fallback, navigate]);
+  return <Spinner className="py-4" label={t('Opening your company…')} />;
 }
 
 function Row({

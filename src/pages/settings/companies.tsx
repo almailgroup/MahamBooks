@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany } from '@/db/records';
+import { keepOffDevice } from '@/cloud/kept-off';
 import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
 import { countryName, currencyName } from '@/lib/geo';
@@ -22,7 +23,8 @@ export default function CompaniesSettings() {
   const remove = async (id: string, name: string) => {
     // A company kept in the cloud only leaves this device; it is deleted for
     // everyone from Settings → Team, by its owner.
-    const inCloud = Boolean(await db.syncState.get(id));
+    const link = await db.syncState.get(id);
+    const inCloud = Boolean(link);
     const ok = await confirm({
       title: inCloud
         ? t('Remove {name} from this device?', { name })
@@ -38,6 +40,8 @@ export default function CompaniesSettings() {
       danger: true,
     });
     if (!ok) return;
+    // Removed on purpose: it doesn't come back to this device by itself.
+    if (link) await keepOffDevice(link.userId, id);
     await deleteCompany(id);
     toast.success(
       inCloud ? t('{name} was removed from this device.', { name }) : t('{name} deleted', { name }),
