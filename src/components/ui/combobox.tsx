@@ -95,7 +95,7 @@ export function Combobox({
             className,
           )}
         >
-          <span className={cn('min-w-0 truncate', !selected && 'text-slate-500')}>
+          <span dir="auto" className={cn('min-w-0 truncate', !selected && 'text-slate-500')}>
             {selected
               ? renderValue
                 ? renderValue(selected)
@@ -164,7 +164,9 @@ export function Combobox({
                   aria-hidden
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-slate-900">{o.label}</span>
+                  <span dir="auto" className="block truncate text-slate-900">
+                    {o.label}
+                  </span>
                   {o.detail ? (
                     <span className="block truncate text-xs text-slate-500">{o.detail}</span>
                   ) : null}

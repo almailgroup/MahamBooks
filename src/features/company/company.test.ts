@@ -73,6 +73,21 @@ describe('setting up a company', () => {
     });
   });
 
+  it('writes the default notes in the language of the documents', async () => {
+    // Kuwaiti documents are bilingual: Arabic first, then English.
+    const kuwait = await setupCompany({ name: 'Al Mail Trading' });
+    expect(kuwait.language).toBe('ar-en');
+    expect(kuwait.defaults.invoiceNotes).toBe('شكراً لتعاملكم معنا.\nThank you for your business.');
+    expect(kuwait.defaults.quoteNotes).toBe(
+      'نتطلع إلى التعامل معكم.\nWe look forward to working with you.',
+    );
+    expect(createCompany({ language: 'ar' }).defaults.invoiceNotes).toBe('شكراً لتعاملكم معنا.');
+    expect(createCompany({ language: 'en' }).defaults).toMatchObject({
+      invoiceNotes: 'Thank you for your business.',
+      quoteNotes: 'We look forward to working with you.',
+    });
+  });
+
   it('switches taxes on when starter rates are given', async () => {
     const company = await setupCompany(
       { name: 'Gulf Co', currency: 'AED', address: { ...createCompany().address, country: 'AE' } },

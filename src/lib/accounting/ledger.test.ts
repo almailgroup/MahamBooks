@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createDocument } from '@/db/defaults';
 import { createPayment } from '@/db/payments';
 import type { InvoiceDocument, LineItem, ManualJournal, TaxLine } from '@/db/types';
 import { dec } from '@/lib/money';
+import { setDictionaryForTests } from '@/i18n';
 import {
   allocate,
   buildLedger,
+  lineDescription,
+  problemText,
   postDocument,
   postJournal,
   postExpense,
@@ -450,5 +453,106 @@ describe('VAT tags', () => {
       updatedAt: '',
     };
     expect(postJournal(journal, context()).every((l) => l.settlement)).toBe(true);
+  });
+});
+
+describe('descriptions the books write', () => {
+  afterEach(() => setDictionaryForTests('en', {}));
+  const arabic = {
+    'Invoice {number}': 'فاتورة {number}',
+    'Payment {number}': 'الدفعة {number}',
+    'Exchange difference {number}': 'فرق العملة {number}',
+    'Cheque {cheque} returned ({number})': 'ارتجاع الشيك {cheque} ({number})',
+    'No exchange rate for {currency}; 1:1 was used.':
+      'لا يوجد سعر صرف لعملة {currency}، فاستُخدم السعر 1:1.',
+    'No account is set up for “{account}”. Choose one in the accounting settings.':
+      'لم يُعدّ حساب لـ«{account}». اختر حساباً في إعدادات المحاسبة.',
+    'Money owed by clients': 'المبالغ المستحقة على العملاء',
+  };
+
+  it('are kept in English and shown in the reader’s language', () => {
+    const lines = postDocument(doc({ items: [item(1, 100, [])] }), context());
+    expect(lines.map((l) => l.description)).toEqual(['Invoice INV-1', 'Invoice INV-1']);
+    expect(lineDescription(lines[0])).toBe('Invoice INV-1');
+    setDictionaryForTests('ar', arabic);
+    expect(lines.map((l) => lineDescription(l))).toEqual(['فاتورة INV-1', 'فاتورة INV-1']);
+    // Reports in another language than the interface pass their own words.
+    expect(lineDescription(lines[0], (text, vars) => `${text}|${vars?.number}`)).toBe(
+      'Invoice {number}|INV-1',
+    );
+  });
+
+  it('name returned cheques and exchange differences', () => {
+    const invoice = doc({
+      id: 'eur',
+      currency: 'EUR',
+      exchangeRate: 0.86,
+      items: [item(1, 100, [])],
+    });
+    const returned = createPayment('co', {
+      number: 'PAY-7',
+      amount: 100,
+      currency: 'EUR',
+      exchangeRate: 0.87,
+      method: 'cheque',
+      allocations: [{ documentId: 'eur', amount: 100 }],
+      voided: true,
+      voidedOn: '2026-10-20',
+      cheque: {
+        number: '000123',
+        bank: 'NBOK',
+        date: '2026-10-15',
+        drawer: 'Orbit',
+        status: 'returned',
+      },
+    });
+    const lines = postPayment(returned, context({ documents: new Map([['eur', invoice]]) }));
+    setDictionaryForTests('ar', arabic);
+    const texts = new Set(lines.map((l) => lineDescription(l)));
+    expect(texts).toEqual(
+      new Set(['الدفعة PAY-7', 'فرق العملة PAY-7', 'ارتجاع الشيك 000123 (PAY-7)']),
+    );
+    expect(total(lines)).toBe(0);
+  });
+
+  it('keep what people typed as it is', () => {
+    const expense = postExpense(
+      {
+        id: 'e',
+        companyId: 'co',
+        number: 'EXP-1',
+        date: '2026-10-02',
+        vendorId: null,
+        accountId: 'services',
+        description: 'Printer paper',
+        amount: 12,
+        taxes: [],
+        currency: 'GBP',
+        paidFromAccountId: 'bank',
+        reference: '',
+        notes: '',
+        createdAt: '',
+        updatedAt: '',
+      },
+      context(),
+    );
+    setDictionaryForTests('ar', arabic);
+    expect(expense.map((l) => lineDescription(l))).toEqual(['Printer paper', 'Printer paper']);
+  });
+
+  it('report problems in the reader’s language', () => {
+    const { problems } = buildLedger(
+      {
+        documents: [doc({ items: [item(1, 100, [])], currency: 'EUR' })],
+        payments: [],
+        journals: [],
+      },
+      context({ roles: { sales: 'sales' } }),
+    );
+    setDictionaryForTests('ar', arabic);
+    expect(problems.map((p) => problemText(p))).toEqual([
+      'لا يوجد سعر صرف لعملة EUR، فاستُخدم السعر 1:1.',
+      'لم يُعدّ حساب لـ«المبالغ المستحقة على العملاء». اختر حساباً في إعدادات المحاسبة.',
+    ]);
   });
 });

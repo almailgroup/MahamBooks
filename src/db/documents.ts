@@ -378,7 +378,7 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
     ]),
     async () => {
       const company = await db.companies.get(input.companyId);
-      if (!company) throw new Error('Company not found');
+      if (!company) throw new Error(t('Company not found'));
       const existing = await db.documents.get(input.id);
       if (isPosted(input) || (existing && isPosted(existing))) {
         assertUnlocked(company, input.issueDate, existing?.issueDate);
@@ -579,9 +579,9 @@ export async function duplicateDocument(
   overrides: Partial<InvoiceDocument> = {},
 ): Promise<InvoiceDocument> {
   const source = await db.documents.get(id);
-  if (!source) throw new Error('Document not found');
+  if (!source) throw new Error(t('Document not found'));
   const company = await db.companies.get(source.companyId);
-  if (!company) throw new Error('Company not found');
+  if (!company) throw new Error(t('Company not found'));
   const type = asType ?? source.type;
   const client = source.clientId ? await db.clients.get(source.clientId) : undefined;
   const fresh = await draftDocument(company, type, client ?? null);
@@ -655,9 +655,9 @@ export async function convertDocument(
   to: 'invoice' | 'proforma' | 'sales_order',
 ): Promise<InvoiceDocument> {
   const source = await db.documents.get(sourceId);
-  if (!source || !CONVERSIONS[source.type]?.includes(to)) throw new Error('Document not found');
+  if (!source || !CONVERSIONS[source.type]?.includes(to)) throw new Error(t('Document not found'));
   const company = await db.companies.get(source.companyId);
-  if (!company) throw new Error('Company not found');
+  if (!company) throw new Error(t('Company not found'));
   const deposit = to === 'invoice' || to === 'proforma';
   const linked = await duplicateDocument(sourceId, to, {
     sourceId: source.id,

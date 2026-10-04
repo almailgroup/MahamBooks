@@ -255,7 +255,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
       description: t(
         'A void document stays in your records for reference but no longer counts as owed.',
       ),
-      confirmLabel: t('Void'),
+      confirmLabel: t('Void document'),
       danger: true,
     });
     if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
@@ -269,6 +269,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         'A cancelled document stays in your records for reference. Invoices and delivery notes already made from it are not changed.',
       ),
       confirmLabel: cancelLabel,
+      cancelLabel: t('Keep'),
       danger: true,
     });
     if (ok) await setStatus('cancelled');
@@ -420,7 +421,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   if (doc.status === 'void' && booked) {
     item('unvoid', <Undo2 />, t('Restore (un-void)'), () => void setStatus('sent'));
   } else if (booked && doc.status !== 'draft') {
-    item('void', <Ban />, t('Void'), () => void voidDoc());
+    item('void', <Ban />, t('Void document'), () => void voidDoc());
   }
   if (doc.status === 'cancelled') {
     item(
@@ -462,7 +463,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                     to={`/clients/${client.id}`}
                     className="hover:text-primary-700 font-medium text-slate-700"
                   >
-                    {localName(client)}
+                    <bdi>{localName(client)}</bdi>
                   </Link>
                 ),
               })}
@@ -512,7 +513,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="rounded-xl bg-slate-200/60 p-3 sm:p-6">
           <div className="mx-auto max-w-[820px]">
             <PdfPreview blob={pdf.blob} loading={pdf.loading} error={pdf.error} />
@@ -583,7 +584,10 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
               ) : null}
               <RelatedDocuments doc={doc} />
               {doc.privateNotes ? (
-                <p className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
+                <p
+                  dir="auto"
+                  className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900"
+                >
                   {doc.privateNotes}
                 </p>
               ) : null}
@@ -673,7 +677,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
-                      <p className="text-sm text-slate-700">{activityText(a)}</p>
+                      <p className="text-sm text-slate-700">{activityText(a, fmt)}</p>
                       <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}

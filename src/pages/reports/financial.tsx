@@ -27,7 +27,7 @@ import { addDaysISO, parseISODate, toISODate, today } from '@/lib/dates';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { downloadCsv } from '@/lib/csv';
 import { presetRange } from '@/lib/reports';
-import type { LedgerLine } from '@/lib/accounting/ledger';
+import { lineDescription, problemText, type LedgerLine } from '@/lib/accounting/ledger';
 import {
   fiscalYearEnd,
   fiscalYearStart,
@@ -254,7 +254,7 @@ function Problems() {
             <Link to={sourceLink(p)} className="font-medium underline">
               {p.number}
             </Link>
-            : {p.message}
+            : {problemText(p)}
           </li>
         ))}
       </ul>
@@ -484,7 +484,7 @@ export function GeneralLedgerReport() {
           '',
           l.date,
           l.number,
-          l.description,
+          lineDescription(l, primary.t),
           l.amount > 0 ? major(l.amount) : '',
           l.amount < 0 ? major(-l.amount) : '',
           major(l.balance),
@@ -550,7 +550,7 @@ export function GeneralLedgerReport() {
                 <tr className="bg-slate-50/40">
                   <td colSpan={5} className="px-5 pt-3 pb-1.5 font-semibold text-slate-900">
                     <span className="tabular me-2 text-slate-500">{a.account.code}</span>
-                    {accountName(a.account)}
+                    <bdi>{accountName(a.account)}</bdi>
                   </td>
                   <td className="tabular px-5 pt-3 pb-1.5 text-end text-slate-500">
                     {money(a.opening)}
@@ -569,7 +569,7 @@ export function GeneralLedgerReport() {
                         {l.number}
                       </Link>
                     </td>
-                    <td className="px-3 py-1.5 text-slate-700">{l.description}</td>
+                    <td className="px-3 py-1.5 text-slate-700">{lineDescription(l, primary.t)}</td>
                     <td className="tabular px-3 py-1.5 text-end">
                       {l.amount > 0 ? money(l.amount) : ''}
                     </td>

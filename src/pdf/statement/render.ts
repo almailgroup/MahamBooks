@@ -1,3 +1,4 @@
+import { t } from '@/i18n';
 import type { StatementRenderModel } from './model';
 
 /**
@@ -5,7 +6,7 @@ import type { StatementRenderModel } from './model';
  * knows invoice templates); the PDF code and fonts load on first use.
  */
 export async function renderStatementPdf(models: StatementRenderModel[]): Promise<Blob> {
-  if (models.length === 0) throw new Error('No statements to print.');
+  if (models.length === 0) throw new Error(t('No statements to print.'));
   await import('../buffer-shim');
   const [{ pdf }, { registerFonts }, fonts, { statementDocument, STATEMENT_FONTS }] =
     await Promise.all([

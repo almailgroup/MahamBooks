@@ -888,12 +888,17 @@ export function PageFooter({
   theme,
   style,
   textStyle,
+  lead,
+  leadStyle,
   marginX = 40,
 }: {
   model: RenderModel;
   theme: TemplateTheme;
   style?: Style;
   textStyle?: Style;
+  /** A line above the footer text (the company's numbers), kept clear of it. */
+  lead?: string;
+  leadStyle?: Style;
   marginX?: number;
 }) {
   const text = sx({ fontSize: 7.5, color: theme.faint, lineHeight: 1.4 }, textStyle);
@@ -913,7 +918,14 @@ export function PageFooter({
   return (
     <>
       <View fixed style={box}>
-        <Text style={sx(text, { flex: 1, paddingRight: numberWidth + 16 })}>{model.footer}</Text>
+        {lead ? (
+          <View style={{ flex: 1, paddingRight: numberWidth + 16 }}>
+            <Text style={sx(text, leadStyle)}>{lead}</Text>
+            {model.footer ? <Text style={text}>{model.footer}</Text> : null}
+          </View>
+        ) : (
+          <Text style={sx(text, { flex: 1, paddingRight: numberWidth + 16 })}>{model.footer}</Text>
+        )}
       </View>
       {/* react-pdf drops text drawn by `render` when it has a line height,
           so the page number is a fixed text of its own without one. */}

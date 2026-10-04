@@ -34,6 +34,8 @@ test('a 5% retention is held, a partial payment shows on the statement, then the
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page).toHaveURL(/#\/invoices\/[0-9a-f-]{36}$/);
   const heading = page.getByRole('heading', { level: 1 });
+  // The editor's heading stays until the saved invoice's page renders.
+  await expect(heading).toHaveText(/^Invoice INV-/);
   const number = (await heading.textContent())!.replace(/^Invoice /, '').trim();
   await page.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Mark as sent' }).click();

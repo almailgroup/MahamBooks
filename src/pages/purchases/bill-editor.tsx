@@ -38,6 +38,7 @@ import { retentionDefaults } from '@/lib/retention';
 import { TotalsPanel } from '@/features/editor/totals-panel';
 import { TaxSelect } from '@/features/editor/tax-select';
 import { ClientDialog } from '@/features/clients/client-dialog';
+import { contactOptions } from '@/features/clients/contact-option';
 import { categoryOptions, useAccounts } from '@/features/accounting/account-pickers';
 import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
 import { ItemNameInput } from '@/features/editor/item-name-input';
@@ -223,17 +224,9 @@ function Editor({
     }
   };
 
-  const vendorOptions = clients
-    .filter((c) => (isVendor(c) && !c.archived) || c.id === doc.clientId)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({
-      value: c.id,
-      label: c.name,
-      detail: [c.nameAr, c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
-        .filter(Boolean)
-        .join(' · '),
-      keywords: [c.number, c.nameAr].filter(Boolean).join(' '),
-    }));
+  const vendorOptions = contactOptions(
+    clients.filter((c) => (isVendor(c) && !c.archived) || c.id === doc.clientId),
+  );
 
   const actions = (
     <div className="flex flex-wrap items-center gap-2">
@@ -264,7 +257,7 @@ function Editor({
     { key: 'category', label: t('Category') },
     { key: 'description', label: t('Description') },
     { key: 'qty', label: t('Qty'), end: true },
-    { key: 'rate', label: t('Rate'), end: true },
+    { key: 'rate', label: t('Price'), end: true },
     { key: 'tax', label: t('Tax') },
     { key: 'amount', label: t('Amount'), end: true },
   ];
@@ -571,7 +564,7 @@ function Editor({
                       />
                     </div>
                     <div className="col-span-2 @3xl:col-span-1">
-                      <MiniLabel>{t('Rate')}</MiniLabel>
+                      <MiniLabel>{t('Price')}</MiniLabel>
                       <NumberInput
                         aria-label={t('Line {number} rate', { number: index + 1 })}
                         value={item.unitPrice}

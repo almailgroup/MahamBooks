@@ -388,7 +388,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                             </span>
                           ) : null}
                         </td>
-                        <td className="max-w-56 truncate px-3 py-3 text-slate-700">
+                        <td dir="auto" className="max-w-56 truncate px-3 py-3 text-slate-700">
                           {client ? localName(client) : '—'}
                         </td>
                         <td className="px-3 py-3 whitespace-nowrap text-slate-600">
@@ -431,7 +431,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                       className="flex items-center justify-between gap-3 px-4 py-3"
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-slate-900">
+                        <p dir="auto" className="truncate font-medium text-slate-900">
                           {client ? localName(client) : '—'}
                         </p>
                         <p className="text-xs text-slate-500">

@@ -3,12 +3,12 @@ import { ImagePlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Address } from '@/db/types';
 import { countryOptions, currencyOptions, LOCALE_OPTIONS } from '@/lib/geo';
-import { DATE_FORMATS } from '@/lib/format';
+import { DATE_FORMATS, formatDate } from '@/lib/format';
 import { logoFromFile } from '@/lib/image';
 import { isHexColor, normalizeHex } from '@/lib/color';
 import { cn } from '@/lib/cn';
 import { GOVERNORATES, findGovernorate } from '@/lib/kuwait';
-import { currentLanguage, t } from '@/i18n';
+import { currentLanguage, interfaceLocale, t } from '@/i18n';
 import { Button } from './ui/button';
 import { Field, Input, Select } from './ui/form';
 import { Combobox } from './ui/combobox';
@@ -99,6 +99,8 @@ export function LocaleSelect({
   );
 }
 
+const SAMPLE_DATE = '2026-12-31';
+
 export function DateFormatSelect({
   value,
   onChange,
@@ -108,6 +110,7 @@ export function DateFormatSelect({
   onChange: (format: (typeof DATE_FORMATS)[number]['value']) => void;
   id?: string;
 }) {
+  const locale = interfaceLocale(undefined);
   return (
     <Select
       id={id}
@@ -116,7 +119,8 @@ export function DateFormatSelect({
     >
       {DATE_FORMATS.map((o) => (
         <option key={o.value} value={o.value}>
-          {o.value === 'locale' ? t(o.label) : o.label}
+          {/* A sample date as it will look, with month names in the interface language. */}
+          {o.value === 'locale' ? t(o.label) : formatDate(SAMPLE_DATE, o.value, locale)}
         </option>
       ))}
     </Select>
@@ -371,7 +375,7 @@ export function LogoUpload({
       </button>
       <div className="space-y-2 text-sm text-slate-500">
         <p>{t('PNG, JPG, SVG or WebP. A wide logo on a transparent background looks best.')}</p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => input.current?.click()} loading={busy}>
             {value ? t('Replace') : t('Choose file')}
           </Button>

@@ -8,7 +8,8 @@ import { fromMinor } from '@/lib/money';
 import { amountInWords } from '@/lib/words';
 import { isISODate } from '@/lib/dates';
 import { ltr } from '../bidi';
-import { ARABIC_LOCALE } from '../model';
+import { ARABIC_LOCALE, relabelBankDetails } from '../model';
+import { documentLabels } from '../labels';
 import { STATEMENT_WORDS, type StatementLanguage, type StatementWords } from './words';
 
 /** A printed phrase: the main language, and English under it on bilingual statements. */
@@ -263,7 +264,14 @@ export function buildStatementModel(
   }
 
   const period = `${date(statement.from)} – ${date(statement.to)}`;
-  const bankText = clean(company.payment?.bankDetails);
+  const printed = documentLabels(language, company.labels);
+  const bankText = relabelBankDetails(
+    clean(company.payment?.bankDetails),
+    printed.primary,
+    printed.secondary,
+    [],
+    rtl,
+  );
   const title = phrase('title');
   return {
     language,

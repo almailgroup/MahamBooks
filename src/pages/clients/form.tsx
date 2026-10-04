@@ -8,6 +8,7 @@ import type { Client } from '@/db/types';
 import { useCompany } from '@/app/company';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, PageHeader, Spinner } from '@/components/ui/misc';
+import { StickyActions } from '@/components/ui/sticky-actions';
 import { ClientForm, newContact, validateClient } from '@/features/clients/client-form';
 import { CONTACT_COPY, contactRoles, type ContactKind } from '@/features/clients/contact-kind';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
@@ -101,14 +102,14 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
         breadcrumb={<Link to={copy.base}>{t(copy.title)}</Link>}
         title={id && client.name ? t(copy.editTitle, { name: client.name }) : t(copy.newLabel)}
         actions={
-          <>
+          <StickyActions>
             <Button variant="ghost" onClick={() => navigate(-1)}>
               {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
               {t(copy.saveLabel)}
             </Button>
-          </>
+          </StickyActions>
         }
       />
       <Card>
@@ -122,7 +123,8 @@ export default function ClientFormPage({ kind = 'customer' }: { kind?: ContactKi
           />
         </CardBody>
       </Card>
-      <div className="mt-4 flex justify-end gap-2">
+      {/* On phones the buttons stay in the bar at the bottom of the screen. */}
+      <div className="mt-4 hidden justify-end gap-2 lg:flex">
         <Button variant="ghost" onClick={() => navigate(-1)}>
           {t('Cancel')}
         </Button>

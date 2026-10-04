@@ -252,11 +252,7 @@ export default function PayslipsPage() {
           setParams(query, { replace: true });
         }}
       />
-      <div
-        className={
-          size === 'A5' ? 'space-y-6 text-[11px] print:space-y-0' : 'space-y-6 print:space-y-0'
-        }
-      >
+      <div className="space-y-6 print:space-y-0">
         {lines.map((line) => (
           <Payslip key={line.id} company={company} run={run} line={line} />
         ))}

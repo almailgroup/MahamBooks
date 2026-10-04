@@ -1,5 +1,5 @@
 import type { BankMatch, ID, ISODate } from '@/db/types';
-import type { LedgerLine } from '@/lib/accounting/ledger';
+import type { LedgerLabel, LedgerLine } from '@/lib/accounting/ledger';
 import { daysBetween } from '@/lib/dates';
 
 /**
@@ -13,7 +13,9 @@ export interface BookEntry extends BankMatch {
   /** Movement on the account, minor units; positive is money in. */
   amount: number;
   number: string;
+  /** In English; show it with `lineDescription`. */
   description: string;
+  label?: LedgerLabel;
   contactId: ID | null;
 }
 
@@ -36,6 +38,7 @@ export function bookEntries(lines: LedgerLine[], accountId: ID): BookEntry[] {
         amount: l.amount,
         number: l.number,
         description: l.description,
+        ...(l.label ? { label: l.label } : {}),
         contactId: l.contactId,
       });
     }

@@ -44,7 +44,11 @@ export function TaxSelect({
     value.length === 0
       ? placeholder
       : value
-          .map((t) => `${Number(t.rate.toFixed(4))}%${t.kind === 'reverse_charge' ? ' RC' : ''}`)
+          .map((tax) => {
+            const rate = `${Number(tax.rate.toFixed(4))}%`;
+            // "RC" is short for reverse charge.
+            return tax.kind === 'reverse_charge' ? t('{rate} RC', { rate }) : rate;
+          })
           .join(' + ');
 
   return (

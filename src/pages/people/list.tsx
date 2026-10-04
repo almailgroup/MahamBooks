@@ -109,7 +109,7 @@ export default function EmployeeListPage() {
 
   const exportCsv = () =>
     downloadCsv(
-      `${t('Employees')}-${on}`,
+      `employees-${on}`,
       [
         t('Number'),
         t('Name (English)'),

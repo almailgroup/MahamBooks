@@ -21,6 +21,7 @@ export async function setCreditHold(clientId: ID, hold: boolean): Promise<void> 
       {
         text: hold ? msg('{name} put on credit hold') : msg('Credit hold lifted for {name}'),
         vars: { name: client.name },
+        arabic: { name: client.nameAr },
       },
       { clientId: client.id },
     );

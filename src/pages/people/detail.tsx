@@ -385,7 +385,7 @@ export default function EmployeeDetailPage() {
             {employee.notes ? (
               <Card>
                 <CardHeader title={t('Notes')} />
-                <CardBody className="text-sm whitespace-pre-wrap text-slate-700">
+                <CardBody dir="auto" className="text-sm whitespace-pre-wrap text-slate-700">
                   {employee.notes}
                 </CardBody>
               </Card>

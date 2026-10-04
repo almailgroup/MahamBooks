@@ -89,6 +89,7 @@ export async function saveExpense(input: Expense): Promise<Expense> {
         ? msg('Expense {number} of {amount} updated')
         : msg('Expense {number} of {amount} recorded'),
       vars: { number: expense.number, amount: formatMoney(amount, currency, company.locale) },
+      money: { amount: { amount, currency } },
     });
     return expense;
   });

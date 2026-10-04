@@ -341,7 +341,7 @@ export default function AccountingSettings() {
                   {account ? (
                     <>
                       <span className="tabular me-2 text-slate-500">{account.code}</span>
-                      {localName(account)}
+                      <bdi>{localName(account)}</bdi>
                     </>
                   ) : (
                     <span className="text-slate-500">—</span>

@@ -333,7 +333,7 @@ export default function ChequeRegisterPage() {
                             </span>
                             <PaymentStatusBadge payment={p} />
                           </div>
-                          <p className="truncate text-sm text-slate-600">
+                          <p dir="auto" className="truncate text-sm text-slate-600">
                             {p.cheque.drawer || partyName(p)}
                           </p>
                           <p className="text-xs text-slate-500">
@@ -401,13 +401,16 @@ export default function ChequeRegisterPage() {
                                 {p.cheque.bank ? bankName(p.cheque.bank, language) : '—'}
                               </td>
                               <td className="max-w-52 px-3 py-3 text-slate-700">
-                                <span className="block truncate">
+                                <span dir="auto" className="block truncate">
                                   {p.cheque.drawer || partyName(p) || '—'}
                                 </span>
                                 {p.cheque.drawer &&
                                 partyName(p) &&
                                 p.cheque.drawer !== partyName(p) ? (
-                                  <span className="block truncate text-xs text-slate-500">
+                                  <span
+                                    dir="auto"
+                                    className="block truncate text-xs text-slate-500"
+                                  >
                                     {partyName(p)}
                                   </span>
                                 ) : null}
@@ -535,7 +538,7 @@ export default function ChequeRegisterPage() {
                             {s.direction === 'out' ? <Badge>{t('Given')}</Badge> : null}
                           </div>
                           <p className="truncate text-sm text-slate-700">
-                            {s.drawer || (client ? localName(client) : '—')}
+                            <bdi>{s.drawer || (client ? localName(client) : '—')}</bdi>
                             {s.purpose ? (
                               <span className="text-slate-500"> · {s.purpose}</span>
                             ) : null}

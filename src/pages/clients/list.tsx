@@ -229,10 +229,15 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                               onClick={(e) => e.stopPropagation()}
                               className="hover:text-primary-700 font-medium text-slate-900"
                             >
-                              {client.name}
+                              <bdi>{localName(client)}</bdi>
                             </Link>
                             <span className="block text-xs text-slate-500">
-                              {[client.nameAr, client.number, client.currency]
+                              {/* The other name: English under Arabic, Arabic under English. */}
+                              {[
+                                localName(client) === client.name ? client.nameAr : client.name,
+                                client.number,
+                                client.currency,
+                              ]
                                 .filter(Boolean)
                                 .join(' · ')}
                             </span>
@@ -281,7 +286,7 @@ export default function ClientListPage({ kind = 'customer' }: { kind?: ContactKi
                       className="flex items-start justify-between gap-3 px-4 py-3 active:bg-slate-50"
                     >
                       <span className="min-w-0">
-                        <span className="block truncate font-medium text-slate-900">
+                        <span dir="auto" className="block truncate font-medium text-slate-900">
                           {localName(row.client)}
                         </span>
                         <span className="block text-xs text-slate-500">{row.client.number}</span>

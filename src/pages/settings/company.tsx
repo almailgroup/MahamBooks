@@ -31,6 +31,7 @@ import { BankAccountFields, ibanProblem } from '@/features/company/bank-fields';
 import { bankAccountOf, withBankAccount } from '@/features/company/bank';
 import { HolidaysEditor } from '@/features/company/holidays-editor';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { printedBankDetails } from '@/pdf/model';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
 const SECTIONS = [
@@ -390,7 +391,7 @@ export default function CompanySettings() {
               {t('Printed on documents')}
             </p>
             <p dir="auto" className="text-sm whitespace-pre-line text-slate-700">
-              {draft.payment.bankDetails}
+              {printedBankDetails(draft)}
             </p>
           </div>
         ) : null}
@@ -403,7 +404,7 @@ export default function CompanySettings() {
           'Your logo and colour on documents, and the stamp and signature that make them official.',
         )}
       >
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div className="space-y-3">
             <p className="text-sm font-medium text-slate-700">{t('Logo')}</p>
             <LogoUpload value={draft.branding.logo} onChange={(logo) => setBranding({ logo })} />

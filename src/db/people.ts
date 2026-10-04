@@ -129,20 +129,24 @@ export async function saveEmployee(input: Employee): Promise<Employee> {
     await db.employees.put(employee);
 
     const vars = { name: employee.name, number: employee.number };
+    const arabic = { name: employee.nameAr };
     if (!existing) {
       await logActivity(company.id, 'employee', employee.id, 'created', {
         text: msg('Employee {name} ({number}) added'),
         vars,
+        arabic,
       });
     } else if (existing.status !== 'left' && employee.status === 'left') {
       await logActivity(company.id, 'employee', employee.id, 'left', {
         text: msg('Employee {name} ({number}) marked as left'),
         vars,
+        arabic,
       });
     } else {
       await logActivity(company.id, 'employee', employee.id, 'updated', {
         text: msg('Employee {name} ({number}) updated'),
         vars,
+        arabic,
       });
     }
     return employee;
@@ -180,6 +184,7 @@ export async function deleteEmployee(id: ID): Promise<void> {
       await logActivity(employee.companyId, 'employee', id, 'deleted', {
         text: msg('Employee {name} ({number}) deleted'),
         vars: { name: employee.name, number: employee.number },
+        arabic: { name: employee.nameAr },
       });
     },
   );

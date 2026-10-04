@@ -1,3 +1,4 @@
+import { t } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { Client, Company, DocumentLanguage } from '@/db/types';
 import {
@@ -82,7 +83,7 @@ export function useLivePdf(
         const model = await prepareModel(doc, company, client, accent, language);
         blob = await renderPdf(model, templateId);
       } catch (e) {
-        error = e instanceof Error ? e.message : 'Could not create the PDF.';
+        error = e instanceof Error ? e.message : t('Could not create the PDF.');
       }
       if (latest.current !== key) return;
       setDone((prev) => ({ key, blob: blob ?? prev?.blob ?? null, error }));

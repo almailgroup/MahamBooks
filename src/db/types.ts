@@ -1017,6 +1017,10 @@ export interface Activity {
   /** Translation key and values, to show the message in the reader's language. */
   messageKey?: string;
   messageVars?: Record<string, string | number>;
+  /** Amounts among the values, written in the reader's language when shown. */
+  messageMoney?: Record<string, { amount: number; currency: string }>;
+  /** Arabic names among the values (an account's, a client's), shown to Arabic readers. */
+  messageVarsAr?: Record<string, string>;
 }
 
 /** Money spent without a bill: fuel, a train ticket, a software subscription. */

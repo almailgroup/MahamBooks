@@ -227,7 +227,7 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                           {fmt.date(r.payment.date)}
                         </span>
                       </td>
-                      <td className="max-w-56 truncate px-3 py-3 text-slate-700">
+                      <td dir="auto" className="max-w-56 truncate px-3 py-3 text-slate-700">
                         {r.client ? localName(r.client) : '—'}
                       </td>
                       <td className="hidden px-3 py-3 text-slate-600 md:table-cell">

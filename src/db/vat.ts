@@ -175,6 +175,9 @@ export async function fileVatReturn(
           company.locale,
         ),
       },
+      money: {
+        amount: { amount: fromMinor(Math.abs(result.net), precision), currency: company.currency },
+      },
     });
     return record;
   });

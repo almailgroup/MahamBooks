@@ -145,14 +145,15 @@ export async function saveAccount(input: Account): Promise<Account> {
     account.updatedAt = nowStamp();
     await db.accounts.put(account);
     const vars = { code: account.code, name: account.name };
+    const arabic = { name: account.nameAr };
     await logActivity(
       account.companyId,
       'account',
       account.id,
       existing ? 'updated' : 'created',
       existing
-        ? { text: msg('Account {code} {name} updated'), vars }
-        : { text: msg('Account {code} {name} created'), vars },
+        ? { text: msg('Account {code} {name} updated'), vars, arabic }
+        : { text: msg('Account {code} {name} created'), vars, arabic },
     );
     return account;
   });
@@ -178,6 +179,7 @@ export async function ensureSpecAccount(company: Company, key: AccountSpecKey): 
   await logActivity(company.id, 'account', account.id, 'created', {
     text: msg('Account {code} {name} created'),
     vars: { code: account.code, name: account.name },
+    arabic: { name: account.nameAr },
   });
   return account;
 }
@@ -239,6 +241,7 @@ export async function deleteAccount(id: ID): Promise<void> {
   await logActivity(account.companyId, 'account', id, 'deleted', {
     text: msg('Account {code} {name} deleted'),
     vars: { code: account.code, name: account.name },
+    arabic: { name: account.nameAr },
   });
 }
 

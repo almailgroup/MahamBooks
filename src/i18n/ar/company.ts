@@ -19,7 +19,7 @@ export default {
   'Legal form': 'الشكل القانوني',
   'Business activity': 'النشاط التجاري',
   'Some activities have limits on cash payments.': 'بعض الأنشطة لها حدود على الدفع النقدي.',
-  'No tax': 'بدون ضريبة',
+  'No tax': 'بلا ضريبة',
   'Other country or currency': 'دولة أو عملة أخرى',
   'Sets currency, date format and tax.': 'تحدد العملة وصيغة التاريخ والضريبة.',
   'This business charges tax': 'هذه الشركة تحتسب ضريبة',

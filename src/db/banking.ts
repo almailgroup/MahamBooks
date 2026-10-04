@@ -64,6 +64,7 @@ export async function importStatement(
       });
       if (rows.length) await db.bankTransactions.bulkAdd(rows);
       const vars = { count: rows.length, account: account.name, file: fileName };
+      const arabic = { account: account.nameAr };
       await logActivity(companyId, 'bank', importId, 'imported', {
         text: fileName
           ? rows.length === 1
@@ -73,6 +74,7 @@ export async function importStatement(
             ? msg('{count} statement line imported into {account}')
             : msg('{count} statement lines imported into {account}'),
         vars,
+        arabic,
       });
       return { added: rows.length, duplicates: lines.length - rows.length, transactions: rows };
     },

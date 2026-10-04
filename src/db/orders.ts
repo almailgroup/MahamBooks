@@ -68,7 +68,7 @@ export async function createFromOrder(
   quantities?: Record<ID, number>,
 ): Promise<InvoiceDocument> {
   let source = await db.documents.get(sourceId);
-  if (!source || !partTargets(source).includes(target)) throw new Error('Document not found');
+  if (!source || !partTargets(source).includes(target)) throw new Error(t('Document not found'));
   if (source.status === 'cancelled' || source.status === 'void') {
     throw new Error(t('This document is cancelled.'));
   }
@@ -79,7 +79,7 @@ export async function createFromOrder(
     source = (await db.documents.get(source.id)) ?? source;
   }
   const company = await db.companies.get(source.companyId);
-  if (!company) throw new Error('Company not found');
+  if (!company) throw new Error(t('Company not found'));
   const client = source.clientId ? await db.clients.get(source.clientId) : undefined;
 
   const related = await relatedForProgress(source);
@@ -150,7 +150,7 @@ export async function markDelivered(
   receipt: { date: ISODate; receiverName: string; receiverCivilId?: string },
 ): Promise<void> {
   const doc = await db.documents.get(id);
-  if (!doc || doc.type !== 'delivery_note') throw new Error('Document not found');
+  if (!doc || doc.type !== 'delivery_note') throw new Error(t('Document not found'));
   const receiverName = receipt.receiverName.trim();
   await setDocumentStatus(
     id,

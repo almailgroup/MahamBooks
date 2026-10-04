@@ -4,6 +4,7 @@ import { CURRENT_COMPANY_KEY } from './records';
 import { seedMissingCharts } from './chart-setup';
 import type { Company, ID } from './types';
 import { APP_NAME } from '@/lib/brand';
+import { t } from '@/i18n';
 
 export const BACKUP_FORMAT = 1;
 export const LAST_BACKUP_KEY = 'lastBackupAt';
@@ -88,13 +89,12 @@ export async function exportBackup(companyId?: ID): Promise<Backup> {
 
 export function backupFileName(company?: Pick<Company, 'name'>): string {
   const stamp = new Date().toISOString().slice(0, 10);
-  const name = company?.name
-    ? `-${company.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')}`
-    : '';
-  return `${APP_NAME}-backup${name}-${stamp}.json`;
+  // Letters and digits only, so the name saves the same everywhere.
+  const slug = (company?.name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${APP_NAME}-backup${slug ? `-${slug}` : ''}-${stamp}.json`;
 }
 
 export function parseBackup(text: string): Backup {
@@ -102,15 +102,17 @@ export function parseBackup(text: string): Backup {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new BackupError('This file is not a valid backup (it is not JSON).');
+    throw new BackupError(t('This file is not a valid backup (it is not JSON).'));
   }
   const result = backupSchema.safeParse(json);
   if (!result.success) {
-    throw new BackupError(`This file is not an ${APP_NAME} backup, or it is damaged.`);
+    throw new BackupError(
+      t('This file is not an {app} backup, or it is damaged.', { app: APP_NAME }),
+    );
   }
   if (result.data.format > BACKUP_FORMAT) {
     throw new BackupError(
-      'This backup was made by a newer version of the app. Please update first.',
+      t('This backup was made by a newer version of the app. Please update first.'),
     );
   }
   return result.data as Backup;

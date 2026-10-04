@@ -16,7 +16,7 @@ import {
 } from '@/lib/format';
 import { formatAddressLines, isAddressEmpty } from '@/lib/geo';
 import { normalizeHex } from '@/lib/color';
-import { bankFromIban, formatHijri, formatIban, isValidIban } from '@/lib/kuwait';
+import { bankFromIban, formatHijri, formatIban, isValidIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { amountInWords } from '@/lib/words';
 import { isISODate, today } from '@/lib/dates';
 import type { FontId } from './fonts';
@@ -297,6 +297,60 @@ const IBAN_PATTERN = /\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){10,30}\b/g;
  * stand alone), the bank's name in the document language when the IBAN
  * shows it, and the WAMD number.
  */
+/** The labels the company's bank details are saved with (see features/company/bank.ts). */
+const BANK_LINES: [english: string, key: LabelKey][] = [
+  ['Account name', 'accountName'],
+  ['Account no.', 'accountNumber'],
+  ['IBAN', 'iban'],
+  ['SWIFT', 'swift'],
+  ['WAMD', 'wamd'],
+];
+
+/**
+ * The company's bank details in the document's words. They are saved with
+ * English labels ("Account name: …"), which become the document's ("اسم
+ * الحساب · Account name: …" on a bilingual one), and a Kuwaiti bank's name in
+ * both languages, which keeps the document's (Arabic first on a bilingual
+ * one, read right to left); lines the company typed itself stay as they are.
+ * `drop` leaves out lines printed elsewhere.
+ */
+export function relabelBankDetails(
+  text: string,
+  labels: Labels,
+  secondary: Labels | null,
+  drop: LabelKey[] = [],
+  rtl = false,
+): string {
+  return text
+    .split('\n')
+    .flatMap((line) => {
+      const bank = KUWAIT_BANKS.find((b) => line.trim() === `${b.name.en} · ${b.name.ar}`);
+      if (bank) {
+        if (secondary) return [`${bank.name.ar} · ${ltr(bank.name.en)}`];
+        return [rtl ? bank.name.ar : bank.name.en];
+      }
+      const found = BANK_LINES.find(([english]) => line.trimStart().startsWith(`${english}:`));
+      if (!found) return [line];
+      const [english, key] = found;
+      if (drop.includes(key)) return [];
+      const words = secondary ? `${labels[key]} · ${ltr(secondary[key])}` : labels[key];
+      return [`${words}:${line.trimStart().slice(english.length + 1)}`];
+    })
+    .join('\n');
+}
+
+/** The company's bank details as its documents print them (settings show this). */
+export function printedBankDetails(company: Pick<Company, 'language' | 'labels' | 'payment'>) {
+  const { primary, secondary } = documentLabels(company.language, company.labels);
+  return relabelBankDetails(
+    company.payment.bankDetails,
+    primary,
+    secondary,
+    [],
+    isRtlLanguage(company.language),
+  );
+}
+
 function paymentDetails(
   text: string,
   labels: Labels,
@@ -306,7 +360,8 @@ function paymentDetails(
 ): string {
   const rtl = isRtlLanguage(language);
   let bank: ReturnType<typeof bankFromIban>;
-  const lines = text
+  // The WAMD number is added below, in the document's words.
+  const lines = relabelBankDetails(text, labels, secondary, clean(wamdPhone) ? ['wamd'] : [], rtl)
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)

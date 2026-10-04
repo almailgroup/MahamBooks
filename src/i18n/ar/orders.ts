@@ -158,7 +158,7 @@ export default {
   '{number} marked as sent': 'تم تعيين {number} كمرسل',
   '{number} marked as accepted': 'تم تعيين {number} كمقبول',
   '{number} marked as declined': 'تم تعيين {number} كمرفوض',
-  '{number} voided': 'تم إلغاء {number}',
+  '{number} voided': 'تم إبطال {number}',
   '{number} confirmed': 'تم تأكيد {number}',
   '{number} issued': 'تم إصدار {number}',
   '{number} marked as delivered': 'تم تأكيد تسليم {number}',
@@ -235,7 +235,7 @@ export default {
   'Payments made against it will be kept as an unapplied advance to the vendor.':
     'ستبقى الدفعات المسددة عليه دفعة مقدمة غير موزعة للمورد.',
   'This cannot be undone.': 'لا يمكن التراجع عن ذلك.',
-  'Void {number}?': 'إلغاء {number}؟',
+  'Void {number}?': 'إبطال {number}؟',
   'A void document stays in your records for reference but no longer counts as owed.':
     'يبقى المستند الملغى في سجلاتك للرجوع إليه، لكنه لم يعد يُحتسب مبلغاً مستحقاً.',
   'A void document stays in your records for reference but leaves the books.':

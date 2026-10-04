@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useBlocker } from 'react-router';
+import { t } from '@/i18n';
 import { useConfirm } from '@/components/ui/overlay';
 
 /**
@@ -17,10 +18,10 @@ export function useUnsavedGuard(dirty: boolean) {
   useEffect(() => {
     if (blocker.state !== 'blocked') return;
     void confirm({
-      title: 'Discard unsaved changes?',
-      description: 'You have changes that have not been saved yet.',
-      confirmLabel: 'Discard changes',
-      cancelLabel: 'Keep editing',
+      title: t('Discard unsaved changes?'),
+      description: t('You have changes that have not been saved yet.'),
+      confirmLabel: t('Discard changes'),
+      cancelLabel: t('Keep editing'),
       danger: true,
     }).then((ok) => (ok ? blocker.proceed() : blocker.reset()));
   }, [blocker, confirm]);

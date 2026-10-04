@@ -122,7 +122,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
                   <li key={asset.id} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="min-w-0 truncate text-slate-700">
                       <span className="tabular me-2 text-slate-500">{asset.number}</span>
-                      {localName(asset)}
+                      <bdi>{localName(asset)}</bdi>
                     </span>
                     <span className="tabular shrink-0 text-slate-900">
                       {fmt.money(fromMinor(amount, p))}

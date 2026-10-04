@@ -9,6 +9,7 @@ import { fillTemplate, isValidEmail, mailtoLink } from '@/lib/email';
 import { formatDate, formatMoney } from '@/lib/format';
 import { normalizeKuwaitPhone } from '@/lib/kuwait';
 import { today } from '@/lib/dates';
+import { downloadName } from '@/lib/file-names';
 import {
   isLinkExpired,
   shareMessage,
@@ -138,7 +139,7 @@ export function SendDialog({
   const share = async () => {
     setBusy('share');
     try {
-      const file = new File([await getPdf()], fileName, { type: 'application/pdf' });
+      const file = new File([await getPdf()], downloadName(fileName), { type: 'application/pdf' });
       await navigator.share({ files: [file], title: subject, text: body });
       await afterSend(t('share'));
       onOpenChange(false);
@@ -331,7 +332,7 @@ export function WhatsAppDialog({
   const sharePdf = async () => {
     setBusy(true);
     try {
-      const file = new File([await getPdf()], fileName, { type: 'application/pdf' });
+      const file = new File([await getPdf()], downloadName(fileName), { type: 'application/pdf' });
       await navigator.share({ files: [file], text });
       await afterShare(t('share'));
       onOpenChange(false);

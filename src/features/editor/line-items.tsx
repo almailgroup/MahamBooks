@@ -193,10 +193,10 @@ export function LineItemsEditor({
       <div className="hidden grid-cols-12 gap-3 px-3 pb-2 text-xs font-medium tracking-wide text-slate-500 uppercase @xl:grid">
         {prices ? (
           <>
-            <span className="col-span-6 ps-5">{t('Item')}</span>
+            <span className="col-span-5 ps-5">{t('Item')}</span>
             <span className="col-span-2 text-end">{t('Qty')}</span>
             <span className="col-span-2 text-end">{t('Price')}</span>
-            <span className="col-span-2 pe-9 text-end">{t('Amount')}</span>
+            <span className="col-span-3 pe-9 text-end">{t('Amount')}</span>
           </>
         ) : (
           <>
@@ -422,7 +422,7 @@ export function LineItemsEditor({
           return (
             <li key={item.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-xs">
               <div className="grid grid-cols-12 gap-x-3 gap-y-2">
-                <div className="col-span-12 @xl:col-span-6">{nameInput}</div>
+                <div className="col-span-12 @xl:col-span-5">{nameInput}</div>
                 <div className="col-span-4 @xl:col-span-2">
                   <MiniLabel>{t('Qty')}</MiniLabel>
                   {quantityInput}
@@ -435,7 +435,7 @@ export function LineItemsEditor({
                     onValueChange={(unitPrice) => update(index, { unitPrice })}
                   />
                 </div>
-                <div className="col-span-4 flex items-start justify-end gap-1 @xl:col-span-2">
+                <div className="col-span-4 flex items-start justify-end gap-1 @xl:col-span-3">
                   <div className="min-w-0 flex-1 text-end">
                     <MiniLabel>{t('Amount')}</MiniLabel>
                     <p
@@ -450,7 +450,7 @@ export function LineItemsEditor({
 
                 <div
                   className={cn(
-                    'col-span-12 space-y-2 @xl:col-span-6 @xl:ps-6',
+                    'col-span-12 space-y-2 @xl:col-span-5 @xl:ps-6',
                     // Condition and serial number sit beside the description.
                     hasGoodsDetails(item) && '@xl:row-span-2',
                   )}
@@ -471,7 +471,7 @@ export function LineItemsEditor({
                     onChange={(discount, discountType) => update(index, { discount, discountType })}
                   />
                 </div>
-                <div className={cn('col-span-4 @xl:col-span-2', !showTaxes && 'invisible')}>
+                <div className={cn('col-span-4 @xl:col-span-3', !showTaxes && 'invisible')}>
                   <FieldLabel>{t('Tax')}</FieldLabel>
                   <TaxSelect
                     value={item.taxes}
@@ -481,11 +481,11 @@ export function LineItemsEditor({
                 </div>
                 {hasGoodsDetails(item) ? (
                   <>
-                    <label className="col-span-5 @xl:col-span-2 @xl:col-start-7">
+                    <label className="col-span-5 @xl:col-span-2 @xl:col-start-6">
                       <FieldLabel>{t('Condition')}</FieldLabel>
                       {conditionSelect(item, index)}
                     </label>
-                    <label className="col-span-7 @xl:col-span-4">
+                    <label className="col-span-7 @xl:col-span-5">
                       <FieldLabel>{t('Serial no.')}</FieldLabel>
                       {serialInput(item, index)}
                     </label>

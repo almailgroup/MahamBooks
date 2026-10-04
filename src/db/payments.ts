@@ -181,6 +181,7 @@ export async function ensurePaymentAccount(
   await logActivity(company.id, 'account', account.id, 'created', {
     text: msg('Account {code} {name} created'),
     vars: { code: account.code, name: account.name },
+    arabic: { name: account.nameAr },
   });
   return account;
 }
@@ -369,16 +370,17 @@ export async function savePayment(input: Payment): Promise<Payment> {
         ),
         documents: numbers.join(', '),
       };
+      const money = { amount: { amount: payment.amount, currency: payment.currency } };
       await logActivity(
         company.id,
         'payment',
         payment.id,
         existing ? 'updated' : 'created',
         existing
-          ? { text: msg('Payment {number} of {amount} updated'), vars }
+          ? { text: msg('Payment {number} of {amount} updated'), vars, money }
           : numbers.length
-            ? { text: msg('Payment {number} of {amount} recorded for {documents}'), vars }
-            : { text: msg('Payment {number} of {amount} recorded'), vars },
+            ? { text: msg('Payment {number} of {amount} recorded for {documents}'), vars, money }
+            : { text: msg('Payment {number} of {amount} recorded'), vars, money },
         { clientId: payment.clientId || null, documentId: payment.documentIds[0] ?? null },
       );
       return payment;

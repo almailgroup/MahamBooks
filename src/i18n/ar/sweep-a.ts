@@ -141,11 +141,13 @@ export default {
   'Record transfer': 'تسجيل التحويل',
   'Choose the account the statement belongs to.': 'اختر الحساب الذي يخصه الكشف.',
   '{count} statement line imported into {account} from {file}':
-    'استيراد حركات الكشف إلى {account} من {file}: {count}',
+    'تم استيراد حركات الكشف ({count}) إلى {account} من {file}',
   '{count} statement lines imported into {account} from {file}':
-    'استيراد حركات الكشف إلى {account} من {file}: {count}',
-  '{count} statement line imported into {account}': 'استيراد حركات الكشف إلى {account}: {count}',
-  '{count} statement lines imported into {account}': 'استيراد حركات الكشف إلى {account}: {count}',
+    'تم استيراد حركات الكشف ({count}) إلى {account} من {file}',
+  '{count} statement line imported into {account}':
+    'تم استيراد حركات الكشف ({count}) إلى {account}',
+  '{count} statement lines imported into {account}':
+    'تم استيراد حركات الكشف ({count}) إلى {account}',
   'Statement line not found.': 'لم يُعثر على حركة الكشف.',
   'That transaction is already matched to another line.':
     'هذه المعاملة مطابَقة بالفعل مع حركة أخرى.',
@@ -211,12 +213,12 @@ export default {
   'Received into': 'الإيداع في',
   'Record refund': 'تسجيل الاسترداد',
   Box: 'الخانة',
-  'Undo this filing?': 'إلغاء تقديم هذا الإقرار؟',
+  'Undo this filing?': 'التراجع عن تقديم هذا الإقرار؟',
   'The return goes back to “ready to file” and its closing entry (and any payment recorded) is removed.':
     'يعود الإقرار إلى «جاهز للتقديم» ويُحذف قيد إقفاله (وأي سداد مسجّل له).',
-  'Undo filing': 'إلغاء التقديم',
-  'Filing undone': 'تم إلغاء التقديم',
-  'Could not undo the filing.': 'تعذّر إلغاء التقديم.',
+  'Undo filing': 'التراجع عن التقديم',
+  'Filing undone': 'تم التراجع عن التقديم',
+  'Could not undo the filing.': 'تعذّر التراجع عن التقديم.',
   'VAT return · {period}': 'إقرار ضريبة القيمة المضافة · {period}',
   'Filed {date}, ref. {reference}': 'قُدّم في {date}، المرجع {reference}',
   'Filed {date}': 'قُدّم في {date}',
@@ -256,8 +258,9 @@ export default {
   'VAT return {start} to {end} filed: {amount} to reclaim':
     'قُدّم إقرار ضريبة القيمة المضافة من {start} إلى {end}: {amount} قابلة للاسترداد',
   'This period is locked. Remove or move the lock date (Settings → Accounting) to undo the return.':
-    'هذه الفترة مقفلة. احذف تاريخ الإقفال أو غيّره (الإعدادات ← المحاسبة) لإلغاء الإقرار.',
-  'VAT return {start} to {end} undone': 'تم إلغاء إقرار ضريبة القيمة المضافة من {start} إلى {end}',
+    'هذه الفترة مقفلة. احذف تاريخ الإقفال أو غيّره (الإعدادات ← المحاسبة) للتراجع عن تقديم الإقرار.',
+  'VAT return {start} to {end} undone':
+    'تم التراجع عن تقديم إقرار ضريبة القيمة المضافة من {start} إلى {end}',
   'Return not found.': 'لم يُعثر على الإقرار.',
   'The payment for this return is already recorded.': 'سداد هذا الإقرار مسجّل بالفعل.',
   'The chart of accounts has no VAT liability account.':

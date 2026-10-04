@@ -2,24 +2,29 @@ import { db } from './db';
 import { createDocument, emptyTotals, nowStamp } from './defaults';
 import { markSent, saveDocument } from './documents';
 import { logActivity } from './activity';
-import type { ID, InvoiceDocument, ISODate, RecurringProfile } from './types';
+import type { Client, ID, InvoiceDocument, ISODate, RecurringProfile } from './types';
 import { addDaysISO, occurrenceDate, today } from '@/lib/dates';
 import { placeholderLocale, replaceDatePlaceholders } from '@/lib/placeholders';
+import { retentionDefaults } from '@/lib/retention';
 import { shortId } from '@/lib/ids';
 import { msg } from '@/i18n';
 
 /**
  * Builds (without saving) the invoice a profile produces for `issueDate`.
  * `locale` writes month names in the document's language (`placeholderLocale`).
+ * The client's retention applies as on an invoice made by hand: its rate,
+ * unless a valid clearance certificate covers the date.
  */
 export function invoiceFromProfile(
   profile: RecurringProfile,
   issueDate: ISODate,
   locale: string,
+  client: Client | null = null,
 ): InvoiceDocument {
   const t = profile.template;
   const fill = (s: string) => replaceDatePlaceholders(s, issueDate, locale);
   return createDocument(profile.companyId, 'invoice', {
+    ...retentionDefaults(client, 'invoice', issueDate),
     clientId: profile.clientId,
     issueDate,
     dueDate: addDaysISO(issueDate, profile.dueDays),
@@ -73,7 +78,9 @@ export async function issueNow(profileId: ID): Promise<InvoiceDocument | null> {
   const client = profile.clientId ? await db.clients.get(profile.clientId) : undefined;
   // The client's document language, else the company's.
   const locale = placeholderLocale(client?.language ?? company.language, company.locale);
-  const invoice = await saveDocument(invoiceFromProfile(profile, issueDate, locale));
+  const invoice = await saveDocument(
+    invoiceFromProfile(profile, issueDate, locale, client ?? null),
+  );
   if (profile.markSent) await markSent(invoice.id);
   await db.recurring.put(advanceProfile(profile));
   await logActivity(

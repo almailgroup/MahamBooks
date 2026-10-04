@@ -217,6 +217,7 @@ async function ensureAccounts(
       await logActivity(company.id, 'account', account.id, 'created', {
         text: msg('Account {code} {name} created'),
         vars: { code: account.code, name: account.name },
+        arabic: { name: account.nameAr },
       });
     }
     out[key] = account.id;
@@ -607,6 +608,7 @@ export async function saveStaffLoan(input: StaffLoan): Promise<StaffLoan> {
     await logActivity(company.id, 'payroll', loan.id, 'loan', {
       text: msg('Loan to {name} recorded'),
       vars: { name: employee.name },
+      arabic: { name: employee.nameAr },
     });
     return loan;
   });
@@ -639,6 +641,7 @@ export async function cancelStaffLoan(id: ID): Promise<StaffLoan> {
     await logActivity(company.id, 'payroll', loan.id, 'loan_cancelled', {
       text: msg('Loan to {name} cancelled'),
       vars: { name: employee?.name ?? '' },
+      arabic: { name: employee?.nameAr },
     });
     return next;
   });
@@ -715,6 +718,7 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
       await logActivity(company.id, 'payroll', record.id, existing ? 'leave_updated' : 'leave', {
         text: existing ? msg('Leave of {name} updated') : msg('Leave recorded for {name}'),
         vars: { name: employee.name },
+        arabic: { name: employee.nameAr },
       });
       return record;
     },
@@ -730,6 +734,7 @@ export async function cancelLeaveRecord(id: ID): Promise<void> {
     await logActivity(record.companyId, 'payroll', id, 'leave_cancelled', {
       text: msg('Leave of {name} cancelled'),
       vars: { name: employee?.name ?? '' },
+      arabic: { name: employee?.nameAr },
     });
   });
 }
@@ -1576,6 +1581,7 @@ export async function postSettlement(form: SettlementForm): Promise<FinalSettlem
     };
     await db.finalSettlements.add(settlement);
     const vars = { name: employee.name, number: employee.number };
+    const arabic = { name: employee.nameAr };
     if (employee.status !== 'left' || employee.leavingDate !== form.leavingDate) {
       await db.employees.put({
         ...employee,
@@ -1588,12 +1594,14 @@ export async function postSettlement(form: SettlementForm): Promise<FinalSettlem
         await logActivity(company.id, 'employee', employee.id, 'left', {
           text: msg('Employee {name} ({number}) marked as left'),
           vars,
+          arabic,
         });
       }
     }
     await logActivity(company.id, 'payroll', id, 'settlement', {
       text: msg('Final settlement for {name} posted'),
       vars,
+      arabic,
     });
     return settlement;
   });
@@ -1622,6 +1630,7 @@ export async function paySettlement(
     const bank = await moneyAccount(company, input.bankAccountId, settings.bankAccountId);
     const employee = await db.employees.get(settlement.employeeId);
     const name = employee?.name ?? '';
+    const nameAr = employee?.nameAr;
     let paymentJournalId: ID | null = null;
     if (settlement.net > 0) {
       const accounts = await ensureAccounts(company, settings, ['salariesPayable']);
@@ -1647,6 +1656,7 @@ export async function paySettlement(
     await logActivity(company.id, 'payroll', id, 'settlement_paid', {
       text: msg('Final settlement for {name} paid'),
       vars: { name },
+      arabic: { name: nameAr },
     });
     return next;
   });
@@ -1659,6 +1669,7 @@ export async function reverseSettlement(id: ID): Promise<FinalSettlement> {
     const company = await loadCompany(settlement.companyId);
     const employee = await db.employees.get(settlement.employeeId);
     const vars = { name: employee?.name ?? '' };
+    const arabic = { name: employee?.nameAr };
     let next: FinalSettlement;
     if (settlement.status === 'paid') {
       assertOpen(company, settlement.paidOn);
@@ -1673,6 +1684,7 @@ export async function reverseSettlement(id: ID): Promise<FinalSettlement> {
       await logActivity(company.id, 'payroll', id, 'settlement_payment_undone', {
         text: msg('Payment of the final settlement for {name} undone'),
         vars,
+        arabic,
       });
     } else if (settlement.status === 'posted') {
       assertOpen(company, settlement.leavingDate);
@@ -1685,6 +1697,7 @@ export async function reverseSettlement(id: ID): Promise<FinalSettlement> {
       await logActivity(company.id, 'payroll', id, 'settlement_reversed', {
         text: msg('Final settlement for {name} reversed'),
         vars,
+        arabic,
       });
     } else {
       throw new PayrollError(t('This settlement was reversed.'));

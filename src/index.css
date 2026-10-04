@@ -215,9 +215,31 @@
     outline: none;
   }
 
-  /* Letter spacing breaks the joining of Arabic letters. */
-  [dir='rtl'] :is(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
-    letter-spacing: normal;
+  /*
+   * What people type takes its own direction: an English name in an Arabic
+   * form keeps its full stop at the end ("Gulf Pearl Co. W.L.L."), an Arabic
+   * line in an English one reads right to left, and an empty field starts
+   * from the page's side. Fields with a set direction (numbers, codes, IBANs)
+   * or alignment keep theirs.
+   */
+  :is(input:not([type]), input[type='text'], input[type='search'], textarea):not(
+    [dir],
+    [inputmode],
+    .text-end
+  ) {
+    unicode-bidi: plaintext;
+  }
+
+  /*
+   * A cut-off name in either language (dir="auto") reads in its own direction,
+   * so a long English name loses its end, not its start, yet lines up with
+   * the page like the names around it.
+   */
+  [dir='rtl'] .truncate[dir='auto'] {
+    text-align: right;
+  }
+  [dir='ltr'] .truncate[dir='auto'] {
+    text-align: left;
   }
 
   /* Icons that point somewhere face the other way in Arabic. */
@@ -241,4 +263,12 @@
     ) {
     transform: scaleX(-1);
   }
+}
+
+/*
+ * Letter spacing breaks the joining of Arabic letters. Outside the layers,
+ * so it wins over the tracking utilities (a rule in the base layer never does).
+ */
+[dir='rtl'] :is(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
+  letter-spacing: normal;
 }

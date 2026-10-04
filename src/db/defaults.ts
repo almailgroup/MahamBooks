@@ -1,6 +1,8 @@
 import type {
   Client,
   Company,
+  DocumentDefaults,
+  DocumentLanguage,
   EmailTemplates,
   InvoiceDocument,
   NumberingRule,
@@ -129,10 +131,28 @@ export function defaultEmailTemplatesAr(): EmailTemplates {
   };
 }
 
+/**
+ * The notes new invoices and quotes start with, in the language of the
+ * documents: Arabic first, then English, on bilingual ones.
+ */
+export function defaultNotes(
+  language: DocumentLanguage,
+): Pick<DocumentDefaults, 'invoiceNotes' | 'quoteNotes'> {
+  const notes = {
+    invoiceNotes: { en: 'Thank you for your business.', ar: 'شكراً لتعاملكم معنا.' },
+    quoteNotes: { en: 'We look forward to working with you.', ar: 'نتطلع إلى التعامل معكم.' },
+  };
+  const write = ({ en, ar }: { en: string; ar: string }) =>
+    language === 'ar' ? ar : language === 'ar-en' ? `${ar}\n${en}` : en;
+  return { invoiceNotes: write(notes.invoiceNotes), quoteNotes: write(notes.quoteNotes) };
+}
+
 export function createCompany(overrides: Partial<Company> = {}): Company {
   const stamp = nowStamp();
   const locale = overrides.locale ?? 'en-KW';
   const usLetter = /-(US|CA)$/.test(locale);
+  // Kuwaiti invoices are in Arabic, with English next to it.
+  const language = overrides.language ?? 'ar-en';
   return {
     id: newId(),
     name: '',
@@ -148,8 +168,7 @@ export function createCompany(overrides: Partial<Company> = {}): Company {
     currency: 'KWD',
     locale,
     dateFormat: 'dd/MM/yyyy',
-    // Kuwaiti invoices are in Arabic, with English next to it.
-    language: 'ar-en',
+    language,
     branding: {
       accentColor: '#4f46e5',
       templateId: 'modern',
@@ -160,9 +179,8 @@ export function createCompany(overrides: Partial<Company> = {}): Company {
     defaults: {
       paymentTermsDays: 30,
       quoteValidDays: 30,
-      invoiceNotes: 'Thank you for your business.',
+      ...defaultNotes(language),
       invoiceTerms: '',
-      quoteNotes: 'We look forward to working with you.',
       quoteTerms: '',
       creditNotes: '',
       creditTerms: '',

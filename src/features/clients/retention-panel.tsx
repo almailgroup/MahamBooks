@@ -16,6 +16,7 @@ import type { ClearanceCertificate, Client, InvoiceDocument, RetentionRelease } 
 import { DOCUMENT_ROUTES, useFormat } from '@/app/company';
 import { isPosted } from '@/lib/accounting/ledger';
 import { daysBetween, today } from '@/lib/dates';
+import { downloadName } from '@/lib/file-names';
 import { receiptFromFile } from '@/lib/image';
 import { currencyPrecision, dec, round } from '@/lib/money';
 import {
@@ -534,7 +535,7 @@ export function RetentionPanel({
                     {file ? (
                       <a
                         href={file.dataUrl}
-                        download={file.name}
+                        download={downloadName(file.name, `certificate-${c.number}`)}
                         className="text-primary-700 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-slate-100"
                       >
                         <Paperclip className="size-3.5" aria-hidden /> {t('Scan')}

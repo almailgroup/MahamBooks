@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { db } from '@/db/db';
-import type { Client } from '@/db/types';
+import type { Client, Company } from '@/db/types';
 import { useCompany } from '@/app/company';
 import {
   bankName,
@@ -15,9 +15,9 @@ import {
   sortCheques,
   type ChequeFilter,
 } from '@/lib/cheques';
-import { formatDate, formatDateTime, formatMoney } from '@/lib/format';
+import { formatDate, formatMoney } from '@/lib/format';
 import { currencyPrecision, fromMinor } from '@/lib/money';
-import { today } from '@/lib/dates';
+import { toISODate, today } from '@/lib/dates';
 import { chequeStatusMeta, SECURITY_CHEQUE_STATUS_META } from '@/lib/status';
 import { t } from '@/i18n';
 import arabic from '@/i18n/ar/payments';
@@ -65,6 +65,12 @@ const COLUMNS = {
   none: { en: 'No cheques.', ar: 'لا توجد شيكات.' },
 };
 
+/** When the register was printed: "04/10/2026 13:38", in the company's date format. */
+function printedAt(dateFormat: Company['dateFormat'], now = new Date()): string {
+  const time = [now.getHours(), now.getMinutes()].map((n) => String(n).padStart(2, '0')).join(':');
+  return `${formatDate(toISODate(now), dateFormat, EN)} ${time}`;
+}
+
 function Head({ words, end }: { words: Words; end?: boolean }) {
   return (
     <th
@@ -81,7 +87,10 @@ function Head({ words, end }: { words: Words; end?: boolean }) {
 function Both({ en, ar }: Words) {
   return (
     <>
-      <span className="block">{en}</span>
+      {/* Isolated: "Marina Breeze Restaurants Co." keeps its full stop at the end. */}
+      <span className="block">
+        <bdi>{en}</bdi>
+      </span>
       {ar !== en ? (
         <span className="block text-slate-600" dir="rtl">
           {ar}
@@ -166,7 +175,11 @@ export default function ChequeRegisterPrintPage() {
         </Button>
       </div>
 
-      <article className="mx-auto max-w-5xl bg-white p-4 text-xs shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0">
+      {/* Like payslips, the sheet reads the same in both languages: English on the left. */}
+      <article
+        dir="ltr"
+        className="mx-auto max-w-5xl bg-white p-4 text-xs shadow-sm ring-1 ring-slate-200 sm:p-8 print:max-w-none print:p-0 print:shadow-none print:ring-0"
+      >
         <header className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b-2 border-slate-800 pb-3">
           <div dir="ltr">
             <p className="text-sm font-semibold text-slate-900">{company.name}</p>
@@ -184,7 +197,8 @@ export default function ChequeRegisterPrintPage() {
           </div>
           <p className="w-full text-slate-500">
             {COLUMNS.printed.en} / {COLUMNS.printed.ar}:{' '}
-            <span dir="ltr">{formatDateTime(new Date().toISOString(), EN)}</span>
+            {/* Written like the dates in the table, which both readers know. */}
+            <span dir="ltr">{printedAt(company.dateFormat)}</span>
           </p>
         </header>
 
@@ -228,9 +242,11 @@ export default function ChequeRegisterPrintPage() {
                             )}
                           </td>
                           <td className="border border-slate-300 px-2 py-1.5">
-                            {s.drawer || <Both {...who} />}
+                            {s.drawer ? <bdi>{s.drawer}</bdi> : <Both {...who} />}
                           </td>
-                          <td className="border border-slate-300 px-2 py-1.5">{s.purpose}</td>
+                          <td className="border border-slate-300 px-2 py-1.5">
+                            <bdi>{s.purpose}</bdi>
+                          </td>
                           <td
                             className="tabular border border-slate-300 px-2 py-1.5 text-end"
                             dir="ltr"
@@ -273,7 +289,9 @@ export default function ChequeRegisterPrintPage() {
                           </td>
                           <td className="border border-slate-300 px-2 py-1.5">
                             {p.cheque.drawer ? (
-                              <span className="block">{p.cheque.drawer}</span>
+                              <span className="block">
+                                <bdi>{p.cheque.drawer}</bdi>
+                              </span>
                             ) : null}
                             {who.en && who.en !== p.cheque.drawer ? <Both {...who} /> : null}
                           </td>

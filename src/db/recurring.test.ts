@@ -3,6 +3,8 @@ import { db } from './db';
 import { createClient, createRecurring } from './defaults';
 import { generateDueInvoices } from './recurring';
 import { saveClient, setupCompany } from './records';
+import { loadLedger } from './accounting';
+import { trialBalance } from '@/lib/accounting/statements';
 import {
   datePlaceholderExamples,
   placeholderLocale,
@@ -127,6 +129,76 @@ describe('recurring invoices', () => {
     );
     const [invoice] = await generateDueInvoices(company.id, '2026-02-10');
     expect(invoice.items[0].name).toBe('دعم فني — فبراير 2026');
+  });
+
+  it('hold back the client’s retention unless a clearance certificate covers the date', async () => {
+    const company = await setupCompany({
+      name: 'Al Mail Contracting',
+      currency: 'KWD',
+      locale: 'en-KW',
+      address: { line1: '', line2: '', city: '', state: '', postalCode: '', country: 'KW' },
+    });
+    const client = await saveClient(
+      createClient(company.id, {
+        name: 'Ministry',
+        retentionPercent: 5,
+        retentionKind: 'tax',
+        clearanceCertificates: [
+          { id: 'c1', number: 'MOF-1', issueDate: '2026-03-01', expiryDate: '2026-03-31' },
+        ],
+      }),
+    );
+    const base = createRecurring(company.id);
+    await db.recurring.put(
+      createRecurring(company.id, {
+        clientId: client.id,
+        frequency: 'monthly',
+        startDate: '2026-02-01',
+        nextIssueDate: '2026-02-01',
+        remainingCycles: 2,
+        markSent: true,
+        template: {
+          ...base.template,
+          currency: 'KWD',
+          items: [
+            {
+              id: 'i1',
+              kind: 'item',
+              productId: null,
+              name: 'Maintenance',
+              description: '',
+              quantity: 1,
+              unit: '',
+              unitPrice: 1250.5,
+              discount: 0,
+              discountType: 'percent',
+              taxes: [],
+            },
+          ],
+        },
+      }),
+    );
+    const [february, march] = await generateDueInvoices(company.id, '2026-03-10');
+    // February: no certificate yet, 5% of KD 1,250.500 is held back.
+    expect(february).toMatchObject({ retentionPercent: 5, retentionKind: 'tax' });
+    expect(february.totals.retention).toBe(62.525);
+    expect(february.totals.balance).toBe(1187.975);
+    // March: the certificate covers the date, nothing is held back.
+    expect(march).toMatchObject({ retentionPercent: 0, retentionKind: 'tax' });
+    expect(march.totals.retention ?? 0).toBe(0);
+    expect(march.totals.balance).toBe(1250.5);
+
+    // The books: the retention waits in 1110 Retentions receivable (fils).
+    const { accounts, lines, problems } = await loadLedger((await db.companies.get(company.id))!);
+    expect(problems).toEqual([]);
+    const byCode: Record<string, number> = {};
+    for (const l of lines) {
+      const code = accounts.find((a) => a.id === l.accountId)!.code;
+      byCode[code] = (byCode[code] ?? 0) + l.amount;
+    }
+    expect(byCode).toEqual({ '1100': 2_438_475, '1110': 62_525, '4000': -2_501_000 });
+    const tb = trialBalance(lines, accounts, '2026-12-31', { month: 12, day: 31 });
+    expect(tb.totalDebit).toBe(tb.totalCredit);
   });
 
   it('skips paused profiles and future dates', async () => {

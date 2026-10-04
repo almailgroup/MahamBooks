@@ -703,6 +703,7 @@ async function openingAccount(company: Company): Promise<Account> {
   await logActivity(company.id, 'account', account.id, 'created', {
     text: msg('Account {code} {name} created'),
     vars: { code: account.code, name: account.name },
+    arabic: { name: account.nameAr },
   });
   return account;
 }
@@ -785,6 +786,7 @@ export async function commitImport(
                   ? msg('Vendor {name} imported')
                   : msg('Client {name} imported'),
               vars: { name: client.name },
+              arabic: { name: client.nameAr },
             },
             { clientId: client.id },
           );
@@ -843,6 +845,7 @@ export async function commitImport(
           await logActivity(company.id, 'product', p.id, 'created', {
             text: msg('Item {name} imported'),
             vars: { name: p.name },
+            arabic: { name: p.nameAr },
           });
         }
       }
@@ -915,6 +918,7 @@ export async function commitImport(
                     ? msg('Vendor {name} imported')
                     : msg('Client {name} imported'),
                 vars: { name: client.name },
+                arabic: { name: client.nameAr },
               },
               { clientId: client.id },
             );

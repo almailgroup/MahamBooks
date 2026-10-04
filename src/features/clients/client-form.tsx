@@ -11,6 +11,7 @@ import { Field, Input, NumberInput, Select, Switch, Textarea } from '@/component
 import { AddressFields, CurrencySelect } from '@/components/fields';
 import { isCustomer, isVendor } from '@/db/purchases';
 import { RETENTION_KINDS, TAX_RETENTION_PERCENT, contactRetention } from '@/lib/retention';
+import { taxIdLabel } from '@/features/company/taxes';
 import type { ContactKind } from './contact-kind';
 
 export function newContact(primary = false): ClientContact {
@@ -182,7 +183,7 @@ export function ClientForm({
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2">
-        <Field label={company.taxIdLabel || t('Tax ID')} optional>
+        <Field label={taxIdLabel(company)} optional>
           {(id) => (
             <Input id={id} value={value.taxId} onChange={(e) => set({ taxId: e.target.value })} />
           )}

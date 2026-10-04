@@ -109,8 +109,8 @@ export default function RecurringEditorPage() {
 
   // The invoice the profile will produce next, with placeholders filled in.
   const preview = useMemo(
-    () => (profile ? invoiceFromProfile(profile, nextDate, locale) : null),
-    [profile, nextDate, locale],
+    () => (profile ? invoiceFromProfile(profile, nextDate, locale, client) : null),
+    [profile, nextDate, locale, client],
   );
   const pdf = useLivePdf(
     preview ? { ...preview, number: t('Next') } : null,
@@ -211,7 +211,7 @@ export default function RecurringEditorPage() {
           </>
         }
       />
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_520px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_520px]">
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader

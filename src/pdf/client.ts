@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+import { downloadName, fileName } from '@/lib/file-names';
 import type { RenderModel } from './model';
 import type { PdfRequest, PdfResponse } from './pdf.worker';
 
@@ -82,7 +84,7 @@ export async function renderPdf(model: RenderModel, templateId: string | null): 
         failAll(new Error('PDF generation timed out.'));
         reject(
           new Error(
-            'PDF generation took too long. Please check the logo and content, then try again.',
+            t('PDF generation took too long. Please check the logo and content, then try again.'),
           ),
         );
       }, TIMEOUT_MS);
@@ -97,17 +99,19 @@ export async function renderPdf(model: RenderModel, templateId: string | null): 
   }
 }
 
-/** e.g. "Invoice INV-2026-0001 - Client name.pdf" */
+/**
+ * e.g. "Invoice INV-2026-0001 - Client name.pdf", in ASCII so it saves in
+ * every language: a client name in Arabic letters is left out.
+ */
 export function pdfFileName(title: string, clientName = ''): string {
-  const base = [title, clientName].filter(Boolean).join(' - ');
-  return `${base.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'document'}.pdf`;
+  return fileName([title, clientName], 'pdf', 'document');
 }
 
-export function downloadBlob(blob: Blob, fileName: string): void {
+export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName;
+  a.download = downloadName(name);
   document.body.appendChild(a);
   a.click();
   a.remove();

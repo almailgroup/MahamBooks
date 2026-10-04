@@ -235,7 +235,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
     const ok = await confirm({
       title: t('Void {number}?', { number: doc.number }),
       description: t('A void document stays in your records for reference but leaves the books.'),
-      confirmLabel: t('Void'),
+      confirmLabel: t('Void document'),
       danger: true,
     });
     if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
@@ -248,6 +248,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
         'A cancelled document stays in your records for reference. Bills already made from it are not changed.',
       ),
       confirmLabel: t('Cancel order'),
+      cancelLabel: t('Keep'),
       danger: true,
     });
     if (ok) await setStatus('cancelled');
@@ -306,7 +307,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                     to={`/vendors/${vendor.id}`}
                     className="hover:text-primary-700 font-medium text-slate-700"
                   >
-                    {localName(vendor)}
+                    <bdi>{localName(vendor)}</bdi>
                   </Link>
                 ),
               })}
@@ -399,7 +400,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                 </DropdownItem>
               ) : doc.status !== 'draft' ? (
                 <DropdownItem icon={<Ban />} onSelect={() => void voidDoc()}>
-                  {t('Void')}
+                  {t('Void document')}
                 </DropdownItem>
               ) : null}
               <DropdownSeparator />
@@ -411,7 +412,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-6">
           <Card>
             <CardBody>
@@ -463,7 +464,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                     {order ? (
                       <th className="px-3 py-2.5 text-end font-medium">{t('Billed')}</th>
                     ) : null}
-                    <th className="px-3 py-2.5 text-end font-medium">{t('Rate')}</th>
+                    <th className="px-3 py-2.5 text-end font-medium">{t('Price')}</th>
                     <th className="px-5 py-2.5 text-end font-medium">{t('Amount')}</th>
                   </tr>
                 </thead>
@@ -613,7 +614,10 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
               )}
               <RelatedDocuments doc={doc} />
               {doc.privateNotes ? (
-                <p className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
+                <p
+                  dir="auto"
+                  className="mt-3 rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900"
+                >
                   {doc.privateNotes}
                 </p>
               ) : null}
@@ -692,7 +696,7 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
                   {activity.slice(0, 12).map((a) => (
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2 border-white" />
-                      <p className="text-sm text-slate-700">{activityText(a)}</p>
+                      <p className="text-sm text-slate-700">{activityText(a, fmt)}</p>
                       <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
                     </li>
                   ))}

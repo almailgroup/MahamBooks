@@ -205,8 +205,8 @@ function Editor({
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader title={t('Asset')} />
             <CardBody className="grid gap-4 md:grid-cols-2">

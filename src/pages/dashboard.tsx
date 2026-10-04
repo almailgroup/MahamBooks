@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { db } from '@/db/db';
+import { activityText } from '@/db/activity';
 import type { Activity, Client, InvoiceDocument, Payment } from '@/db/types';
 import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
 import { displayStatus } from '@/lib/status';
@@ -631,7 +632,7 @@ function Kpi({
   hint: ReactNode;
 }) {
   const fmt = useFormat();
-  const long = fmt.money(amount).length > 13;
+  const long = fmt.money(amount).replace(/[\u200e\u200f\u2066-\u2069]/g, '').length > 13;
   return (
     <Link
       to={to}
@@ -1273,7 +1274,7 @@ function ActivityCard({
                     aria-hidden
                   />
                   <span className="min-w-0">
-                    <span className="block text-sm text-slate-700">{plainActivity(a, fmt)}</span>
+                    <span className="block text-sm text-slate-700">{activityText(a, fmt)}</span>
                     <span className="text-xs text-slate-500">{when(a.at, fmt)}</span>
                   </span>
                 </>
@@ -1302,20 +1303,6 @@ function ActivityCard({
       </CardBody>
     </Card>
   );
-}
-
-const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
-
-/** An activity in the reader's language, with dates in the company's format. */
-function plainActivity(a: Activity, fmt: ReturnType<typeof useFormat>): string {
-  const vars = Object.fromEntries(
-    Object.entries(a.messageVars ?? {}).map(([k, v]) => [
-      k,
-      typeof v === 'string' ? v.replace(ISO_DATE, (d) => fmt.date(d)) : v,
-    ]),
-  );
-  const text = a.messageKey ? t(a.messageKey, vars) : a.message;
-  return text.replace(ISO_DATE, (d) => fmt.date(d));
 }
 
 /** "Just now", "5 minutes ago", "Today at 10:42", "Yesterday" or the date. */

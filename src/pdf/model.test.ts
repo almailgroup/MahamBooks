@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Client, Company, DocumentLanguage, InvoiceDocument } from '@/db/types';
 import { createCompany } from '@/db/defaults';
 import { formatHijri } from '@/lib/kuwait';
-import { buildRenderModel, documentLanguage, paymentLinkOf, showsAmountInWords } from './model';
+import { composeBankDetails } from '@/features/company/bank';
+import {
+  buildRenderModel,
+  documentLanguage,
+  paymentLinkOf,
+  printedBankDetails,
+  showsAmountInWords,
+} from './model';
 import { sampleClient, sampleCompany, sampleDocument, sampleGoods } from './sample';
 
 const company = sampleCompany();
@@ -263,6 +270,47 @@ describe('buildRenderModel: Kuwaiti invoice details', () => {
     const both = model('ar-en').payment!;
     expect(both.details).toContain('البنك: بنك الكويت الوطني');
     expect(both.details).toContain('Bank: National Bank of Kuwait');
+  });
+
+  it('prints saved bank details in the document’s words, with the WAMD number once', () => {
+    const bankDetails = composeBankDetails(
+      {
+        bankCode: 'NBOK',
+        bankName: '',
+        accountName: 'Al Waha Print & Mail Co. W.L.L.',
+        iban: 'KW86NBOK0000000000002012345678',
+        accountNumber: '2012345678',
+        swift: '',
+        extra: '',
+      },
+      '+965 9876 5432',
+    );
+    const saved = { ...company, payment: { ...company.payment, bankDetails } };
+    const details = (language: DocumentLanguage) =>
+      model(language, {}, { company: saved }).payment!.details;
+    const en = details('en');
+    expect(en).toContain('Account name: Al Waha Print & Mail Co. W.L.L.');
+    expect(en.match(/WAMD/g)).toHaveLength(1);
+    // The bank is saved under both its names; each document prints its own.
+    expect(bankDetails).toContain('National Bank of Kuwait · بنك الكويت الوطني');
+    expect(en.split('\n')[0]).toBe('National Bank of Kuwait');
+    const ar = details('ar');
+    expect(ar.split('\n')[0]).toBe('بنك الكويت الوطني');
+    expect(ar).toContain('اسم الحساب: Al Waha Print & Mail Co. W.L.L.');
+    expect(ar).toContain('رقم الحساب: 2012345678');
+    expect(ar).toContain('رقم الآيبان: KW86 NBOK 0000 0000 0000 2012 3456 78');
+    expect(ar).not.toMatch(/National|Account|IBAN|WAMD/);
+    expect(ar.match(/ومض/g)).toHaveLength(1);
+    const both = details('ar-en');
+    expect(both).toContain('اسم الحساب · Account name: Al Waha Print & Mail Co. W.L.L.');
+    // Settings show the details as the documents print them.
+    expect(printedBankDetails({ ...saved, language: 'ar' })).toMatch(
+      /^بنك الكويت الوطني\nاسم الحساب: Al Waha Print & Mail Co\. W\.L\.L\.\n/,
+    );
+    expect(printedBankDetails({ ...saved, language: 'en' })).toBe(
+      bankDetails.replace(' · بنك الكويت الوطني', ''),
+    );
+    expect(both.split('\n')[0]).toMatch(/^بنك الكويت الوطني · \W*National Bank of Kuwait\W*$/);
   });
 
   it('prints the document’s own payment link while it is valid', () => {

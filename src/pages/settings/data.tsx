@@ -18,6 +18,7 @@ import { useCompany, useFormat } from '@/app/company';
 import { localName } from '@/i18n/names';
 import { normalizeImage } from '@/lib/image';
 import { APP_NAME } from '@/lib/brand';
+import { downloadName } from '@/lib/file-names';
 import { formatBytes, requestPersistentStorage, storageStatus } from '@/lib/storage';
 import { daysBetween, today } from '@/lib/dates';
 import { msg, t, tp } from '@/i18n';
@@ -33,12 +34,12 @@ import {
 } from '@/components/ui/overlay';
 import { SettingsSection } from './shared';
 
-function downloadJson(data: unknown, fileName: string) {
+function downloadJson(data: unknown, name: string) {
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName;
+  a.download = downloadName(name);
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -164,8 +165,10 @@ export default function DataSettings() {
         }
       >
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => backup(false)} loading={busy === 'one'}>
-            <Download /> {t('Back up {name}', { name: localName(company) })}
+          <Button onClick={() => backup(false)} loading={busy === 'one'} className="max-w-full">
+            <Download />
+            {/* A long company name is cut short rather than pushing past a phone screen. */}
+            <span className="truncate">{t('Back up {name}', { name: localName(company) })}</span>
           </Button>
           {(companyCount ?? 0) > 1 ? (
             <Button variant="outline" onClick={() => backup(true)} loading={busy === 'all'}>

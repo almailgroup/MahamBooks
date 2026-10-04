@@ -154,7 +154,7 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
       to={`${copy.contactBase}/${client.id}`}
       className="hover:text-primary-700 font-medium text-slate-700"
     >
-      {localName(client)}
+      <bdi>{localName(client)}</bdi>
     </Link>
   ) : null;
 
@@ -295,7 +295,11 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
             {payment.notes ? (
               <Row
                 label={t('Notes')}
-                value={<span className="whitespace-pre-line">{payment.notes}</span>}
+                value={
+                  <span dir="auto" className="whitespace-pre-line">
+                    {payment.notes}
+                  </span>
+                }
               />
             ) : null}
           </CardBody>

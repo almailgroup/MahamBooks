@@ -5,6 +5,7 @@ import { t } from '@/i18n';
 import { Field, Input, Switch } from '@/components/ui/form';
 import { BankAccountFields, ibanProblem } from '@/features/company/bank-fields';
 import { bankAccountOf, withBankAccount } from '@/features/company/bank';
+import { printedBankDetails } from '@/pdf/model';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
 export default function PaymentSettingsPage() {
@@ -50,7 +51,7 @@ export default function PaymentSettingsPage() {
               {t('Printed on documents')}
             </p>
             <p dir="auto" className="text-sm whitespace-pre-line text-slate-700">
-              {p.bankDetails}
+              {printedBankDetails(draft)}
             </p>
           </div>
         ) : null}

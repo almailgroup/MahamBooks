@@ -2,7 +2,7 @@ import { format as formatPattern } from 'date-fns';
 import { ar } from 'date-fns/locale/ar';
 import type { DateFormat, ISODate } from '@/db/types';
 import { currencyPrecision } from './money';
-import { isISODate, parseISODate } from './dates';
+import { isISODate, parseISODate, toISODate } from './dates';
 
 const numberFormats = new Map<string, Intl.NumberFormat>();
 
@@ -96,6 +96,28 @@ export function formatUnitPrice(
   return localize(text, code, display);
 }
 
+const isArabic = (locale: string) => locale.toLowerCase().startsWith('ar');
+
+/** The marks Intl puts around Arabic figures, and isolates. */
+const BIDI_MARKS = /[\u200e\u200f\u061c\u2066-\u2069]/g;
+
+/**
+ * An amount for the screen that reads the same in right-to-left text and in
+ * a left-to-right cell. Arabic amounts are the figure, its minus sign on the
+ * left, then the currency: "-12.500 د.ك". The marks Intl uses keep that order
+ * only inside right-to-left text (a negative amount in a left-to-right cell
+ * puts the currency on the other side, and so does "-5.83 USD" anywhere), so
+ * the figure and the whole amount are isolated instead. Screens only: the
+ * PDF renderer draws isolates as boxes, so documents keep Intl's text.
+ */
+export function isolateAmount(text: string, locale: string): string {
+  if (!isArabic(locale)) return text;
+  const plain = text.replace(BIDI_MARKS, '');
+  const parts = /^(-?[\d.,]+)\s+(\S.*)$/u.exec(plain);
+  // RLI, LRI figure PDI, the currency, PDI.
+  return parts ? `\u2067\u2066${parts[1]}\u2069\u00a0${parts[2]}\u2069` : `\u2068${plain}\u2069`;
+}
+
 /** Plain number with the currency's decimals and no symbol, e.g. "1,234.50". */
 export function formatAmount(amount: number, currency: string, locale: string): string {
   const digits = currencyPrecision(safeCurrency(currency));
@@ -141,17 +163,27 @@ export function formatDate(
     }
   }
   // Month names follow the language: "3 أكتوبر 2026" in Arabic.
-  return formatPattern(
-    date,
-    dateFormat,
-    locale.toLowerCase().startsWith('ar') ? { locale: ar } : {},
-  );
+  return formatPattern(date, dateFormat, isArabic(locale) ? { locale: ar } : {});
 }
 
-export function formatDateTime(value: string | null | undefined, locale: string): string {
+/**
+ * A moment, e.g. "Oct 3, 2026, 11:54 PM". In Arabic the date is written the
+ * way the app writes dates (`dateFormat`, "03/10/2026"), then the time:
+ * Intl's Arabic date puts marks between its parts that turn it around
+ * ("2026/10/03") next to the other dates.
+ */
+export function formatDateTime(
+  value: string | null | undefined,
+  locale: string,
+  dateFormat?: DateFormat,
+): string {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
+  if (isArabic(locale) && dateFormat) {
+    const time = new Intl.DateTimeFormat(locale, { timeStyle: 'short' }).format(date);
+    return `${formatDate(toISODate(date), dateFormat, locale)}، ${time}`;
+  }
   try {
     return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(
       date,

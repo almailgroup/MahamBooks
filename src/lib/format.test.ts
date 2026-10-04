@@ -4,10 +4,12 @@ import { addDaysISO, daysBetween, isISODate, occurrenceDate } from './dates';
 import {
   currencySymbol,
   formatDate,
+  formatDateTime,
   formatMoney,
   formatPercent,
   formatQuantity,
   formatUnitPrice,
+  isolateAmount,
 } from './format';
 
 describe('money helpers', () => {
@@ -108,4 +110,35 @@ it('writes foreign currencies by code in Arabic', () => {
 it('writes month names in Arabic', () => {
   expect(formatDate('2026-10-03', 'd MMM yyyy', 'ar-KW-u-nu-latn')).toBe('3 أكتوبر 2026');
   expect(formatDate('2026-10-03', 'dd/MM/yyyy', 'ar-KW-u-nu-latn')).toBe('03/10/2026');
+});
+
+describe('amounts on screen', () => {
+  const AR = 'ar-KW-u-nu-latn';
+  const RLI = '\u2067';
+  const LRI = '\u2066';
+  const PDI = '\u2069';
+
+  it('keep the minus sign with the figure and the currency after it in Arabic', () => {
+    expect(isolateAmount(formatMoney(-12.5, 'KWD', AR, 'local'), AR)).toBe(
+      `${RLI}${LRI}-12.500${PDI}\u00a0د.ك${PDI}`,
+    );
+    expect(isolateAmount(formatMoney(1234.5, 'KWD', AR, 'local'), AR)).toBe(
+      `${RLI}${LRI}1,234.500${PDI}\u00a0د.ك${PDI}`,
+    );
+    expect(isolateAmount(formatMoney(-5.83, 'USD', AR, 'code'), AR)).toBe(
+      `${RLI}${LRI}-5.83${PDI}\u00a0USD${PDI}`,
+    );
+  });
+
+  it('leave English amounts as they are', () => {
+    expect(isolateAmount(formatMoney(-12.5, 'KWD', 'en-KW', 'local'), 'en-KW')).toBe(
+      formatMoney(-12.5, 'KWD', 'en-KW', 'local'),
+    );
+  });
+});
+
+it('writes Arabic date-times with the app’s date format', () => {
+  const moment = new Date(2026, 9, 3, 23, 54).toISOString();
+  expect(formatDateTime(moment, 'ar-KW-u-nu-latn', 'dd/MM/yyyy')).toBe('03/10/2026، 11:54 م');
+  expect(formatDateTime(moment, 'en-US', 'dd/MM/yyyy')).toBe('Oct 3, 2026, 11:54 PM');
 });

@@ -254,38 +254,16 @@ function Corporate({ model, theme }: TemplateProps) {
         }}
       />
 
-      <View
-        fixed
-        style={{
-          position: 'absolute',
-          left: 40,
-          right: 40,
-          bottom: 44,
-          borderTopWidth: 1.5,
-          borderTopColor: theme.accent,
-        }}
-      />
+      {/* The company's numbers above the footer, in the same box: a footer of two
+          lines (Arabic and English) would otherwise run into them. */}
       <PageFooter
         model={model}
         theme={theme}
         textStyle={{ color: theme.muted }}
-        style={{ bottom: 20 }}
+        lead={companyIdLine(model)}
+        leadStyle={{ fontSize: 7, marginBottom: 2 }}
+        style={{ bottom: 20, borderTopWidth: 1.5, borderTopColor: theme.accent, paddingTop: 6 }}
       />
-      {companyIdLine(model) ? (
-        <Text
-          fixed
-          style={{
-            position: 'absolute',
-            left: 40,
-            right: 40,
-            bottom: 33,
-            fontSize: 7,
-            color: theme.muted,
-          }}
-        >
-          {companyIdLine(model)}
-        </Text>
-      ) : null}
       <RunningHeader model={model} theme={theme} />
     </DocShell>
   );

@@ -16,7 +16,7 @@ import type {
 import { allocateNumber } from '@/lib/numbering';
 import { taxKind } from '@/lib/calc';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
-import { msg } from '@/i18n';
+import { msg, t } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
 /* Companies                                                                  */
@@ -92,6 +92,7 @@ export async function setupCompany(
       await logActivity(company.id, 'company', company.id, 'created', {
         text: msg('Company {name} created'),
         vars: { name: company.name },
+        arabic: { name: company.nameAr },
       });
       return company;
     },
@@ -156,10 +157,13 @@ export async function saveClient(input: Client): Promise<Client> {
         'client',
         client.id,
         'created',
-        `${client.isCustomer === false ? 'Vendor' : 'Client'} ${client.name} added`,
         {
-          clientId: client.id,
+          text:
+            client.isCustomer === false ? msg('Vendor {name} added') : msg('Client {name} added'),
+          vars: { name: client.name },
+          arabic: { name: client.nameAr },
         },
+        { clientId: client.id },
       );
     }
     return client;
@@ -178,18 +182,17 @@ export async function clientHasRecords(id: ID): Promise<boolean> {
 
 export async function deleteClient(id: ID): Promise<void> {
   if (await clientHasRecords(id)) {
-    throw new Error('This contact has documents, payments or expenses. Archive it instead.');
+    throw new Error(t('This contact has documents, payments or expenses. Archive it instead.'));
   }
   const client = await db.clients.get(id);
   await db.clients.delete(id);
   if (client) {
-    await logActivity(
-      client.companyId,
-      'client',
-      id,
-      'deleted',
-      `${client.isCustomer === false ? 'Vendor' : 'Client'} ${client.name} deleted`,
-    );
+    await logActivity(client.companyId, 'client', id, 'deleted', {
+      text:
+        client.isCustomer === false ? msg('Vendor {name} deleted') : msg('Client {name} deleted'),
+      vars: { name: client.name },
+      arabic: { name: client.nameAr },
+    });
   }
 }
 

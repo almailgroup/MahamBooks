@@ -572,6 +572,7 @@ export async function deleteItem(id: ID): Promise<void> {
       await logActivity(product.companyId, 'product', id, 'deleted', {
         text: msg('Item {name} deleted'),
         vars: { name: product.name },
+        arabic: { name: product.nameAr },
       });
     },
   );

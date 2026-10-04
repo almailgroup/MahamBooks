@@ -20,7 +20,7 @@ import { useCompany, useFormat } from '@/app/company';
 import { useLedger } from '@/features/accounting/use-ledger';
 import { SOURCE_LABELS, sourceLink } from '@/features/accounting/source-link';
 import { MoneyAccountSelect, useAccounts } from '@/features/accounting/account-pickers';
-import type { LedgerLine } from '@/lib/accounting/ledger';
+import { lineDescription, problemText, type LedgerLine } from '@/lib/accounting/ledger';
 import {
   vatBoxLines,
   vatDueDate,
@@ -619,7 +619,9 @@ function VatReturnDetail({ start }: { start: string }) {
           </Notice>
         ) : null}
         {problems.length ? (
-          <Notice tone="amber">{problems.map((p) => `${p.number}: ${p.message}`).join(' ')}</Notice>
+          <Notice tone="amber">
+            {problems.map((p) => `${p.number}: ${problemText(p)}`).join(' ')}
+          </Notice>
         ) : null}
 
         <Card className="overflow-hidden">
@@ -794,7 +796,7 @@ function BoxLines({
                 {t(SOURCE_LABELS[line.source])}{' '}
                 <bdi className="whitespace-nowrap">{line.number}</bdi>
               </Link>
-              <span className="block text-slate-500">{line.description}</span>
+              <span className="block text-slate-500">{lineDescription(line)}</span>
             </td>
             <td className="hidden py-1.5 pe-3 text-slate-600 sm:table-cell">
               {line.contactId ? (names.get(line.contactId) ?? '—') : '—'}

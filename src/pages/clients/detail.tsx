@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -34,6 +34,8 @@ import { contactRetention, retentionKindLabel } from '@/lib/retention';
 import { daysBetween, today } from '@/lib/dates';
 import { isPosted } from '@/lib/accounting/ledger';
 import { t, tp } from '@/i18n';
+import { localName } from '@/i18n/names';
+import { taxIdLabel } from '@/features/company/taxes';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Badge,
@@ -62,6 +64,22 @@ const DOC_TYPES: Record<ContactKind, DocumentType[]> = {
   vendor: ['bill', 'vendor_credit', 'purchase_order'],
 };
 
+/**
+ * An address, one line under the other: each line keeps its own direction
+ * ("5 Mill Lane" stays in order on an Arabic page) and the block its side.
+ */
+function AddressLines({ lines }: { lines: string[] }) {
+  return (
+    <p>
+      {lines.map((line, i) => (
+        <span key={i} className="block">
+          <bdi>{line}</bdi>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function DocumentRow({ doc, now }: { doc: InvoiceDocument; now: string }) {
   const fmt = useFormat();
   const priced = doc.type !== 'delivery_note';
@@ -75,9 +93,10 @@ function DocumentRow({ doc, now }: { doc: InvoiceDocument; now: string }) {
       >
         <span className="min-w-0">
           <span className="block text-sm font-medium text-slate-800">
-            {doc.number}
+            {/* Isolated, so two Latin numbers don't run together in Arabic. */}
+            <bdi>{doc.number}</bdi>
             {doc.vendorReference ? (
-              <span className="ms-2 font-normal text-slate-500">{doc.vendorReference}</span>
+              <bdi className="ms-2 font-normal text-slate-500">{doc.vendorReference}</bdi>
             ) : null}
           </span>
           <span className="text-xs text-slate-500">
@@ -367,17 +386,15 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
         ) : null}
         {address.length ? (
           <Detail label={vendorView ? t('Address') : t('Billing address')}>
-            <p className="whitespace-pre-line">{address.join('\n')}</p>
+            <AddressLines lines={address} />
           </Detail>
         ) : null}
         {shipping.length ? (
           <Detail label={t('Shipping address')}>
-            <p className="whitespace-pre-line">{shipping.join('\n')}</p>
+            <AddressLines lines={shipping} />
           </Detail>
         ) : null}
-        {client.taxId ? (
-          <Detail label={company.taxIdLabel || t('Tax ID')}>{client.taxId}</Detail>
-        ) : null}
+        {client.taxId ? <Detail label={taxIdLabel(company)}>{client.taxId}</Detail> : null}
         {client.civilId ? (
           <Detail label={t('Civil ID')}>
             <span dir="ltr">{client.civilId}</span>
@@ -406,7 +423,10 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
           </Detail>
         ) : null}
         {client.notes ? (
-          <p className="rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900">
+          <p
+            dir="auto"
+            className="rounded-md bg-amber-50 p-3 text-xs whitespace-pre-line text-amber-900"
+          >
             {client.notes}
           </p>
         ) : null}
@@ -425,7 +445,7 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
   let body: ReactNode;
   if (tab === 'overview') {
     body = (
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader
@@ -668,7 +688,9 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
             </Link>
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{client.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+              <bdi>{localName(client)}</bdi>
+            </h1>
             {client.archived ? <Badge tone="slate">{t('Archived')}</Badge> : null}
             {client.creditHold && !vendorView ? (
               <Badge tone="red">{t('On credit hold')}</Badge>
@@ -694,7 +716,15 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
             ) : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {[client.nameAr, client.number].filter(Boolean).join(' · ')}
+            {/* The other name: English under an Arabic one, and the other way round. */}
+            {[localName(client) === client.name ? client.nameAr : client.name, client.number]
+              .filter(Boolean)
+              .map((part, i) => (
+                <Fragment key={i}>
+                  {i > 0 ? ' · ' : null}
+                  <bdi>{part}</bdi>
+                </Fragment>
+              ))}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

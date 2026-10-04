@@ -1,10 +1,12 @@
 import type { Client, InvoiceDocument, Payment } from '@/db/types';
 import { msg, type Dictionary } from '@/i18n';
 import { toCsv } from '@/lib/csv';
+import { downloadName } from '@/lib/file-names';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { agingAt, AGING_BUCKETS } from '@/lib/reports';
 import { ACCOUNT_TYPES } from '@/lib/accounting/account-types';
 import { generalLedger, type DateRange } from '@/lib/accounting/statements';
+import { lineDescription, type LedgerLine } from '@/lib/accounting/ledger';
 import { accumulatedAt } from '@/lib/accounting/depreciation';
 import { assetTerms } from '@/db/assets';
 import {
@@ -82,6 +84,9 @@ export function buildAuditorPack(
   const texts = secondary ? [primary, secondary] : [primary];
   const names = (record: { name: string; nameAr?: string }) => texts.map((t) => t.name(record));
   const nameHeadings = texts.map((t) => t.t(msg('Name')));
+  // Wording the ledger wrote follows the pack's language; people's own text stays as typed.
+  const describe = (l: LedgerLine) =>
+    l.label ? texts.map((t) => lineDescription(l, t.t)).join(' / ') : l.description;
   const major = (minor: number) => fromMinor(minor, p);
   const { yearEnd } = statementContext(data);
   const files: PackFile[] = [];
@@ -129,7 +134,7 @@ export function buildAuditorPack(
           ...names(a.account),
           l.date,
           l.number,
-          l.description,
+          describe(l),
           l.amount > 0 ? major(l.amount) : '',
           l.amount < 0 ? major(-l.amount) : '',
           major(l.balance),
@@ -276,12 +281,12 @@ export function auditorPackZip(files: PackFile[]): Blob {
   return new Blob([zip.buffer as ArrayBuffer], { type: 'application/zip' });
 }
 
-/** Saves a file the app made. */
-export function downloadBlob(fileName: string, blob: Blob): void {
+/** Saves a file the app made, under an ASCII name (see `downloadName`). */
+export function downloadBlob(name: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName;
+  a.download = downloadName(name);
   document.body.appendChild(a);
   a.click();
   a.remove();

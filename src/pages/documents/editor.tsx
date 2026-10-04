@@ -46,6 +46,7 @@ import { useLivePdf } from '@/components/pdf/use-pdf';
 import { LineItemsEditor } from '@/features/editor/line-items';
 import { TotalsPanel } from '@/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
+import { contactOptions } from '@/features/clients/contact-option';
 import { useCreditCheck } from '@/features/clients/credit-check';
 import { retentionDefaults } from '@/lib/retention';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
@@ -271,22 +272,15 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   };
 
   // Vendors only show up once they are also marked as clients.
-  const clientOptions = clients
-    .filter((c) => (!c.archived && isCustomer(c)) || c.id === doc.clientId)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({
-      value: c.id,
-      label: c.name,
-      detail: [c.nameAr, c.contacts.find((x) => x.primary)?.email || c.email, c.address.city]
-        .filter(Boolean)
-        .join(' · '),
-      keywords: [c.number, c.nameAr].filter(Boolean).join(' '),
-    }));
+  const clientOptions = contactOptions(
+    clients.filter((c) => (!c.archived && isCustomer(c)) || c.id === doc.clientId),
+  );
 
   const preview = <PdfPreview blob={pdf.blob} loading={pdf.loading} error={pdf.error} />;
 
-  const defaultTemplate =
-    TEMPLATE_META.find((m) => m.id === company.branding.templateId)?.name ?? 'Modern';
+  const defaultTemplate = t(
+    TEMPLATE_META.find((m) => m.id === company.branding.templateId)?.name ?? TEMPLATE_META[0].name,
+  );
   const templateSelect = (
     <Select
       aria-label={t('Template')}
@@ -297,7 +291,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
       <option value="">{t('Default ({name})', { name: defaultTemplate })}</option>
       {TEMPLATE_META.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.name}
+          {t(m.name)}
         </option>
       ))}
     </Select>

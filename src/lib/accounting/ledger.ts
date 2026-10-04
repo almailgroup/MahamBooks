@@ -16,6 +16,7 @@ import { computeDocument } from '@/lib/document-calc';
 import { isReverseCharge, taxKind } from '@/lib/calc';
 import { Decimal, dec, toMinor } from '@/lib/money';
 import { postsToLedger } from '@/lib/document-types';
+import { interpolate, msg, t, type Vars } from '@/i18n';
 
 /**
  * The general ledger is derived from the business documents: every issued
@@ -55,7 +56,10 @@ export interface LedgerLine {
   /** Document number shown in reports, e.g. "INV-2026-0001". */
   number: string;
   contactId: ID | null;
+  /** In English; show it with `lineDescription` so generated wording is translated. */
   description: string;
+  /** Wording the ledger made up ("Invoice {number}"), to show in the reader's language. */
+  label?: LedgerLabel;
   vat?: VatTag;
   /** Part of the entry that closes a VAT return; later returns leave it out. */
   settlement?: boolean;
@@ -65,7 +69,58 @@ export interface LedgerProblem {
   source: LedgerSource;
   sourceId: ID;
   number: string;
+  /** In English; show it with `problemText`. */
   message: string;
+  label?: LedgerLabel;
+}
+
+/**
+ * Text written by the ledger: an English key (marked with `msg`) and its
+ * values. `terms` names values that are English keys themselves.
+ */
+export interface LedgerLabel {
+  text: string;
+  vars?: Record<string, string>;
+  terms?: string[];
+}
+
+type Translate = (text: string, vars?: Vars) => string;
+
+function labelText(label: LedgerLabel, translate: Translate): string {
+  const vars = { ...label.vars };
+  for (const term of label.terms ?? []) if (vars[term]) vars[term] = translate(vars[term]);
+  return translate(label.text, vars);
+}
+
+/** A line's description in the interface language, or a report's (`translate`). */
+export function lineDescription(
+  line: Pick<LedgerLine, 'description' | 'label'>,
+  translate: Translate = t,
+): string {
+  return line.label ? labelText(line.label, translate) : line.description;
+}
+
+/** A problem in the interface language, or a report's (`translate`). */
+export function problemText(
+  problem: Pick<LedgerProblem, 'message' | 'label'>,
+  translate: Translate = t,
+): string {
+  return problem.label ? labelText(problem.label, translate) : problem.message;
+}
+
+/** Description of a generated line: the English text and its label. */
+function described(text: string, vars: Record<string, string>) {
+  return { description: interpolate(text, vars), label: { text, vars } };
+}
+
+/** An entry that cannot be posted; `label` is its message for the reader. */
+export class LedgerError extends Error {
+  constructor(
+    message: string,
+    readonly label: LedgerLabel,
+  ) {
+    super(message);
+  }
 }
 
 export interface LedgerContext {
@@ -107,7 +162,33 @@ export type StockMovementPosting = Pick<
   'value' | 'sourceValue' | 'sourceType' | 'sourceId' | 'documentId'
 >;
 
-export class UnbalancedEntryError extends Error {}
+export class UnbalancedEntryError extends LedgerError {
+  constructor(message: string) {
+    super(message, { text: msg('This entry does not balance.') });
+  }
+}
+
+/** What the accounts of each role hold, for "no account is set up" problems. */
+const ROLE_NAMES: Record<AccountRole, string> = {
+  receivable: msg('Money owed by clients'),
+  payable: msg('Money owed to vendors'),
+  bank: msg('Bank'),
+  cash: msg('Cash payments'),
+  credit_card: msg('Company card'),
+  sales: msg('Sales'),
+  charges: msg('Delivery and other charges'),
+  output_tax: msg('Tax charged on sales'),
+  input_tax: msg('Tax paid on purchases'),
+  tax_settlement: msg('VAT owed to (or due from) the tax office'),
+  fx: msg('Exchange gains and losses'),
+  capital: msg('Owner or share capital'),
+  drawings: msg('Drawings'),
+  retained_earnings: msg('Retained earnings'),
+  opening_balance: msg('Opening balances'),
+  cost_of_sales: msg('Cost of sales'),
+  expense: msg('Expenses'),
+  bank_fees: msg('Bank charges'),
+};
 
 /** Company-currency value of one unit of the document currency. */
 export function rateOf(
@@ -138,7 +219,13 @@ export function isPosted(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean
 
 function role(ctx: LedgerContext, name: AccountRole, fallback?: AccountRole): ID {
   const id = ctx.roles[name] ?? (fallback ? ctx.roles[fallback] : undefined);
-  if (!id) throw new Error(`No account is set up for "${name}".`);
+  if (!id) {
+    throw new LedgerError(`No account is set up for "${name}".`, {
+      text: msg('No account is set up for “{account}”. Choose one in the accounting settings.'),
+      vars: { account: ROLE_NAMES[name] },
+      terms: ['account'],
+    });
+  }
   return id;
 }
 
@@ -170,6 +257,21 @@ function balanced(lines: LedgerLine[]): boolean {
   return lines.reduce((acc, l) => acc + l.amount, 0) === 0;
 }
 
+/** "VAT 5% reverse charge": the tax keeps its own name. */
+function reverseCharge(tax: { name: string; rate: number }) {
+  return described(msg('{tax} {rate}% reverse charge'), {
+    tax: tax.name,
+    rate: String(tax.rate),
+  });
+}
+
+function rateProblem(currency: string) {
+  return {
+    message: `No exchange rate for ${currency}; 1:1 was used.`,
+    label: { text: msg('No exchange rate for {currency}; 1:1 was used.'), vars: { currency } },
+  };
+}
+
 type PostedType = 'invoice' | 'credit' | 'bill' | 'vendor_credit';
 
 /** How each document type posts: the partner account side and default accounts. */
@@ -181,7 +283,8 @@ const POSTING: Record<
     line: AccountRole;
     charges: AccountRole;
     sign: 1 | -1;
-    noun: string;
+    /** Description of the entry, e.g. "Invoice {number}". */
+    numbered: string;
   }
 > = {
   // Sales: debit receivable, credit income and output tax.
@@ -191,7 +294,7 @@ const POSTING: Record<
     line: 'sales',
     charges: 'charges',
     sign: 1,
-    noun: 'Invoice',
+    numbered: msg('Invoice {number}'),
   },
   credit: {
     partner: 'receivable',
@@ -199,7 +302,7 @@ const POSTING: Record<
     line: 'sales',
     charges: 'charges',
     sign: -1,
-    noun: 'Credit note',
+    numbered: msg('Credit note {number}'),
   },
   // Purchases: credit payable, debit expenses and input tax.
   bill: {
@@ -208,7 +311,7 @@ const POSTING: Record<
     line: 'expense',
     charges: 'expense',
     sign: -1,
-    noun: 'Bill',
+    numbered: msg('Bill {number}'),
   },
   vendor_credit: {
     partner: 'payable',
@@ -216,7 +319,7 @@ const POSTING: Record<
     line: 'expense',
     charges: 'expense',
     sign: 1,
-    noun: 'Vendor credit',
+    numbered: msg('Vendor credit {number}'),
   },
 };
 
@@ -339,7 +442,11 @@ function stockEntryIds(doc: InvoiceDocument, entries: WeighedEntry[], ctx: Ledge
 
 function inventoryAccount(ctx: LedgerContext): ID {
   const id = usable(ctx, ctx.stock?.inventoryAccountId);
-  if (!id) throw new Error('No inventory account is set up.');
+  if (!id) {
+    throw new LedgerError('No inventory account is set up.', {
+      text: msg('No inventory account is set up.'),
+    });
+  }
   return id;
 }
 
@@ -410,7 +517,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     number: doc.number,
     contactId: doc.clientId || null,
   };
-  const noun = rule.noun;
+  const named = described(rule.numbered, { number: doc.number });
   // A retention held back by the customer (or from the vendor) is not due
   // yet: it waits in retentions receivable (payable) until it is released.
   const retentionAccount = usable(
@@ -424,7 +531,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
       ...base,
       accountId: role(ctx, rule.partner),
       amount: sign * (w.total - retained),
-      description: `${noun} ${doc.number}`,
+      ...named,
     },
   ];
   if (retained > 0 && retentionAccount) {
@@ -432,7 +539,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
       ...base,
       accountId: retentionAccount,
       amount: sign * retained,
-      description: `Retention ${doc.number}`,
+      ...described(msg('Retention {number}'), { number: doc.number }),
     });
   }
   const entries = [...groups.values()];
@@ -448,8 +555,7 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
       ...base,
       accountId: g.accountId,
       amount: -sign * minor,
-      description:
-        entries.length === 1 ? `${noun} ${doc.number}` : g.label || `${noun} ${doc.number}`,
+      ...(entries.length > 1 && g.label ? { description: g.label } : named),
       vat: g.vat,
     });
   });
@@ -467,15 +573,17 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
   if (!sales) {
     for (const t of w.reverseTaxes) {
       const vat: VatTag = { flow, part: 'tax', kind: 'reverse_charge', rate: t.rate };
-      const description = `${t.name} ${t.rate}% reverse charge`;
+      const text = reverseCharge(t);
       lines.push(
-        { ...base, accountId: role(ctx, 'input_tax'), amount: -sign * t.minor, description, vat },
-        { ...base, accountId: role(ctx, 'output_tax'), amount: sign * t.minor, description, vat },
+        { ...base, accountId: role(ctx, 'input_tax'), amount: -sign * t.minor, ...text, vat },
+        { ...base, accountId: role(ctx, 'output_tax'), amount: sign * t.minor, ...text, vat },
       );
     }
   }
   const kept = lines.filter((l) => l.amount !== 0);
-  if (!balanced(kept)) throw new UnbalancedEntryError(`${noun} ${doc.number} does not balance`);
+  if (!balanced(kept)) {
+    throw new UnbalancedEntryError(`${named.description} does not balance`);
+  }
   return kept;
 }
 
@@ -530,13 +638,15 @@ export function postDocumentStock(
     number: doc.number,
     contactId: doc.clientId || null,
   };
-  const description =
+  const text = described(
     doc.type === 'invoice' || doc.type === 'credit'
-      ? `Cost of sales ${doc.number}`
-      : `Stock cost difference ${doc.number}`;
+      ? msg('Cost of sales {number}')
+      : msg('Stock cost difference {number}'),
+    { number: doc.number },
+  );
   return [
-    { ...base, accountId: inventoryAccount(ctx), amount: difference, description },
-    { ...base, accountId: costOfSalesAccount(ctx), amount: -difference, description },
+    { ...base, accountId: inventoryAccount(ctx), amount: difference, ...text },
+    { ...base, accountId: costOfSalesAccount(ctx), amount: -difference, ...text },
   ];
 }
 
@@ -566,19 +676,23 @@ export function postStockEntry(
     // Opening stock is valued as entered; stock that had already gone below
     // zero takes its cost from it, and the difference is cost of sales.
     const nominal = movements.reduce((acc, m) => acc + toMinor(m.sourceValue ?? m.value, p), 0);
-    const description = `Opening stock ${entry.number}`;
+    const text = described(msg('Opening stock {number}'), { number: entry.number });
     lines = [
-      { ...base, accountId: inventory, amount: moved, description },
-      { ...base, accountId: role(ctx, 'opening_balance'), amount: -nominal, description },
-      { ...base, accountId: costOfSalesAccount(ctx), amount: nominal - moved, description },
+      { ...base, accountId: inventory, amount: moved, ...text },
+      { ...base, accountId: role(ctx, 'opening_balance'), amount: -nominal, ...text },
+      { ...base, accountId: costOfSalesAccount(ctx), amount: nominal - moved, ...text },
     ];
   } else {
     const adjustments = usable(ctx, ctx.stock?.adjustmentAccountId);
-    if (!adjustments) throw new Error('No inventory adjustments account is set up.');
-    const description = `Stock adjustment ${entry.number}`;
+    if (!adjustments) {
+      throw new LedgerError('No inventory adjustments account is set up.', {
+        text: msg('No inventory adjustments account is set up.'),
+      });
+    }
+    const text = described(msg('Stock adjustment {number}'), { number: entry.number });
     lines = [
-      { ...base, accountId: inventory, amount: moved, description },
-      { ...base, accountId: adjustments, amount: -moved, description },
+      { ...base, accountId: inventory, amount: moved, ...text },
+      { ...base, accountId: adjustments, amount: -moved, ...text },
     ];
   }
   const kept = lines.filter((l) => l.amount !== 0);
@@ -645,16 +759,16 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
     number: payment.number,
     contactId: payment.clientId || null,
   };
-  const label = `Payment ${payment.number}`;
+  const named = described(msg('Payment {number}'), { number: payment.number });
   // Money in: debit bank, credit receivable. Money out: debit payable, credit bank.
   const flow = out ? -1 : 1;
   const lines: LedgerLine[] = [
-    { ...base, accountId: bank, amount: flow * received, description: label },
+    { ...base, accountId: bank, amount: flow * received, ...named },
     {
       ...base,
       accountId: role(ctx, out ? 'payable' : 'receivable'),
       amount: -flow * cleared,
-      description: label,
+      ...named,
     },
   ];
   const fx = received - cleared;
@@ -663,30 +777,34 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
       ...base,
       accountId: role(ctx, 'fx'),
       amount: -flow * fx,
-      description: `Exchange difference ${payment.number}`,
+      ...described(msg('Exchange difference {number}'), { number: payment.number }),
     });
   }
   const fee = !out && payment.fee ? toMinor(dec(payment.fee).times(rate), p) : 0;
   if (fee > 0) {
-    const description = `Fee ${payment.number}`;
+    const text = described(msg('Fee {number}'), { number: payment.number });
     lines.push(
       {
         ...base,
         accountId: usable(ctx, payment.feeAccountId) ?? role(ctx, 'bank_fees', 'expense'),
         amount: fee,
-        description,
+        ...text,
       },
-      { ...base, accountId: bank, amount: -fee, description },
+      { ...base, accountId: bank, amount: -fee, ...text },
     );
   }
   const kept = lines.filter((l) => l.amount !== 0);
   if (!balanced(kept)) throw new UnbalancedEntryError(`Payment ${payment.number} does not balance`);
   if (!reversedOn) return kept;
-  const reason = payment.cheque?.status === 'cancelled' ? 'cancelled' : 'returned';
-  const description = `Cheque ${payment.cheque?.number ?? ''} ${reason} (${payment.number})`;
+  const reversal = described(
+    payment.cheque?.status === 'cancelled'
+      ? msg('Cheque {cheque} cancelled ({number})')
+      : msg('Cheque {cheque} returned ({number})'),
+    { cheque: payment.cheque?.number ?? '', number: payment.number },
+  );
   return [
     ...kept,
-    ...kept.map((l) => ({ ...l, date: reversedOn, amount: -l.amount, description })),
+    ...kept.map((l) => ({ ...l, date: reversedOn, amount: -l.amount, ...reversal })),
   ];
 }
 
@@ -716,13 +834,15 @@ export function postExpense(expense: Expense, ctx: LedgerContext): LedgerLine[] 
     number: expense.number,
     contactId: expense.vendorId,
   };
-  const label = expense.description || `Expense ${expense.number}`;
+  const named = expense.description
+    ? { description: expense.description }
+    : described(msg('Expense {number}'), { number: expense.number });
   const lines: LedgerLine[] = [
     {
       ...base,
       accountId: usable(ctx, expense.accountId) ?? role(ctx, 'expense'),
       amount: total - taxTotal,
-      description: label,
+      ...named,
       vat: {
         flow: 'purchase',
         part: 'base',
@@ -741,7 +861,7 @@ export function postExpense(expense: Expense, ctx: LedgerContext): LedgerLine[] 
       ...base,
       accountId: usable(ctx, expense.paidFromAccountId) ?? role(ctx, 'bank'),
       amount: -total,
-      description: label,
+      ...named,
     },
   ];
   for (const t of reverse) {
@@ -752,10 +872,10 @@ export function postExpense(expense: Expense, ctx: LedgerContext): LedgerLine[] 
       0,
     );
     const vat: VatTag = { flow: 'purchase', part: 'tax', kind: 'reverse_charge', rate: t.rate };
-    const description = `${t.name} ${t.rate}% reverse charge`;
+    const text = reverseCharge(t);
     lines.push(
-      { ...base, accountId: role(ctx, 'input_tax'), amount: minor, description, vat },
-      { ...base, accountId: role(ctx, 'output_tax'), amount: -minor, description, vat },
+      { ...base, accountId: role(ctx, 'input_tax'), amount: minor, ...text, vat },
+      { ...base, accountId: role(ctx, 'output_tax'), amount: -minor, ...text, vat },
     );
   }
   return lines.filter((l) => l.amount !== 0);
@@ -773,7 +893,9 @@ export function postJournal(journal: ManualJournal, ctx: LedgerContext): LedgerL
       sourceId: journal.id,
       number: journal.number,
       contactId: l.contactId,
-      description: l.description || journal.reference || `Journal ${journal.number}`,
+      ...(l.description || journal.reference
+        ? { description: l.description || journal.reference }
+        : described(msg('Journal {number}'), { number: journal.number })),
       ...(journal.vatReturnId ? { settlement: true } : {}),
     }))
     .filter((l) => l.amount !== 0);
@@ -808,6 +930,7 @@ export function buildLedger(
         sourceId: id,
         number,
         message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof LedgerError ? { label: error.label } : {}),
       });
     }
   };
@@ -818,7 +941,7 @@ export function buildLedger(
         source: doc.type,
         sourceId: doc.id,
         number: doc.number,
-        message: `No exchange rate for ${doc.currency}; 1:1 was used.`,
+        ...rateProblem(doc.currency),
       });
     }
     attempt(doc.type, doc.id, doc.number, () => postDocument(doc, ctx));
@@ -854,7 +977,7 @@ export function buildLedger(
         source: 'payment',
         sourceId: payment.id,
         number: payment.number,
-        message: `No exchange rate for ${payment.currency}; 1:1 was used.`,
+        ...rateProblem(payment.currency),
       });
     }
     attempt('payment', payment.id, payment.number, () => postPayment(payment, ctx));
@@ -865,7 +988,7 @@ export function buildLedger(
         source: 'expense',
         sourceId: expense.id,
         number: expense.number,
-        message: `No exchange rate for ${expense.currency}; 1:1 was used.`,
+        ...rateProblem(expense.currency),
       });
     }
     attempt('expense', expense.id, expense.number, () => postExpense(expense, ctx));

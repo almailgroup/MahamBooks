@@ -34,7 +34,8 @@ function Label({ row, text, link }: { row: ReportRow; text: ReportText; link: st
       {row.record?.code ? (
         <span className="tabular me-2 text-slate-500">{row.record.code}</span>
       ) : null}
-      {rowLabel(row, text)}
+      {/* Isolated: an English name would run into the code in Arabic. */}
+      <bdi>{rowLabel(row, text)}</bdi>
     </>
   );
   return link ? (

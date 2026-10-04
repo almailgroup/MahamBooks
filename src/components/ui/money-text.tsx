@@ -1,7 +1,7 @@
 import type { HTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 import { useCompany, useFormat } from '@/app/company';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, isolateAmount } from '@/lib/format';
 
 export type MoneyTone = 'default' | 'strong' | 'muted' | 'positive' | 'negative' | 'warning';
 
@@ -35,7 +35,7 @@ export function MoneyText({
   const fmt = useFormat();
   const foreign = Boolean(currency && currency !== company.currency);
   const text = foreign
-    ? formatMoney(amount, currency!, fmt.locale, 'code')
+    ? isolateAmount(formatMoney(amount, currency!, fmt.locale, 'code'), fmt.locale)
     : fmt.money(amount, currency);
   return (
     <span

@@ -39,6 +39,7 @@ import {
   type BookEntry,
 } from '@/lib/banking/match';
 import { isMoneyAccount } from '@/lib/accounting/account-types';
+import { lineDescription } from '@/lib/accounting/ledger';
 import { currencyPrecision, fromMinor, sameAmount, toMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
 import { t, tp } from '@/i18n';
@@ -671,7 +672,7 @@ function MatchPanel({
                     {entry.contactId && names.get(entry.contactId)
                       ? ` · ${names.get(entry.contactId)}`
                       : ''}
-                    {entry.description ? ` · ${entry.description}` : ''}
+                    {entry.description ? ` · ${lineDescription(entry)}` : ''}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-3">

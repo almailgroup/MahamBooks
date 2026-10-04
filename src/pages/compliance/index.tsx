@@ -135,7 +135,7 @@ export default function CompliancePage() {
           aria-hidden
         >
           <span className="tabular text-base font-semibold">{dayFormat.format(date)}</span>
-          <span className="text-[11px]">{shortMonth.format(date)}</span>
+          <span className="text-xs">{shortMonth.format(date)}</span>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-start">
           <div className="min-w-0 flex-1">

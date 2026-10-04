@@ -9,6 +9,7 @@ import {
   formatMoney,
   formatPercent,
   formatQuantity,
+  isolateAmount,
 } from '@/lib/format';
 import { interfaceLocale, msg, t, tp } from '@/i18n';
 
@@ -63,7 +64,8 @@ export function useCompany(): Company {
 
 /**
  * Formatting helpers bound to the active company's currency and the
- * interface language (Arabic shows amounts as "1,234.500 د.ك.").
+ * interface language (Arabic shows amounts as "1,234.500 د.ك", kept in one
+ * piece and in order wherever they are shown, see `isolateAmount`).
  */
 export function useFormat() {
   const company = useCompany();
@@ -73,9 +75,13 @@ export function useFormat() {
       locale,
       currency: company.currency,
       money: (amount: number, currency: string = company.currency) =>
-        formatMoney(amount, currency, locale, company.currencyDisplay ?? 'local'),
+        isolateAmount(
+          formatMoney(amount, currency, locale, company.currencyDisplay ?? 'local'),
+          locale,
+        ),
       date: (value: ISODate | null | undefined) => formatDate(value, company.dateFormat, locale),
-      dateTime: (value: string | null | undefined) => formatDateTime(value, locale),
+      dateTime: (value: string | null | undefined) =>
+        formatDateTime(value, locale, company.dateFormat),
       quantity: (value: number) => formatQuantity(value, locale),
       percent: (value: number) => formatPercent(value, locale),
     };
