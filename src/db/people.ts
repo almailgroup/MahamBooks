@@ -293,6 +293,25 @@ export async function deleteEmployee(id: ID): Promise<void> {
   );
 }
 
+/**
+ * One activity entry for scans added to several personnel files at once
+ * (each file is added with `addAttachment`).
+ */
+export async function logPersonnelFilesAdded(
+  companyId: ID,
+  files: number,
+  employees: number,
+): Promise<void> {
+  if (files === 0) return;
+  await logActivity(companyId, 'employee', newId(), 'files', {
+    text:
+      files === 1
+        ? msg('{count} file added to a personnel file')
+        : msg('{count} files added to {employees} personnel files'),
+    vars: { count: files, employees },
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Settings                                                                   */
 /* -------------------------------------------------------------------------- */

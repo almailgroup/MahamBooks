@@ -440,6 +440,16 @@ describe('planning an employee file', () => {
     expect(result.employees!.notes).toBe(10);
   });
 
+  it('reads placeholders such as "-" and "N/A" as empty', async () => {
+    const c = await company();
+    const result = await plan(c, [
+      ['Employee Number', 'Name', 'Mobile', 'Passport No', 'Nationality'],
+      ['1', 'Ali Test', '-', 'N/A', 'Indian'],
+    ]);
+    expect(on(result, 2)).toMatchObject({ phone: '', passportNumber: '', nationality: 'IN' });
+    expect(notesOn(result, 2)).toEqual([]);
+  });
+
   it('notes duplicate Civil IDs in the file and rows without a name', async () => {
     const c = await company();
     const civilId = fakeCivilId('1991-01-01', 5);

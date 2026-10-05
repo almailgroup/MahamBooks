@@ -163,12 +163,16 @@ export function readPhone(value: string): { phone: string; kind: PhoneKind } | n
   return { phone: v, kind: 'kept' };
 }
 
-/** The value of each field in a row. */
+/** What exports write for "nothing": a dash, N/A and the like. */
+const PLACEHOLDER = /^(-+|—|–|\.|n\/a|#n\/a|nil|null|none)$/i;
+
+/** The value of each field in a row (placeholders read as empty). */
 function cellsOf(row: string[], mapping: ColumnMapping): Record<string, string> {
   const cells: Record<string, string> = {};
   for (const column of IMPORT_COLUMNS.employees) {
     const index = mapping[column.key];
-    cells[column.key] = index == null ? '' : (row[index] ?? '').trim();
+    const value = index == null ? '' : (row[index] ?? '').trim();
+    cells[column.key] = PLACEHOLDER.test(value) ? '' : value;
   }
   return cells;
 }

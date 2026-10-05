@@ -1,6 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Download, FileUp, FileWarning, IdCard, Plus, Search, Settings2 } from 'lucide-react';
+import {
+  Download,
+  FilePlus2,
+  FileUp,
+  FileWarning,
+  IdCard,
+  Plus,
+  Search,
+  Settings2,
+} from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import type { EmployeeCategory } from '@/db/types';
 import { CATEGORY_LABELS, isCurrent, STATUS_LABELS, workforceSummary } from '@/lib/hr/employees';
@@ -14,6 +23,7 @@ import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { entryTitle, ExpiryBadge } from '@/features/renewals/display';
 import { ComplianceSettingsDialog } from '@/features/renewals/settings-dialog';
+import { BulkDocumentsDialog } from '@/features/people/bulk-documents-dialog';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
@@ -51,6 +61,7 @@ export default function EmployeeListPage() {
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
 
   const on = today();
   const worst = useMemo(() => worstDocuments(register?.entries ?? [], on), [register, on]);
@@ -157,6 +168,9 @@ export default function EmployeeListPage() {
                 <ButtonLink to="/settings/import?kind=employees" variant="outline">
                   <FileUp /> {t('Import')}
                 </ButtonLink>
+                <Button variant="outline" onClick={() => setDocumentsOpen(true)}>
+                  <FilePlus2 /> {t('Add documents')}
+                </Button>
               </>
             ) : null}
             <ButtonLink to="/employees/new">
@@ -432,6 +446,9 @@ export default function EmployeeListPage() {
       )}
       {settingsOpen ? (
         <ComplianceSettingsDialog settings={settings} onClose={() => setSettingsOpen(false)} />
+      ) : null}
+      {documentsOpen ? (
+        <BulkDocumentsDialog employees={employees} onClose={() => setDocumentsOpen(false)} />
       ) : null}
     </div>
   );

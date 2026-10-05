@@ -1,5 +1,9 @@
 import { createCompany, expect, test } from './fixtures';
-import { fakeCardNumber, zohoWorkbook } from '../src/test/workbook';
+import { fakeCardNumber, zohoEmployees, zohoWorkbook } from '../src/test/workbook';
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+// A tiny PDF: the app keeps PDF files as they are.
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n');
 
 test('employees come over from a Zoho People spreadsheet with their Arabic names', async ({
   page,
@@ -17,7 +21,7 @@ test('employees come over from a Zoho People spreadsheet with their Arabic names
   // A made-up Zoho export (.xlsx): the check is one line and one button.
   await page.locator('input[type=file]').setInputFiles({
     name: 'Employee_View.xlsx',
-    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    mimeType: XLSX,
     buffer: Buffer.from(zohoWorkbook()),
   });
   await expect(
@@ -61,4 +65,56 @@ test('employees come over from a Zoho People spreadsheet with their Arabic names
   await expect(page.getByText('Male', { exact: true })).toBeVisible();
   await expect(page.getByText('01/05/1990')).toBeVisible();
   await expect(page.getByText('Driving licence', { exact: true }).first()).toBeVisible();
+});
+
+test('scans go to the personnel files of the employees whose numbers end their names', async ({
+  page,
+}) => {
+  await createCompany(page, 'Gulf Shield Security');
+  await page.goto('#/settings/import?kind=employees');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'staff.xlsx',
+    mimeType: XLSX,
+    buffer: Buffer.from(zohoWorkbook(zohoEmployees().slice(0, 2))),
+  });
+  await page.getByRole('button', { name: 'Import 2 employees' }).click();
+  await expect(page.getByText('2 employees imported').first()).toBeVisible();
+
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'Add documents' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add documents' });
+  await dialog.locator('input[type=file]').setInputFiles([
+    { name: 'موظف تجريبي واحد 101.pdf', mimeType: 'application/pdf', buffer: PDF },
+    { name: 'Sample Cleaner Two 0102.pdf', mimeType: 'application/pdf', buffer: PDF },
+    { name: 'Somebody 999.pdf', mimeType: 'application/pdf', buffer: PDF },
+    { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('notes') },
+  ]);
+  await expect(dialog.getByText('2 files matched · 1 not matched · 1 refused')).toBeVisible();
+  const file = (name: string) => dialog.getByRole('listitem').filter({ hasText: name });
+  await expect(file('موظف تجريبي واحد 101.pdf')).toContainText('000101 · TEST GUARD ONE');
+  await expect(file('Sample Cleaner Two 0102.pdf')).toContainText('000102 · Sample Cleaner Two');
+  await expect(dialog.getByText('No employee has the number 999.')).toBeVisible();
+  await expect(dialog.getByText('Only photos and PDF files can be added.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add 2 files' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('2 files added to the personnel files')).toBeVisible();
+
+  // Each is in the right personnel file.
+  await page.getByRole('link', { name: 'TEST GUARD ONE' }).click();
+  await expect(page.getByText('موظف تجريبي واحد 101.pdf')).toBeVisible();
+  await expect(page.getByText('Sample Cleaner Two 0102.pdf')).toHaveCount(0);
+  await page.goto('#/employees');
+  await page.getByRole('link', { name: 'Sample Cleaner Two' }).click();
+  await expect(page.getByText('Sample Cleaner Two 0102.pdf')).toBeVisible();
+
+  // Adding the same files again finds them already there.
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'Add documents' }).click();
+  await dialog
+    .locator('input[type=file]')
+    .setInputFiles([
+      { name: 'موظف تجريبي واحد 101.pdf', mimeType: 'application/pdf', buffer: PDF },
+    ]);
+  await expect(dialog.getByText(/Already in their personnel file/)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Add 0 files' })).toBeDisabled();
 });
