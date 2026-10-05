@@ -401,6 +401,7 @@ export default function EmployeeListPage() {
                               <EmployeeAvatar
                                 employee={e}
                                 photo={e.photoId ? photos.get(e.photoId) : undefined}
+                                size="md"
                               />
                               <div className="min-w-0">
                                 <Link

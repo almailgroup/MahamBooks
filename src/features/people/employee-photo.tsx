@@ -19,8 +19,10 @@ import {
 
 const SIZES = {
   sm: 'size-9 text-xs',
-  md: 'size-12 text-sm',
-  lg: 'size-20 text-xl',
+  /** The employees list: big enough to tell people apart. */
+  md: 'size-12 text-sm sm:size-14 sm:text-base',
+  /** The employee's page. */
+  lg: 'size-24 text-2xl',
 } as const;
 
 /** First letters of the first and last words of a name ("Ali Hassan" → "AH"). */
@@ -138,7 +140,7 @@ export function EmployeePhotoEditor({ employee }: { employee: Employee }) {
         size="lg"
         className={busy ? 'opacity-60' : undefined}
       />
-      <span className="bg-surface absolute -end-0.5 -bottom-0.5 flex size-7 items-center justify-center rounded-full text-slate-600 shadow ring-1 ring-slate-900/10">
+      <span className="bg-surface absolute end-0 bottom-0 flex size-7 items-center justify-center rounded-full text-slate-600 shadow ring-1 ring-slate-900/10">
         <Camera className="size-3.5" aria-hidden />
       </span>
     </span>
