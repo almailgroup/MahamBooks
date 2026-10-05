@@ -1,4 +1,5 @@
 import { normalizeDigits } from '@/lib/money';
+import { parseCsvRows } from '@/lib/banking/statement';
 import { msg, t } from '@/i18n';
 
 /**
@@ -7,7 +8,7 @@ import { msg, t } from '@/i18n';
  * case, with or without spaces and punctuation).
  */
 
-export type ImportKind = 'contacts' | 'products' | 'opening' | 'documents';
+export type ImportKind = 'contacts' | 'products' | 'opening' | 'documents' | 'employees';
 
 export interface ImportColumn {
   key: string;
@@ -312,7 +313,337 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
     ]),
     col('notes', msg('Notes'), ['notes', 'note', 'remarks', 'ملاحظات']),
   ],
+  // Zoho People, Excel sheets and other HR systems, in English and Arabic.
+  employees: [
+    col('number', msg('Employee number'), [
+      'employee number',
+      'employee no',
+      'employee id',
+      'employee code',
+      'emp no',
+      'emp id',
+      'emp number',
+      'emp code',
+      'staff number',
+      'staff no',
+      'staff id',
+      'الرقم الوظيفي',
+      'رقم الموظف',
+      'كود الموظف',
+    ]),
+    col('name', msg('Name'), [
+      'name',
+      'full name',
+      'employee name',
+      'english name',
+      'name english',
+      'name en',
+      'full name english',
+      'الاسم',
+      'اسم الموظف',
+      'الاسم الكامل',
+      'الاسم بالانجليزي',
+      'الاسم بالانجليزيه',
+      'الاسم الانجليزي',
+    ]),
+    col('firstName', msg('First name'), [
+      'first name',
+      'firstname',
+      'given name',
+      'forename',
+      'الاسم الاول',
+    ]),
+    col('middleName', msg('Middle name'), ['middle name', 'middlename', 'الاسم الاوسط']),
+    col('lastName', msg('Last name'), [
+      'last name',
+      'lastname',
+      'surname',
+      'family name',
+      'اسم العائله',
+      'اللقب',
+    ]),
+    col('nameAr', msg('Arabic name'), [
+      'arabic name',
+      'name arabic',
+      'name ar',
+      'namear',
+      'full name arabic',
+      'arabic full name',
+      'الاسم بالعربي',
+      'الاسم بالعربيه',
+      'الاسم العربي',
+    ]),
+    col('nameArFile', msg('File names with Arabic names'), [
+      'docs',
+      'documents',
+      'document',
+      'attachments',
+      'attachment',
+      'files',
+      'file name',
+    ]),
+    col('nationality', msg('Nationality'), [
+      'nationality',
+      'citizenship',
+      'country',
+      'country of citizenship',
+      'الجنسيه',
+    ]),
+    col('gender', msg('Gender'), ['gender', 'sex', 'الجنس', 'النوع']),
+    col('birthDate', msg('Date of birth'), [
+      'date of birth',
+      'birth date',
+      'birthdate',
+      'dob',
+      'تاريخ الميلاد',
+    ]),
+    col('civilId', msg('Civil ID number'), [
+      'civil id',
+      'civil id no',
+      'civil id number',
+      'civilid',
+      'cid',
+      'الرقم المدني',
+      'البطاقه المدنيه',
+      'رقم البطاقه المدنيه',
+    ]),
+    col('civilIdExpiry', msg('Civil ID expiry'), [
+      'civil id expiry',
+      'civil id expiry date',
+      'civil id expiration',
+      'civil id expiration date',
+      'cid expiry',
+      'انتهاء البطاقه المدنيه',
+      'تاريخ انتهاء البطاقه المدنيه',
+      'انتهاء الرقم المدني',
+    ]),
+    col('passportNumber', msg('Passport number'), [
+      'passport',
+      'passport no',
+      'passport number',
+      'رقم الجواز',
+      'جواز السفر',
+      'رقم جواز السفر',
+    ]),
+    col('passportExpiry', msg('Passport expiry'), [
+      'passport expiry',
+      'passport expiry date',
+      'passport expiration',
+      'passport expiration date',
+      'انتهاء الجواز',
+      'تاريخ انتهاء الجواز',
+      'تاريخ انتهاء جواز السفر',
+    ]),
+    col('residencyNumber', msg('Residency number'), [
+      'residency number',
+      'residency no',
+      'residence number',
+      'residence no',
+      'iqama number',
+      'visa number',
+      'رقم الاقامه',
+    ]),
+    col('residencyExpiry', msg('Residency expiry'), [
+      'residency expiry',
+      'residency expiry date',
+      'residence expiry',
+      'visa expiry',
+      'iqama expiry',
+      'document expiry',
+      'انتهاء الاقامه',
+      'تاريخ انتهاء الاقامه',
+    ]),
+    col('workPermitNumber', msg('Work permit number'), [
+      'work permit',
+      'work permit no',
+      'work permit number',
+      'labour card',
+      'labor card',
+      'اذن العمل',
+      'رقم اذن العمل',
+    ]),
+    col('workPermitExpiry', msg('Work permit expiry'), [
+      'work permit expiry',
+      'work permit expiry date',
+      'labour card expiry',
+      'labor card expiry',
+      'انتهاء اذن العمل',
+      'تاريخ انتهاء اذن العمل',
+    ]),
+    col('drivingLicenceNumber', msg('Driving licence number'), [
+      'driving license',
+      'driving licence',
+      'driving license number',
+      'driving licence number',
+      'driving license no',
+      'driving licence no',
+      'رخصه القياده',
+      'رقم رخصه القياده',
+    ]),
+    col('drivingLicenceExpiry', msg('Driving licence expiry'), [
+      'driving license expiry',
+      'driving licence expiry',
+      'driving license expiry date',
+      'driving licence expiry date',
+      'license expiry',
+      'licence expiry',
+      'انتهاء رخصه القياده',
+      'تاريخ انتهاء رخصه القياده',
+    ]),
+    col('department', msg('Department'), ['department', 'dept', 'division', 'القسم', 'الاداره']),
+    col('jobTitle', msg('Job title'), [
+      'job title',
+      'designation',
+      'position',
+      'title',
+      'job',
+      'occupation',
+      'profession',
+      'المسمي الوظيفي',
+      'الوظيفه',
+      'المهنه',
+    ]),
+    col('jobTitleAr', msg('Job title (Arabic)'), [
+      'arabic job title',
+      'job title arabic',
+      'designation arabic',
+      'المسمي الوظيفي بالعربي',
+      'المسمي الوظيفي بالعربيه',
+    ]),
+    col('hireDate', msg('Hire date'), [
+      'hire date',
+      'date of joining',
+      'joining date',
+      'date joined',
+      'start date',
+      'employment date',
+      'doj',
+      'تاريخ التعيين',
+      'تاريخ الالتحاق',
+      'تاريخ المباشره',
+      'تاريخ بدء العمل',
+    ]),
+    col('basicSalary', msg('Basic salary'), [
+      'basic salary',
+      'basic',
+      'salary',
+      'basic pay',
+      'monthly salary',
+      'الراتب الاساسي',
+      'الراتب',
+    ]),
+    col('iban', msg('IBAN'), ['iban', 'iban number', 'iban no', 'رقم الايبان', 'الايبان', 'ايبان']),
+    col('bank', msg('Bank'), ['bank', 'bank name', 'البنك', 'اسم البنك']),
+    col('accountNumber', msg('Account or salary card number'), [
+      'bank account number',
+      'account number',
+      'account no',
+      'bank account',
+      'salary card',
+      'salary card number',
+      'card number',
+      'رقم الحساب',
+      'رقم الحساب البنكي',
+      'رقم البطاقه',
+      'بطاقه الراتب',
+    ]),
+    col('phone', msg('Mobile'), [
+      'mobile',
+      'phone',
+      'mobile number',
+      'phone number',
+      'personal mobile number',
+      'personal mobile',
+      'mobile no',
+      'phone no',
+      'contact number',
+      'telephone',
+      'الهاتف',
+      'النقال',
+      'رقم الهاتف',
+      'الجوال',
+      'الموبايل',
+      'رقم النقال',
+    ]),
+    col('email', msg('Email'), [
+      'email',
+      'e mail',
+      'email address',
+      'email id',
+      'personal email',
+      'work email',
+      'البريد الالكتروني',
+      'البريد',
+      'الايميل',
+    ]),
+    col('pifssNumber', msg('PIFSS number'), [
+      'pifss',
+      'pifss number',
+      'pifss no',
+      'social security number',
+      'رقم التامينات',
+    ]),
+    col('bloodGroup', msg('Blood group'), ['blood group', 'blood type', 'فصيله الدم']),
+    col('notes', msg('Notes'), ['notes', 'note', 'remarks', 'comments', 'ملاحظات']),
+  ],
 };
+
+/** Fields an employee's name can come from: one of them must be in the file. */
+const EMPLOYEE_NAME_FIELDS = ['name', 'firstName', 'middleName', 'lastName', 'nameAr'];
+
+/** The fields still to match before rows can be checked. */
+export function missingColumns(kind: ImportKind, mapping: ColumnMapping): ImportColumn[] {
+  if (kind === 'employees') {
+    const named = EMPLOYEE_NAME_FIELDS.some((key) => mapping[key] != null);
+    return named || mapping.number != null
+      ? []
+      : IMPORT_COLUMNS.employees.filter((c) => c.key === 'name');
+  }
+  return IMPORT_COLUMNS[kind].filter((c) => c.required && mapping[c.key] == null);
+}
+
+/** Date fields of a kind, for guessing how the file writes dates. */
+export const DATE_COLUMNS: Record<ImportKind, string[]> = {
+  contacts: [],
+  products: [],
+  opening: [],
+  documents: ['date', 'dueDate'],
+  employees: [
+    'hireDate',
+    'birthDate',
+    'civilIdExpiry',
+    'passportExpiry',
+    'residencyExpiry',
+    'workPermitExpiry',
+    'drivingLicenceExpiry',
+  ],
+};
+
+const ARABIC_LETTER = /[\u0600-\u06ff]/;
+
+/**
+ * An Arabic name in a document's file name, as HR systems keep scans:
+ * "<Arabic name> <employee number>.pdf". The number is optional.
+ */
+export function arabicNameFromFileName(
+  value: string,
+): { name: string; number: string | null } | null {
+  const m = /^(.+?)[\s_-]*(\d+)?\s*(?:\(\d+\))?\.([a-z0-9]{2,5})$/i.exec(
+    normalizeDigits(value).trim(),
+  );
+  if (!m) return null;
+  const name = m[1].replace(/[\s_]+/g, ' ').trim();
+  if (!ARABIC_LETTER.test(name) || /[A-Za-z0-9]/.test(name)) return null;
+  return { name, number: m[2] ?? null };
+}
+
+/** Whether most values of a column are file names made of an Arabic name and a number. */
+function holdsArabicFileNames(values: string[]): boolean {
+  const filled = values.filter((v) => v.trim() !== '');
+  if (filled.length === 0) return false;
+  const named = filled.filter((v) => arabicNameFromFileName(v)?.number);
+  return named.length >= Math.max(1, filled.length * 0.6);
+}
 
 /** Column names compared without case, accents, Arabic letter variants or punctuation. */
 export function normalizeHeader(text: string): string {
@@ -331,8 +662,14 @@ export type ColumnMapping = Record<string, number | null>;
 /**
  * Best guess of which file column holds each field. Exact names win over
  * partial ones, longer names over shorter ones; a column is used once.
+ * With the rows, employees without an Arabic name column take Arabic names
+ * from a column of document file names ("<Arabic name> 424.pdf").
  */
-export function guessColumns(kind: ImportKind, headers: string[]): ColumnMapping {
+export function guessColumns(
+  kind: ImportKind,
+  headers: string[],
+  rows: string[][] = [],
+): ColumnMapping {
   const fields = IMPORT_COLUMNS[kind];
   const names = headers.map(normalizeHeader);
   const candidates: { field: string; column: number; score: number }[] = [];
@@ -362,6 +699,23 @@ export function guessColumns(kind: ImportKind, headers: string[]): ColumnMapping
     if (mapping[c.field] !== null || used.has(c.column)) continue;
     mapping[c.field] = c.column;
     used.add(c.column);
+  }
+  if (kind === 'employees') {
+    const body = rows.slice(1);
+    const column = (index: number) => body.map((r) => r[index] ?? '');
+    if (mapping.nameAr != null) mapping.nameArFile = null;
+    else if (
+      mapping.nameArFile != null &&
+      body.length &&
+      !holdsArabicFileNames(column(mapping.nameArFile))
+    ) {
+      // A "Docs" column that doesn't hold Arabic names.
+      mapping.nameArFile = null;
+    }
+    if (mapping.nameAr == null && mapping.nameArFile == null && body.length) {
+      const found = headers.findIndex((_, i) => !used.has(i) && holdsArabicFileNames(column(i)));
+      if (found >= 0) mapping.nameArFile = found;
+    }
   }
   return mapping;
 }
@@ -446,6 +800,45 @@ export const TEMPLATE_ROWS: Record<ImportKind, Record<string, string>[]> = {
       amount: '480.000',
     },
   ],
+  employees: [
+    {
+      number: '000101',
+      name: 'Fahad Al-Mutairi',
+      nameAr: 'فهد المطيري',
+      nationality: 'Kuwait',
+      gender: 'Male',
+      birthDate: '14/03/1990',
+      civilId: '290031412348',
+      civilIdExpiry: '31/12/2028',
+      department: 'Head Office',
+      jobTitle: 'Accountant',
+      jobTitleAr: 'محاسب',
+      hireDate: '01/02/2022',
+      basicSalary: '1250.000',
+      iban: 'KW81CBKU0000000000001234560101',
+      phone: '+965 5000 1234',
+      email: 'fahad@example.com',
+    },
+    {
+      number: '000102',
+      name: 'Ram Bahadur',
+      nameAr: 'رام بهادور',
+      nationality: 'Nepal',
+      gender: 'Male',
+      birthDate: '02/07/1994',
+      civilIdExpiry: '15/06/2027',
+      passportNumber: 'PA1234567',
+      passportExpiry: '20/08/2030',
+      residencyExpiry: '15/06/2027',
+      department: 'Security',
+      jobTitle: 'Security Guard',
+      jobTitleAr: 'حارس أمن',
+      hireDate: '10/09/2023',
+      basicSalary: '180.000',
+      accountNumber: '5407000000000008',
+      phone: '977-9800000000',
+    },
+  ],
 };
 
 /** Sample rows for an open bills file (the same columns as open invoices). */
@@ -484,4 +877,34 @@ export function decodeCsv(data: ArrayBuffer | Uint8Array): string {
       return new TextDecoder().decode(bytes);
     }
   }
+}
+
+/** What a chosen file is: an Excel workbook, an old binary Excel file, or text (CSV). */
+export function spreadsheetKind(bytes: Uint8Array, name = ''): 'xlsx' | 'xls' | 'text' {
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+    return 'xlsx';
+  }
+  if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)
+    return 'xls';
+  if (/\.xls$/i.test(name)) return 'xls';
+  return 'text';
+}
+
+/**
+ * The rows of a CSV file or of an Excel workbook's first sheet, the column
+ * names first. The Excel reader is loaded only when a workbook is chosen.
+ */
+export async function readImportFile(data: ArrayBuffer, name = ''): Promise<string[][]> {
+  const bytes = new Uint8Array(data);
+  const kind = spreadsheetKind(bytes, name);
+  if (kind === 'xlsx') {
+    const { readXlsx } = await import('@/lib/xlsx');
+    return readXlsx(bytes);
+  }
+  if (kind === 'xls') {
+    throw new Error(
+      t('Older Excel files (.xls) can’t be read. In Excel, save the file as .xlsx or CSV.'),
+    );
+  }
+  return parseCsvRows(decodeCsv(bytes));
 }

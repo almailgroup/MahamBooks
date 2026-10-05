@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Download, FileWarning, IdCard, Plus, Search, Settings2 } from 'lucide-react';
+import { Download, FileUp, FileWarning, IdCard, Plus, Search, Settings2 } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import type { EmployeeCategory } from '@/db/types';
 import { CATEGORY_LABELS, isCurrent, STATUS_LABELS, workforceSummary } from '@/lib/hr/employees';
@@ -150,9 +150,14 @@ export default function EmployeeListPage() {
         actions={
           <>
             {employees.length > 0 ? (
-              <Button variant="outline" onClick={exportCsv}>
-                <Download /> {t('Export CSV')}
-              </Button>
+              <>
+                <Button variant="outline" onClick={exportCsv}>
+                  <Download /> {t('Export CSV')}
+                </Button>
+                <ButtonLink to="/settings/import?kind=employees" variant="outline">
+                  <FileUp /> {t('Import')}
+                </ButtonLink>
+              </>
             ) : null}
             <ButtonLink to="/employees/new">
               <Plus /> {t('New employee')}
@@ -170,9 +175,14 @@ export default function EmployeeListPage() {
               'Add your staff to track Civil IDs, residencies and work permits, and to estimate end-of-service pay.',
             )}
             action={
-              <ButtonLink to="/employees/new">
-                <Plus /> {t('New employee')}
-              </ButtonLink>
+              <div className="flex flex-wrap justify-center gap-2">
+                <ButtonLink to="/employees/new">
+                  <Plus /> {t('New employee')}
+                </ButtonLink>
+                <ButtonLink to="/settings/import?kind=employees" variant="outline">
+                  <FileUp /> {t('Import from a spreadsheet')}
+                </ButtonLink>
+              </div>
             }
           />
         </Card>

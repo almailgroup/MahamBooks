@@ -852,6 +852,7 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     nationality: employee.nationality,
     civilId: employee.civilId,
     iban: employee.iban,
+    accountNumber: employee.accountNumber ?? '',
     hireDate: employee.hireDate,
     leavingDate: employee.status === 'left' ? employee.leavingDate : null,
     permitSalary: employee.permitSalary,

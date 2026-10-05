@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSalaryFile,
   formatSalaryPeriod,
+  hasPayAccount,
   presetLayout,
   salaryFileCsv,
   type SalaryFileEntry,
@@ -103,5 +104,24 @@ describe('salary transfer file', () => {
     });
     expect(salaryFileCsv(nbk, false)).toBe('NBOKKWKW,Fatima Al-Sabah');
     expect(formatSalaryPeriod('2026-09', 'yyyy-mm')).toBe('2026-09');
+  });
+
+  it('pays staff without an IBAN on their salary card number, and keeps IBANs first', () => {
+    const card = {
+      ...entries[0],
+      employeeId: 'card',
+      iban: '',
+      accountNumber: '5407 0000 0000 0008',
+    };
+    const both = { ...entries[0], employeeId: 'both', accountNumber: '5407000000000008' };
+    const badIban = { ...card, employeeId: 'bad', iban: 'KW00CBKU0000000000001234560101' };
+    const nothing = { ...card, employeeId: 'none', accountNumber: '' };
+    const file = buildSalaryFile([card, both, badIban, nothing], options);
+    // WPS: employee no, Civil ID, names, account, bank code, amount, month, PAM file.
+    expect(file.rows[0].slice(4, 6)).toEqual(['5407000000000008', '']);
+    expect(file.rows[1][4]).toBe('KW81CBKU0000000000001234560101');
+    expect(file.problems.map((p) => p.employeeId)).toEqual(['bad', 'none']);
+    expect(hasPayAccount(card)).toBe(true);
+    expect(hasPayAccount({ iban: '', accountNumber: '' })).toBe(false);
   });
 });

@@ -92,7 +92,25 @@ export interface SalaryFileEntry {
   nameEn: string;
   nameAr: string;
   iban: string;
+  /** Account or salary card number, used when there is no IBAN. */
+  accountNumber?: string;
   amount: number;
+}
+
+/**
+ * Where the salary goes: the IBAN, or for staff without one an account or
+ * salary card number (common for workers paid on salary cards).
+ */
+export function payAccount(entry: Pick<SalaryFileEntry, 'iban' | 'accountNumber'>): string {
+  const iban = compactIban(entry.iban);
+  if (iban) return iban;
+  return (entry.accountNumber ?? '').replace(/[\s-]/g, '');
+}
+
+/** Whether the salary can be paid: a valid IBAN, or no IBAN and an account or card number. */
+export function hasPayAccount(entry: Pick<SalaryFileEntry, 'iban' | 'accountNumber'>): boolean {
+  if (compactIban(entry.iban)) return isValidIban(entry.iban);
+  return payAccount(entry) !== '';
 }
 
 export interface SalaryFileOptions {
@@ -110,7 +128,10 @@ export interface SalaryFile {
   /** Total of the amounts in the file, in minor units. */
   totalMinor: number;
   count: number;
-  /** Employees whose IBAN is missing or invalid; the file is not ready while there are any. */
+  /**
+   * Employees whose IBAN is invalid, or who have neither an IBAN nor an
+   * account number; the file is not ready while there are any.
+   */
   problems: SalaryFileEntry[];
 }
 
@@ -126,9 +147,10 @@ function cell(column: SalaryFileColumn, entry: SalaryFileEntry, options: SalaryF
     case 'nameAr':
       return entry.nameAr || entry.nameEn;
     case 'iban':
-      return iban;
+      // Staff paid on a salary card have its number in the account column.
+      return payAccount(entry);
     case 'bankCode':
-      return bankFromIban(iban)?.code ?? iban.slice(4, 8);
+      return iban ? (bankFromIban(iban)?.code ?? iban.slice(4, 8)) : '';
     case 'swift': {
       const code = bankFromIban(iban)?.code;
       return KUWAIT_BANKS.find((b) => b.code === code)?.swift ?? '';
@@ -163,7 +185,7 @@ export function buildSalaryFile(
     rows: paid.map((e) => columns.map((c) => cell(c, e, options))),
     totalMinor: paid.reduce((s, e) => s + toMinor(e.amount, options.precision), 0),
     count: paid.length,
-    problems: paid.filter((e) => !isValidIban(e.iban)),
+    problems: paid.filter((e) => !hasPayAccount(e)),
   };
 }
 

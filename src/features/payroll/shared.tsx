@@ -102,7 +102,7 @@ export function useWarningText(): (warning: PayWarning) => string {
           permit: fmt.money(w.permit),
         });
       case 'iban':
-        return t('No valid IBAN: the salary can’t go in the bank file.');
+        return t('No valid IBAN or salary card number: the salary can’t go in the bank file.');
       case 'gcc_rates':
         return t(
           'No contribution rates for nationals of {country}. Add them in the payroll settings.',

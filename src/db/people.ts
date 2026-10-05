@@ -5,7 +5,7 @@ import type { Employee, EmployeeAllowance, ID, PeopleSettings } from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId, shortId } from '@/lib/ids';
 import { today } from '@/lib/dates';
-import { currencyPrecision, round } from '@/lib/money';
+import { currencyPrecision, normalizeDigits, round } from '@/lib/money';
 import { compactIban, normalizeKuwaitPhone } from '@/lib/kuwait';
 import { DEFAULT_REMINDER_DAYS, normalizeReminderDays } from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
@@ -25,6 +25,8 @@ export function createEmployee(companyId: ID, overrides: Partial<Employee> = {})
     nameAr: '',
     nationality: 'KW',
     category: 'kuwaiti',
+    birthDate: null,
+    gender: null,
     civilId: '',
     civilIdExpiry: null,
     passportNumber: '',
@@ -48,6 +50,7 @@ export function createEmployee(companyId: ID, overrides: Partial<Employee> = {})
     allowances: [],
     bank: '',
     iban: '',
+    accountNumber: '',
     pifssNumber: '',
     phone: '',
     email: '',
@@ -67,8 +70,21 @@ export function newAllowance(overrides: Partial<EmployeeAllowance> = {}): Employ
 
 export class EmployeeError extends Error {}
 
-/** Saves an employee, giving new ones the next employee number. */
-export async function saveEmployee(input: Employee): Promise<Employee> {
+/** An account or salary card number as stored: without spaces or dashes. */
+export function compactAccountNumber(value: string | undefined): string {
+  return normalizeDigits(value ?? '')
+    .replace(/[\s-]/g, '')
+    .toUpperCase();
+}
+
+/**
+ * Saves an employee, giving new ones the next employee number. With
+ * `log: false` no activity entry is written (an import writes one for all).
+ */
+export async function saveEmployee(
+  input: Employee,
+  options: { log?: boolean } = {},
+): Promise<Employee> {
   return db.transaction('rw', [db.employees, db.companies, db.activities], async () => {
     const company = await db.companies.get(input.companyId);
     if (!company) throw new EmployeeError(t('Company not found'));
@@ -87,6 +103,9 @@ export async function saveEmployee(input: Employee): Promise<Employee> {
       department: input.department.trim(),
       civilId: input.civilId.replace(/\s/g, ''),
       iban: compactIban(input.iban),
+      accountNumber: compactAccountNumber(input.accountNumber),
+      birthDate: input.birthDate || null,
+      gender: input.gender === 'male' || input.gender === 'female' ? input.gender : null,
       phone: input.phone.trim() ? (normalizeKuwaitPhone(input.phone) ?? input.phone.trim()) : '',
       email: input.email.trim(),
       basicSalary: round(Math.max(0, input.basicSalary), places),
@@ -127,6 +146,7 @@ export async function saveEmployee(input: Employee): Promise<Employee> {
     }
     if (!existing) employee.createdAt = employee.updatedAt;
     await db.employees.put(employee);
+    if (options.log === false) return employee;
 
     const vars = { name: employee.name, number: employee.number };
     const arabic = { name: employee.nameAr };

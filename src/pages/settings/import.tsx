@@ -1,4 +1,5 @@
 import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   CheckCircle2,
@@ -6,6 +7,7 @@ import {
   FileSpreadsheet,
   FileText,
   FileUp,
+  IdCard,
   Package,
   Scale,
   Users,
@@ -15,6 +17,7 @@ import { toast } from 'sonner';
 import { useCompany, useFormat } from '@/app/company';
 import {
   commitImport,
+  importEmployees,
   loadImportContext,
   planImport,
   type ImportOptions,
@@ -23,20 +26,19 @@ import {
   type PlannedRow,
   type RowIssue,
 } from '@/db/import';
+import type { EmployeeImportProgress } from '@/db/import-employees';
 import {
   BILL_TEMPLATE_ROWS,
-  decodeCsv,
+  DATE_COLUMNS,
   guessColumns,
   IMPORT_COLUMNS,
+  missingColumns,
+  readImportFile,
   TEMPLATE_ROWS,
   type ColumnMapping,
   type ImportKind,
 } from '@/features/company/import-columns';
-import {
-  detectDateFormats,
-  parseCsvRows,
-  type DateFormat as CsvDateFormat,
-} from '@/lib/banking/statement';
+import { detectDateFormats, type DateFormat as CsvDateFormat } from '@/lib/banking/statement';
 import { downloadCsv } from '@/lib/csv';
 import { fromMinor, currencyPrecision } from '@/lib/money';
 import { addDaysISO, isISODate, today } from '@/lib/dates';
@@ -45,8 +47,11 @@ import { msg, t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Field, Select } from '@/components/ui/form';
 import { Badge, Segmented } from '@/components/ui/misc';
+import { Disclosure } from '@/components/ui/disclosure';
 import { SettingsSection } from './shared';
 import { DateField } from '@/components/ui/date-field';
+import { useRoleView } from '@/features/cloud/role-gates';
+import { EmployeeImportPreview } from '@/features/people/import-preview';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const PREVIEW_LIMIT = 200;
@@ -76,7 +81,15 @@ const KINDS: { value: ImportKind; title: string; text: string; icon: ReactNode }
     text: msg('Invoices your customers have not paid yet, and bills you have not paid.'),
     icon: <FileText />,
   },
+  {
+    value: 'employees',
+    title: msg('Employees'),
+    text: msg('Your staff from Zoho People or a spreadsheet, with Civil IDs and papers.'),
+    icon: <IdCard />,
+  },
 ];
+
+const isKind = (value: string | null): value is ImportKind => KINDS.some((k) => k.value === value);
 
 const DATE_FORMATS: { value: CsvDateFormat; label: string }[] = [
   { value: 'dd/MM/yyyy', label: msg('31/12/2026 (day first)') },
@@ -94,6 +107,7 @@ function defaultAsOf(): string {
 }
 
 function readyText(kind: ImportKind, documentType: 'invoice' | 'bill', count: number): string {
+  if (kind === 'employees') return tp(count, '{count} employee ready', '{count} employees ready');
   if (kind === 'contacts') return tp(count, '{count} contact ready', '{count} contacts ready');
   if (kind === 'products') return tp(count, '{count} item ready', '{count} items ready');
   if (kind === 'opening') return tp(count, '{count} balance ready', '{count} balances ready');
@@ -103,6 +117,7 @@ function readyText(kind: ImportKind, documentType: 'invoice' | 'bill', count: nu
 }
 
 function importLabel(kind: ImportKind, documentType: 'invoice' | 'bill', count: number): string {
+  if (kind === 'employees') return tp(count, 'Import {count} employee', 'Import {count} employees');
   if (kind === 'contacts') return tp(count, 'Import {count} contact', 'Import {count} contacts');
   if (kind === 'products') return tp(count, 'Import {count} item', 'Import {count} items');
   if (kind === 'opening') return t('Post opening balances');
@@ -113,6 +128,12 @@ function importLabel(kind: ImportKind, documentType: 'invoice' | 'bill', count: 
 
 function doneText(result: ImportResult, documentType: 'invoice' | 'bill'): string {
   const n = result.added;
+  if (result.kind === 'employees') {
+    if (n === 0 && result.updated) {
+      return tp(result.updated, '{count} employee updated', '{count} employees updated');
+    }
+    return tp(n, '{count} employee imported', '{count} employees imported');
+  }
   if (result.kind === 'contacts')
     return tp(n, '{count} contact imported', '{count} contacts imported');
   if (result.kind === 'products') return tp(n, '{count} item imported', '{count} items imported');
@@ -186,14 +207,24 @@ function rowSummary(kind: ImportKind, row: PlannedRow, money: (amount: number) =
         amount: doc ? money(doc.items[0]?.unitPrice ?? 0) : cells.amount,
       };
     }
+    case 'employees': {
+      // Shown by EmployeeImportPreview; kept for completeness.
+      const e = record?.kind === 'employees' ? record.value.employee : null;
+      return { title: e?.name ?? cells.name, details: [cells.number], amount: '' };
+    }
   }
 }
 
 export default function ImportSettings() {
   const company = useCompany();
   const fmt = useFormat();
+  const roles = useRoleView();
   const input = useRef<HTMLInputElement>(null);
-  const [kind, setKind] = useState<ImportKind>('contacts');
+  const [params] = useSearchParams();
+  const [kind, setKind] = useState<ImportKind>(() => {
+    const wanted = params.get('kind');
+    return isKind(wanted) ? wanted : 'contacts';
+  });
   const [contactType, setContactType] = useState<'customer' | 'vendor'>('customer');
   const [documentType, setDocumentType] = useState<'invoice' | 'bill'>('invoice');
   const [asOf, setAsOf] = useState(defaultAsOf);
@@ -205,8 +236,15 @@ export default function ImportSettings() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [allColumns, setAllColumns] = useState(false);
+  const [updateExisting, setUpdateExisting] = useState(false);
+  const [progress, setProgress] = useState<EmployeeImportProgress | null>(null);
   const context = useLiveQuery(() => loadImportContext(company.id), [company.id]);
   const precision = currencyPrecision(company.currency);
+  // Payroll and people data: only owners, admins and accountants import employees.
+  const employeesBlocked =
+    roles.peopleHidden || roles.readOnly.readOnly
+      ? t('Only owners, admins and accountants can import employees.')
+      : '';
 
   const options: ImportOptions = useMemo(
     () => ({
@@ -216,8 +254,9 @@ export default function ImportSettings() {
       dateFormat,
       fileName: file?.name ?? '',
       formatDate: fmt.date,
+      updateExisting,
     }),
-    [contactType, documentType, asOf, dateFormat, file, fmt],
+    [contactType, documentType, asOf, dateFormat, file, fmt, updateExisting],
   );
 
   const plan: ImportPlan | null = useMemo(
@@ -228,19 +267,27 @@ export default function ImportSettings() {
 
   const headers = file?.rows[0] ?? [];
   const columns = IMPORT_COLUMNS[kind];
-  const missing = mapping ? columns.filter((c) => c.required && mapping[c.key] == null) : [];
+  const missing = mapping ? missingColumns(kind, mapping) : [];
+  const isMissing = (key: string) => missing.some((c) => c.key === key);
   // Columns the file has (or must have) first; the rest on request.
   const shownColumns =
-    allColumns || !mapping ? columns : columns.filter((c) => c.required || mapping[c.key] != null);
+    allColumns || !mapping
+      ? columns
+      : columns.filter((c) => c.required || isMissing(c.key) || mapping[c.key] != null);
   const hiddenColumns = columns.length - shownColumns.length;
+  const matched = mapping ? columns.filter((c) => mapping[c.key] != null).length : 0;
 
-  const guessDateFormat = (rows: string[][], map: ColumnMapping) => {
-    const index = map.date;
-    if (index == null) return;
-    const found = detectDateFormats(
-      rows.slice(1).map((r) => r[index] ?? ''),
-      !fmt.locale.endsWith('US'),
-    );
+  /** Dates written as text (CSV): which way round they are. Spreadsheet dates are ISO already. */
+  const textDates = (rows: string[][], map: ColumnMapping, of: ImportKind) =>
+    DATE_COLUMNS[of]
+      .map((key) => map[key])
+      .filter((index): index is number => index != null)
+      .flatMap((index) => rows.slice(1).map((r) => r[index] ?? ''))
+      .filter((v) => v.trim() !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(v.trim()));
+  const guessDateFormat = (rows: string[][], map: ColumnMapping, of: ImportKind) => {
+    const values = textDates(rows, map, of);
+    if (!values.length) return;
+    const found = detectDateFormats(values, !fmt.locale.endsWith('US'));
     if (found[0]) setDateFormat(found[0]);
   };
 
@@ -248,10 +295,11 @@ export default function ImportSettings() {
     setKind(next);
     setResult(null);
     setFilter('all');
+    setUpdateExisting(false);
     if (file) {
-      const map = guessColumns(next, file.rows[0] ?? []);
+      const map = guessColumns(next, file.rows[0] ?? [], file.rows);
       setMapping(map);
-      if (next === 'documents') guessDateFormat(file.rows, map);
+      guessDateFormat(file.rows, map, next);
     }
   };
 
@@ -261,33 +309,46 @@ export default function ImportSettings() {
       toast.error(t('Please choose a file smaller than 5 MB.'));
       return;
     }
-    const rows = parseCsvRows(decodeCsv(await chosen.arrayBuffer()));
+    let rows: string[][];
+    try {
+      rows = await readImportFile(await chosen.arrayBuffer(), chosen.name);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Could not read the file.'));
+      return;
+    }
     if (rows.length < 2) {
       toast.error(t('The file needs a row of column names and at least one row of data.'));
       return;
     }
-    const map = guessColumns(kind, rows[0]);
+    const map = guessColumns(kind, rows[0], rows);
     setFile({ name: chosen.name, rows });
     setAllColumns(false);
     setMapping(map);
     setResult(null);
     setFilter('all');
-    if (kind === 'documents') guessDateFormat(rows, map);
+    setUpdateExisting(false);
+    guessDateFormat(rows, map, kind);
   };
 
   const clear = () => {
     setFile(null);
     setMapping(null);
     setResult(null);
+    setProgress(null);
   };
 
   const template = () => {
     const rows =
       kind === 'documents' && documentType === 'bill' ? BILL_TEMPLATE_ROWS : TEMPLATE_ROWS[kind];
+    // Employees: the usual columns, not every one the import understands.
+    const templateColumns =
+      kind === 'employees'
+        ? columns.filter((c) => rows.some((r) => r[c.key] !== undefined))
+        : columns;
     downloadCsv(
       `almailbooks-${kind === 'documents' ? `open-${documentType}s` : kind}-template.csv`,
-      columns.map((c) => t(c.label)),
-      rows.map((r) => columns.map((c) => r[c.key] ?? '')),
+      templateColumns.map((c) => t(c.label)),
+      rows.map((r) => templateColumns.map((c) => r[c.key] ?? '')),
     );
   };
 
@@ -295,7 +356,10 @@ export default function ImportSettings() {
     if (!file || !mapping || !plan) return;
     setBusy(true);
     try {
-      const done = await commitImport(company.id, kind, file.rows, mapping, options);
+      const done =
+        kind === 'employees'
+          ? await importEmployees(company.id, file.rows, mapping, options, setProgress)
+          : await commitImport(company.id, kind, file.rows, mapping, options);
       setResult(done);
       setFile(null);
       setMapping(null);
@@ -304,6 +368,7 @@ export default function ImportSettings() {
       toast.error(error instanceof Error ? error.message : t('Could not import the file.'));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -312,17 +377,87 @@ export default function ImportSettings() {
   );
   const blocked = !plan || plan.ready === 0 || (kind === 'opening' && plan.errors > 0);
   const viewLink =
-    kind === 'contacts'
-      ? contactType === 'vendor'
-        ? '/vendors'
-        : '/clients'
-      : kind === 'products'
-        ? '/products'
-        : kind === 'opening'
-          ? '/journals'
-          : documentType === 'invoice'
-            ? '/invoices'
-            : '/bills';
+    kind === 'employees'
+      ? '/employees'
+      : kind === 'contacts'
+        ? contactType === 'vendor'
+          ? '/vendors'
+          : '/clients'
+        : kind === 'products'
+          ? '/products'
+          : kind === 'opening'
+            ? '/journals'
+            : documentType === 'invoice'
+              ? '/invoices'
+              : '/bills';
+  const showDateFormat = Boolean(
+    file &&
+    mapping &&
+    (kind === 'documents' ||
+      (kind === 'employees' && textDates(file.rows, mapping, kind).length > 0)),
+  );
+  // Settings shown above the file for some kinds; none for products and spreadsheet employees.
+  const hasFileOptions =
+    kind === 'contacts' || kind === 'opening' || kind === 'documents' || showDateFormat;
+  const residencyColumn =
+    kind === 'employees' && mapping?.residencyExpiry != null
+      ? headers[mapping.residencyExpiry]
+      : undefined;
+
+  const columnFields = mapping ? (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {shownColumns.map((c) => (
+          <Field
+            key={c.key}
+            label={
+              <>
+                {t(c.label)}
+                {c.required || isMissing(c.key) ? (
+                  <span className="ms-0.5 text-red-600" aria-hidden>
+                    *
+                  </span>
+                ) : null}
+              </>
+            }
+            error={
+              (c.required && mapping[c.key] == null) || isMissing(c.key)
+                ? t('Choose a column')
+                : undefined
+            }
+          >
+            {(id) => (
+              <Select
+                id={id}
+                value={mapping[c.key] == null ? '' : String(mapping[c.key])}
+                aria-required={c.required || isMissing(c.key)}
+                onChange={(e) =>
+                  setMapping({
+                    ...mapping,
+                    [c.key]: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+              >
+                <option value="">{t('Not in the file')}</option>
+                {headers.map((h, i) => (
+                  <option key={i} value={i}>
+                    {h || t('Column {number}', { number: i + 1 })}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ))}
+      </div>
+      {hiddenColumns > 0 || allColumns ? (
+        <Button variant="ghost" size="sm" onClick={() => setAllColumns(!allColumns)}>
+          {allColumns
+            ? t('Show only the columns in the file')
+            : tp(hiddenColumns, 'Show {count} more field', 'Show {count} more fields')}
+        </Button>
+      ) : null}
+    </>
+  ) : null;
 
   return (
     <div className="space-y-6">
@@ -339,18 +474,20 @@ export default function ImportSettings() {
         >
           {KINDS.map((k) => {
             const active = k.value === kind;
+            const off = k.value === 'employees' && Boolean(employeesBlocked);
             return (
               <button
                 key={k.value}
                 type="button"
                 role="radio"
                 aria-checked={active}
+                disabled={off}
                 onClick={() => chooseKind(k.value)}
                 className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-start transition-colors',
+                  'flex items-start gap-3 rounded-xl border p-4 text-start transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                   active
                     ? 'border-primary-500 bg-primary-50/60 ring-primary-500/20 ring-3'
-                    : 'bg-surface border-slate-200 hover:border-slate-300 hover:bg-slate-50',
+                    : 'bg-surface border-slate-200 enabled:hover:border-slate-300 enabled:hover:bg-slate-50',
                 )}
               >
                 <span
@@ -363,7 +500,9 @@ export default function ImportSettings() {
                 </span>
                 <span className="min-w-0">
                   <span className="block font-medium text-slate-900">{t(k.title)}</span>
-                  <span className="mt-0.5 block text-sm text-slate-500">{t(k.text)}</span>
+                  <span className="mt-0.5 block text-sm text-slate-500">
+                    {off ? employeesBlocked : t(k.text)}
+                  </span>
                 </span>
               </button>
             );
@@ -373,14 +512,16 @@ export default function ImportSettings() {
 
       <SettingsSection
         title={t('Your file')}
-        description={t('A CSV file with one row per record and the column names in the first row.')}
+        description={t(
+          'A CSV or Excel file with one row per record and the column names in the first row.',
+        )}
         actions={
           <Button variant="outline" size="sm" onClick={template}>
             <Download /> {t('Download template')}
           </Button>
         }
       >
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className={cn('grid gap-4 sm:grid-cols-2', !hasFileOptions && 'hidden')}>
           {kind === 'contacts' ? (
             <LabeledGroup label={t('Rows without a type are')}>
               <Segmented
@@ -415,7 +556,7 @@ export default function ImportSettings() {
               )}
             </Field>
           ) : null}
-          {kind === 'documents' && file ? (
+          {showDateFormat ? (
             <Field label={t('Dates in the file look like')}>
               {(id) => (
                 <Select
@@ -451,9 +592,9 @@ export default function ImportSettings() {
         ) : null}
 
         {file ? (
-          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
             <FileSpreadsheet className="text-primary-600 size-5 shrink-0" aria-hidden />
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 basis-40">
               <p className="truncate text-sm font-medium text-slate-900" dir="auto">
                 {file.name}
               </p>
@@ -492,10 +633,10 @@ export default function ImportSettings() {
             <span className="bg-primary-50 text-primary-600 flex size-11 items-center justify-center rounded-full">
               <FileUp className="size-5" aria-hidden />
             </span>
-            <span className="font-medium text-slate-900">{t('Choose a CSV file')}</span>
+            <span className="font-medium text-slate-900">{t('Choose a CSV or Excel file')}</span>
             <span className="max-w-sm text-sm text-slate-500">
               {t(
-                'Or drop it here. In Excel, use Save as → CSV. Arabic column names and text are fine.',
+                'Or drop it here. Excel files (.xlsx) are read from their first sheet. Arabic column names and text are fine.',
               )}
             </span>
           </button>
@@ -503,9 +644,9 @@ export default function ImportSettings() {
         <input
           ref={input}
           type="file"
-          accept=".csv,.txt,text/csv,text/plain"
+          accept=".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="hidden"
-          aria-label={t('Choose a CSV file')}
+          aria-label={t('Choose a CSV or Excel file')}
           onChange={(e) => {
             void read(e.target.files?.[0]);
             e.target.value = '';
@@ -513,57 +654,43 @@ export default function ImportSettings() {
         />
       </SettingsSection>
 
-      {file && mapping ? (
+      {file && mapping && kind !== 'employees' ? (
         <SettingsSection
           title={t('Match the columns')}
           description={t('We matched what we could. Check the fields marked as required.')}
         >
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {shownColumns.map((c) => (
-              <Field
-                key={c.key}
-                label={
-                  <>
-                    {t(c.label)}
-                    {c.required ? (
-                      <span className="ms-0.5 text-red-600" aria-hidden>
-                        *
-                      </span>
-                    ) : null}
-                  </>
-                }
-                error={c.required && mapping[c.key] == null ? t('Choose a column') : undefined}
-              >
-                {(id) => (
-                  <Select
-                    id={id}
-                    value={mapping[c.key] == null ? '' : String(mapping[c.key])}
-                    aria-required={c.required}
-                    onChange={(e) =>
-                      setMapping({
-                        ...mapping,
-                        [c.key]: e.target.value === '' ? null : Number(e.target.value),
-                      })
-                    }
-                  >
-                    <option value="">{t('Not in the file')}</option>
-                    {headers.map((h, i) => (
-                      <option key={i} value={i}>
-                        {h || t('Column {number}', { number: i + 1 })}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            ))}
-          </div>
-          {hiddenColumns > 0 || allColumns ? (
-            <Button variant="ghost" size="sm" onClick={() => setAllColumns(!allColumns)}>
-              {allColumns
-                ? t('Show only the columns in the file')
-                : tp(hiddenColumns, 'Show {count} more field', 'Show {count} more fields')}
-            </Button>
+          {columnFields}
+        </SettingsSection>
+      ) : null}
+      {file && mapping && kind === 'employees' && !result ? (
+        <SettingsSection
+          title={t('Check before importing')}
+          description={
+            missing.length
+              ? t('Choose the column with the names or the employee numbers.')
+              : t('Nothing is saved until you import. Notes are things to check later.')
+          }
+        >
+          {plan && !missing.length ? (
+            <EmployeeImportPreview
+              plan={plan}
+              updateExisting={updateExisting}
+              onUpdateExisting={setUpdateExisting}
+              busy={busy}
+              progress={progress}
+              onImport={() => void run()}
+              blocked={employeesBlocked}
+              residencyColumn={residencyColumn}
+            />
           ) : null}
+          <Disclosure
+            key={file.name}
+            label={t('Columns')}
+            hint={tp(matched, '{count} column matched', '{count} columns matched')}
+            defaultOpen={missing.length > 0}
+          >
+            {columnFields}
+          </Disclosure>
         </SettingsSection>
       ) : null}
 
@@ -595,10 +722,25 @@ export default function ImportSettings() {
                       '{count} opening balances recorded',
                     )
                   : '',
+                result.kind === 'employees' && result.added && result.updated
+                  ? tp(result.updated, '{count} employee updated', '{count} employees updated')
+                  : '',
+                result.kind === 'employees' && result.documents
+                  ? tp(
+                      result.documents,
+                      '{count} driving licence in the documents register',
+                      '{count} driving licences in the documents register',
+                    )
+                  : '',
               ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
+            {result.kind === 'employees' && result.added && !result.salaries ? (
+              <p className="max-w-md text-sm text-slate-500">
+                {t('Salaries are not in the file: add them before running payroll.')}
+              </p>
+            ) : null}
             <div className="mt-2 flex flex-wrap justify-center gap-2">
               <ButtonLink to={viewLink}>{t('View them')}</ButtonLink>
               <Button variant="outline" onClick={clear}>
@@ -607,7 +749,7 @@ export default function ImportSettings() {
             </div>
           </div>
         </SettingsSection>
-      ) : plan ? (
+      ) : plan && kind !== 'employees' ? (
         <SettingsSection
           title={t('Check before importing')}
           description={

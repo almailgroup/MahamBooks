@@ -34,6 +34,17 @@ function decimalsOf(value: number): number {
 }
 
 /**
+ * A card, account or Civil ID number with only its last digits showing:
+ * "•••• 1234". Short values are hidden entirely.
+ */
+export function maskNumber(value: string, visible = 4): string {
+  const compact = value.replace(/\s/g, '');
+  if (!compact) return '';
+  if (compact.length <= visible) return '••••';
+  return `•••• ${compact.slice(-visible)}`;
+}
+
+/**
  * How currencies are shown: `code` is the international style ("KWD 1.500"),
  * `local` the way amounts are written in Kuwait ("KD 1.500", "1.500 د.ك").
  */

@@ -280,6 +280,57 @@ export function bankFromIban(value: string): KuwaitBank | undefined {
   return KUWAIT_BANKS.find((b) => b.code === code);
 }
 
+/** The short names people use for the banks. */
+const BANK_SHORT_NAMES: Record<string, string[]> = {
+  NBOK: ['NBK'],
+  KFHO: ['KFH', 'Bait Al Tamweel', 'بيتك'],
+  BBYN: ['Boubyan', 'بوبيان'],
+  GULB: ['GBK', 'Gulf'],
+  BRGN: ['Burgan', 'برقان'],
+  COMB: ['CBK', 'Commercial Bank', 'التجاري'],
+  ABKK: ['ABK', 'Ahli', 'Al Ahli', 'الاهلي'],
+  WRBA: ['Warba', 'وربة'],
+  KWIB: ['KIB', 'International Bank', 'الدولي'],
+};
+
+const bankKey = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
+/** A Kuwaiti bank by its code, SWIFT code, English or Arabic name or short name (NBK, KFH…). */
+export function findBank(name: string): KuwaitBank | undefined {
+  const wanted = bankKey(name);
+  if (!wanted) return undefined;
+  return KUWAIT_BANKS.find((b) =>
+    [b.code, b.swift, b.name.en, b.name.ar, ...(BANK_SHORT_NAMES[b.code] ?? [])].some(
+      (n) => bankKey(n) === wanted,
+    ),
+  );
+}
+
+/**
+ * Checks a payment card number, such as a salary card: 12 to 19 digits with
+ * a valid Luhn check digit.
+ */
+export function isValidCardNumber(value: string): boolean {
+  const digits = value.replace(/[\s-]/g, '');
+  if (!/^\d{12,19}$/.test(digits)) return false;
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
 // --------------------------------------------------------------- Civil ID
 
 const CIVIL_ID_WEIGHTS = [2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];

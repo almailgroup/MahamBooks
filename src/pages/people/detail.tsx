@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteEmployee, employeeDeletion, saveEmployee } from '@/db/people';
@@ -10,6 +10,7 @@ import { useCompany, useFormat } from '@/app/company';
 import {
   CATEGORY_LABELS,
   CONTRACT_LABELS,
+  GENDER_LABELS,
   LEAVING_REASON_LABELS,
   PAY_BASIS_LABELS,
   RESIDENCY_ARTICLES,
@@ -20,6 +21,7 @@ import { DOCUMENT_TYPES, normalizeReminderDays } from '@/lib/compliance';
 import { bankFromIban, formatIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { countryName } from '@/lib/geo';
 import { currencyPrecision, dec, round } from '@/lib/money';
+import { maskNumber } from '@/lib/format';
 import { serviceYears } from '@/lib/hr/eosi';
 import { today } from '@/lib/dates';
 import { EmployeeDocuments } from '@/features/people/employee-documents';
@@ -49,12 +51,51 @@ const TABS: { value: Tab; label: string }[] = [
   { value: 'eos', label: msg('End of service') },
 ];
 
-function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
+function Row({
+  label,
+  children,
+  wrapLabel = false,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+  /** A long label wraps instead of squeezing the value. */
+  wrapLabel?: boolean;
+}) {
   return (
     <div className="flex justify-between gap-4 py-2 text-sm">
-      <dt className="shrink-0 text-slate-500">{label}</dt>
-      <dd className="min-w-0 text-end break-words text-slate-900">{children || '—'}</dd>
+      <dt className={cn('text-slate-500', wrapLabel ? 'min-w-0' : 'shrink-0')}>{label}</dt>
+      <dd
+        className={cn(
+          'min-w-0 text-end break-words text-slate-900',
+          wrapLabel && 'shrink-0 whitespace-nowrap',
+        )}
+      >
+        {children || '—'}
+      </dd>
     </div>
+  );
+}
+
+/** A card or account number with only its last four digits, and a button to show it all. */
+function MaskedNumber({ value }: { value: string }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono text-xs text-slate-700" dir="ltr">
+        {shown ? value : maskNumber(value)}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="-my-1.5"
+        aria-label={shown ? t('Hide the number') : t('Show the whole number')}
+        aria-pressed={shown}
+        title={shown ? t('Hide the number') : t('Show the whole number')}
+        onClick={() => setShown((s) => !s)}
+      >
+        {shown ? <EyeOff /> : <Eye />}
+      </Button>
+    </span>
   );
 }
 
@@ -340,6 +381,12 @@ export default function EmployeeDetailPage() {
                   <Row label={t('Nationality')}>
                     {countryName(employee.nationality, fmt.locale)}
                   </Row>
+                  {employee.gender ? (
+                    <Row label={t('Gender')}>{t(GENDER_LABELS[employee.gender])}</Row>
+                  ) : null}
+                  {employee.birthDate ? (
+                    <Row label={t('Date of birth')}>{fmt.date(employee.birthDate)}</Row>
+                  ) : null}
                   <Row label={t('Civil ID number')}>
                     {employee.civilId ? <span dir="ltr">{employee.civilId}</span> : null}
                   </Row>
@@ -420,6 +467,11 @@ export default function EmployeeDetailPage() {
                           {formatIban(employee.iban)}
                         </span>
                       ) : null}
+                    </Row>
+                  ) : null}
+                  {employee.accountNumber ? (
+                    <Row label={t('Account or salary card number')} wrapLabel>
+                      <MaskedNumber value={employee.accountNumber} />
                     </Row>
                   ) : null}
                 </dl>

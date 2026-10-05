@@ -1097,6 +1097,8 @@ export type PayBasis = 'monthly' | 'daily' | 'hourly' | 'piece';
 export type LeavingReason =
   'resignation' | 'termination' | 'contract_end' | 'retirement' | 'dismissal' | 'death' | 'other';
 
+export type Gender = 'male' | 'female';
+
 export interface EmployeeAllowance {
   id: ID;
   name: string;
@@ -1119,9 +1121,12 @@ export interface Employee {
   number: string;
   name: string;
   nameAr?: string;
-  /** ISO 3166-1 alpha-2 code. */
+  /** ISO 3166-1 alpha-2 code; empty when not known. */
   nationality: string;
   category: EmployeeCategory;
+  /** Empty or null when not known (older records don't have it). */
+  birthDate?: ISODate | null;
+  gender?: Gender | null;
   civilId: string;
   civilIdExpiry: ISODate | null;
   passportNumber: string;
@@ -1151,6 +1156,12 @@ export interface Employee {
   /** First four letters of the bank's SWIFT code (see KUWAIT_BANKS) or a bank name. */
   bank: string;
   iban: string;
+  /**
+   * A bank account or salary card number for salaries paid without an IBAN
+   * (salary cards are common for workers); used in the salary file when the
+   * IBAN is empty.
+   */
+  accountNumber?: string;
   /** PIFSS (social security) number of Kuwaiti and GCC staff. */
   pifssNumber: string;
   phone: string;
@@ -1729,6 +1740,8 @@ export interface PayLine {
   nationality: string;
   civilId: string;
   iban: string;
+  /** Account or salary card number, for staff paid without an IBAN (older runs don't have it). */
+  accountNumber?: string;
   hireDate: ISODate | null;
   leavingDate: ISODate | null;
   permitSalary: number;

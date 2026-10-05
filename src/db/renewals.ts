@@ -75,8 +75,10 @@ export function createComplianceDocument(
   };
 }
 
+/** Saves a register document; with `log: false` no activity entry is written (imports). */
 export async function saveComplianceDocument(
   input: ComplianceDocument,
+  options: { log?: boolean } = {},
 ): Promise<ComplianceDocument> {
   return db.transaction(
     'rw',
@@ -116,6 +118,7 @@ export async function saveComplianceDocument(
       };
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.complianceDocuments.put(doc);
+      if (options.log === false) return doc;
       await logActivity(company.id, 'compliance', doc.id, existing ? 'updated' : 'created', {
         text: existing ? msg('Document {title} updated') : msg('Document {title} added'),
         vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },

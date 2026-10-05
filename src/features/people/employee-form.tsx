@@ -7,6 +7,7 @@ import type {
   EmployeeAllowance,
   EmployeeCategory,
   EmployeeStatus,
+  Gender,
   LeavingReason,
   PayBasis,
 } from '@/db/types';
@@ -16,6 +17,7 @@ import {
   CATEGORY_LABELS,
   categoryForNationality,
   CONTRACT_LABELS,
+  GENDER_LABELS,
   insuredWithPifss,
   LEAVING_REASON_LABELS,
   needsResidency,
@@ -34,7 +36,7 @@ import {
   KUWAIT_BANKS,
   normalizeKuwaitPhone,
 } from '@/lib/kuwait';
-import { parseISODate, toISODate } from '@/lib/dates';
+import { parseISODate, today, toISODate } from '@/lib/dates';
 import { currencyPrecision, dec, round } from '@/lib/money';
 import { msg, t } from '@/i18n';
 import { useLanguage } from '@/i18n/provider';
@@ -91,6 +93,7 @@ const CATEGORY_HINTS: Record<EmployeeCategory, string> = {
 };
 
 const CATEGORIES: EmployeeCategory[] = ['kuwaiti', 'gcc', 'expat', 'domestic'];
+const GENDERS: Gender[] = ['male', 'female'];
 const STATUSES: EmployeeStatus[] = ['active', 'on_leave', 'left'];
 const PAY_BASES: PayBasis[] = ['monthly', 'daily', 'hourly', 'piece'];
 const CONTRACTS: ContractType[] = ['unlimited', 'fixed'];
@@ -227,6 +230,32 @@ export function EmployeeForm({
                 </option>
               ))}
             </Select>
+          )}
+        </Field>
+        <Field label={t('Gender')} optional>
+          {(id) => (
+            <Select
+              id={id}
+              value={value.gender ?? ''}
+              onChange={(e) => set({ gender: (e.target.value || null) as Gender | null })}
+            >
+              <option value="">{t('Not set')}</option>
+              {GENDERS.map((g) => (
+                <option key={g} value={g}>
+                  {t(GENDER_LABELS[g])}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <Field label={t('Date of birth')} optional>
+          {(id) => (
+            <DateField
+              id={id}
+              value={value.birthDate ?? ''}
+              max={today()}
+              onChange={(iso) => set({ birthDate: iso || null })}
+            />
           )}
         </Field>
         <Field
@@ -716,6 +745,28 @@ export function EmployeeForm({
               }}
               aria-invalid={Boolean(errors.iban)}
               placeholder="KW00 XXXX 0000 0000 0000 0000 0000 00"
+              autoComplete="off"
+              spellCheck={false}
+              dir="ltr"
+              className="font-mono"
+            />
+          )}
+        </Field>
+        <Field
+          label={t('Account or salary card number')}
+          optional
+          hint={
+            value.accountNumber?.trim() && value.iban.trim()
+              ? t('The IBAN is used for salaries while there is one.')
+              : t('For salaries paid to a salary card or an account without an IBAN.')
+          }
+        >
+          {(id) => (
+            <Input
+              id={id}
+              value={value.accountNumber ?? ''}
+              onChange={(e) => set({ accountNumber: e.target.value })}
+              inputMode="numeric"
               autoComplete="off"
               spellCheck={false}
               dir="ltr"

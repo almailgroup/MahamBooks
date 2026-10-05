@@ -3,6 +3,7 @@ import type {
   Employee,
   EmployeeCategory,
   EmployeeStatus,
+  Gender,
   ISODate,
   LeavingReason,
   PayBasis,
@@ -53,6 +54,11 @@ export const CATEGORY_LABELS: Record<EmployeeCategory, string> = {
   gcc: msg('GCC national'),
   expat: msg('Expatriate'),
   domestic: msg('Domestic worker'),
+};
+
+export const GENDER_LABELS: Record<Gender, string> = {
+  male: msg('Male'),
+  female: msg('Female'),
 };
 
 export const STATUS_LABELS: Record<EmployeeStatus, string> = {

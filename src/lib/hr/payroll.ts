@@ -13,10 +13,10 @@ import type {
 } from '@/db/types';
 import { daysBetween } from '@/lib/dates';
 import { dec, fromMinor, round, toMinor, type Decimal, type Numeric } from '@/lib/money';
-import { isValidIban } from '@/lib/kuwait';
 import { msg } from '@/i18n';
 import { calculateEosi, eosWage, serviceYears, type EosiResult } from './eosi';
 import { eosiReasonFor } from './employees';
+import { hasPayAccount } from './salary-file';
 
 /**
  * Kuwait private sector payroll (Labour Law 6/2010). There is no income tax;
@@ -295,8 +295,8 @@ export type PayWarning =
  * Checks a worked-out pay line against the law: loan recoveries over 10%
  * and all deductions (other than social security) over 25% of the wage
  * (art. 59), net pay below the minimum wage, a basic salary below the work
- * permit salary, and a missing or invalid IBAN (salaries are paid into a
- * local bank account, art. 57).
+ * permit salary, and a missing or invalid IBAN without a salary card or
+ * account number (salaries are paid into a local bank account, art. 57).
  */
 export function payLineWarnings(line: PayLine, rules: PayRules, precision: number): PayWarning[] {
   const p = precision;
@@ -328,7 +328,7 @@ export function payLineWarnings(line: PayLine, rules: PayRules, precision: numbe
   if (line.category === 'expat' && minor(line.permitSalary) > minor(line.monthlyBasic)) {
     out.push({ code: 'permit_salary', permit: line.permitSalary });
   }
-  if (minor(line.net) > 0 && !isValidIban(line.iban)) out.push({ code: 'iban' });
+  if (minor(line.net) > 0 && !hasPayAccount(line)) out.push({ code: 'iban' });
   if (contributionRates(line, rules).missing) {
     out.push(
       line.category === 'gcc'

@@ -22,6 +22,7 @@ import type {
   Client,
   Company,
   DocumentType,
+  Employee,
   ID,
   ISODate,
   InvoiceDocument,
@@ -29,7 +30,15 @@ import type {
   Product,
 } from './types';
 import {
+  commitEmployeeImport,
+  planEmployeeRows,
+  type EmployeeImportProgress,
+  type EmployeeImportSummary,
+  type EmployeeRecord,
+} from './import-employees';
+import {
   IMPORT_COLUMNS,
+  missingColumns,
   normalizeHeader,
   type ColumnMapping,
   type ImportKind,
@@ -79,6 +88,10 @@ export interface ImportOptions {
   fileName: string;
   /** Shows a date in messages (defaults to yyyy-MM-dd). */
   formatDate?: (date: ISODate) => string;
+  /** Employees: rows for employees already in the company update them (else they are skipped). */
+  updateExisting?: boolean;
+  /** Employees: the day documents' expiry and joining dates are judged on (defaults to today). */
+  today?: ISODate;
 }
 
 export interface ImportContext {
@@ -87,6 +100,7 @@ export interface ImportContext {
   products: Product[];
   accounts: Account[];
   documents: Pick<InvoiceDocument, 'type' | 'number'>[];
+  employees: Employee[];
 }
 
 export type RowStatus = 'ready' | 'skipped' | 'error';
@@ -122,7 +136,8 @@ export type ImportRecord =
   | { kind: 'contacts'; value: ContactRecord }
   | { kind: 'products'; value: Product }
   | { kind: 'opening'; value: OpeningRecord }
-  | { kind: 'documents'; value: DocumentRecord };
+  | { kind: 'documents'; value: DocumentRecord }
+  | { kind: 'employees'; value: EmployeeRecord };
 
 export interface PlannedRow {
   /** Line number in the file (the header is line 1). */
@@ -144,11 +159,17 @@ export interface ImportPlan {
   newContacts: number;
   /** Opening balances, in minor units of the company currency. */
   totals: { debit: number; credit: number; difference: number };
+  /** Employees: what the file holds and what to check. */
+  employees?: EmployeeImportSummary;
 }
 
 export interface ImportResult {
   kind: ImportKind;
   added: number;
+  /** Employees already in the company that were updated. */
+  updated?: number;
+  /** Employees: whether the file had salaries (false: add them before payroll). */
+  salaries?: boolean;
   skipped: number;
   newContacts: number;
   /** Opening documents created for contacts' opening balances. */
@@ -252,9 +273,12 @@ export function planImport(
   ctx: ImportContext,
 ): ImportPlan {
   const plan = emptyPlan(kind);
-  const missing = IMPORT_COLUMNS[kind].filter((c) => c.required && mapping[c.key] == null);
+  const missing = missingColumns(kind, mapping);
   const body = rows.slice(1);
   if (missing.length || body.length === 0) return plan;
+  if (kind === 'employees') {
+    return finish(planEmployeeRows(plan, body, mapping, options, ctx, rows[0] ?? []));
+  }
   const fmtDate = options.formatDate ?? ((d: ISODate) => d);
   const lock = accountingSettings(ctx.company).lockDate;
   const locked = (date: ISODate) => Boolean(lock && date <= lock);
@@ -673,13 +697,29 @@ function openingDocument(
 export async function loadImportContext(companyId: ID): Promise<ImportContext> {
   const company = await db.companies.get(companyId);
   if (!company) throw new ImportError(t('Company not found.'));
-  const [clients, products, accounts, documents] = await Promise.all([
+  const [clients, products, accounts, documents, employees] = await Promise.all([
     db.clients.where('companyId').equals(companyId).toArray(),
     db.products.where('companyId').equals(companyId).toArray(),
     db.accounts.where('companyId').equals(companyId).toArray(),
     db.documents.where('companyId').equals(companyId).toArray(),
+    db.employees.where('companyId').equals(companyId).toArray(),
   ]);
-  return { company, clients, products, accounts, documents };
+  return { company, clients, products, accounts, documents, employees };
+}
+
+/**
+ * Imports employees: plans the file against the company as it is now, then
+ * saves the employees in batches (see import-employees.ts), with progress.
+ */
+export async function importEmployees(
+  companyId: ID,
+  rows: string[][],
+  mapping: ColumnMapping,
+  options: ImportOptions,
+  onProgress?: (progress: EmployeeImportProgress) => void,
+): Promise<ImportResult> {
+  const plan = planImport('employees', rows, mapping, options, await loadImportContext(companyId));
+  return commitEmployeeImport(companyId, plan, onProgress);
 }
 
 /** The Opening balance equity account, added when the chart has none. */
@@ -734,6 +774,8 @@ export async function commitImport(
   mapping: ColumnMapping,
   options: ImportOptions,
 ): Promise<ImportResult> {
+  // Employees are saved in batches, not in one transaction.
+  if (kind === 'employees') return importEmployees(companyId, rows, mapping, options);
   return db.transaction(
     'rw',
     [
@@ -745,6 +787,8 @@ export async function commitImport(
       db.accounts,
       db.payments,
       db.activities,
+      // Read by loadImportContext.
+      db.employees,
     ],
     async () => {
       const ctx = await loadImportContext(companyId);

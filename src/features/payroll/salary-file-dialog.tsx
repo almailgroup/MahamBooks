@@ -53,6 +53,7 @@ export function SalaryFileDialog({
           nameEn: l.name,
           nameAr: l.nameAr,
           iban: l.iban,
+          accountNumber: l.accountNumber ?? '',
           amount: l.net,
         })),
         {
@@ -206,7 +207,9 @@ export function SalaryFileDialog({
 
           {file.problems.length > 0 ? (
             <div role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800">
-              <p className="font-medium">{t('Add a valid IBAN for these employees first:')}</p>
+              <p className="font-medium">
+                {t('Add a valid IBAN or a salary card number for these employees first:')}
+              </p>
               <ul className="mt-1 list-disc ps-5">
                 {file.problems.map((p) => (
                   <li key={p.employeeId}>
