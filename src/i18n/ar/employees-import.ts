@@ -290,4 +290,23 @@ export default {
   '{count} file added to a personnel file': 'تمت إضافة {count} ملف إلى ملف موظف',
   '{count} files added to {employees} personnel files':
     'تمت إضافة {count} من الملفات إلى ملفات {employees} من الموظفين',
+
+  'Date of birth “{value}” is in the future, so it was left empty.':
+    'تاريخ الميلاد «{value}» في المستقبل، لذا تُرك فارغًا.',
+  'Date of birth “{value}” is before 1900, so it was left empty.':
+    'تاريخ الميلاد «{value}» قبل عام 1900، لذا تُرك فارغًا.',
+
+  // A leave balance column
+  'Leave balance': 'رصيد الإجازات',
+  'Leave balance: “{value}” is not a number of days.':
+    'رصيد الإجازات: «{value}» ليس عددًا من الأيام.',
+  'Leave balances of {count} employees brought forward on the import date, confirmed.': {
+    one: 'رُحّل رصيد إجازة موظف واحد في تاريخ الاستيراد، مؤكدًا.',
+    two: 'رُحّل رصيدا إجازة موظفَين في تاريخ الاستيراد، مؤكدَين.',
+    few: 'رُحّلت أرصدة إجازات {count} موظفين في تاريخ الاستيراد، مؤكدة.',
+    many: 'رُحّلت أرصدة إجازات {count} موظفًا في تاريخ الاستيراد، مؤكدة.',
+    other: 'رُحّلت أرصدة إجازات {count} موظف في تاريخ الاستيراد، مؤكدة.',
+  },
+  'Leave balances are not in the file: new employees start with 0 days on the import date until you set them in Payroll → Leave.':
+    'أرصدة الإجازات غير موجودة في الملف: يبدأ الموظفون الجدد بصفر أيام في تاريخ الاستيراد إلى أن تحددها من الرواتب ← الإجازات.',
 } satisfies Dictionary;

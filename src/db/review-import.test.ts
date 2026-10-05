@@ -131,10 +131,13 @@ describe('employees from a CSV', () => {
     ]);
   });
 
-  it('points out a birth date written in full that is in the future', async () => {
-    expect(await birthDates(['1001,Made-up Person,India,02/07/2094,10/09/2023'])).toEqual([
-      { birthDate: '2094-07-02', notes: ['The date of birth is in the future (2094-07-02).'] },
-    ]);
+  it('leaves out a birth date written in full that is in the future, and says so', async () => {
+    const [row] = await birthDates(['1001,Made-up Person,India,02/07/2094,10/09/2023']);
+    expect(row.birthDate).toBeNull();
+    expect(row.notes).toHaveLength(1);
+    expect(row.notes[0]).toMatch(
+      /Date of birth .*02\/07\/2094.* is in the future, so it was left empty\./,
+    );
   });
 });
 

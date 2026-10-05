@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Eye, EyeOff, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deleteEmployee, employeeDeletion, saveEmployee } from '@/db/people';
+import { deleteEmployee, employeeDeletion } from '@/db/people';
 import { addAttachment, removeAttachment } from '@/db/purchases';
 import { useCompany, useFormat } from '@/app/company';
 import {
@@ -28,6 +28,7 @@ import { EmployeeDocuments } from '@/features/people/employee-documents';
 import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
 import { EmployeePhotoEditor } from '@/features/people/employee-photo';
+import { MarkLeftDialog } from '@/features/people/mark-left-dialog';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { EndOfServiceTab, LeaveTab, LoansTab } from '@/features/payroll/employee-tabs';
 import { cn } from '@/lib/cn';
@@ -117,6 +118,7 @@ export default function EmployeeDetailPage() {
   const employees = useEmployees();
   const settings = usePeopleSettings();
   const [params, setParams] = useSearchParams();
+  const [markingLeft, setMarkingLeft] = useState(false);
   const tab = TABS.find((x) => x.value === params.get('tab'))?.value ?? 'overview';
 
   if (employee === undefined || !records || !renewals || !files || !employees || !settings) {
@@ -150,17 +152,9 @@ export default function EmployeeDetailPage() {
           );
           return;
         }
-        const left = await confirm({
-          title: t('Mark {name} as left?', { name }),
-          description: t(
-            '{name} has payroll records (pay runs, leave, loans or a final settlement). Payroll is part of the accounts, so the employee can’t be deleted. Marked as left, they stay in past payroll and reports.',
-            { name },
-          ),
-          confirmLabel: t('Mark as left'),
-        });
-        if (!left) return;
-        await saveEmployee({ ...employee, status: 'left' });
-        toast.success(t('{name} is marked as left.', { name }));
+        // The leaving date and the reason are asked for: the reason decides
+        // the end-of-service indemnity.
+        setMarkingLeft(true);
         return;
       }
       const ok = await confirm({
@@ -492,6 +486,9 @@ export default function EmployeeDetailPage() {
           </div>
         </div>
       )}
+      {markingLeft ? (
+        <MarkLeftDialog employee={employee} onClose={() => setMarkingLeft(false)} />
+      ) : null}
     </div>
   );
 }

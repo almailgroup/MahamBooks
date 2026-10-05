@@ -49,7 +49,7 @@ import { FileList } from './file-list';
 import { DateField } from '@/components/ui/date-field';
 
 export type EmployeeErrors = Partial<
-  Record<'name' | 'iban' | 'contractEnd' | 'leavingDate' | 'number', string>
+  Record<'name' | 'iban' | 'contractEnd' | 'leavingDate' | 'leavingReason' | 'number', string>
 >;
 
 /** Blocking problems; soft warnings (Civil ID, probation) are shown on the fields. */
@@ -72,6 +72,10 @@ export function validateEmployee(employee: Employee): EmployeeErrors {
     employee.leavingDate < employee.hireDate
   ) {
     errors.leavingDate = t('The leaving date is before the hire date.');
+  }
+  // Never a reason nobody chose: it decides the end-of-service indemnity.
+  if (employee.status === 'left' && !employee.leavingReason) {
+    errors.leavingReason = t('Choose the reason for leaving.');
   }
   return errors;
 }
@@ -818,13 +822,18 @@ export function EmployeeForm({
                   />
                 )}
               </Field>
-              <Field label={t('Reason for leaving')}>
+              <Field label={t('Reason for leaving')} error={errors.leavingReason}>
                 {(id) => (
                   <Select
                     id={id}
-                    value={value.leavingReason ?? 'resignation'}
-                    onChange={(e) => set({ leavingReason: e.target.value as LeavingReason })}
+                    value={value.leavingReason ?? ''}
+                    onChange={(e) =>
+                      set({ leavingReason: (e.target.value || null) as LeavingReason | null })
+                    }
+                    aria-invalid={Boolean(errors.leavingReason)}
+                    required
                   >
+                    <option value="">{t('Choose a reason')}</option>
                     {REASONS.map((r) => (
                       <option key={r} value={r}>
                         {t(LEAVING_REASON_LABELS[r])}

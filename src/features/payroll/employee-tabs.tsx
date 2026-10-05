@@ -3,6 +3,8 @@ import { Link } from 'react-router';
 import { CalendarPlus, HandCoins, Plus, SlidersHorizontal, UserMinus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Employee } from '@/db/types';
+import { setLeaveOpening } from '@/db/people';
+import { localName } from '@/i18n/names';
 import {
   cancelLeaveRecord,
   cancelStaffLoan,
@@ -10,7 +12,7 @@ import {
   loanBalance,
   loanRecoveredMinor,
 } from '@/db/payroll';
-import { annualLeaveBalance, LEAVE_TYPES, sickDaysByTier, SICK_TIERS } from '@/lib/hr/leave';
+import { employeeLeaveBalance, LEAVE_TYPES, sickDaysByTier, SICK_TIERS } from '@/lib/hr/leave';
 import { formatPeriod } from '@/lib/hr/payroll';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
@@ -31,6 +33,7 @@ import {
   useStaffLoans,
 } from './hooks';
 import { LeaveDialog } from './leave-dialog';
+import { LeaveOpeningDialog } from './leave-opening-dialog';
 import { LoanDialog } from './loan-dialog';
 import { AmountRow } from './shared';
 
@@ -40,13 +43,15 @@ export function LeaveTab({ employee }: { employee: Employee }) {
   const confirm = useConfirm();
   const records = useLeaveRecords(employee.id);
   const employees = useEmployees();
-  const [dialog, setDialog] = useState<'leave' | 'balance' | null>(null);
+  const [dialog, setDialog] = useState<'leave' | 'balance' | 'opening' | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const dayOff = useMemo(() => companyDayOff(company), [company]);
   if (!records || !employees) return <Spinner className="py-12" />;
+  const brought = employee.leaveOpening ?? null;
 
   const on = today();
   const year = Number(on.slice(0, 4));
-  const balance = annualLeaveBalance(records, employee.hireDate, on);
+  const balance = employeeLeaveBalance(employee, records, on);
   const sick = sickDaysByTier(records, year, dayOff);
   const list = [...records].sort(
     (a, b) => b.start.localeCompare(a.start) || b.createdAt.localeCompare(a.createdAt),
@@ -57,6 +62,19 @@ export function LeaveTab({ employee }: { employee: Employee }) {
       : percent === 0
         ? t('Without pay')
         : t('{percent} pay', { percent: fmt.percent(percent) });
+
+  const confirmOpening = async () => {
+    if (!brought) return;
+    setConfirming(true);
+    try {
+      await setLeaveOpening(employee.id, { date: brought.date, days: brought.days });
+      toast.success(t('Leave brought forward for {name} confirmed', { name: localName(employee) }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('Something went wrong.'));
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const cancel = async (id: string) => {
     const ok = await confirm({
@@ -69,8 +87,12 @@ export function LeaveTab({ employee }: { employee: Employee }) {
       danger: true,
     });
     if (!ok) return;
-    await cancelLeaveRecord(id);
-    toast.success(t('Leave cancelled'));
+    try {
+      await cancelLeaveRecord(id);
+      toast.success(t('Leave cancelled'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('Something went wrong.'));
+    }
   };
 
   return (
@@ -108,6 +130,41 @@ export function LeaveTab({ employee }: { employee: Employee }) {
               ) : null}
               <AmountRow label={t('Taken')} value={`−${fmt.quantity(balance.taken)}`} />
             </dl>
+            {brought ? (
+              <div className="rounded-lg border border-slate-200 p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-slate-900">{t('Leave brought forward')}</p>
+                  {brought.confirmed ? (
+                    <Badge tone="green">{t('Confirmed')}</Badge>
+                  ) : (
+                    <Badge tone="amber">{t('Not confirmed')}</Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-slate-600">
+                  {t('{days} days on {date}. Leave counts from this date.', {
+                    days: fmt.quantity(brought.days),
+                    date: fmt.date(brought.date),
+                  })}
+                </p>
+                {brought.confirmed ? null : (
+                  <p className="mt-1 text-xs text-amber-800">
+                    {t(
+                      'Imported with 0 days. Enter what they had left on that day, from your records before, or confirm it.',
+                    )}
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setDialog('opening')}>
+                    {t('Edit')}
+                  </Button>
+                  {brought.confirmed ? null : (
+                    <Button size="sm" loading={confirming} onClick={() => void confirmOpening()}>
+                      {t('Confirm')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : null}
             {balance.eligibleFrom && on < balance.eligibleFrom ? (
               <p className="text-xs text-slate-500">
                 {t('Annual leave can be taken from {date}, after nine months of service.', {
@@ -205,7 +262,9 @@ export function LeaveTab({ employee }: { employee: Employee }) {
           </ul>
         )}
       </Card>
-      {dialog ? (
+      {dialog === 'opening' ? (
+        <LeaveOpeningDialog employee={employee} onClose={() => setDialog(null)} />
+      ) : dialog ? (
         <LeaveDialog
           employees={employees}
           employeeId={employee.id}

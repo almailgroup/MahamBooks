@@ -1,4 +1,4 @@
-import { addYears, differenceInCalendarDays, differenceInCalendarYears } from 'date-fns';
+import { addDays, addYears, differenceInCalendarDays, differenceInCalendarYears } from 'date-fns';
 import type { EmployeeAllowance, ISODate, PayBasis } from '@/db/types';
 import { parseISODate } from '@/lib/dates';
 import { dec, round, type Numeric } from '@/lib/money';
@@ -196,13 +196,15 @@ export function calculateEosi(input: EosiInput): EosiResult {
 }
 
 /**
- * Years of service from the hire date to `until`: completed years plus the
- * days since the last anniversary over the days in that service year, so
- * part years count pro rata. Rounded to 4 decimals (about an hour).
+ * Years of service from the hire date through `until`, both days counted
+ * (the leaving date is a day worked and paid): completed years plus the days
+ * since the last anniversary over the days in that service year, so part
+ * years count pro rata. Hired 1 October 2023 with a last day of 30 September
+ * 2026 is three years. Rounded to 4 decimals (about an hour).
  */
 export function serviceYears(hireDate: ISODate, until: ISODate): number {
   const start = parseISODate(hireDate);
-  const end = parseISODate(until);
+  const end = addDays(parseISODate(until), 1);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return 0;
   let whole = differenceInCalendarYears(end, start);
   if (addYears(start, whole) > end) whole -= 1;

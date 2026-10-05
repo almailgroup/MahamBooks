@@ -35,7 +35,7 @@ export async function logActivity(
   entityId: ID,
   action: string,
   message: ActivityMessage,
-  refs: { clientId?: ID | null; documentId?: ID | null } = {},
+  refs: { clientId?: ID | null; documentId?: ID | null; employeeId?: ID | null } = {},
 ): Promise<void> {
   const activity: Activity = {
     id: newId(),
@@ -45,6 +45,8 @@ export async function logActivity(
     entityId,
     clientId: refs.clientId ?? null,
     documentId: refs.documentId ?? null,
+    // About an employee's papers: private, whatever happens to the document.
+    ...(refs.employeeId ? { employeeId: refs.employeeId } : {}),
     action,
     message: typeof message === 'string' ? message : interpolate(message.text, message.vars),
     ...(typeof message === 'string'

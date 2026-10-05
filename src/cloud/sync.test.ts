@@ -6,7 +6,11 @@ import { draftDocument, saveDocument } from '@/db/documents';
 import { createPayment, savePayment } from '@/db/payments';
 import { addAttachment } from '@/db/purchases';
 import { createEmployee, deleteEmployee, saveEmployee } from '@/db/people';
-import { createComplianceDocument, saveComplianceDocument } from '@/db/renewals';
+import {
+  createComplianceDocument,
+  deleteComplianceDocument,
+  saveComplianceDocument,
+} from '@/db/renewals';
 import type { Company, InvoiceDocument } from '@/db/types';
 import type { CloudApi, PushChange } from './api';
 import { FakeCloud } from './testing/fake-cloud';
@@ -491,6 +495,36 @@ describe('files', () => {
     await staff.api.removeFiles([scanPath]);
     expect(server.files.has(scanPath)).toBe(true);
     expect((await staff.api.listFiles(company.id)).map((f) => f.path)).not.toContain(scanPath);
+  });
+
+  it('keep activity about an employee’s document from staff once the document is deleted', async () => {
+    const STAFF = 'user-staff';
+    const { company } = await uploaded();
+    const employee = await saveEmployee(createEmployee(company.id, { name: 'Test Guard Eleven' }));
+    const licence = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: employee.id,
+        expiryDate: '2027-01-31',
+      }),
+    );
+    await deleteComplianceDocument(licence.id);
+    const about = await db.activities.where('entityId').equals(licence.id).toArray();
+    const deleted = about.find((a) => a.action === 'deleted')!;
+    expect(deleted).toMatchObject({ message: 'Document Driving licence deleted' });
+    expect(about.every((a) => a.employeeId === employee.id)).toBe(true);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'activities', deleted.id)?._private).toBe(true);
+
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    const seen = await db.activities.where('companyId').equals(company.id).toArray();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter((a) => a.entityId === licence.id)).toEqual([]);
+    expect(JSON.stringify(seen)).not.toContain('Driving licence');
   });
 
   it('left behind are cleaned up, except those still on their way', async () => {

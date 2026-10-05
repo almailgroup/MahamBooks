@@ -53,6 +53,10 @@ describe('private records', () => {
     expect(isPrivateRecord('activities', about('doc-emp'), lookup)).toBe(true);
     expect(isPrivateRecord('activities', about('ren-emp'), lookup)).toBe(true);
     expect(isPrivateRecord('activities', about('doc-co'), lookup)).toBe(false);
+    // Logged about an employee's document: private without finding the document,
+    // which may be deleted by now.
+    expect(isPrivateRecord('activities', { ...about('gone'), employeeId: 'emp-1' })).toBe(true);
+    expect(isPrivateRecord('activities', { ...about('gone'), employeeId: null })).toBe(false);
 
     const file = (ownerId: string) => ({ id: 'att', ownerId });
     expect(isPrivateRecord('attachments', file('emp-1'), lookup)).toBe(true);

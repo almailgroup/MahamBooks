@@ -35,8 +35,7 @@ describe('review: staff and viewers', () => {
   // Known, left to whoever owns renewals (src/db/renewals.ts): the fee of an
   // employee's renewal is an expense, which staff and viewers see, written
   // "Passport renewal – <name>" with the new document number as reference.
-  // `it.fails` keeps it on record; it starts failing (flip it to `it`) once fixed.
-  it.fails('never receive an employee’s name or passport number through an expense', async () => {
+  it('never receive an employee’s name or passport number through an expense', async () => {
     const OWNER = 'user-owner';
     const VIEWER = 'user-viewer';
     const server = new FakeCloud();

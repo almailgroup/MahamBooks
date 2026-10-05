@@ -81,6 +81,11 @@ export function EosiCard({ employee, divisor }: { employee: Employee; divisor: n
   const left = employee.status === 'left';
   const until = left && employee.leavingDate ? employee.leavingDate : today();
   const title = left ? t('End of service at leaving') : t('End-of-service estimate today');
+  // Only a reason someone chose gives one amount; "Other" or none shows both.
+  const reason =
+    left && employee.leavingReason && employee.leavingReason !== 'other'
+      ? employee.leavingReason
+      : null;
 
   if (!underLabourLaw(employee.category)) {
     return (
@@ -116,11 +121,11 @@ export function EosiCard({ employee, divisor }: { employee: Employee; divisor: n
     pifssOffset: offset,
     precision,
   };
-  const results = left
+  const results = reason
     ? [
         {
           label: null,
-          result: calculateEosi({ ...base, reason: eosiReasonFor(employee.leavingReason) }),
+          result: calculateEosi({ ...base, reason: eosiReasonFor(reason) }),
         },
       ]
     : [
@@ -142,6 +147,9 @@ export function EosiCard({ employee, divisor }: { employee: Employee; divisor: n
         description={t('Labour Law 6/2010, articles 51 and 53. An estimate, not legal advice.')}
       />
       <CardBody className="space-y-4">
+        {left && !employee.leavingReason ? (
+          <p className="text-sm text-amber-800">{t('The reason for leaving isn’t recorded.')}</p>
+        ) : null}
         <div className={cn('grid grid-cols-1 gap-3', results.length > 1 && 'sm:grid-cols-2')}>
           {results.map(({ label, result }, i) => (
             <div key={i} className="rounded-lg bg-slate-50 p-4">

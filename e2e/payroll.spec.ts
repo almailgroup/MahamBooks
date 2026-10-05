@@ -63,6 +63,25 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
   await expect(page).toHaveURL(/#\/payroll\/runs\/[0-9a-f-]{36}$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Payroll for ${month.label}`);
 
+  // Hired before they were added here: their leave before isn't known. Everyone
+  // without a balance starts at 0 days, in one go.
+  const noOpening = page.getByText(
+    '2 employees have no opening leave balance: their leave is counted from their hire date.',
+  );
+  await expect(noOpening).toBeVisible();
+  await page.getByRole('button', { name: 'Set opening leave balances' }).click();
+  const everyone = page.getByRole('dialog', { name: 'Set opening leave balances' });
+  await expect(
+    everyone.getByRole('radio', { name: /^Everyone without a balance starts at 0 days/ }),
+  ).toBeChecked();
+  await expect(
+    everyone.getByText('This applies to 2 current employees without an opening balance.'),
+  ).toBeVisible();
+  await everyone.getByRole('button', { name: 'Set for 2 employees' }).click();
+  await expect(page.getByText('Opening leave balances set for 2 employees')).toBeVisible();
+  await expect(everyone).toBeHidden();
+  await expect(noOpening).toBeHidden();
+
   // PIFSS is 10.5% of the insured KD 2,750: KD 288.750 off Fatima's pay.
   const fatima = page.getByRole('row').filter({ hasText: 'Fatima Al-Sabah' });
   await expect(fatima).toContainText('KD 2,711.250');
@@ -105,12 +124,12 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
     .replace(/^\uFEFF/, '')
     .split('\r\n');
   expect(rows[0]).toBe(
-    'Employee No,Civil ID,Employee Name,Employee Name (Arabic),IBAN,Bank Code,Amount,Salary Month,PAM File No',
+    'Employee No,Civil ID,Employee Name,Employee Name (Arabic),IBAN,Account/Card No,Bank Code,Amount,Salary Month,PAM File No',
   );
   const period = month.period.replace('-', '');
   expect(rows.slice(1)).toEqual([
-    `EMP-001,,Fatima Al-Sabah,فاطمة الصباح,KW81CBKU0000000000001234560101,CBKU,2711.250,${period},`,
-    `EMP-002,,Ravi Kumar,رافي كومار,KW09NBOK0000000000001234567890,NBOK,525.000,${period},`,
+    `EMP-001,,Fatima Al-Sabah,فاطمة الصباح,KW81CBKU0000000000001234560101,,CBKU,2711.250,${period},`,
+    `EMP-002,,Ravi Kumar,رافي كومار,KW09NBOK0000000000001234567890,,NBOK,525.000,${period},`,
   ]);
 
   // Bilingual payslips.
@@ -118,6 +137,27 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
   await expect(page.getByText('قسيمة الراتب').first()).toBeVisible();
   await expect(page.getByText('KD 2,711.250').first()).toBeVisible();
   await page.getByRole('link', { name: 'Back to the pay run' }).click();
+
+  // Ravi's own balance from a spreadsheet: it replaces the 0 days.
+  await page.goto('#/payroll/leave');
+  await page.getByRole('button', { name: 'Set opening leave balances' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Set opening leave balances' });
+  await sheet.getByRole('radio', { name: /^From a spreadsheet/ }).check();
+  await sheet.locator('input[type=file]').setInputFiles({
+    name: 'leave-balances.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Employee No,Leave balance\nEMP-002,12.5\nEMP-009,3\nEMP-001,many\n'),
+  });
+  await expect(sheet.getByText('1 matched · 1 not found · 1 can’t be read')).toBeVisible();
+  await expect(
+    sheet.getByText('1 of them has an opening balance already: the spreadsheet replaces it.'),
+  ).toBeVisible();
+  await expect(sheet.getByText('No employee has this number.')).toBeVisible();
+  await expect(sheet.getByText(/^“.?many.?” is not a number of days\.$/)).toBeVisible();
+  await sheet.getByRole('button', { name: 'Set for 1 employee' }).click();
+  await expect(page.getByText('Opening leave balance set for 1 employee')).toBeVisible();
+  await page.getByRole('link', { name: 'Ravi Kumar' }).click();
+  await expect(page.getByText(/^12\.5 days on .+\. Leave counts from this date\.$/)).toBeVisible();
 
   // The books balance.
   await page.goto('#/reports/balance-sheet');

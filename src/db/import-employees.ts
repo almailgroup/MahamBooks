@@ -1,6 +1,6 @@
 import { db } from './db';
 import { logActivity } from './activity';
-import { compactAccountNumber, createEmployee, saveEmployee } from './people';
+import { compactAccountNumber, createEmployee, putLeaveOpening, saveEmployee } from './people';
 import { createComplianceDocument, saveComplianceDocument } from './renewals';
 import type {
   ComplianceDocumentType,
@@ -82,6 +82,10 @@ export interface EmployeeImportSummary {
   documentExpiry: { total: number; sameAsCivilId: number } | null;
   /** The file has salaries; without them, salaries are added before payroll. */
   salaries: boolean;
+  /** The file has a leave balance column. */
+  leaveBalanceColumn: boolean;
+  /** Employees whose leave balance the file gives. */
+  leaveBalances: number;
 }
 
 export interface EmployeeRecord {
@@ -89,6 +93,8 @@ export interface EmployeeRecord {
   /** The employee already in the company this row updates. */
   existing: Employee | null;
   drivingLicence: { number: string; expiryDate: ISODate | null } | null;
+  /** Leave the employee has left on the import date, from the file (confirmed). */
+  leaveOpening: { date: ISODate; days: number } | null;
 }
 
 export interface EmployeeImportProgress {
@@ -221,6 +227,8 @@ function emptySummary(): EmployeeImportSummary {
     missingHireDates: 0,
     documentExpiry: null,
     salaries: false,
+    leaveBalanceColumn: false,
+    leaveBalances: 0,
   };
 }
 
@@ -255,6 +263,7 @@ export function planEmployeeRows(
   const fromDocumentExpiry = /document/.test(normalizeHeader(residencyHeader ?? ''));
   if (fromDocumentExpiry) summary.documentExpiry = { total: 0, sameAsCivilId: 0 };
   summary.salaries = mapping.basicSalary != null;
+  summary.leaveBalanceColumn = mapping.leaveBalance != null;
 
   /** yyyy-MM-dd from a cell (ISO from spreadsheets, else as the file writes dates). */
   const readDate = (field: string, value: string, issues: RowIssue[]): ISODate | null => {
@@ -273,6 +282,50 @@ export function planEmployeeRows(
       return null;
     }
     // Excel's empty date (1899-12-30 and thereabouts) and other placeholders.
+    return date < '1901-01-01' ? null : date;
+  };
+
+  /**
+   * A date of birth. A year written short ("02/07/94") reads as 20xx; when
+   * that is in the future it is 19xx. A date in the future or before 1900 is
+   * left empty, with a note.
+   */
+  const readBirthDate = (value: string, issues: RowIssue[]): ISODate | null => {
+    if (!value) return null;
+    const v = normalizeDigits(value).trim();
+    const iso = /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
+    let date = iso && isISODate(iso) ? iso : parseStatementDate(v, options.dateFormat);
+    if (!date) {
+      issues.push({
+        level: 'warning',
+        text: t('{field}: “{value}” is not a date.', {
+          field: t(LABELS.birthDate),
+          value: isolate(value),
+        }),
+      });
+      return null;
+    }
+    // A short year: the four-figure year read isn't in the text.
+    if (date > on && !v.includes(date.slice(0, 4))) {
+      date = `${Number(date.slice(0, 4)) - 100}${date.slice(4)}`;
+    }
+    // Excel's empty date (30 December 1899 and thereabouts).
+    if (date >= '1899-12-28' && date < '1900-01-01') return null;
+    if (date > on || date < '1900-01-01') {
+      issues.push({
+        level: 'warning',
+        text:
+          date > on
+            ? t('Date of birth “{value}” is in the future, so it was left empty.', {
+                value: isolate(value),
+              })
+            : t('Date of birth “{value}” is before 1900, so it was left empty.', {
+                value: isolate(value),
+              }),
+      });
+      return null;
+    }
+    // 1 January 1900 and the like stand for "not known", as in other date columns.
     return date < '1901-01-01' ? null : date;
   };
 
@@ -366,7 +419,10 @@ export function planEmployeeRows(
     }
 
     const patch: Partial<Employee> = {};
-    if (english || nameAr) patch.name = english || nameAr;
+    // The main name is the English one (the bank's salary file, payslips): an
+    // Arabic value names only a new employee, never replaces an existing name.
+    if (english) patch.name = english;
+    else if (nameAr && !existing) patch.name = nameAr;
     if (nameAr) {
       patch.nameAr = nameAr;
       if (nameFromFile) summary.arabicNamesFromFiles += 1;
@@ -401,18 +457,7 @@ export function planEmployeeRows(
       if (gender) patch.gender = gender;
       else note(t('Gender “{value}” not recognised.', { value: isolate(cells.gender) }));
     }
-    let birthDate = readDate('birthDate', cells.birthDate, issues);
-    if (birthDate && birthDate > on) {
-      // "02/07/94" reads as 2094: with a two-digit year, a birth date is the
-      // century before. A full year in the future is only pointed out.
-      const year = birthDate.slice(0, 4);
-      const earlier = `${Number(year) - 100}${birthDate.slice(4)}`;
-      if (!normalizeDigits(cells.birthDate).includes(year) && isISODate(earlier)) {
-        birthDate = earlier;
-      } else {
-        note(t('The date of birth is in the future ({date}).', { date: fmtDate(birthDate) }));
-      }
-    }
+    const birthDate = readBirthDate(cells.birthDate, issues);
     if (birthDate) patch.birthDate = birthDate;
 
     // Civil ID and documents.
@@ -488,6 +533,21 @@ export function planEmployeeRows(
       if (amount === null || amount < 0) {
         note(t('Basic salary: “{value}” is not an amount.', { value: isolate(cells.basicSalary) }));
       } else patch.basicSalary = round(dec(amount), places);
+    }
+    // Annual leave left on the import date, as the other system has it.
+    let leaveOpening: EmployeeRecord['leaveOpening'] = null;
+    if (cells.leaveBalance) {
+      const days = parseAmount(cells.leaveBalance);
+      if (days === null || days < 0) {
+        note(
+          t('Leave balance: “{value}” is not a number of days.', {
+            value: isolate(cells.leaveBalance),
+          }),
+        );
+      } else {
+        leaveOpening = { date: on, days: Math.round(days * 100) / 100 };
+        summary.leaveBalances += 1;
+      }
     }
     let iban = compactIban(normalizeDigits(cells.iban));
     const account = compactAccountNumber(cells.accountNumber);
@@ -583,13 +643,19 @@ export function planEmployeeRows(
           number,
           name: patch.name ?? '',
           status: 'active',
+          // Their leave history is in the other system: leave counts from the
+          // import, with the balance the file gives, or 0 days brought forward
+          // until someone confirms it.
+          leaveOpening: leaveOpening
+            ? { ...leaveOpening, confirmed: true }
+            : { date: on, days: 0, confirmed: false },
         });
     plan.rows.push({
       line,
       status: 'ready',
       issues,
       cells,
-      record: { kind: 'employees', value: { employee, existing, drivingLicence } },
+      record: { kind: 'employees', value: { employee, existing, drivingLicence, leaveOpening } },
     });
   });
   return plan;
@@ -656,7 +722,14 @@ export async function commitEmployeeImport(
     const batch = records.slice(start, start + BATCH_SIZE);
     await db.transaction(
       'rw',
-      [db.employees, db.companies, db.activities, db.complianceDocuments],
+      [
+        db.employees,
+        db.companies,
+        db.activities,
+        db.complianceDocuments,
+        db.finalSettlements,
+        db.leaveRecords,
+      ],
       async () => {
         for (const record of batch) {
           // An employee that arrived meanwhile (from another device) is not added twice.
@@ -667,7 +740,11 @@ export async function commitEmployeeImport(
               .first();
             if (twin) continue;
           }
-          const saved = await saveEmployee(record.employee, { log: false });
+          let saved = await saveEmployee(record.employee, { log: false });
+          // The file names them: its leave balance replaces the one they had.
+          if (record.existing && record.leaveOpening) {
+            saved = await putLeaveOpening(saved, record.leaveOpening, { replace: true });
+          }
           if (record.existing) updated += 1;
           else added += 1;
           if (record.drivingLicence) {

@@ -21,6 +21,22 @@ describe('employee numbers in file names', () => {
     expect(numberInFileName('2024-05-01 contract 424.pdf')).toBe('424');
     // A photo's date and time are not an employee number.
     expect(numberInFileName('WhatsApp Image 2023-05-12 at 10.20.30.jpeg')).toBeNull();
+    // Nor is any date in the name, whichever way it is written.
+    for (const name of [
+      'Residency 2026-03-15.pdf',
+      'Residency 15-03-2026.pdf',
+      'Residency 15.03.2026.pdf',
+      'Residency 03-15-2026.pdf',
+      'Residency 15_03_26.pdf',
+      'Residency 20260315.pdf',
+      'Residency 15032026.pdf',
+      'Payslip 2026-03.pdf',
+      'Payslip 03-2026 (2).pdf',
+    ]) {
+      expect(numberInFileName(name), name).toBeNull();
+    }
+    expect(numberInFileName('Test Guard 424 2026-03-15.pdf')).toBe('424');
+    expect(numberInFileName('2026-03-15_Test Guard_0424.pdf')).toBe('0424');
     expect(numberInFileName('passport.pdf')).toBeNull();
     expect(numberKey('000424')).toBe('424');
     expect(numberKey('EMP-0424')).toBe('424');
@@ -111,5 +127,11 @@ describe('matching photos to employees', () => {
   it('match documents by name too, when there is no number', () => {
     const [match] = matchDocuments([pdf('Sample Cleaner Two.pdf')], staff);
     expect(match).toMatchObject({ status: 'matched', employeeId: 'e102' });
+    // A date after the name is not an employee number: the name still matches.
+    const [dated] = matchDocuments(
+      [pdf('Sample Cleaner Two 2026-03-15.pdf')],
+      [...staff, { id: 'e15', number: '000015', name: 'Fifteen' }],
+    );
+    expect(dated).toMatchObject({ status: 'matched', employeeId: 'e102', number: null });
   });
 });

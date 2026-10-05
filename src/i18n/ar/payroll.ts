@@ -257,9 +257,10 @@ export default {
   'Public holidays (double)': 'العطلات الرسمية (أجر مضاعف)',
   'Unpaid absence (days)': 'غياب بدون أجر (أيام)',
   'Deducted at the daily rate of {rate}.': 'يُستقطع بالأجر اليومي البالغ {rate}.',
-  'From leave records: {days} unpaid days.': 'من سجل الإجازات: {days} يوم بدون أجر.',
-  'From leave records: {days} sick days at {percent} pay.':
-    'من سجل الإجازات: {days} يوم مرضي بنسبة {percent} من الأجر.',
+  'From leave records: {days} calendar days without pay.':
+    'من سجل الإجازات: {days} يوم تقويمي بدون أجر.',
+  'From leave records: {days} calendar days of sick leave at {percent} pay.':
+    'من سجل الإجازات: {days} يوم تقويمي من الإجازة المرضية بنسبة {percent} من الأجر.',
   'Loan instalments': 'أقساط القروض',
   'Loan of {amount} from {date}': 'قرض بمبلغ {amount} بتاريخ {date}',
   Loan: 'قرض',
@@ -504,9 +505,9 @@ export default {
   'Working days in a month': 'أيام العمل في الشهر',
   'The daily rate is the monthly wage divided by this; 26 for a six-day week (art. 67).':
     'الأجر اليومي هو الأجر الشهري مقسومًا على هذا العدد؛ 26 لأسبوع عمل من ستة أيام (المادة 67).',
-  'Overtime and unpaid days use': 'يُحسب العمل الإضافي والأيام بدون أجر على',
-  'Overtime is paid at 125%, on rest days 150% and on public holidays 200% of the hourly rate.':
-    'يُدفع العمل الإضافي بنسبة 125%، وفي أيام الراحة 150%، وفي العطلات الرسمية 200% من أجر الساعة.',
+  'Overtime and unpaid absence use': 'يُحسب العمل الإضافي والغياب بدون أجر على',
+  'Overtime is paid at 125%, on rest days 150% and on public holidays 200% of the hourly rate. Unpaid leave costs a share of the month’s pay.':
+    'يُدفع العمل الإضافي بنسبة 125%، وفي أيام الراحة 150%، وفي العطلات الرسمية 200% من أجر الساعة. وتُخصم الإجازة بدون أجر بنسبتها من راتب الشهر.',
   'Basic salary and allowances': 'الراتب الأساسي والبدلات',
   'Basic salary only': 'الراتب الأساسي فقط',
   'Minimum wage': 'الحد الأدنى للأجور',
@@ -535,4 +536,170 @@ export default {
   '{code} {name} (created when used)': '{code} {name} (يُنشأ عند الاستخدام)',
   'Discard changes': 'تجاهل التغييرات',
   'Save settings': 'حفظ الإعدادات',
+
+  // Leave in pay runs that are already approved or paid
+  'This leave changes the pay of {name} in the {month} pay run, which is already paid. Undo its payment and reopen it first, then update it after the leave.':
+    'هذه الإجازة تغيّر راتب {name} في مسير رواتب {month}، وقد دُفع بالفعل. ألغِ دفعه وأعد فتحه أولًا، ثم حدّثه بعد تسجيل الإجازة.',
+  'This leave changes the pay of {name} in the {month} pay run, which is already approved. Reopen the pay run first, then update it after the leave.':
+    'هذه الإجازة تغيّر راتب {name} في مسير رواتب {month}، وقد اعتُمد بالفعل. أعد فتح المسير أولًا، ثم حدّثه بعد تسجيل الإجازة.',
+
+  // Final settlement: the reason, the hire date and the wage are needed
+  'Add the hire date and the salary to {name}’s record before the final settlement.':
+    'أضف تاريخ التعيين والراتب إلى ملف {name} قبل المخالصة النهائية.',
+  'Add the hire date to {name}’s record before the final settlement.':
+    'أضف تاريخ التعيين إلى ملف {name} قبل المخالصة النهائية.',
+  'Add the salary to {name}’s record before the final settlement.':
+    'أضف الراتب إلى ملف {name} قبل المخالصة النهائية.',
+  'Edit the employee': 'تعديل بيانات الموظف',
+  'Choose the reason for leaving first: it decides the end-of-service indemnity and the notice pay.':
+    'اختر سبب ترك العمل أولًا: فهو يحدد مكافأة نهاية الخدمة وبدل مهلة الإنذار.',
+
+  // Leave brought forward (imported staff)
+  'Leave brought forward': 'رصيد الإجازة المرحّل',
+  'Leave brought forward for {name} confirmed': 'تم تأكيد رصيد الإجازة المرحّل لـ{name}',
+  'Not confirmed': 'غير مؤكد',
+  '{days} days on {date}. Leave counts from this date.':
+    '{days} يوم في {date}. تُحتسب الإجازة من هذا التاريخ.',
+  'Imported with 0 days. Enter what they had left on that day, from your records before, or confirm it.':
+    'استُورد بصفر أيام. أدخل ما تبقّى له في ذلك اليوم من سجلاتك السابقة، أو أكّده كما هو.',
+  'The annual leave {name} had left on this date, from your records before. Leave counts from this date: nothing before it is added.':
+    'الإجازة السنوية المتبقية لـ{name} في هذا التاريخ من سجلاتك السابقة. تُحتسب الإجازة من هذا التاريخ، ولا يُضاف شيء قبله.',
+  'Days brought forward': 'الأيام المرحّلة',
+  '{count} employees in this pay run have leave brought forward that isn’t confirmed: their leave provision counts from the import date, with 0 days before it.':
+    {
+      zero: 'لا يوجد في هذا المسير موظف برصيد إجازة مرحّل غير مؤكد.',
+      one: 'في هذا المسير موظف واحد رصيد إجازته المرحّل غير مؤكد: يُحتسب مخصص إجازته من تاريخ الاستيراد، بصفر أيام قبله.',
+      two: 'في هذا المسير موظفان رصيد إجازتهما المرحّل غير مؤكد: يُحتسب مخصص إجازتهما من تاريخ الاستيراد، بصفر أيام قبله.',
+      few: 'في هذا المسير {count} موظفين أرصدة إجازاتهم المرحّلة غير مؤكدة: يُحتسب مخصص إجازاتهم من تاريخ الاستيراد، بصفر أيام قبله.',
+      many: 'في هذا المسير {count} موظفًا أرصدة إجازاتهم المرحّلة غير مؤكدة: يُحتسب مخصص إجازاتهم من تاريخ الاستيراد، بصفر أيام قبله.',
+      other:
+        'في هذا المسير {count} موظف أرصدة إجازاتهم المرحّلة غير مؤكدة: يُحتسب مخصص إجازاتهم من تاريخ الاستيراد، بصفر أيام قبله.',
+    },
+  'and {count} more': {
+    zero: 'ولا أحد غيرهم',
+    one: 'وموظف آخر',
+    two: 'وموظفان آخران',
+    few: 'و{count} آخرين',
+    many: 'و{count} آخرين',
+    other: 'و{count} آخرين',
+  },
+
+  // Salary file: staff paid on salary cards
+  'Not in this file: these employees are paid to an account or salary card number, which this layout has no column for. Add the “Account or salary card number” column if your bank takes it, or pay them another way:':
+    'غير موجودين في هذا الملف: يُدفع لهؤلاء الموظفين على رقم حساب أو بطاقة راتب، وليس في هذا التنسيق عمود له. أضف عمود «رقم الحساب أو بطاقة الراتب» إن كان بنكك يقبله، أو ادفع لهم بطريقة أخرى:',
+  'Check these salary card numbers: they don’t look right.':
+    'راجع أرقام بطاقات الراتب هذه، فهي لا تبدو صحيحة.',
+  '{count} paid another way, total {amount}': '{count} يُدفع لهم بطريقة أخرى، بإجمالي {amount}',
+
+  // Opening leave balances for many employees at once
+  'Set opening leave balances': 'تحديد أرصدة الإجازات الافتتاحية',
+  'Opening leave balances': 'أرصدة الإجازات الافتتاحية',
+  'The annual leave each employee had left on a date, from your records before. Leave counts from that date: nothing before it is added.':
+    'الإجازة السنوية المتبقية لكل موظف في تاريخ معيّن من سجلاتك السابقة. تُحتسب الإجازة من ذلك التاريخ، ولا يُضاف شيء قبله.',
+  'The date the balances are from, such as the first day of this month.':
+    'التاريخ الذي تعود إليه الأرصدة، مثل أول يوم في هذا الشهر.',
+  'Everyone without a balance starts at {count} days': {
+    zero: 'يبدأ كل من ليس له رصيد بصفر أيام',
+    one: 'يبدأ كل من ليس له رصيد بيوم واحد',
+    two: 'يبدأ كل من ليس له رصيد بيومين',
+    few: 'يبدأ كل من ليس له رصيد بـ{count} أيام',
+    many: 'يبدأ كل من ليس له رصيد بـ{count} يومًا',
+    other: 'يبدأ كل من ليس له رصيد بـ{count} يوم',
+  },
+  'Current employees with no opening balance yet all get the same number of days.':
+    'يحصل الموظفون الحاليون الذين ليس لهم رصيد افتتاحي بعد على عدد الأيام نفسه.',
+  'From a spreadsheet': 'من جدول بيانات',
+  'Each employee’s own balance: columns Employee number and Days, and As of when the dates differ. Excel (.xlsx) or CSV.':
+    'رصيد كل موظف على حدة: عمودا «الرقم الوظيفي» و«الأيام»، وعمود «في تاريخ» إذا اختلفت التواريخ. ملف Excel ‏(.xlsx) أو CSV.',
+  'This applies to {count} current employees without an opening balance.': {
+    zero: 'لا يوجد موظف حالي بلا رصيد افتتاحي.',
+    one: 'ينطبق هذا على موظف حالي واحد بلا رصيد افتتاحي.',
+    two: 'ينطبق هذا على موظفَين حاليَّين بلا رصيد افتتاحي.',
+    few: 'ينطبق هذا على {count} موظفين حاليين بلا رصيد افتتاحي.',
+    many: 'ينطبق هذا على {count} موظفًا حاليًا بلا رصيد افتتاحي.',
+    other: 'ينطبق هذا على {count} موظف حالي بلا رصيد افتتاحي.',
+  },
+  'Every current employee has an opening leave balance already.':
+    'لكل موظف حالي رصيد إجازة افتتاحي بالفعل.',
+  Who: 'مَن هم',
+  'Employees with an opening balance keep it, and so do staff added when they joined: all their leave is here.':
+    'يحتفظ الموظفون الذين لهم رصيد افتتاحي برصيدهم، وكذلك من أُضيفوا عند التحاقهم بالعمل، فإجازاتهم كلها مسجّلة هنا.',
+  Spreadsheet: 'جدول البيانات',
+  'Excel (.xlsx) or CSV': 'ملف Excel ‏(.xlsx) أو CSV',
+  'The file needs these columns: {columns}.': 'يحتاج الملف إلى هذه الأعمدة: {columns}.',
+  'Every balance is as of {date}: the file has no As of column.':
+    'كل الأرصدة في تاريخ {date}، فليس في الملف عمود «في تاريخ».',
+  'Each balance is as of the date in “{column}”, or {date} where it is empty.':
+    'كل رصيد في التاريخ المذكور في «{column}»، أو في {date} حيث يكون فارغًا.',
+  'Employee numbers from “{number}”, days from “{days}”.':
+    'الأرقام الوظيفية من «{number}»، والأيام من «{days}».',
+  'Rows not used': 'صفوف لن تُستخدم',
+  'Balances to set': 'الأرصدة التي ستُحدَّد',
+  'replaces the balance it had': 'يحلّ محل الرصيد السابق',
+  '{count} matched': {
+    zero: 'لم يُطابَق أي موظف',
+    one: 'تمت مطابقة موظف واحد',
+    two: 'تمت مطابقة موظفَين',
+    few: 'تمت مطابقة {count} موظفين',
+    many: 'تمت مطابقة {count} موظفًا',
+    other: 'تمت مطابقة {count} موظف',
+  },
+  '{count} not found': {
+    one: 'صف واحد لم يُعثر على موظفه',
+    two: 'صفان لم يُعثر على موظفيهما',
+    few: '{count} صفوف لم يُعثر على موظفيها',
+    many: '{count} صفًا لم يُعثر على موظفيها',
+    other: '{count} صف لم يُعثر على موظفيها',
+  },
+  '{count} can’t be read': {
+    one: 'صف واحد تتعذّر قراءته',
+    two: 'صفان تتعذّر قراءتهما',
+    few: '{count} صفوف تتعذّر قراءتها',
+    many: '{count} صفًا تتعذّر قراءتها',
+    other: '{count} صف تتعذّر قراءتها',
+  },
+  '{count} of them have an opening balance already: the spreadsheet replaces it.': {
+    one: 'لأحدهم رصيد افتتاحي بالفعل، وسيحلّ جدول البيانات محله.',
+    two: 'لاثنين منهم رصيد افتتاحي بالفعل، وسيحلّ جدول البيانات محله.',
+    few: 'لـ{count} منهم رصيد افتتاحي بالفعل، وسيحلّ جدول البيانات محله.',
+    many: 'لـ{count} منهم رصيد افتتاحي بالفعل، وسيحلّ جدول البيانات محله.',
+    other: 'لـ{count} منهم رصيد افتتاحي بالفعل، وسيحلّ جدول البيانات محله.',
+  },
+  'Set for {count} employees': {
+    zero: 'تحديد',
+    one: 'تحديد لموظف واحد',
+    two: 'تحديد لموظفَين',
+    few: 'تحديد لـ{count} موظفين',
+    many: 'تحديد لـ{count} موظفًا',
+    other: 'تحديد لـ{count} موظف',
+  },
+  'Opening leave balances set for {count} employees': {
+    one: 'تم تحديد رصيد الإجازة الافتتاحي لموظف واحد',
+    two: 'تم تحديد أرصدة الإجازات الافتتاحية لموظفَين',
+    few: 'تم تحديد أرصدة الإجازات الافتتاحية لـ{count} موظفين',
+    many: 'تم تحديد أرصدة الإجازات الافتتاحية لـ{count} موظفًا',
+    other: 'تم تحديد أرصدة الإجازات الافتتاحية لـ{count} موظف',
+  },
+  '{count} employees have no opening leave balance: their leave is counted from their hire date.': {
+    one: 'موظف واحد ليس له رصيد إجازة افتتاحي: تُحتسب إجازته من تاريخ تعيينه.',
+    two: 'موظفان ليس لهما رصيد إجازة افتتاحي: تُحتسب إجازتهما من تاريخ تعيينهما.',
+    few: '{count} موظفين ليس لهم رصيد إجازة افتتاحي: تُحتسب إجازاتهم من تاريخ تعيينهم.',
+    many: '{count} موظفًا ليس لهم رصيد إجازة افتتاحي: تُحتسب إجازاتهم من تاريخ تعيينهم.',
+    other: '{count} موظف ليس لهم رصيد إجازة افتتاحي: تُحتسب إجازاتهم من تاريخ تعيينهم.',
+  },
+  'No employee number.': 'لا يوجد رقم وظيفي.',
+  'No employee has this number.': 'لا يوجد موظف بهذا الرقم.',
+  'The same employee is on row {line}.': 'الموظف نفسه في الصف {line} أيضًا.',
+  '“{value}” is not a number of days.': '«{value}» ليس عددًا من الأيام.',
+  'No days.': 'لا يوجد عدد أيام.',
+  'The days can’t be below 0.': 'لا يمكن أن يقل عدد الأيام عن 0.',
+  'There is nothing to set.': 'لا يوجد ما يُحدَّد.',
+  'Leave brought forward set for {count} employee from a spreadsheet':
+    'تم تحديد رصيد الإجازة المرحّل لـ{count} موظف من جدول بيانات',
+  'Leave brought forward set for {count} employees from a spreadsheet':
+    'تم تحديد أرصدة الإجازات المرحّلة لـ{count} من الموظفين من جدول بيانات',
+  'Leave brought forward set for {count} employee: {days} days on {date}':
+    'تم تحديد رصيد الإجازة المرحّل لـ{count} موظف: {days} يوم في {date}',
+  'Leave brought forward set for {count} employees: {days} days on {date}':
+    'تم تحديد أرصدة الإجازات المرحّلة لـ{count} من الموظفين: {days} يوم في {date}',
 } satisfies Dictionary;

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   FileSpreadsheet,
+  ListChecks,
   MoreHorizontal,
   Printer,
   RefreshCw,
@@ -35,10 +36,17 @@ import {
   payLineWarnings,
   payRunTotals,
 } from '@/lib/hr/payroll';
+import { employeesNeedingLeaveOpening } from '@/lib/hr/leave';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
-import { usePeopleSettings } from '@/features/people/hooks';
-import { useAccounts, usePayrollSettings, useStaffLoans } from '@/features/payroll/hooks';
+import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
+import {
+  useAccounts,
+  useLeaveRecords,
+  usePayrollSettings,
+  useStaffLoans,
+} from '@/features/payroll/hooks';
+import { LeaveOpeningsDialog } from '@/features/payroll/leave-openings-dialog';
 import { PayLineDialog } from '@/features/payroll/line-dialog';
 import { SalaryFileDialog } from '@/features/payroll/salary-file-dialog';
 import { AmountRow, PayDialog, RunStatusBadge, useWarningText } from '@/features/payroll/shared';
@@ -82,8 +90,10 @@ export default function PayRunPage() {
   const run = useLiveQuery(() => db.payRuns.get(id), [id]);
   const settings = usePayrollSettings();
   const people = usePeopleSettings();
+  const employees = useEmployees();
   const accounts = useAccounts();
   const loans = useStaffLoans();
+  const leaveRecords = useLeaveRecords();
   const journals = useLiveQuery(async () => {
     if (!run) return [];
     const ids = [run.journalId, run.provisionJournalId, run.paymentJournalId].filter(
@@ -92,10 +102,19 @@ export default function PayRunPage() {
     return (await db.journals.bulkGet(ids)).filter((j): j is ManualJournal => Boolean(j));
   }, [run]);
   const [lineId, setLineId] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'pay' | 'file' | null>(null);
+  const [dialog, setDialog] = useState<'pay' | 'file' | 'openings' | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (run === undefined || !settings || !people || !accounts || !loans || !journals) {
+  if (
+    run === undefined ||
+    !settings ||
+    !people ||
+    !employees ||
+    !accounts ||
+    !loans ||
+    !leaveRecords ||
+    !journals
+  ) {
     return <Spinner className="py-24" label={t('Loading…')} />;
   }
   if (!run || run.companyId !== company.id) {
@@ -132,6 +151,25 @@ export default function PayRunPage() {
     accountingSettings(company).template,
   );
   const byId = (journalId: string | null) => journals.find((j) => j.id === journalId);
+  // Staff whose leave before they were added here isn't known: those without
+  // an opening balance, and imported staff whose balance nobody has checked yet.
+  const inRun = new Set(run.lines.map((l) => l.employeeId));
+  const needing = employeesNeedingLeaveOpening(
+    employees.filter((e) => inRun.has(e.id)),
+    leaveRecords,
+  ).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+  const noOpening = needing.filter((e) => !e.leaveOpening);
+  const unconfirmed = needing.filter((e) => e.leaveOpening && !e.leaveOpening.confirmed);
+  const noOpeningText = tp(
+    noOpening.length,
+    '{count} employee has no opening leave balance: their leave is counted from their hire date.',
+    '{count} employees have no opening leave balance: their leave is counted from their hire date.',
+  );
+  const unconfirmedText = tp(
+    unconfirmed.length,
+    '{count} employee in this pay run has leave brought forward that isn’t confirmed: their leave provision counts from the import date, with 0 days before it.',
+    '{count} employees in this pay run have leave brought forward that isn’t confirmed: their leave provision counts from the import date, with 0 days before it.',
+  );
 
   const act = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -146,12 +184,22 @@ export default function PayRunPage() {
   };
 
   const approve = async () => {
+    const posted = t(
+      'Salaries, PIFSS and deductions are posted to the books on {date}. You can reopen the pay run until it is paid.',
+      { date: fmt.date(run.date) },
+    );
     const ok = await confirm({
       title: t('Approve the payroll for {month}?', { month }),
-      description: t(
-        'Salaries, PIFSS and deductions are posted to the books on {date}. You can reopen the pay run until it is paid.',
-        { date: fmt.date(run.date) },
-      ),
+      description:
+        needing.length > 0 ? (
+          <div className="space-y-2">
+            <p>{posted}</p>
+            {noOpening.length > 0 ? <p className="text-amber-800">{noOpeningText}</p> : null}
+            {unconfirmed.length > 0 ? <p className="text-amber-800">{unconfirmedText}</p> : null}
+          </div>
+        ) : (
+          posted
+        ),
       confirmLabel: t('Approve'),
     });
     if (ok) await act(() => approvePayRun(run.id), t('Payroll for {month} approved', { month }));
@@ -296,6 +344,47 @@ export default function PayRunPage() {
           hint={t('With the employer’s PIFSS share')}
         />
       </div>
+
+      {run.status === 'draft' && needing.length > 0 ? (
+        <Card className="border-amber-200 bg-amber-50/40">
+          <CardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="size-4 text-amber-500" aria-hidden />
+                {t('Opening leave balances')}
+              </span>
+            }
+            description={
+              <span className="space-y-1">
+                {noOpening.length > 0 ? <span className="block">{noOpeningText}</span> : null}
+                {unconfirmed.length > 0 ? <span className="block">{unconfirmedText}</span> : null}
+              </span>
+            }
+            actions={
+              <Button variant="outline" size="sm" onClick={() => setDialog('openings')}>
+                <ListChecks /> {t('Set opening leave balances')}
+              </Button>
+            }
+          />
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 px-5 pb-4 text-sm">
+            {needing.slice(0, 12).map((e) => (
+              <li key={e.id}>
+                <Link
+                  to={`/employees/${e.id}?tab=leave`}
+                  className="text-primary-700 font-medium hover:underline"
+                >
+                  {localName(e)}
+                </Link>
+              </li>
+            ))}
+            {needing.length > 12 ? (
+              <li className="text-slate-500">
+                {tp(needing.length - 12, 'and {count} more', 'and {count} more')}
+              </li>
+            ) : null}
+          </ul>
+        </Card>
+      ) : null}
 
       {warnings.length > 0 ? (
         <Card className="border-amber-200 bg-amber-50/40">
@@ -553,6 +642,7 @@ export default function PayRunPage() {
       {dialog === 'file' ? (
         <SalaryFileDialog run={run} settings={settings} onClose={() => setDialog(null)} />
       ) : null}
+      {dialog === 'openings' ? <LeaveOpeningsDialog onClose={() => setDialog(null)} /> : null}
     </div>
   );
 }

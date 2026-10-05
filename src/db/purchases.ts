@@ -138,6 +138,18 @@ export async function addAttachment(
   return attachment;
 }
 
+/**
+ * Removes a file. An employee's photo is one of their files: removing it
+ * removes the photo too, so the employee never points at a file that's gone.
+ */
 export async function removeAttachment(id: ID): Promise<void> {
-  await db.attachments.delete(id);
+  await db.transaction('rw', [db.attachments, db.employees], async () => {
+    const attachment = await db.attachments.get(id);
+    await db.attachments.delete(id);
+    if (!attachment) return;
+    const employee = await db.employees.get(attachment.ownerId);
+    if (employee?.photoId === id) {
+      await db.employees.put({ ...employee, photoId: null, updatedAt: nowStamp() });
+    }
+  });
 }

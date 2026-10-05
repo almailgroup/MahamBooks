@@ -27,9 +27,10 @@ const TIMESTAMP_FIELDS = [
 
 /**
  * Records whose timestamps are shown or order things: the activity log, sent
- * and paid dates, recent documents and payments, when a year was closed, and
- * the order of stock movements of the same day. (Restamping a record that is
- * put makes Dexie read it first, so the others are left alone.)
+ * and paid dates, recent documents and payments, when a year was closed, the
+ * order of stock movements of the same day, and when staff were added (which
+ * tells whether all their leave is here). (Restamping a record that is put
+ * makes Dexie read it first, so the others are left alone.)
  */
 const STAMPED_TABLES = (): Table[] => [
   db.activities,
@@ -39,6 +40,7 @@ const STAMPED_TABLES = (): Table[] => [
   db.recurring,
   db.stockEntries,
   db.landedCosts,
+  db.employees,
 ];
 
 /** First record of a day: 09:00 in Kuwait (06:00 UTC); each next record 20 seconds later. */

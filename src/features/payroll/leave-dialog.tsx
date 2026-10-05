@@ -3,8 +3,8 @@ import { toast } from 'sonner';
 import type { Employee, ID, LeaveRecord, LeaveType } from '@/db/types';
 import { companyDayOff, createLeaveRecord, saveLeaveRecord } from '@/db/payroll';
 import {
-  annualLeaveBalance,
   countLeaveDays,
+  employeeLeaveBalance,
   LEAVE_TYPE_ORDER,
   LEAVE_TYPES,
   leaveWarnings,
@@ -75,7 +75,7 @@ export function LeaveDialog({
   const own = records.filter((r) => r.employeeId === who);
 
   const counted = mode === 'leave' ? countLeaveDays(type, start, end, dayOff) : 0;
-  const balance = employee ? annualLeaveBalance(own, employee.hireDate, start) : null;
+  const balance = employee ? employeeLeaveBalance(employee, own, start) : null;
   const warnings =
     mode === 'leave'
       ? leaveWarnings({ id: '', type, kind: 'leave', start, end, days: counted }, own, balance)

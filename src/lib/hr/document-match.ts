@@ -66,7 +66,8 @@ export function numberKey(number: string): string {
 /**
  * The employee number in a file name: the number at its end ("محمد علي
  * 424.pdf", "Ali_0424.pdf", "Ali 424 (2).pdf"), or else its only number
- * ("EMP424 passport.pdf"). Dates and times are not taken for numbers.
+ * ("EMP424 passport.pdf"). Dates and times are not taken for numbers:
+ * "Residency 2026-03-15.pdf" has none.
  */
 export function numberInFileName(name: string): string | null {
   const base = baseName(name);
@@ -76,13 +77,39 @@ export function numberInFileName(name: string): string | null {
   return runs.length === 1 ? runs[0] : null;
 }
 
-/** A file name without its extension and the marks of copies ("name (2)", "name - Copy"). */
+const YEAR = String.raw`(?:19|20)\d{2}`;
+const MONTH = String.raw`(?:0?[1-9]|1[0-2])`;
+const DAY = String.raw`(?:0?[1-9]|[12]\d|3[01])`;
+
+/**
+ * Dates as file names write them, with "-", "_" or "." between the parts or
+ * none: 2026-03-15, 15-03-2026, 03-15-2026, 15.03.26, 20260315, 15032026,
+ * and months such as 2026-03 or 03-2026.
+ */
+const DATES = [
+  String.raw`${YEAR}([-_.])${MONTH}\1${DAY}`,
+  String.raw`${DAY}([-_.])${MONTH}\2${YEAR}`,
+  String.raw`${MONTH}([-_.])${DAY}\3${YEAR}`,
+  String.raw`${DAY}([-_.])${MONTH}\4\d{2}`,
+  String.raw`${YEAR}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])`,
+  String.raw`(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])${YEAR}`,
+  String.raw`${YEAR}[-_.]${MONTH}`,
+  String.raw`${MONTH}[-_.]${YEAR}`,
+];
+const DATE = new RegExp(String.raw`(?<!\d)(?:${DATES.join('|')})(?!\d)`, 'g');
+
+/**
+ * A file name without its extension, the marks of copies ("name (2)", "name
+ * - Copy") and dates.
+ */
 function baseName(name: string): string {
   return (
     normalizeDigits(name)
       .replace(/\.[a-z0-9]{1,5}$/i, '')
       // Copies the system made: "name (2)", "name - Copy", "name copy".
       .replace(/(\s*\(\d+\)|\s*-?\s*copy)+$/i, '')
+      .replace(DATE, ' ')
+      .replace(/[\s_-]+$/, '')
       .trim()
   );
 }

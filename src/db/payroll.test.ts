@@ -237,27 +237,49 @@ describe('leave in pay runs', () => {
       ...c,
       holidays: [{ date: '2026-10-06', name: 'Bridge day', nameAr: 'يوم عطلة' }],
     });
-    // Sun 4 – Thu 8 October with a bridge holiday on Tuesday: 4 working days.
+    // Sun 4 – Thu 8 October: unpaid leave runs in calendar days, the holiday included.
     const unpaid = await saveLeaveRecord(
       createLeaveRecord(c.id, expat.id, { type: 'unpaid', start: '2026-10-04', end: '2026-10-08' }),
     );
-    expect(unpaid.days).toBe(4);
+    expect(unpaid.days).toBe(5);
     // 16 sick days for Fatima (the bridge day is not counted): 15 at full pay, 1 at three quarters.
     await saveLeaveRecord(
       createLeaveRecord(c.id, kuwaiti.id, { type: 'sick', start: '2026-10-01', end: '2026-10-25' }),
     );
     const run = await createPayRun(c.id, '2026-10');
     const [fatima, ravi] = run.lines;
+    // Sunday 25 October, the 16th working day; the weekend before it is still at full pay.
     expect(fatima.reducedPay).toEqual([{ percent: 75, days: 1 }]);
-    // 3,000 ÷ 26 × a quarter of a day.
-    expect(fatima.absenceDeduction).toBe(28.846);
-    expect(ravi.unpaidLeaveDays).toBe(4);
-    expect(ravi.absenceDeduction).toBe(78.462); // 510 ÷ 26 × 4
+    // A quarter of a day of KD 3,000 in a 31-day month: 3,000 − 30.75 days' pay.
+    expect(fatima.absenceDeduction).toBe(24.194);
+    expect(ravi.unpaidLeaveDays).toBe(5);
+    // 510 × 5 ÷ 31: KD 450 basic and KD 60 housing each for 26 days, 377.419 + 50.323.
+    expect(ravi.absenceDeduction).toBe(82.258);
     await expect(
       saveLeaveRecord(
         createLeaveRecord(c.id, expat.id, { start: '2026-10-09', end: '2026-10-10' }),
       ),
     ).rejects.toThrow(/weekends/);
+  });
+
+  it('pay nothing for a month of unpaid leave, and joiners only for their days', async () => {
+    const c = await company();
+    const { expat } = await staff(c);
+    // Joined on 16 September: 15 days employed, 10 of them on unpaid leave.
+    await saveLeaveRecord(
+      createLeaveRecord(c.id, expat.id, { type: 'unpaid', start: '2026-09-01', end: '2026-09-25' }),
+    );
+    await saveLeaveRecord(
+      createLeaveRecord(c.id, expat.id, { type: 'unpaid', start: '2026-10-01', end: '2026-10-31' }),
+    );
+    const september = await createPayRun(c.id, '2026-09');
+    const ravi = september.lines.find((l) => l.employeeId === expat.id)!;
+    expect(ravi).toMatchObject({ daysWorked: 15, unpaidLeaveDays: 10, basic: 225 });
+    // Paid for 5 of 30 days: 450 × 5 ÷ 30 + 60 × 5 ÷ 30.
+    expect(ravi.gross).toBe(85);
+    const october = await createPayRun(c.id, '2026-10');
+    const away = october.lines.find((l) => l.employeeId === expat.id)!;
+    expect(away).toMatchObject({ unpaidLeaveDays: 31, gross: 0, net: 0 });
   });
 });
 

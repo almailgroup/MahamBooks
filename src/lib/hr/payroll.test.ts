@@ -180,7 +180,36 @@ describe('pay lines', () => {
     expect(wage.overtimePay).toBe(30); // 624 ÷ 26 ÷ 8 × 8 × 1.25
   });
 
-  it('deduct unpaid days at the daily rate and reduced-pay sick days at the unpaid share', () => {
+  it('deduct leave as a share of the month’s pay and absence at the daily rate', () => {
+    const result = calc({
+      leaveBasis: 'calendar',
+      absentDays: 1,
+      unpaidLeaveDays: 3,
+      reducedPay: [
+        { percent: 75, days: 2 },
+        { percent: 50, days: 1 },
+      ],
+    });
+    // Absence: a day at KD 20 (520 ÷ 26). Leave: 3 + 2 × 0.25 + 0.5 = 4 of the
+    // month's 30 days, 520 − 520 × 26 ÷ 30 = 69.333.
+    expect(result.absenceDeduction).toBe(89.333);
+    expect(result.gross).toBe(430.667);
+    // A whole month of unpaid leave leaves exactly nothing, allowances included.
+    const away = calc(
+      {
+        leaveBasis: 'calendar',
+        monthlyBasic: 333.333,
+        allowances: [{ id: 'a', name: 'Food', nameAr: '', monthly: 41.111, amount: 0 }],
+        daysWorked: 31,
+        daysInMonth: 31,
+        unpaidLeaveDays: 31,
+      },
+      { ...RULES, rateBase: 'wage' },
+    );
+    expect(away).toMatchObject({ gross: 0, net: 0, absenceDeduction: 374.444 });
+  });
+
+  it('keep the daily rate for leave on lines of runs prepared before', () => {
     const result = calc({
       absentDays: 1,
       unpaidLeaveDays: 1,
@@ -303,14 +332,14 @@ describe('pay run entry', () => {
 describe('provisions', () => {
   const employee = {
     category: 'expat' as const,
-    hireDate: '2021-09-30',
+    hireDate: '2021-10-01',
     basicSalary: 600,
     allowances: [],
     payBasis: 'monthly' as const,
   };
 
   it('hold the indemnity if the contract ended at the month end', () => {
-    // Five years: 5 × 15 days × 600 ÷ 26 = 1,730.769.
+    // Five years to the end of 30 September: 5 × 15 days × 600 ÷ 26 = 1,730.769.
     expect(eosProvisionFor(employee, '2026-09-30', 26, 3)).toBe(1730.769);
     expect(eosProvisionFor({ ...employee, category: 'domestic' }, '2026-09-30', 26, 3)).toBe(0);
     expect(eosProvisionFor(employee, '2021-01-31', 26, 3)).toBe(0);
@@ -405,7 +434,7 @@ describe('final settlement', () => {
 
     const domestic = computeSettlement({
       ...base,
-      employee: { ...base.employee, category: 'domestic', hireDate: '2024-09-15' },
+      employee: { ...base.employee, category: 'domestic', hireDate: '2024-09-16' },
     });
     expect(domestic.eosi).toBeNull();
     expect(domestic.indemnity).toBe(1200); // two years × KD 600

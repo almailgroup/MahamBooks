@@ -248,6 +248,21 @@ export function EmployeeImportPreview({
               )}
             </Point>
           ) : null}
+          {summary.leaveBalances ? (
+            <Point>
+              {tp(
+                summary.leaveBalances,
+                'Leave balance of {count} employee brought forward on the import date, confirmed.',
+                'Leave balances of {count} employees brought forward on the import date, confirmed.',
+              )}
+            </Point>
+          ) : !summary.leaveBalanceColumn && summary.add > 0 ? (
+            <Point>
+              {t(
+                'Leave balances are not in the file: new employees start with 0 days on the import date until you set them in Payroll → Leave.',
+              )}
+            </Point>
+          ) : null}
           {summary.expired || summary.expiring ? (
             <Point>
               {t('Documents already expired: {expired}. Expiring within 60 days: {expiring}.', {

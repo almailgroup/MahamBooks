@@ -10,6 +10,7 @@ import {
   reverseSettlement,
   settlementDefaults,
   settlementInput,
+  settlementMissingText,
   settlementSetup,
   type SettlementData,
   type SettlementForm,
@@ -270,12 +271,49 @@ function SettlementView({
   );
 }
 
+/** A settlement form whose reason for leaving may still have to be chosen. */
+type Draft = Omit<SettlementForm, 'reason'> & { reason: LeavingReason | null };
+
+/** The reason a settlement starts from: one someone chose; "Other" or none is asked for. */
+function knownReason(employee: Employee): LeavingReason | null {
+  return employee.leavingReason && employee.leavingReason !== 'other'
+    ? employee.leavingReason
+    : null;
+}
+
 function SettlementFormView({ employee, data }: { employee: Employee; data: SettlementData }) {
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
   const p = currencyPrecision(company.currency);
-  const start = (date: string, reason: LeavingReason, keep?: SettlementForm): SettlementForm => {
+  const start = (date: string, reason: LeavingReason | null, keep?: Draft): Draft => {
+    const kept = keep
+      ? {
+          pifssOffset: keep.pifssOffset,
+          indemnityOverride: keep.indemnityOverride,
+          otherDeductions: keep.otherDeductions,
+          deductionNote: keep.deductionNote,
+          notes: keep.notes,
+        }
+      : {};
+    if (!reason) {
+      // Nothing is worked out until the reason is chosen: it decides the indemnity.
+      return {
+        employeeId: employee.id,
+        leavingDate: date,
+        reason: null,
+        pifssOffset: 0,
+        indemnityOverride: null,
+        noticeMonths: 0,
+        leaveDays: 0,
+        lastSalaryDays: 0,
+        loans: [],
+        otherDeductions: 0,
+        deductionNote: '',
+        notes: '',
+        ...kept,
+      };
+    }
     const defaults = settlementDefaults(
       employee,
       date,
@@ -283,33 +321,115 @@ function SettlementFormView({ employee, data }: { employee: Employee; data: Sett
       settlementSetup(employee, date, data, p),
       p,
     );
-    return keep
-      ? {
-          ...defaults,
-          pifssOffset: keep.pifssOffset,
-          indemnityOverride: keep.indemnityOverride,
-          otherDeductions: keep.otherDeductions,
-          deductionNote: keep.deductionNote,
-          notes: keep.notes,
-        }
-      : defaults;
+    return { ...defaults, ...kept };
   };
-  const [form, setForm] = useState<SettlementForm>(() =>
-    start(
-      employee.leavingDate ?? today(),
-      employee.leavingReason && employee.leavingReason !== 'other'
-        ? employee.leavingReason
-        : 'termination',
-    ),
+  const [draft, setForm] = useState<Draft>(() =>
+    start(employee.leavingDate ?? today(), knownReason(employee)),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const setup = useMemo(
-    () => settlementSetup(employee, form.leavingDate, data, p),
-    [employee, form.leavingDate, data, p],
+    () => settlementSetup(employee, draft.leavingDate, data, p),
+    [employee, draft.leavingDate, data, p],
   );
-  const amounts = computeSettlement(settlementInput(employee, form, setup, p));
   const set = (patch: Partial<SettlementForm>) => setForm((f) => ({ ...f, ...patch }));
+  const missing = settlementMissingText(employee);
+
+  const leaving = (
+    <Card>
+      <CardHeader title={t('Leaving')} />
+      <CardBody className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label={t('Leaving date')}>
+          {(id) => (
+            <DateField
+              id={id}
+              value={draft.leavingDate}
+              onChange={(iso) => iso && setForm((f) => start(iso, f.reason, f))}
+            />
+          )}
+        </Field>
+        <Field
+          label={t('Reason')}
+          error={draft.reason ? undefined : t('Choose the reason for leaving.')}
+        >
+          {(id) => (
+            <Select
+              id={id}
+              value={draft.reason ?? ''}
+              onChange={(e) =>
+                setForm((f) =>
+                  start(f.leavingDate, (e.target.value || null) as LeavingReason | null, f),
+                )
+              }
+              aria-invalid={!draft.reason}
+              required
+            >
+              <option value="">{t('Choose a reason')}</option>
+              {REASONS.map((r) => (
+                <option key={r} value={r}>
+                  {t(LEAVING_REASON_LABELS[r])}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      </CardBody>
+    </Card>
+  );
+  const header = (
+    <div>
+      <p className="mb-1 text-sm text-slate-500">
+        <Link to={`/employees/${employee.id}?tab=eos`} className="hover:text-slate-700">
+          {localName(employee)}
+        </Link>
+      </p>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+        {t('Final settlement')}
+      </h1>
+      <p className="mt-1 text-sm text-slate-500">
+        {t(
+          'Everything due on leaving, worked out from the records. Check each amount before posting.',
+        )}
+      </p>
+    </div>
+  );
+
+  if (missing) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <Card className="p-6">
+          <p role="alert" className="text-sm text-red-700">
+            {missing}
+          </p>
+          <ButtonLink to={`/employees/${employee.id}/edit`} variant="outline" className="mt-4">
+            {t('Edit the employee')}
+          </ButtonLink>
+        </Card>
+      </div>
+    );
+  }
+  if (!draft.reason) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            {leaving}
+            <Card className="p-6">
+              <p className="text-sm text-slate-600">
+                {t(
+                  'Choose the reason for leaving first: it decides the end-of-service indemnity and the notice pay.',
+                )}
+              </p>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const form: SettlementForm = { ...draft, reason: draft.reason };
+  const amounts = computeSettlement(settlementInput(employee, form, setup, p));
   const month = formatPeriod(periodOf(form.leavingDate), fmt.locale);
   const share = amounts.eosi?.share;
   const shareText = !share
@@ -345,55 +465,11 @@ function SettlementFormView({ employee, data }: { employee: Employee; data: Sett
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="mb-1 text-sm text-slate-500">
-          <Link to={`/employees/${employee.id}?tab=eos`} className="hover:text-slate-700">
-            {localName(employee)}
-          </Link>
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-          {t('Final settlement')}
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {t(
-            'Everything due on leaving, worked out from the records. Check each amount before posting.',
-          )}
-        </p>
-      </div>
+      {header}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <Card>
-            <CardHeader title={t('Leaving')} />
-            <CardBody className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label={t('Leaving date')}>
-                {(id) => (
-                  <DateField
-                    id={id}
-                    value={form.leavingDate}
-                    onChange={(iso) => iso && setForm((f) => start(iso, f.reason, f))}
-                  />
-                )}
-              </Field>
-              <Field label={t('Reason')}>
-                {(id) => (
-                  <Select
-                    id={id}
-                    value={form.reason}
-                    onChange={(e) =>
-                      setForm((f) => start(f.leavingDate, e.target.value as LeavingReason, f))
-                    }
-                  >
-                    {REASONS.map((r) => (
-                      <option key={r} value={r}>
-                        {t(LEAVING_REASON_LABELS[r])}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            </CardBody>
-          </Card>
+          {leaving}
 
           <Card>
             <CardHeader

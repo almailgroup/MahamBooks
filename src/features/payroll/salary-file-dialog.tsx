@@ -68,7 +68,8 @@ export function SalaryFileDialog({
     [run, layout, fmt.currency, precision, settings.pamFileNumber, reference],
   );
   const payable = toMinor(payRunTotals(run.lines, precision).net, precision);
-  const matches = file.totalMinor === payable;
+  // With the staff left out of this layout (paid another way), it adds up.
+  const matches = file.totalMinor + file.leftOutMinor === payable;
   const ready = file.problems.length === 0 && matches && file.count > 0;
 
   const move = (index: number, by: number) =>
@@ -225,6 +226,42 @@ export function SalaryFileDialog({
             </div>
           ) : null}
 
+          {file.leftOut.length > 0 ? (
+            <div role="status" className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">
+                {t(
+                  'Not in this file: these employees are paid to an account or salary card number, which this layout has no column for. Add the “Account or salary card number” column if your bank takes it, or pay them another way:',
+                )}
+              </p>
+              <ul className="mt-1 list-disc ps-5">
+                {file.leftOut.map((p) => (
+                  <li key={p.employeeId}>
+                    {localName({ name: p.nameEn, nameAr: p.nameAr })} ·{' '}
+                    <span className="tabular">{fmt.money(p.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {file.checks.length > 0 ? (
+            <div role="status" className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">
+                {t('Check these salary card numbers: they don’t look right.')}
+              </p>
+              <ul className="mt-1 list-disc ps-5">
+                {file.checks.map((p) => (
+                  <li key={p.employeeId}>
+                    {localName({ name: p.nameEn, nameAr: p.nameAr })}
+                    <span className="ms-1 font-mono text-xs" dir="ltr">
+                      {p.accountNumber}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm">
             <p className="text-slate-700">
               {t('{count} transfers, total {amount}', {
@@ -232,6 +269,14 @@ export function SalaryFileDialog({
                 amount: fmt.money(fromMinor(file.totalMinor, precision)),
               })}
             </p>
+            {file.leftOut.length > 0 ? (
+              <p className="text-slate-700">
+                {t('{count} paid another way, total {amount}', {
+                  count: file.leftOut.length,
+                  amount: fmt.money(fromMinor(file.leftOutMinor, precision)),
+                })}
+              </p>
+            ) : null}
             {matches ? (
               <p className="mt-1 flex items-center gap-1.5 text-emerald-700">
                 <CircleCheck className="size-4" aria-hidden />

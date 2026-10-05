@@ -109,7 +109,12 @@ function EmployeeFormPage() {
     }
     setSaving(true);
     try {
-      const saved = await saveEmployee(employee);
+      // Refused when the record changed after the form was opened: saving
+      // would put back what the form still shows.
+      const saved = await saveEmployee(
+        employee,
+        id ? { expectedUpdatedAt: employee.updatedAt } : {},
+      );
       await files.commit(company.id);
       toast.success(t('{name} saved', { name: localName(saved) }));
       allowNavigation();
@@ -148,7 +153,11 @@ function EmployeeFormPage() {
         errors={errors}
         currency={company.currency}
         departments={departments}
-        files={files}
+        files={{
+          ...files,
+          // The photo is kept with the personnel file but changed on the employee's page.
+          files: files.files.filter((f) => !employee.photoId || f.id !== employee.photoId),
+        }}
       />
       <div className="mt-6 flex justify-end gap-2">{actions}</div>
     </div>

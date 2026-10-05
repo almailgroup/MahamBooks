@@ -487,4 +487,16 @@ export default {
   'Document {title} archived': 'تمت أرشفة الوثيقة {title}',
   'Document {title} restored': 'تمت استعادة الوثيقة {title}',
   'Document {title} deleted': 'تم حذف الوثيقة {title}',
+
+  // The reason for leaving is always chosen by someone
+  'Choose a reason': 'اختر السبب',
+  'Choose the reason for leaving.': 'اختر سبب ترك العمل.',
+  'The reason for leaving isn’t recorded.': 'سبب ترك العمل غير مسجّل.',
+  'This employee was changed somewhere else after you opened the form. Reload the page to see the changes, then make yours again.':
+    'تغيّر ملف هذا الموظف من مكان آخر بعد أن فتحت النموذج. أعد تحميل الصفحة لترى التغييرات، ثم أدخل تعديلاتك من جديد.',
+  '{name} has a final settlement, so they stay marked as left. Reverse the settlement to make them current again.':
+    'لدى {name} مخالصة نهائية، لذا يبقى مسجّلًا على أنه ترك العمل. اعكس المخالصة لإعادته موظفًا حاليًا.',
+  'Leave brought forward for {name}: {days} days on {date}':
+    'رصيد الإجازة المرحّل لـ{name}: {days} يوم في {date}',
+  'Document renewal fee': 'رسوم تجديد وثيقة',
 } satisfies Dictionary;

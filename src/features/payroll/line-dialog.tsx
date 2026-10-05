@@ -155,17 +155,20 @@ export function PayLineDialog({
                   <ul className="mt-2 space-y-1 text-xs text-slate-600">
                     {line.unpaidLeaveDays > 0 ? (
                       <li>
-                        {t('From leave records: {days} unpaid days.', {
+                        {t('From leave records: {days} calendar days without pay.', {
                           days: fmt.quantity(line.unpaidLeaveDays),
                         })}
                       </li>
                     ) : null}
                     {line.reducedPay.map((r) => (
                       <li key={r.percent}>
-                        {t('From leave records: {days} sick days at {percent} pay.', {
-                          days: fmt.quantity(r.days),
-                          percent: fmt.percent(r.percent),
-                        })}
+                        {t(
+                          'From leave records: {days} calendar days of sick leave at {percent} pay.',
+                          {
+                            days: fmt.quantity(r.days),
+                            percent: fmt.percent(r.percent),
+                          },
+                        )}
                       </li>
                     ))}
                   </ul>

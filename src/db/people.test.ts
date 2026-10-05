@@ -157,8 +157,7 @@ describe('employees', () => {
     // The renewal fee stays in the books, without the name.
     const fee = (await db.expenses.get(expense!.id))!;
     expect(fee.amount).toBe(10);
-    expect(fee.description).not.toContain('Rajesh');
-    expect(fee.description).toContain(a.number);
+    expect(fee.description).toBe('Document renewal fee');
     expect(JSON.stringify(await db.employees.toArray())).not.toContain('290010112345');
   });
 

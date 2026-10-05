@@ -9,6 +9,7 @@ import { bookEntries, matchKey } from '@/lib/banking/match';
 import { chequePayments, isOpenCheque } from '@/lib/cheques';
 import { stockLevels } from '@/lib/inventory/costing';
 import { balanced, payRunPostings, payRunTotals } from '@/lib/hr/payroll';
+import { employeesNeedingLeaveOpening } from '@/lib/hr/leave';
 import { isValidCivilId, isValidIban } from '@/lib/kuwait';
 import { addDaysISO, today } from '@/lib/dates';
 import { toMinor } from '@/lib/money';
@@ -276,6 +277,9 @@ describe('the demo company', () => {
     ).toBeGreaterThanOrEqual(2);
     expect(employees.some((e) => e.status === 'left')).toBe(true);
     expect(employees.filter((e) => e.category === 'kuwaiti')).toHaveLength(2);
+    // Staff have their leave balances brought forward, and the joiner was added when hired.
+    const leave = await db.leaveRecords.where('companyId').equals(company.id).toArray();
+    expect(employeesNeedingLeaveOpening(employees, leave)).toEqual([]);
     const assets = await db.assets.where('companyId').equals(company.id).toArray();
     expect(assets.length).toBe(4);
     expect(new Set(assets.map((a) => a.source))).toEqual(new Set(['opening', 'bill', 'purchase']));

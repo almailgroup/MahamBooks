@@ -40,7 +40,7 @@ describe('employee categories', () => {
     expect(eosiReasonFor('resignation')).toBe('resignation');
     expect(eosiReasonFor('dismissal')).toBe('dismissal');
     expect(eosiReasonFor('contract_end')).toBe('termination');
-    expect(eosiReasonFor(null)).toBe('termination');
+    expect(eosiReasonFor('other')).toBe('termination');
   });
 });
 

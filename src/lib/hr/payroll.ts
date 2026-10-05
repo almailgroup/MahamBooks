@@ -206,6 +206,12 @@ export function rateWage(
  * overtime, pay lost to unpaid days and reduced-pay sick days, additions,
  * contributions, loan recoveries and other deductions. Each amount is rounded
  * to the currency's decimals once, so the totals add up to the fils.
+ *
+ * Leave costs a share of the month's pay, worked out like the pay for the
+ * days employed (wage × days ÷ days in the month), so a month of unpaid leave
+ * leaves exactly nothing; absence entered by hand is deducted at the daily
+ * rate. Lines without `leaveBasis` (runs prepared before) keep the daily rate
+ * for leave too.
  */
 export function calculatePayLine(line: PayLine, rules: PayRules, precision: number): PayLine {
   const p = precision;
@@ -213,6 +219,11 @@ export function calculatePayLine(line: PayLine, rules: PayRules, precision: numb
   const daysWorked = Math.min(Math.max(0, line.daysWorked), daysInMonth);
   const fraction = dec(daysWorked).dividedBy(daysInMonth);
 
+  // Pay for a share of the month: basic salary and each allowance rounded once.
+  const earnedFor = (share: Decimal) =>
+    dec(round(dec(line.monthlyBasic).times(share), p)).plus(
+      total(line.allowances.map((a) => round(dec(a.monthly).times(share), p))),
+    );
   const basic = round(dec(line.monthlyBasic).times(fraction), p);
   const allowances = line.allowances.map((a) => ({
     ...a,
@@ -225,18 +236,23 @@ export function calculatePayLine(line: PayLine, rules: PayRules, precision: numb
   const hourly = daily.dividedBy(PAYROLL_RULES.hoursPerDay);
   const overtime = overtimePay(hourly, line.overtime, p);
 
-  const lostDays = dec(Math.max(0, line.absentDays))
-    .plus(Math.max(0, line.unpaidLeaveDays))
-    .plus(
-      total(
-        line.reducedPay.map((r) =>
-          dec(Math.max(0, r.days))
-            .times(100 - Math.min(100, Math.max(0, r.percent)))
-            .dividedBy(100),
-        ),
+  const leaveDays = dec(Math.max(0, line.unpaidLeaveDays)).plus(
+    total(
+      line.reducedPay.map((r) =>
+        dec(Math.max(0, r.days))
+          .times(100 - Math.min(100, Math.max(0, r.percent)))
+          .dividedBy(100),
       ),
-    );
-  const lost = daily.times(lostDays);
+    ),
+  );
+  const calendar = line.leaveBasis === 'calendar';
+  let leaveLost = dec(0);
+  if (calendar) {
+    const paidDays = leaveDays.gt(daysWorked) ? dec(0) : dec(daysWorked).minus(leaveDays);
+    leaveLost = earned.minus(earnedFor(paidDays.dividedBy(daysInMonth)));
+  }
+  const atDailyRate = dec(Math.max(0, line.absentDays)).plus(calendar ? 0 : leaveDays);
+  const lost = dec(round(daily.times(atDailyRate), p)).plus(leaveLost);
   const absenceDeduction = round(lost.gt(earned) ? earned : lost, p);
 
   const additions = round(
@@ -581,6 +597,17 @@ export interface SettlementAmounts {
   dues: number;
   deductions: number;
   net: number;
+}
+
+/**
+ * What a final settlement can't be worked out without: the hire date (the
+ * years of service) and the wage (indemnity, notice and leave pay).
+ */
+export function settlementMissing(
+  employee: Pick<Employee, 'hireDate' | 'basicSalary' | 'allowances'>,
+): { hireDate: boolean; wage: boolean } {
+  const wage = total(employee.allowances.map((a) => a.amount)).plus(dec(employee.basicSalary));
+  return { hireDate: !employee.hireDate, wage: !wage.gt(0) };
 }
 
 /** Days of the leaving month the employee worked (from the 1st or the hire date). */

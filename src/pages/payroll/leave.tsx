@@ -1,19 +1,25 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { CalendarPlus, Plane } from 'lucide-react';
+import { CalendarPlus, ListChecks, Plane } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import { companyDayOff } from '@/db/payroll';
-import { annualLeaveBalance, LEAVE_TYPES, sickDaysByTier } from '@/lib/hr/leave';
+import {
+  employeeLeaveBalance,
+  employeesNeedingLeaveOpening,
+  LEAVE_TYPES,
+  sickDaysByTier,
+} from '@/lib/hr/leave';
 import { isCurrent } from '@/lib/hr/employees';
 import { today } from '@/lib/dates';
 import { useEmployees } from '@/features/people/hooks';
 import { useLeaveRecords } from '@/features/payroll/hooks';
 import { LeaveDialog } from '@/features/payroll/leave-dialog';
+import { LeaveOpeningsDialog } from '@/features/payroll/leave-openings-dialog';
 import { PayrollHeader } from '@/features/payroll/shared';
 import { Button } from '@/components/ui/button';
 import { Badge, Card, EmptyState, Spinner } from '@/components/ui/misc';
 import { localName } from '@/i18n/names';
-import { t } from '@/i18n';
+import { t, tp } from '@/i18n';
 
 /** Leave balances of the current staff and who is on leave today. */
 export default function PayrollLeavePage() {
@@ -23,6 +29,7 @@ export default function PayrollLeavePage() {
   const employees = useEmployees();
   const records = useLeaveRecords();
   const [recording, setRecording] = useState(false);
+  const [opening, setOpening] = useState(false);
   const dayOff = useMemo(() => companyDayOff(company), [company]);
   if (!employees || !records) return <Spinner className="py-24" label={t('Loading…')} />;
 
@@ -45,16 +52,22 @@ export default function PayrollLeavePage() {
     );
     return {
       employee: e,
-      balance: annualLeaveBalance(own, e.hireDate, on).balance,
+      balance: employeeLeaveBalance(e, own, on).balance,
       taken: taken.reduce((s, r) => s + r.days, 0),
       sick: sickDaysByTier(own, year, dayOff).reduce((s, x) => s + x.days, 0),
       away,
     };
   });
+  const needing = employeesNeedingLeaveOpening(current, records).filter((e) => !e.leaveOpening);
   const record = (
-    <Button onClick={() => setRecording(true)} disabled={current.length === 0}>
-      <CalendarPlus /> {t('Record leave')}
-    </Button>
+    <div className="flex flex-wrap gap-2">
+      <Button variant="outline" onClick={() => setOpening(true)} disabled={current.length === 0}>
+        <ListChecks /> {t('Set opening leave balances')}
+      </Button>
+      <Button onClick={() => setRecording(true)} disabled={current.length === 0}>
+        <CalendarPlus /> {t('Record leave')}
+      </Button>
+    </div>
   );
 
   return (
@@ -70,6 +83,15 @@ export default function PayrollLeavePage() {
         </Card>
       ) : (
         <Card>
+          {needing.length > 0 ? (
+            <p className="border-b border-amber-100 bg-amber-50/60 px-5 py-3 text-sm text-amber-900">
+              {tp(
+                needing.length,
+                '{count} employee has no opening leave balance: their leave is counted from their hire date.',
+                '{count} employees have no opening leave balance: their leave is counted from their hire date.',
+              )}
+            </p>
+          ) : null}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -113,6 +135,11 @@ export default function PayrollLeavePage() {
                     </td>
                     <td className="tabular px-3 py-3 text-end font-medium text-slate-900">
                       {fmt.quantity(balance)}
+                      {e.leaveOpening && !e.leaveOpening.confirmed ? (
+                        <Badge tone="amber" className="ms-2">
+                          {t('Not confirmed')}
+                        </Badge>
+                      ) : null}
                     </td>
                     <td className="tabular hidden px-3 py-3 text-end text-slate-600 sm:table-cell">
                       {fmt.quantity(taken)}
@@ -135,6 +162,7 @@ export default function PayrollLeavePage() {
       {recording ? (
         <LeaveDialog employees={employees} records={records} onClose={() => setRecording(false)} />
       ) : null}
+      {opening ? <LeaveOpeningsDialog onClose={() => setOpening(false)} /> : null}
     </div>
   );
 }

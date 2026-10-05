@@ -65,11 +65,11 @@ test('a residency expiring in 20 days is renewed from Compliance with its fee', 
   await expect(row).toContainText('Ravi Kumar');
   await expect(row).toContainText('Valid');
 
-  // The fee is an expense in government fees, and the books balance.
+  // The fee is an expense in government fees, without the employee's name
+  // (staff see expenses), and the books balance.
   await page.goto('#/expenses');
-  await expect(
-    page.getByRole('row', { name: /Residency renewal – Ravi Kumar.*KD 10\.000/ }),
-  ).toBeVisible();
+  await expect(page.getByRole('row', { name: /Document renewal fee.*KD 10\.000/ })).toBeVisible();
+  await expect(page.getByText('Ravi Kumar')).toHaveCount(0);
   await page.goto('#/reports/balance-sheet');
   await expect(page.getByText('Balanced', { exact: true })).toBeVisible();
 });

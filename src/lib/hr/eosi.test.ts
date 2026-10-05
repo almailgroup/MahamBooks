@@ -142,11 +142,14 @@ describe('end-of-service indemnity (Labour Law 6/2010 art. 51)', () => {
 });
 
 describe('service and wage', () => {
-  it('counts years of service with part years', () => {
-    expect(serviceYears('2019-10-03', '2026-10-03')).toBe(7);
-    expect(serviceYears('2024-01-01', '2024-07-01')).toBe(0.4973); // 182 / 366 days
+  it('counts years of service with part years, the last day included', () => {
+    // Hired 3 October 2019, last day 2 October 2026: seven years.
+    expect(serviceYears('2019-10-03', '2026-10-02')).toBe(7);
+    expect(serviceYears('2024-01-01', '2024-06-30')).toBe(0.4973); // 182 / 366 days
     // A 29 February start has its anniversary on 28 February in other years.
-    expect(serviceYears('2020-02-29', '2021-02-28')).toBe(1);
+    expect(serviceYears('2020-02-29', '2021-02-27')).toBe(1);
+    // Hired and left on the same day: one day of service.
+    expect(serviceYears('2026-10-03', '2026-10-03')).toBe(0.0027);
     expect(serviceYears('2026-10-03', '2026-01-01')).toBe(0);
   });
 

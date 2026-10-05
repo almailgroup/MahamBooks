@@ -1,14 +1,15 @@
 import { db } from './db';
 import { logActivity } from './activity';
 import { defaultNumbering, nowStamp } from './defaults';
-import type { Attachment, Employee, EmployeeAllowance, ID, PeopleSettings } from './types';
+import type { Attachment, Employee, EmployeeAllowance, ID, ISODate, PeopleSettings } from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId, shortId } from '@/lib/ids';
-import { today } from '@/lib/dates';
+import { isISODate, today } from '@/lib/dates';
 import { currencyPrecision, normalizeDigits, round } from '@/lib/money';
 import { compactIban, normalizeKuwaitPhone } from '@/lib/kuwait';
 import { DEFAULT_REMINDER_DAYS, normalizeReminderDays } from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
+import { isOpeningRecord } from '@/lib/hr/leave';
 import { msg, t } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
@@ -80,99 +81,205 @@ export function compactAccountNumber(value: string | undefined): string {
 /**
  * Saves an employee, giving new ones the next employee number. With
  * `log: false` no activity entry is written (an import writes one for all).
+ *
+ * `expectedUpdatedAt` is the version a form was opened on: when the record
+ * changed since (on another device, in another tab, by a settlement), the
+ * save is refused instead of putting back what the form still shows. An
+ * employee with a final settlement stays marked as left.
  */
 export async function saveEmployee(
   input: Employee,
-  options: { log?: boolean } = {},
+  options: { log?: boolean; expectedUpdatedAt?: string } = {},
 ): Promise<Employee> {
-  return db.transaction('rw', [db.employees, db.companies, db.activities], async () => {
-    const company = await db.companies.get(input.companyId);
-    if (!company) throw new EmployeeError(t('Company not found'));
-    const name = input.name.trim();
-    if (!name) throw new EmployeeError(t('Enter the employee’s name.'));
-    const places = currencyPrecision(company.currency);
-    const existing = await db.employees.get(input.id);
+  return db.transaction(
+    'rw',
+    [db.employees, db.companies, db.activities, db.finalSettlements],
+    async () => {
+      const company = await db.companies.get(input.companyId);
+      if (!company) throw new EmployeeError(t('Company not found'));
+      const name = input.name.trim();
+      if (!name) throw new EmployeeError(t('Enter the employee’s name.'));
+      const places = currencyPrecision(company.currency);
+      const existing = await db.employees.get(input.id);
+      if (
+        existing &&
+        options.expectedUpdatedAt !== undefined &&
+        existing.updatedAt !== options.expectedUpdatedAt
+      ) {
+        throw new EmployeeError(
+          t(
+            'This employee was changed somewhere else after you opened the form. Reload the page to see the changes, then make yours again.',
+          ),
+        );
+      }
+      if (existing && input.status !== 'left') {
+        const settled = await db.finalSettlements
+          .where('employeeId')
+          .equals(existing.id)
+          .filter((s) => s.status !== 'reversed')
+          .count();
+        if (settled > 0) {
+          throw new EmployeeError(
+            t(
+              '{name} has a final settlement, so they stay marked as left. Reverse the settlement to make them current again.',
+              { name: existing.name },
+            ),
+          );
+        }
+      }
 
-    let employee: Employee = {
-      ...input,
-      name,
-      nameAr: input.nameAr?.trim() ?? '',
-      number: input.number.trim(),
-      jobTitle: input.jobTitle.trim(),
-      jobTitleAr: input.jobTitleAr?.trim() ?? '',
-      department: input.department.trim(),
-      civilId: input.civilId.replace(/\s/g, ''),
-      iban: compactIban(input.iban),
-      accountNumber: compactAccountNumber(input.accountNumber),
-      birthDate: input.birthDate || null,
-      gender: input.gender === 'male' || input.gender === 'female' ? input.gender : null,
-      // Changed only by setEmployeePhoto and removeEmployeePhoto: a form
-      // opened before a new photo doesn't bring the old one back.
-      photoId: existing ? (existing.photoId ?? null) : (input.photoId ?? null),
-      phone: input.phone.trim() ? (normalizeKuwaitPhone(input.phone) ?? input.phone.trim()) : '',
-      email: input.email.trim(),
-      basicSalary: round(Math.max(0, input.basicSalary), places),
-      permitSalary: round(Math.max(0, input.permitSalary), places),
-      allowances: input.allowances
-        .map((a) => ({
-          ...a,
-          name: a.name.trim(),
-          nameAr: a.nameAr?.trim() ?? '',
-          amount: round(Math.max(0, a.amount), places),
-        }))
-        .filter((a) => a.name || a.nameAr || a.amount > 0),
-      contractEnd: input.contractType === 'fixed' ? input.contractEnd : null,
-      leavingDate: input.status === 'left' ? (input.leavingDate ?? today()) : null,
-      leavingReason: input.status === 'left' ? (input.leavingReason ?? 'other') : null,
-      updatedAt: nowStamp(),
-    };
+      let employee: Employee = {
+        ...input,
+        name,
+        nameAr: input.nameAr?.trim() ?? '',
+        number: input.number.trim(),
+        jobTitle: input.jobTitle.trim(),
+        jobTitleAr: input.jobTitleAr?.trim() ?? '',
+        department: input.department.trim(),
+        civilId: input.civilId.replace(/\s/g, ''),
+        iban: compactIban(input.iban),
+        accountNumber: compactAccountNumber(input.accountNumber),
+        birthDate: input.birthDate || null,
+        gender: input.gender === 'male' || input.gender === 'female' ? input.gender : null,
+        // Changed only by setEmployeePhoto and removeEmployeePhoto: a form
+        // opened before a new photo doesn't bring the old one back.
+        photoId: existing ? (existing.photoId ?? null) : (input.photoId ?? null),
+        // Changed only by setLeaveOpening, likewise.
+        leaveOpening: existing ? (existing.leaveOpening ?? null) : (input.leaveOpening ?? null),
+        phone: input.phone.trim() ? (normalizeKuwaitPhone(input.phone) ?? input.phone.trim()) : '',
+        email: input.email.trim(),
+        basicSalary: round(Math.max(0, input.basicSalary), places),
+        permitSalary: round(Math.max(0, input.permitSalary), places),
+        allowances: input.allowances
+          .map((a) => ({
+            ...a,
+            name: a.name.trim(),
+            nameAr: a.nameAr?.trim() ?? '',
+            amount: round(Math.max(0, a.amount), places),
+          }))
+          .filter((a) => a.name || a.nameAr || a.amount > 0),
+        contractEnd: input.contractType === 'fixed' ? input.contractEnd : null,
+        leavingDate: input.status === 'left' ? (input.leavingDate ?? today()) : null,
+        // Only a reason someone chose: the form and "Mark as left" ask for it,
+        // and the final settlement asks again when it is missing.
+        leavingReason: input.status === 'left' ? (input.leavingReason ?? null) : null,
+        updatedAt: nowStamp(),
+      };
 
-    const others = (await db.employees.where('companyId').equals(company.id).toArray()).filter(
-      (e) => e.id !== employee.id,
-    );
-    const taken = new Set(others.map((e) => e.number.toLowerCase()));
-    if (employee.number && taken.has(employee.number.toLowerCase())) {
-      throw new EmployeeError(
-        t('Employee number {number} is already used.', { number: employee.number }),
+      const others = (await db.employees.where('companyId').equals(company.id).toArray()).filter(
+        (e) => e.id !== employee.id,
       );
-    }
-    if (!employee.number) {
-      const rule = company.numbering.employee ?? defaultNumbering().employee;
-      const allocated = allocateNumber(rule, employee.hireDate ?? today(), (n) =>
-        taken.has(n.toLowerCase()),
-      );
-      employee = { ...employee, number: allocated.number };
-      await db.companies.put({
-        ...company,
-        numbering: { ...company.numbering, employee: allocated.rule },
-      });
-    }
-    if (!existing) employee.createdAt = employee.updatedAt;
-    await db.employees.put(employee);
-    if (options.log === false) return employee;
+      const taken = new Set(others.map((e) => e.number.toLowerCase()));
+      if (employee.number && taken.has(employee.number.toLowerCase())) {
+        throw new EmployeeError(
+          t('Employee number {number} is already used.', { number: employee.number }),
+        );
+      }
+      if (!employee.number) {
+        const rule = company.numbering.employee ?? defaultNumbering().employee;
+        const allocated = allocateNumber(rule, employee.hireDate ?? today(), (n) =>
+          taken.has(n.toLowerCase()),
+        );
+        employee = { ...employee, number: allocated.number };
+        await db.companies.put({
+          ...company,
+          numbering: { ...company.numbering, employee: allocated.rule },
+        });
+      }
+      if (!existing) employee.createdAt = employee.updatedAt;
+      await db.employees.put(employee);
+      if (options.log === false) return employee;
 
-    const vars = { name: employee.name, number: employee.number };
-    const arabic = { name: employee.nameAr };
-    if (!existing) {
-      await logActivity(company.id, 'employee', employee.id, 'created', {
-        text: msg('Employee {name} ({number}) added'),
-        vars,
-        arabic,
-      });
-    } else if (existing.status !== 'left' && employee.status === 'left') {
-      await logActivity(company.id, 'employee', employee.id, 'left', {
-        text: msg('Employee {name} ({number}) marked as left'),
-        vars,
-        arabic,
-      });
-    } else {
-      await logActivity(company.id, 'employee', employee.id, 'updated', {
-        text: msg('Employee {name} ({number}) updated'),
-        vars,
-        arabic,
-      });
+      const vars = { name: employee.name, number: employee.number };
+      const arabic = { name: employee.nameAr };
+      if (!existing) {
+        await logActivity(company.id, 'employee', employee.id, 'created', {
+          text: msg('Employee {name} ({number}) added'),
+          vars,
+          arabic,
+        });
+      } else if (existing.status !== 'left' && employee.status === 'left') {
+        await logActivity(company.id, 'employee', employee.id, 'left', {
+          text: msg('Employee {name} ({number}) marked as left'),
+          vars,
+          arabic,
+        });
+      } else {
+        await logActivity(company.id, 'employee', employee.id, 'updated', {
+          text: msg('Employee {name} ({number}) updated'),
+          vars,
+          arabic,
+        });
+      }
+      return employee;
+    },
+  );
+}
+
+/** An opening leave balance as entered: a date and days (0 or more, to 2 decimals). */
+export function checkLeaveOpening(input: { date: ISODate; days: number }): {
+  date: ISODate;
+  days: number;
+} {
+  if (!isISODate(input.date)) throw new EmployeeError(t('Enter the date.'));
+  const days = Math.round(input.days * 100) / 100;
+  if (!Number.isFinite(days) || days < 0) {
+    throw new EmployeeError(t('Enter the number of days.'));
+  }
+  return { date: input.date, days };
+}
+
+/**
+ * Puts an employee's opening leave balance, confirmed. With `replace` (a
+ * spreadsheet or an import that names the employee wins), opening leave
+ * records on or after its date are cancelled: they would count instead.
+ * Runs in a transaction with the employees and leave records.
+ */
+export async function putLeaveOpening(
+  employee: Employee,
+  opening: { date: ISODate; days: number },
+  options: { replace?: boolean } = {},
+): Promise<Employee> {
+  const stamp = nowStamp();
+  const updated: Employee = {
+    ...employee,
+    leaveOpening: { date: opening.date, days: opening.days, confirmed: true },
+    updatedAt: stamp,
+  };
+  await db.employees.put(updated);
+  if (options.replace) {
+    const later = await db.leaveRecords
+      .where('employeeId')
+      .equals(employee.id)
+      .filter((r) => isOpeningRecord(r) && r.start >= opening.date)
+      .toArray();
+    for (const record of later) {
+      await db.leaveRecords.put({ ...record, status: 'cancelled', updatedAt: stamp });
     }
-    return employee;
+  }
+  return updated;
+}
+
+/**
+ * Sets the annual leave an employee brought forward (from the records kept
+ * before) and marks it as confirmed. Leave accrues only from its date, so
+ * nothing before it is counted, provisioned or paid out.
+ */
+export async function setLeaveOpening(
+  employeeId: ID,
+  input: { date: ISODate; days: number },
+): Promise<Employee> {
+  return db.transaction('rw', [db.employees, db.leaveRecords, db.activities], async () => {
+    const employee = await db.employees.get(employeeId);
+    if (!employee) throw new EmployeeError(t('This employee could not be found.'));
+    const { days } = checkLeaveOpening(input);
+    const updated = await putLeaveOpening(employee, { date: input.date, days });
+    await logActivity(employee.companyId, 'employee', employee.id, 'leave_opening', {
+      text: msg('Leave brought forward for {name}: {days} days on {date}'),
+      vars: { name: employee.name, days, date: input.date },
+      arabic: { name: employee.nameAr },
+    });
+    return updated;
   });
 }
 
@@ -239,10 +346,12 @@ export async function employeeDeletion(employee: Employee): Promise<EmployeeDele
 /**
  * Deletes an employee and everything about them: their documents and
  * renewals in the register, every file kept with them or with those, and
- * the activity entries about them. One entry records the deletion, with
- * only the employee number. Renewal fees stay in the books as expenses,
- * with the number in place of the name. Employees with payroll history
- * can't be deleted (the accounts depend on it): mark them as left.
+ * the activity entries about them (those about documents deleted before
+ * too). One entry records the deletion, with only the employee number.
+ * Renewal fees stay in the books as expenses, described as a document
+ * renewal fee, without the name, the document's number or the renewal's
+ * note. Employees with payroll history can't be deleted (the accounts depend
+ * on it): mark them as left.
  */
 export async function deleteEmployee(id: ID): Promise<void> {
   await db.transaction(
@@ -271,20 +380,50 @@ export async function deleteEmployee(id: ID): Promise<void> {
       }
       const { documents, renewals, files, owners } = await personnelFile(id);
       const names = [employee.name, employee.nameAr].filter((n): n is string => Boolean(n?.trim()));
+      const plain = (text: string) => normalizeDigits(text).replace(/[\s-]/g, '').toUpperCase();
+      const numbers = new Set(
+        [
+          employee.civilId,
+          employee.passportNumber,
+          employee.residencyNumber,
+          employee.workPermitNumber,
+          ...documents.map((d) => d.number),
+          ...renewals.map((r) => r.number ?? ''),
+        ]
+          .map(plain)
+          .filter(Boolean),
+      );
+      const unnamed = (text: string) =>
+        names.reduce((out, name) => out.split(name).join(employee.number), text);
       for (const renewal of renewals) {
         if (!renewal.expenseId) continue;
         const expense = await db.expenses.get(renewal.expenseId);
         if (!expense) continue;
-        const description = names.reduce(
-          (text, name) => text.split(name).join(employee.number),
-          expense.description,
-        );
-        if (description !== expense.description) {
-          await db.expenses.put({ ...expense, description, updatedAt: nowStamp() });
+        // Expenses are seen by staff: no name, document number or renewal note.
+        const scrubbed = {
+          description: t('Document renewal fee'),
+          reference: numbers.has(plain(expense.reference)) ? '' : unnamed(expense.reference),
+          notes:
+            expense.notes.trim() && expense.notes.trim() === renewal.note.trim()
+              ? ''
+              : unnamed(expense.notes),
+        };
+        if (
+          scrubbed.description !== expense.description ||
+          scrubbed.reference !== expense.reference ||
+          scrubbed.notes !== expense.notes
+        ) {
+          await db.expenses.put({ ...expense, ...scrubbed, updatedAt: nowStamp() });
         }
       }
       await db.attachments.bulkDelete(files.map((f) => f.id));
       await db.activities.where('entityId').anyOf(owners).delete();
+      // About their documents, also those deleted before (they carry the employee).
+      await db.activities
+        .where('companyId')
+        .equals(employee.companyId)
+        .filter((a) => a.employeeId === id)
+        .delete();
       await db.renewals.bulkDelete(renewals.map((r) => r.id));
       await db.complianceDocuments.bulkDelete(documents.map((d) => d.id));
       await db.employees.delete(id);

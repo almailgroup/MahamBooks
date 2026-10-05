@@ -191,9 +191,9 @@ export default function PayrollSettingsPage() {
               )}
             </Field>
             <Field
-              label={t('Overtime and unpaid days use')}
+              label={t('Overtime and unpaid absence use')}
               hint={t(
-                'Overtime is paid at 125%, on rest days 150% and on public holidays 200% of the hourly rate.',
+                'Overtime is paid at 125%, on rest days 150% and on public holidays 200% of the hourly rate. Unpaid leave costs a share of the month’s pay.',
               )}
             >
               {(id) => (

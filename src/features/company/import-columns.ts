@@ -16,14 +16,42 @@ export interface ImportColumn {
   required?: boolean;
   /** Other names the column goes by in exports and spreadsheets. */
   aliases: string[];
+  /** Names too general to look for inside another column's name: they match only as they are. */
+  exact?: string[];
 }
 
-const col = (key: string, label: string, aliases: string[], required = false): ImportColumn => ({
-  key,
-  label,
-  aliases,
-  required,
-});
+const col = (
+  key: string,
+  label: string,
+  aliases: string[],
+  required = false,
+  exact: string[] = [],
+): ImportColumn => ({ key, label, aliases, required, ...(exact.length ? { exact } : {}) });
+
+/** Names of a column with the annual leave days an employee has left. */
+export const LEAVE_BALANCE_ALIASES = [
+  'leave balance',
+  'annual leave balance',
+  'leave balance days',
+  'vacation balance',
+  'leave brought forward',
+  'رصيد الإجازات',
+  'رصيد الإجازة',
+  'رصيد الإجازات السنوية',
+  'رصيد الإجازة السنوية',
+];
+
+/**
+ * Leave balance column names that match only as they are: "Balance" could be
+ * anything's, and "Leave days taken" is not what is left.
+ */
+export const LEAVE_BALANCE_EXACT = [
+  'balance',
+  'الرصيد',
+  'leave days',
+  'annual leave days',
+  'أيام الإجازة',
+];
 
 export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
   contacts: [
@@ -523,6 +551,7 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
       'تاريخ المباشره',
       'تاريخ بدء العمل',
     ]),
+    col('leaveBalance', msg('Leave balance'), LEAVE_BALANCE_ALIASES, false, LEAVE_BALANCE_EXACT),
     col('basicSalary', msg('Basic salary'), [
       'basic salary',
       'basic',
@@ -660,26 +689,23 @@ export function normalizeHeader(text: string): string {
 export type ColumnMapping = Record<string, number | null>;
 
 /**
- * Best guess of which file column holds each field. Exact names win over
- * partial ones, longer names over shorter ones; a column is used once.
- * With the rows, employees without an Arabic name column take Arabic names
- * from a column of document file names ("<Arabic name> 424.pdf").
+ * Which file column holds each of the fields. Exact names win over partial
+ * ones, longer names over shorter ones; a column is used once.
  */
-export function guessColumns(
-  kind: ImportKind,
-  headers: string[],
-  rows: string[][] = [],
-): ColumnMapping {
-  const fields = IMPORT_COLUMNS[kind];
+export function matchColumns(fields: ImportColumn[], headers: string[]): ColumnMapping {
   const names = headers.map(normalizeHeader);
   const candidates: { field: string; column: number; score: number }[] = [];
   fields.forEach((field, order) => {
     const aliases = [field.label, t(field.label), field.key, ...field.aliases]
       .map(normalizeHeader)
       .filter(Boolean);
+    const exact = (field.exact ?? []).map(normalizeHeader).filter(Boolean);
     names.forEach((name, column) => {
       if (!name) return;
       let score = 0;
+      for (const alias of exact) {
+        if (name === alias) score = Math.max(score, 1000 + alias.length);
+      }
       for (const alias of aliases) {
         if (name === alias) score = Math.max(score, 1000 + alias.length);
         else if (
@@ -700,6 +726,21 @@ export function guessColumns(
     mapping[c.field] = c.column;
     used.add(c.column);
   }
+  return mapping;
+}
+
+/**
+ * Best guess of which file column holds each field (see matchColumns).
+ * With the rows, employees without an Arabic name column take Arabic names
+ * from a column of document file names ("<Arabic name> 424.pdf").
+ */
+export function guessColumns(
+  kind: ImportKind,
+  headers: string[],
+  rows: string[][] = [],
+): ColumnMapping {
+  const mapping = matchColumns(IMPORT_COLUMNS[kind], headers);
+  const used = new Set(Object.values(mapping).filter((i): i is number => i != null));
   if (kind === 'employees') {
     const body = rows.slice(1);
     const column = (index: number) => body.map((r) => r[index] ?? '');
@@ -814,6 +855,7 @@ export const TEMPLATE_ROWS: Record<ImportKind, Record<string, string>[]> = {
       jobTitle: 'Accountant',
       jobTitleAr: 'محاسب',
       hireDate: '01/02/2022',
+      leaveBalance: '12.5',
       basicSalary: '1250.000',
       iban: 'KW81CBKU0000000000001234560101',
       phone: '+965 5000 1234',
@@ -834,6 +876,7 @@ export const TEMPLATE_ROWS: Record<ImportKind, Record<string, string>[]> = {
       jobTitle: 'Security Guard',
       jobTitleAr: 'حارس أمن',
       hireDate: '10/09/2023',
+      leaveBalance: '30',
       basicSalary: '180.000',
       accountNumber: '5407000000000008',
       phone: '977-9800000000',

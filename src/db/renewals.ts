@@ -119,10 +119,17 @@ export async function saveComplianceDocument(
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.complianceDocuments.put(doc);
       if (options.log === false) return doc;
-      await logActivity(company.id, 'compliance', doc.id, existing ? 'updated' : 'created', {
-        text: existing ? msg('Document {title} updated') : msg('Document {title} added'),
-        vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
-      });
+      await logActivity(
+        company.id,
+        'compliance',
+        doc.id,
+        existing ? 'updated' : 'created',
+        {
+          text: existing ? msg('Document {title} updated') : msg('Document {title} added'),
+          vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+        },
+        { employeeId: doc.employeeId },
+      );
       return doc;
     },
   );
@@ -134,10 +141,17 @@ export async function setDocumentArchived(id: ID, archived: boolean): Promise<vo
     const doc = await db.complianceDocuments.get(id);
     if (!doc) return;
     await db.complianceDocuments.put({ ...doc, archived, updatedAt: nowStamp() });
-    await logActivity(doc.companyId, 'compliance', id, archived ? 'archived' : 'restored', {
-      text: archived ? msg('Document {title} archived') : msg('Document {title} restored'),
-      vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
-    });
+    await logActivity(
+      doc.companyId,
+      'compliance',
+      id,
+      archived ? 'archived' : 'restored',
+      {
+        text: archived ? msg('Document {title} archived') : msg('Document {title} restored'),
+        vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+      },
+      { employeeId: doc.employeeId },
+    );
   });
 }
 
@@ -154,10 +168,17 @@ export async function deleteComplianceDocument(id: ID): Promise<void> {
       }
       await db.attachments.where('ownerId').equals(id).delete();
       await db.complianceDocuments.delete(id);
-      await logActivity(doc.companyId, 'compliance', id, 'deleted', {
-        text: msg('Document {title} deleted'),
-        vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
-      });
+      await logActivity(
+        doc.companyId,
+        'compliance',
+        id,
+        'deleted',
+        {
+          text: msg('Document {title} deleted'),
+          vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+        },
+        { employeeId: doc.employeeId },
+      );
     },
   );
 }
@@ -465,6 +486,8 @@ export async function renewDocument(
         if (!account || account.companyId !== company.id) {
           throw new ComplianceError(t('Choose a category.'));
         }
+        // Staff and viewers see expenses: an employee's document leaves no
+        // name, number or note there. They stay on the (private) renewal.
         expense = await saveExpense(
           createExpense(company.id, {
             date: input.renewedOn,
@@ -472,11 +495,15 @@ export async function renewDocument(
             amount: feeAmount,
             currency: company.currency,
             paidFromAccountId: input.fee.paidFromAccountId,
-            description: owner
-              ? t('{document} renewal – {owner}', { document: title, owner })
-              : t('{document} renewal', { document: title }),
-            reference: input.fee.reference?.trim() || number || currentNumber,
-            notes: input.note?.trim() ?? '',
+            description: employee
+              ? t('Document renewal fee')
+              : owner
+                ? t('{document} renewal – {owner}', { document: title, owner })
+                : t('{document} renewal', { document: title }),
+            reference: employee
+              ? (input.fee.reference?.trim() ?? '')
+              : input.fee.reference?.trim() || number || currentNumber,
+            notes: employee ? '' : (input.note?.trim() ?? ''),
           }),
         );
       }
@@ -512,15 +539,23 @@ export async function renewDocument(
         fee: feeAmount,
         expenseId: expense?.id ?? null,
         note: input.note?.trim() ?? '',
+        number: number || currentNumber,
         createdAt: nowStamp(),
       };
       await db.renewals.add(renewal);
-      await logActivity(company.id, 'compliance', renewal.id, 'renewed', {
-        text: owner
-          ? msg('{document} of {owner} renewed until {date}')
-          : msg('{document} renewed until {date}'),
-        vars: { document: title, owner, date: input.newExpiry },
-      });
+      await logActivity(
+        company.id,
+        'compliance',
+        renewal.id,
+        'renewed',
+        {
+          text: owner
+            ? msg('{document} of {owner} renewed until {date}')
+            : msg('{document} renewed until {date}'),
+          vars: { document: title, owner, date: input.newExpiry },
+        },
+        { employeeId: employee?.id ?? null },
+      );
       return { renewal, expense };
     },
   );

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import { setupCompany } from './records';
 import { createEmployee, saveEmployee } from './people';
+import { createLeaveRecord } from './payroll';
 import { importEmployees, loadImportContext, planImport, type ImportOptions } from './import';
 import { employeeNumberKey, readBloodGroup, readGender, readPhone } from './import-employees';
 import type { Company, Employee } from './types';
@@ -16,6 +17,7 @@ import { detectDateFormats } from '@/lib/banking/statement';
 import { readXlsx } from '@/lib/xlsx';
 import { nationalityCode } from '@/lib/hr/nationalities';
 import { arabicJobTitle, englishJobTitle } from '@/lib/hr/job-titles';
+import { employeeLeaveBalance } from '@/lib/hr/leave';
 import { findBank, isValidCardNumber } from '@/lib/kuwait';
 import { maskNumber } from '@/lib/format';
 import { fakeCardNumber, fakeCivilId, zohoEmployees, zohoWorkbook } from '@/test/workbook';
@@ -440,6 +442,72 @@ describe('planning an employee file', () => {
     expect(result.employees!.notes).toBe(10);
   });
 
+  it('reads short years of birth in the past and leaves impossible dates of birth out', async () => {
+    const c = await company();
+    const result = await plan(c, [
+      ['Employee Number', 'Name', 'Date of Birth', 'Nationality'],
+      ['1', 'Test Guard One', '02/07/94', 'Indian'],
+      ['2', 'Test Guard Two', '15/03/05', 'Indian'],
+      ['3', 'Test Guard Three', '02/07/2094', 'Indian'],
+      ['4', 'Test Guard Four', '02/07/1894', 'Indian'],
+    ]);
+    // 2094 would be in the future: 1994. 2005 is not.
+    expect(on(result, 2).birthDate).toBe('1994-07-02');
+    expect(notesOn(result, 2)).toEqual([]);
+    expect(on(result, 3).birthDate).toBe('2005-03-15');
+    expect(on(result, 4).birthDate).toBeNull();
+    expect(notesOn(result, 4)).toEqual([
+      'Date of birth “02/07/2094” is in the future, so it was left empty.',
+    ]);
+    expect(on(result, 5).birthDate).toBeNull();
+    expect(notesOn(result, 5)).toEqual([
+      'Date of birth “02/07/1894” is before 1900, so it was left empty.',
+    ]);
+  });
+
+  it('starts the leave of new employees from the import, not confirmed', async () => {
+    const c = await company();
+    const result = await plan(c, [
+      ['Employee Number', 'Name', 'Joining Date'],
+      ['1', 'Test Guard One', '01/01/2016'],
+    ]);
+    expect(on(result, 2)).toMatchObject({
+      hireDate: '2016-01-01',
+      leaveOpening: { date: '2026-10-05', days: 0, confirmed: false },
+    });
+  });
+
+  it('brings forward the leave balance the file gives, confirmed, on the import date', async () => {
+    const c = await company();
+    const result = await plan(c, [
+      ['Employee Number', 'Name', 'Joining Date', 'Annual Leave Balance'],
+      ['1', 'Test Guard One', '01/01/2016', '22.5'],
+      ['2', 'Test Guard Two', '01/01/2017', ''],
+      ['3', 'Test Guard Three', '01/01/2018', 'many'],
+      ['4', 'Test Guard Four', '01/01/2019', '-3'],
+    ]);
+    expect(result.employees).toMatchObject({ leaveBalanceColumn: true, leaveBalances: 1 });
+    expect(on(result, 2).leaveOpening).toEqual({ date: '2026-10-05', days: 22.5, confirmed: true });
+    // Nothing in the file: 0 days, to be confirmed, as without the column.
+    expect(on(result, 3).leaveOpening).toEqual({ date: '2026-10-05', days: 0, confirmed: false });
+    expect(on(result, 4).leaveOpening).toEqual({ date: '2026-10-05', days: 0, confirmed: false });
+    expect(notesOn(result, 4)).toEqual(['Leave balance: “many” is not a number of days.']);
+    expect(notesOn(result, 5)).toEqual(['Leave balance: “-3” is not a number of days.']);
+
+    // The column goes by other names, in English and Arabic.
+    const column = (header: string) =>
+      guessColumns('employees', ['Emp No', 'Name', header]).leaveBalance;
+    expect(column('Leave Balance')).toBe(2);
+    expect(column('Leave days')).toBe(2);
+    expect(column('Balance')).toBe(2);
+    expect(column('Annual leave balance (days)')).toBe(2);
+    expect(column('رصيد الإجازات')).toBe(2);
+    expect(column('الرصيد')).toBe(2);
+    // "Balance" and "Leave days" are looked for only as the whole name.
+    expect(column('Loan balance')).toBeNull();
+    expect(column('Leave days taken')).toBeNull();
+  });
+
   it('reads placeholders such as "-" and "N/A" as empty', async () => {
     const c = await company();
     const result = await plan(c, [
@@ -605,6 +673,63 @@ describe('importing employees', () => {
     // Importing the same file again adds nobody twice.
     const again = await plan(c, rows);
     expect(again.employees).toMatchObject({ add: 1, existing: 6 });
+  });
+
+  it('gives updated employees the leave balance in the file: it replaces the one they had', async () => {
+    const c = await company();
+    const hand = await saveEmployee(
+      createEmployee(c.id, { number: '7', name: 'Guard Entered By Hand', hireDate: '2015-02-01' }),
+    );
+    await db.employees.update(hand.id, {
+      leaveOpening: { date: '2026-09-01', days: 4, confirmed: true },
+    });
+    const later = createLeaveRecord(c.id, hand.id, {
+      type: 'annual',
+      kind: 'opening',
+      start: '2026-10-05',
+      end: '2026-10-05',
+      days: 9,
+    });
+    await db.leaveRecords.add(later);
+    const blank = await saveEmployee(
+      createEmployee(c.id, {
+        number: '8',
+        name: 'Guard Without A Balance',
+        hireDate: '2016-02-01',
+      }),
+    );
+    const rows = [
+      ['Employee Number', 'Name', 'Leave Balance'],
+      ['7', 'Guard Entered By Hand', '15'],
+      ['8', 'Guard Without A Balance', ''],
+      ['9', 'New Guard', '6.25'],
+    ];
+    const mapping = guessColumns('employees', rows[0], rows);
+
+    // Not updating: the employees here keep what they have.
+    await importEmployees(c.id, rows, mapping, OPTIONS);
+    expect((await db.employees.get(hand.id))!.leaveOpening).toEqual({
+      date: '2026-09-01',
+      days: 4,
+      confirmed: true,
+    });
+    const added = (await db.employees.where('companyId').equals(c.id).toArray()).find(
+      (e) => e.number === '9',
+    )!;
+    expect(added.leaveOpening).toEqual({ date: '2026-10-05', days: 6.25, confirmed: true });
+
+    // Updating: the file wins, even over an opening leave record dated after its date.
+    await importEmployees(c.id, rows, mapping, { ...OPTIONS, updateExisting: true });
+    const updated = (await db.employees.get(hand.id))!;
+    expect(updated.leaveOpening).toEqual({ date: '2026-10-05', days: 15, confirmed: true });
+    expect((await db.leaveRecords.get(later.id))!.status).toBe('cancelled');
+    const records = await db.leaveRecords.where('companyId').equals(c.id).toArray();
+    expect(employeeLeaveBalance(updated, records, '2026-10-05')).toMatchObject({
+      from: '2026-10-05',
+      balance: 15,
+    });
+    // An empty cell leaves the balance as it was.
+    expect((await db.employees.get(blank.id))!.leaveOpening ?? null).toBeNull();
   });
 
   it('is not open to staff or viewers', async () => {

@@ -89,8 +89,11 @@ export const LEAVING_REASON_LABELS: Record<LeavingReason, string> = {
   other: msg('Other'),
 };
 
-/** The end-of-service rule that applies to a leaving reason. */
-export function eosiReasonFor(reason: LeavingReason | null): EosiReason {
+/**
+ * The end-of-service rule that applies to a leaving reason. Only a reason
+ * someone chose: a missing one is asked for, never taken as a termination.
+ */
+export function eosiReasonFor(reason: LeavingReason): EosiReason {
   if (reason === 'resignation') return 'resignation';
   if (reason === 'dismissal') return 'dismissal';
   return 'termination';

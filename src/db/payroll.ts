@@ -41,7 +41,7 @@ import { daysBetween, isISODate, today } from '@/lib/dates';
 import { formatDate } from '@/lib/format';
 import { currencyPrecision, fromMinor, round, toMinor } from '@/lib/money';
 import { freeAccountCode, type SystemAccountSpec } from '@/lib/payment-methods';
-import { GCC_COUNTRIES, insuredWithPifss } from '@/lib/hr/employees';
+import { GCC_COUNTRIES, insuredWithPifss, LEAVING_REASON_LABELS } from '@/lib/hr/employees';
 import {
   balanced,
   calculatePayLine,
@@ -49,6 +49,7 @@ import {
   daysInPeriod,
   employedDays,
   eosProvisionFor,
+  formatPeriod,
   isPeriod,
   lastMonthDays,
   leaveValue,
@@ -63,22 +64,24 @@ import {
   periodStart,
   provisionPostings,
   ratesOn,
+  settlementMissing,
   settlementPostings,
   type Posting,
   type SettlementAmounts,
 } from '@/lib/hr/payroll';
 import {
-  annualLeaveBalance,
   countLeaveDays,
+  employeeLeaveBalance,
   dayOffChecker,
   leaveInPeriod,
   MAX_LEAVE_SPAN,
   type DayOff,
   type LeaveBalance,
 } from '@/lib/hr/leave';
-import { presetLayout, SALARY_FILE_COLUMNS } from '@/lib/hr/salary-file';
+import { currentLayout, presetLayout, SALARY_FILE_COLUMNS } from '@/lib/hr/salary-file';
 import { companyHolidays } from '@/features/company/holidays';
 import { interfaceLocale, msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 export class PayrollError extends Error {}
 
@@ -267,7 +270,8 @@ export function defaultPayrollSettings(companyId: ID): PayrollSettings {
 /** A company's payroll settings, with defaults for anything not set. */
 export async function getPayrollSettings(companyId: ID): Promise<PayrollSettings> {
   const saved = await db.payrollSettings.get(companyId);
-  return { ...defaultPayrollSettings(companyId), ...saved };
+  const settings = { ...defaultPayrollSettings(companyId), ...saved };
+  return { ...settings, salaryFile: currentLayout(settings.salaryFile) };
 }
 
 const percent = (n: number) => (Number.isFinite(n) ? Math.min(100, Math.max(0, round(n, 3))) : 0);
@@ -676,14 +680,60 @@ export function createLeaveRecord(
 }
 
 /**
+ * Refuses a change to an employee's leave that would change their pay in a
+ * pay run already approved or paid: that pay is in the books (and maybe in
+ * the bank), so the run is reopened first and updated after.
+ */
+async function assertPayUnchanged(
+  company: Company,
+  employee: Employee,
+  before: LeaveRecord[],
+  after: LeaveRecord[],
+): Promise<void> {
+  const runs = (await db.payRuns.where('companyId').equals(company.id).toArray())
+    .filter((r) => r.status !== 'draft')
+    .sort((a, b) => a.period.localeCompare(b.period));
+  const dayOff = companyDayOff(company);
+  for (const run of runs) {
+    const line = run.lines.find((l) => l.employeeId === employee.id);
+    if (!line) continue;
+    const employed = { from: line.hireDate, to: line.leavingDate };
+    const was = leaveInPeriod(before, run.period, dayOff, employed);
+    const now = leaveInPeriod(after, run.period, dayOff, employed);
+    if (
+      was.unpaidDays === now.unpaidDays &&
+      JSON.stringify(was.reducedPay) === JSON.stringify(now.reducedPay)
+    ) {
+      continue;
+    }
+    const vars = {
+      name: employee.name,
+      month: formatPeriod(run.period, interfaceLocale(company.locale)),
+    };
+    throw new PayrollError(
+      run.status === 'paid'
+        ? t(
+            'This leave changes the pay of {name} in the {month} pay run, which is already paid. Undo its payment and reopen it first, then update it after the leave.',
+            vars,
+          )
+        : t(
+            'This leave changes the pay of {name} in the {month} pay run, which is already approved. Reopen the pay run first, then update it after the leave.',
+            vars,
+          ),
+    );
+  }
+}
+
+/**
  * Records leave (its days counted from the dates, skipping weekends and the
  * company's public holidays where the type counts working days) or a change
- * to the annual leave balance.
+ * to the annual leave balance. Leave that changes pay in an approved or paid
+ * pay run is refused until the run is reopened.
  */
 export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> {
   return db.transaction(
     'rw',
-    [db.companies, db.employees, db.leaveRecords, db.activities],
+    [db.companies, db.employees, db.leaveRecords, db.activities, db.payRuns],
     async () => {
       const company = await loadCompany(input.companyId);
       const employee = await db.employees.get(input.employeeId);
@@ -714,6 +764,11 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
       }
       record = { ...record, notes: record.notes.trim(), updatedAt: nowStamp() };
       if (!existing) record.createdAt = record.updatedAt;
+      const before = await db.leaveRecords.where('employeeId').equals(employee.id).toArray();
+      await assertPayUnchanged(company, employee, before, [
+        ...before.filter((r) => r.id !== record.id),
+        record,
+      ]);
       await db.leaveRecords.put(record);
       await logActivity(company.id, 'payroll', record.id, existing ? 'leave_updated' : 'leave', {
         text: existing ? msg('Leave of {name} updated') : msg('Leave recorded for {name}'),
@@ -725,18 +780,34 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
   );
 }
 
+/** Cancels leave; refused when that would change pay in an approved or paid pay run. */
 export async function cancelLeaveRecord(id: ID): Promise<void> {
-  await db.transaction('rw', [db.employees, db.leaveRecords, db.activities], async () => {
-    const record = await db.leaveRecords.get(id);
-    if (!record || record.status === 'cancelled') return;
-    await db.leaveRecords.put({ ...record, status: 'cancelled', updatedAt: nowStamp() });
-    const employee = await db.employees.get(record.employeeId);
-    await logActivity(record.companyId, 'payroll', id, 'leave_cancelled', {
-      text: msg('Leave of {name} cancelled'),
-      vars: { name: employee?.name ?? '' },
-      arabic: { name: employee?.nameAr },
-    });
-  });
+  await db.transaction(
+    'rw',
+    [db.companies, db.employees, db.leaveRecords, db.activities, db.payRuns],
+    async () => {
+      const record = await db.leaveRecords.get(id);
+      if (!record || record.status === 'cancelled') return;
+      const employee = await db.employees.get(record.employeeId);
+      const company = await db.companies.get(record.companyId);
+      const cancelled: LeaveRecord = { ...record, status: 'cancelled', updatedAt: nowStamp() };
+      if (employee && company) {
+        const before = await db.leaveRecords.where('employeeId').equals(employee.id).toArray();
+        await assertPayUnchanged(
+          company,
+          employee,
+          before,
+          before.map((r) => (r.id === id ? cancelled : r)),
+        );
+      }
+      await db.leaveRecords.put(cancelled);
+      await logActivity(record.companyId, 'payroll', id, 'leave_cancelled', {
+        text: msg('Leave of {name} cancelled'),
+        vars: { name: employee?.name ?? '' },
+        arabic: { name: employee?.nameAr },
+      });
+    },
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -835,10 +906,12 @@ function loanRecoveries(
 }
 
 function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: PayLine): PayLine {
+  const leavingDate = employee.status === 'left' ? employee.leavingDate : null;
   const leave = leaveInPeriod(
     ctx.leave.filter((r) => r.employeeId === employee.id),
     run.period,
     ctx.dayOff,
+    { from: employee.hireDate, to: leavingDate },
   );
   const line: PayLine = {
     id: previous?.id ?? newId(),
@@ -854,7 +927,7 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     iban: employee.iban,
     accountNumber: employee.accountNumber ?? '',
     hireDate: employee.hireDate,
-    leavingDate: employee.status === 'left' ? employee.leavingDate : null,
+    leavingDate,
     permitSalary: employee.permitSalary,
     monthlyBasic: employee.basicSalary,
     allowances: employee.allowances.map((a) => ({
@@ -864,16 +937,13 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
       monthly: a.amount,
       amount: 0,
     })),
-    daysWorked: employedDays(
-      run.period,
-      employee.hireDate,
-      employee.status === 'left' ? employee.leavingDate : null,
-    ),
+    daysWorked: employedDays(run.period, employee.hireDate, leavingDate),
     daysInMonth: daysInPeriod(run.period),
     overtime: previous?.overtime ?? { normal: 0, restDay: 0, holiday: 0 },
     absentDays: previous?.absentDays ?? 0,
     unpaidLeaveDays: leave.unpaidDays,
     reducedPay: leave.reducedPay,
+    leaveBasis: 'calendar',
     adjustments: previous?.adjustments ?? [],
     loans: loanRecoveries(employee.id, run.period, ctx, run.id, previous?.loans),
     basic: 0,
@@ -1088,11 +1158,8 @@ function provisionLines(ctx: Context, date: ISODate, rules: PayRules): Provision
         !ctx.settings.eosForInsured && insuredWithPifss(e.category)
           ? 0
           : eosProvisionFor(e, date, ctx.people.eosDailyDivisor, p);
-      const balance = annualLeaveBalance(
-        ctx.leave.filter((r) => r.employeeId === e.id),
-        e.hireDate,
-        date,
-      ).balance;
+      // From the leave brought forward, when there is some: nothing before it is posted.
+      const balance = employeeLeaveBalance(e, ctx.leave, date).balance;
       const leaveDays = Math.max(0, balance);
       const wage = e.allowances.reduce(
         (s, a) => s + toMinor(a.amount, p),
@@ -1423,11 +1490,7 @@ export function settlementSetup(
   return {
     rules: payRulesFor(data.settings, period),
     eosDivisor: data.people.eosDailyDivisor,
-    leave: annualLeaveBalance(
-      data.leave.filter((r) => r.employeeId === employee.id),
-      employee.hireDate,
-      leavingDate,
-    ),
+    leave: employeeLeaveBalance(employee, data.leave, leavingDate),
     loans: data.loans
       .filter((l) => l.employeeId === employee.id && l.status === 'active')
       .map((loan) => ({ loan, balance: loanBalance(loan, data.runs, data.settlements, precision) }))
@@ -1503,8 +1566,33 @@ export function settlementInput(
 }
 
 /**
+ * Why a final settlement can't be made for the employee yet (no hire date or
+ * no wage on their record), or null when it can.
+ */
+export function settlementMissingText(
+  employee: Pick<Employee, 'name' | 'nameAr' | 'hireDate' | 'basicSalary' | 'allowances'>,
+): string | null {
+  const missing = settlementMissing(employee);
+  const vars = { name: localName(employee) };
+  if (missing.hireDate && missing.wage) {
+    return t(
+      'Add the hire date and the salary to {name}’s record before the final settlement.',
+      vars,
+    );
+  }
+  if (missing.hireDate) {
+    return t('Add the hire date to {name}’s record before the final settlement.', vars);
+  }
+  if (missing.wage) {
+    return t('Add the salary to {name}’s record before the final settlement.', vars);
+  }
+  return null;
+}
+
+/**
  * Posts a final settlement on the leaving date (see settlementPostings) and
- * marks the employee as left.
+ * marks the employee as left. Refused without a reason for leaving, a hire
+ * date or a wage: each of them decides what is due.
  */
 export async function postSettlement(form: SettlementForm): Promise<FinalSettlement> {
   return db.transaction('rw', TABLES(), async () => {
@@ -1514,6 +1602,11 @@ export async function postSettlement(form: SettlementForm): Promise<FinalSettlem
     const { company, precision: p } = ctx;
     if (ctx.settlements.some((s) => s.employeeId === employee.id && liveSettlement(s))) {
       throw new PayrollError(t('This employee already has a final settlement.'));
+    }
+    const missing = settlementMissingText(employee);
+    if (missing) throw new PayrollError(missing);
+    if (!form.reason || !(form.reason in LEAVING_REASON_LABELS)) {
+      throw new PayrollError(t('Choose the reason for leaving.'));
     }
     if (!isISODate(form.leavingDate)) throw new PayrollError(t('Enter the leaving date.'));
     if (employee.hireDate && form.leavingDate < employee.hireDate) {
@@ -1583,7 +1676,12 @@ export async function postSettlement(form: SettlementForm): Promise<FinalSettlem
     await db.finalSettlements.add(settlement);
     const vars = { name: employee.name, number: employee.number };
     const arabic = { name: employee.nameAr };
-    if (employee.status !== 'left' || employee.leavingDate !== form.leavingDate) {
+    // The employee's record follows the settlement: leaving date and the reason chosen.
+    if (
+      employee.status !== 'left' ||
+      employee.leavingDate !== form.leavingDate ||
+      employee.leavingReason !== form.reason
+    ) {
       await db.employees.put({
         ...employee,
         status: 'left',

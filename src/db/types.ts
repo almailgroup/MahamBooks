@@ -1043,6 +1043,11 @@ export interface Activity {
   /** Document or client the event relates to, for timelines. */
   clientId: ID | null;
   documentId: ID | null;
+  /**
+   * The employee an event about their documents or renewals concerns: such
+   * an event stays private (people data) even after the document is gone.
+   */
+  employeeId?: ID | null;
   action: string;
   /** The message in English as it was logged. */
   message: string;
@@ -1207,8 +1212,23 @@ export interface Employee {
   notes: string;
   /** The employee's photo: one of their attachments, a small square JPEG. */
   photoId?: ID | null;
+  /**
+   * Annual leave brought forward when the employee's leave history starts in
+   * the app (employees imported from another system); null or missing when
+   * leave counts from the hire date.
+   */
+  leaveOpening?: LeaveOpening | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** Annual leave brought forward on a date: leave accrues only from that date. */
+export interface LeaveOpening {
+  date: ISODate;
+  /** Days of annual leave brought forward. */
+  days: number;
+  /** False until someone has checked the figures (an import brings 0 days, not confirmed). */
+  confirmed: boolean;
 }
 
 /** Kinds of documents with an expiry date that the register tracks. */
@@ -1283,6 +1303,11 @@ export interface DocumentRenewal {
   /** Expense recording the fee. */
   expenseId: ID | null;
   note: string;
+  /**
+   * The document's number after the renewal. Kept here, not on the fee's
+   * expense, for employees' documents (older renewals don't have it).
+   */
+  number?: string;
   createdAt: Timestamp;
 }
 
@@ -1667,6 +1692,8 @@ export type SalaryFileColumn =
   | 'nameEn'
   | 'nameAr'
   | 'iban'
+  /** Account or salary card number, for staff paid without an IBAN. */
+  | 'accountNumber'
   | 'bankCode'
   | 'swift'
   | 'amount'
@@ -1795,6 +1822,12 @@ export interface PayLine {
   unpaidLeaveDays: number;
   /** Sick leave paid at a reduced rate in the month (from leave records). */
   reducedPay: ReducedPayDays[];
+  /**
+   * 'calendar': the leave days above are calendar days, and the pay they cost
+   * is a share of the month's pay (wage × days ÷ days in the month). Lines of
+   * runs prepared before had working days, deducted at the daily rate.
+   */
+  leaveBasis?: 'calendar';
   adjustments: PayAdjustment[];
   loans: LoanRecovery[];
   basic: number;

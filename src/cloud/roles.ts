@@ -102,6 +102,8 @@ export function isPrivateRecord(table: string, record: Row, lookup?: RecordLooku
       return record.kind === 'payroll';
     case 'activities': {
       if (record.entity === 'employee' || record.entity === 'payroll') return true;
+      // Logged about an employee's documents: private even once they are deleted.
+      if (employeeOwned(record)) return true;
       if (record.entity !== 'compliance' || !lookup || typeof record.entityId !== 'string') {
         return false;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSalaryFile,
+  currentLayout,
   formatSalaryPeriod,
   hasPayAccount,
   presetLayout,
@@ -56,6 +57,7 @@ describe('salary transfer file', () => {
       'Employee Name',
       'Employee Name (Arabic)',
       'IBAN',
+      'Account/Card No',
       'Bank Code',
       'Amount',
       'Salary Month',
@@ -67,13 +69,14 @@ describe('salary transfer file', () => {
       'Fatima Al-Sabah',
       'فاطمة الصباح',
       'KW81CBKU0000000000001234560101',
+      '',
       'CBKU',
       '1234.500',
       '202609',
       '12345',
     ]);
     expect(file.rows[1][3]).toBe('Ravi, Kumar');
-    expect(file.rows[1][6]).toBe('0.005');
+    expect(file.rows[1][7]).toBe('0.005');
     expect(file.count).toBe(2);
     expect(file.totalMinor).toBe(1_234_505);
     expect(file.problems).toEqual([]);
@@ -106,7 +109,7 @@ describe('salary transfer file', () => {
     expect(formatSalaryPeriod('2026-09', 'yyyy-mm')).toBe('2026-09');
   });
 
-  it('pays staff without an IBAN on their salary card number, and keeps IBANs first', () => {
+  it('pays staff without an IBAN on their salary card number, in its own column', () => {
     const card = {
       ...entries[0],
       employeeId: 'card',
@@ -117,11 +120,40 @@ describe('salary transfer file', () => {
     const badIban = { ...card, employeeId: 'bad', iban: 'KW00CBKU0000000000001234560101' };
     const nothing = { ...card, employeeId: 'none', accountNumber: '' };
     const file = buildSalaryFile([card, both, badIban, nothing], options);
-    // WPS: employee no, Civil ID, names, account, bank code, amount, month, PAM file.
-    expect(file.rows[0].slice(4, 6)).toEqual(['5407000000000008', '']);
-    expect(file.rows[1][4]).toBe('KW81CBKU0000000000001234560101');
+    // WPS: employee no, Civil ID, names, IBAN, account or card, bank code, amount…
+    // A card number never goes in the IBAN column.
+    expect(file.rows[0].slice(4, 7)).toEqual(['', '5407000000000008', '']);
+    expect(file.rows[1].slice(4, 7)).toEqual(['KW81CBKU0000000000001234560101', '', 'CBKU']);
     expect(file.problems.map((p) => p.employeeId)).toEqual(['bad', 'none']);
+    expect(file.leftOut).toEqual([]);
     expect(hasPayAccount(card)).toBe(true);
     expect(hasPayAccount({ iban: '', accountNumber: '' })).toBe(false);
+  });
+
+  it('lists staff on salary cards a layout without the column leaves out, and doubtful cards', () => {
+    const card = { ...entries[0], employeeId: 'card', iban: '', accountNumber: '5407000000000008' };
+    const typo = { ...card, employeeId: 'typo', accountNumber: '5407000000000009' };
+    const transfer = buildSalaryFile([entries[0], card], {
+      ...options,
+      layout: presetLayout('transfer'),
+    });
+    expect(transfer.rows.map((r) => r[0])).toEqual(['KW81CBKU0000000000001234560101']);
+    expect(transfer.leftOut.map((p) => p.employeeId)).toEqual(['card']);
+    // In the file and left out together: everything due.
+    expect(transfer.totalMinor + transfer.leftOutMinor).toBe(2_469_000);
+    expect(transfer.problems).toEqual([]);
+    const wps = buildSalaryFile([card, typo], options);
+    expect(wps.count).toBe(2);
+    expect(wps.checks.map((p) => p.employeeId)).toEqual(['typo']);
+  });
+
+  it('gives a layout saved from a preset the preset’s columns of now', () => {
+    const saved = {
+      ...presetLayout('wps'),
+      columns: presetLayout('wps').columns.filter((c) => c !== 'accountNumber'),
+    };
+    expect(currentLayout(saved).columns).toContain('accountNumber');
+    const custom = { ...saved, preset: 'custom' };
+    expect(currentLayout(custom)).toBe(custom);
   });
 });

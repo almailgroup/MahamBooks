@@ -145,6 +145,7 @@ describe('renewing', () => {
     });
 
     expect((await db.employees.get(employee.id))?.residencyExpiry).toBe(newExpiry);
+    // The details stay on the renewal, which only payroll roles see...
     expect(renewal).toMatchObject({
       employeeId: employee.id,
       type: 'residency',
@@ -152,14 +153,18 @@ describe('renewing', () => {
       newExpiry,
       fee: 10,
       expenseId: expense?.id,
+      number: '18/2024/55',
+      note: 'Renewed at the residency office',
     });
+    // ...not on the expense, which staff and viewers see.
     expect(expense).toMatchObject({
       accountId: code('6090').id,
       amount: 10,
       currency: 'KWD',
       date: today(),
-      description: 'Residency renewal – Ravi Kumar',
-      reference: '18/2024/55',
+      description: 'Document renewal fee',
+      reference: '',
+      notes: '',
     });
     expect(expense?.number).toMatch(/^EXP-\d{4}-0001$/);
     // Dr 6090 Government fees 10.000, Cr 1000 Bank 10.000 (in fils).
