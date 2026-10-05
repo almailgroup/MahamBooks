@@ -2,28 +2,37 @@ import { db } from './db';
 import { createDocument, defaultNumbering, emptyTotals, nowStamp } from './defaults';
 import { logActivity, type ActivityMessage } from './activity';
 import type {
+  Account,
   Client,
   Company,
   DocumentStatus,
   DocumentType,
+  FixedAsset,
   ID,
   InvoiceDocument,
   TaxLine,
 } from './types';
-import { computeDocument, releasedRetention, takesRetention } from '@/lib/document-calc';
+import {
+  computeDocument,
+  documentTaxExempt,
+  releasedRetention,
+  takesRetention,
+} from '@/lib/document-calc';
 import { retentionDefaults } from '@/lib/retention';
 import { taxLineOf } from '@/lib/calc';
 import { allocateNumber } from '@/lib/numbering';
 import { issuedStatus, settledStatus } from '@/lib/status';
 import { addDaysISO, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
-import { currencyPrecision, dec, round } from '@/lib/money';
+import { currencyPrecision, dec, round, toMinor } from '@/lib/money';
 import { isPosted } from '@/lib/accounting/ledger';
 import { isPurchaseType, postsToLedger } from '@/lib/document-types';
 import { deliveryStatusOf, lineProgress, orderStatus } from '@/lib/orders';
 import { msg, t } from '@/i18n';
 import { assertUnlocked, ensureSpecAccount } from './accounting';
+import { billAssetLines } from './assets';
 import { syncDocumentStock, withStockTables } from './inventory';
+import { withPosting } from './posting';
 
 /** Activity log messages of each type (English keys, shown in the reader's language). */
 const LOG: Record<DocumentType, { created: string; updated: string; deleted: string }> = {
@@ -201,7 +210,8 @@ export function applyTotals(
   paid: number,
   client: Pick<Client, 'taxExempt'> | null,
 ): InvoiceDocument {
-  const result = computeDocument(doc, { paid, taxExempt: client?.taxExempt });
+  // An issued document keeps the tax exemption it was issued with.
+  const result = computeDocument(doc, { paid, taxExempt: documentTaxExempt(doc, client) });
   const totals: InvoiceDocument['totals'] = {
     subtotal: result.subtotal,
     discount: result.discount,
@@ -373,6 +383,151 @@ export class DuplicateNumberError extends Error {
   }
 }
 
+/** A change that would leave the books out of step with what depends on the document. */
+export class DocumentChangeError extends Error {}
+
+/** A document's currency is fixed once payments or credits are recorded on it. */
+async function assertCurrencyKept(
+  existing: InvoiceDocument | undefined,
+  next: InvoiceDocument,
+): Promise<void> {
+  if (!existing || existing.currency === next.currency) return;
+  const [payments, uses] = await Promise.all([
+    db.payments.where('documentIds').equals(existing.id).count(),
+    db.payments.where('creditId').equals(existing.id).count(),
+  ]);
+  if (payments + uses > 0) {
+    throw new DocumentChangeError(
+      t('Payments or credits are recorded on {number}, so its currency can’t change.', {
+        number: existing.number,
+      }),
+    );
+  }
+}
+
+const assetLabel = (asset: Pick<FixedAsset, 'number' | 'name'>) =>
+  `${asset.number} ${asset.name}`.trim();
+
+/** Assets in the register (not void) made from lines of a bill. */
+async function assetsFromBill(doc: InvoiceDocument): Promise<FixedAsset[]> {
+  if (doc.type !== 'bill') return [];
+  return db.assets
+    .where('companyId')
+    .equals(doc.companyId)
+    .filter((a) => a.billId === doc.id && a.status !== 'void')
+    .toArray();
+}
+
+/**
+ * An asset made from a bill line is in the books through the bill: the bill
+ * can't leave the books (void, draft, deleted) while the asset is in the
+ * register.
+ */
+async function assertNoAssets(doc: InvoiceDocument): Promise<void> {
+  const [asset] = await assetsFromBill(doc);
+  if (asset) {
+    throw new DocumentChangeError(
+      t('Asset {asset} was made from this bill. Void the asset first.', {
+        asset: assetLabel(asset),
+      }),
+    );
+  }
+}
+
+/**
+ * Bill lines that assets were made from must keep posting the same cost to
+ * the same account, or the register and the books would disagree.
+ */
+async function assertAssetLinesKept(
+  company: Company,
+  existing: InvoiceDocument | undefined,
+  next: InvoiceDocument,
+  accounts: Account[],
+): Promise<void> {
+  if (!existing) return;
+  const assets = await assetsFromBill(existing);
+  if (assets.length === 0) return;
+  if (!isPosted(next)) await assertNoAssets(existing);
+  const p = currencyPrecision(company.currency);
+  const before = billAssetLines(company, [existing], accounts, []);
+  const after = billAssetLines(company, [next], accounts, []);
+  for (const asset of assets) {
+    const was = before.find((l) => l.line.id === asset.billLineId);
+    const now = after.find((l) => l.line.id === asset.billLineId);
+    const same =
+      was &&
+      now &&
+      was.accountId === now.accountId &&
+      toMinor(was.cost, p) === toMinor(now.cost, p);
+    if (was && !same) {
+      throw new DocumentChangeError(
+        t(
+          'Asset {asset} was made from line “{line}” of this bill, so the line can’t change. Void the asset first.',
+          { asset: assetLabel(asset), line: was.line.name },
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * Takes the credit notes (vendor credits) applied to a document that leaves
+ * the books off it, or, for a credit, its own applications: the credit is
+ * free to use again and the invoice (bill) is owed again. Returns the other
+ * documents to recalculate. An application that posted an exchange
+ * difference keeps its entry in a locked period, so it can't be taken off
+ * there.
+ */
+async function takeOffCredits(doc: InvoiceDocument, company: Company): Promise<ID[]> {
+  const credit = doc.type === 'credit' || doc.type === 'vendor_credit';
+  if (!credit && doc.type !== 'invoice' && doc.type !== 'bill') return [];
+  const applications = (
+    credit
+      ? await db.payments.where('creditId').equals(doc.id).toArray()
+      : await db.payments.where('documentIds').equals(doc.id).toArray()
+  ).filter((p) => p.method === 'credit_note');
+  const touched = new Set<ID>();
+  for (const application of applications) {
+    const ids = [
+      ...application.documentIds,
+      ...(application.creditId ? [application.creditId] : []),
+    ];
+    const related = await db.documents.bulkGet(ids);
+    if (related.some((d) => d && d.currency !== company.currency)) {
+      assertUnlocked(company, application.date);
+    }
+    for (const id of ids) touched.add(id);
+    const rest = credit ? [] : application.allocations.filter((a) => a.documentId !== doc.id);
+    if (rest.length === 0) {
+      await db.payments.delete(application.id);
+      await logActivity(
+        company.id,
+        'payment',
+        application.id,
+        'deleted',
+        { text: msg('Payment {number} deleted'), vars: { number: application.number } },
+        { clientId: application.clientId || null },
+      );
+      continue;
+    }
+    const removed = application.allocations
+      .filter((a) => a.documentId === doc.id)
+      .reduce((sum, a) => sum.plus(dec(a.amount)), dec(0));
+    await db.payments.put({
+      ...application,
+      amount: round(
+        dec(application.amount).minus(removed),
+        currencyPrecision(application.currency),
+      ),
+      allocations: rest,
+      documentIds: rest.map((a) => a.documentId),
+      updatedAt: nowStamp(),
+    });
+  }
+  touched.delete(doc.id);
+  return [...touched];
+}
+
 /**
  * Saves a document: assigns a number when it has none, recomputes totals and
  * advances the company's counter. Orders it belongs to are brought up to
@@ -388,6 +543,8 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       db.payments,
       db.activities,
       db.accounts,
+      db.products,
+      db.assets,
     ]),
     async () => {
       const company = await db.companies.get(input.companyId);
@@ -398,6 +555,13 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       }
       const client = input.clientId ? await db.clients.get(input.clientId) : undefined;
       let doc: InvoiceDocument = withRetention({ ...input, number: input.number.trim() }, existing);
+      await assertCurrencyKept(existing, doc);
+      // What it posts with is fixed when it is issued and kept through edits.
+      doc = await withPosting(doc, client, existing);
+      if (existing?.type === 'bill') {
+        const accounts = await db.accounts.where('companyId').equals(company.id).toArray();
+        await assertAssetLinesKept(company, existing, doc, accounts);
+      }
 
       const taken = await takenNumbers(company.id, doc.type, doc.id);
       if (!doc.number) {
@@ -471,22 +635,32 @@ export async function setDocumentStatus(
       db.companies,
       db.activities,
       db.accounts,
+      db.products,
+      db.assets,
     ]),
     async () => {
       const doc = await db.documents.get(id);
       if (!doc) return;
       const company = await db.companies.get(doc.companyId);
-      if (company && isPosted(doc) !== isPosted({ type: doc.type, status })) {
+      const posted = isPosted({ type: doc.type, status });
+      if (company && isPosted(doc) !== posted) {
         assertUnlocked(company, doc.issueDate);
       }
-      if (hasActiveReleases(doc) && !isPosted({ type: doc.type, status })) {
+      if (hasActiveReleases(doc) && !posted) {
         throw releasesFirstError();
       }
+      // Leaving the books: assets made from it are refused, credits applied
+      // to (or from) it are taken off.
+      const leaving = isPosted(doc) && !posted;
+      if (leaving) await assertNoAssets(doc);
+      const credited = leaving && company ? await takeOffCredits(doc, company) : [];
       let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
       if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
       if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
         // Let payments decide between sent / partial / paid.
         const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
+        // Issued now: what it posts with is fixed from now on.
+        if (!isPosted(doc)) next = await withPosting(next, client);
         next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
       }
       if (company && isPosted(next) && next.totals.retention) {
@@ -496,6 +670,8 @@ export async function setDocumentStatus(
         );
       }
       await db.documents.put(next);
+      // The credit is free again, and what it was applied to is owed again.
+      await recalculateDocuments([...credited, ...(status === 'void' ? [doc.id] : [])]);
       await syncDocumentStock(doc.companyId, doc.id);
       await logActivity(
         doc.companyId,
@@ -533,6 +709,7 @@ export async function deleteDocument(id: ID): Promise<void> {
       db.clients,
       db.companies,
       db.attachments,
+      db.assets,
     ]),
     async () => {
       const doc = await db.documents.get(id);
@@ -540,7 +717,12 @@ export async function deleteDocument(id: ID): Promise<void> {
       const company = await db.companies.get(doc.companyId);
       if (company && isPosted(doc)) assertUnlocked(company, doc.issueDate);
       if (hasActiveReleases(doc)) throw releasesFirstError();
+      await assertNoAssets(doc);
       await db.attachments.where('ownerId').equals(id).delete();
+      // Credits applied to it (or, for a credit, its applications) are taken
+      // off: the credit can be used again.
+      const credited = company ? await takeOffCredits(doc, company) : [];
+      // Money paid against it stays on the payment as unapplied credit.
       const payments = await db.payments.where('documentIds').equals(id).toArray();
       for (const p of payments) {
         const allocations = p.allocations.filter((a) => a.documentId !== id);
@@ -550,12 +732,7 @@ export async function deleteDocument(id: ID): Promise<void> {
           documentIds: allocations.map((a) => a.documentId),
         });
       }
-      if (doc.type === 'credit' || doc.type === 'vendor_credit') {
-        const uses = await db.payments.where('creditId').equals(id).toArray();
-        const touched = uses.flatMap((p) => p.documentIds);
-        await db.payments.bulkDelete(uses.map((p) => p.id));
-        await recalculateDocuments(touched);
-      }
+      await recalculateDocuments(credited);
       // Documents created from this one lose the link.
       for (const d of await documentsCreatedFrom(id)) {
         await db.documents.put({ ...d, sourceId: null });
@@ -602,6 +779,8 @@ export async function duplicateDocument(
     ...fresh,
     clientId: source.clientId,
     currency: source.currency,
+    // A credit note of a dollar invoice is booked at the invoice's rate.
+    exchangeRate: source.exchangeRate,
     poNumber: source.poNumber,
     // A copy is a document of its own: it does not count towards an order.
     items: source.items.map((i) => ({ ...i, id: shortId(), sourceLineId: undefined })),

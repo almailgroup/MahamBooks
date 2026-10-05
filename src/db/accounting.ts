@@ -207,7 +207,11 @@ export async function accountInUse(account: Account): Promise<boolean> {
     db.documents
       .where('companyId')
       .equals(account.companyId)
-      .filter((d) => d.items.some((i) => i.accountId === id))
+      .filter(
+        (d) =>
+          d.items.some((i) => i.accountId === id) ||
+          Object.values(d.posting?.accounts ?? {}).includes(id),
+      )
       .count(),
     db.expenses
       .where('companyId')

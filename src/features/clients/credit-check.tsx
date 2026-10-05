@@ -5,6 +5,7 @@ import { DOCUMENT_LABELS, useCompany, useFormat } from '@/app/company';
 import { contactPosition, creditCheck, exposureIncrease } from '@/lib/statements';
 import { today } from '@/lib/dates';
 import { fromMinor } from '@/lib/money';
+import { documentTaxExempt } from '@/lib/document-calc';
 import { t } from '@/i18n';
 import { useConfirm } from '@/components/ui/overlay';
 
@@ -38,7 +39,12 @@ export function useCreditCheck(): (
         companyCurrency: company.currency,
         todayIso: today(),
       });
-      const increase = exposureIncrease(doc, saved, company.currency, client.taxExempt);
+      const increase = exposureIncrease(
+        doc,
+        saved,
+        company.currency,
+        documentTaxExempt(doc, client),
+      );
       const check = creditCheck(client, position, increase, !saved);
       if (check.status === 'ok') return true;
       const money = (minor: number) => fmt.money(fromMinor(minor, position.precision));

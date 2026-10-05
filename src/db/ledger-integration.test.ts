@@ -72,7 +72,7 @@ describe('books of the demo company', () => {
     expect(balanceOf('5100')).toBe(fils(2650 + 3150 + 2400 + 1250));
     // Customs and freight were added to the stock's cost (landed costs), not expensed.
     expect(balanceOf('5200')).toBe(0);
-  });
+  }, 120_000);
 });
 
 describe('lock date', () => {

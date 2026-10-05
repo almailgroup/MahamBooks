@@ -23,7 +23,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { computeDocument } from '@/lib/document-calc';
+import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
 import { addDaysISO, daysBetween } from '@/lib/dates';
 import { currencySymbol } from '@/lib/format';
 import { issuedStatus } from '@/lib/status';
@@ -117,7 +117,8 @@ function Editor({
     [clients, doc.clientId],
   );
   const result = useMemo(
-    () => computeDocument(doc, { paid: doc.totals.paid, taxExempt: vendor?.taxExempt }),
+    () =>
+      computeDocument(doc, { paid: doc.totals.paid, taxExempt: documentTaxExempt(doc, vendor) }),
     [doc, vendor],
   );
 
@@ -169,6 +170,8 @@ function Editor({
     setErrors((e) => ({ ...e, vendor: undefined }));
     setDoc((d) => {
       const next: InvoiceDocument = { ...d, clientId: vendorId };
+      // Another vendor: it is entered with that vendor's tax exemption.
+      if (vendorId !== d.clientId) delete next.posting;
       if (picked) {
         if (isNew || d.totals.paid === 0) next.currency = picked.currency || company.currency;
         if (type === 'bill' && isNew) {
@@ -410,12 +413,20 @@ function Editor({
                 )}
               </Field>
             )}
-            <Field label={t('Currency')}>
+            <Field
+              label={t('Currency')}
+              hint={
+                doc.totals.paid !== 0
+                  ? t('Payments or credits are recorded on it, so its currency stays.')
+                  : undefined
+              }
+            >
               {(fid) => (
                 <CurrencySelect
                   id={fid}
                   value={doc.currency}
                   onChange={(currency) => update({ currency })}
+                  disabled={doc.totals.paid !== 0}
                 />
               )}
             </Field>
@@ -659,7 +670,7 @@ function Editor({
                 currencySymbol={symbol}
                 money={money}
                 percent={fmt.percent}
-                taxExempt={Boolean(vendor?.taxExempt)}
+                taxExempt={documentTaxExempt(doc, vendor)}
                 contact={vendor}
               />
             </CardBody>

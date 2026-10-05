@@ -56,10 +56,12 @@ export function CurrencySelect({
   value,
   onChange,
   id,
+  disabled,
 }: {
   value: string;
   onChange: (code: string) => void;
   id?: string;
+  disabled?: boolean;
 }) {
   const options = useMemo(
     () => currencyOptions(currentLanguage()).map((o) => ({ value: o.value, label: o.label })),
@@ -73,6 +75,7 @@ export function CurrencySelect({
       options={options}
       searchPlaceholder={t('Search currencies…')}
       renderValue={(o) => o.label}
+      disabled={disabled}
     />
   );
 }

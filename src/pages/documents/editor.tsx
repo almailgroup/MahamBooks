@@ -21,7 +21,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { computeDocument } from '@/lib/document-calc';
+import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
 import { addDaysISO, daysBetween } from '@/lib/dates';
 import { currencySymbol, formatUnitPrice } from '@/lib/format';
 import { hasPrices, postsToLedger } from '@/lib/document-types';
@@ -160,7 +160,13 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
 
   const result = useMemo(
     () =>
-      doc ? computeDocument(doc, { paid: doc.totals.paid, taxExempt: client?.taxExempt }) : null,
+      doc
+        ? computeDocument(doc, {
+            paid: doc.totals.paid,
+            // An issued document keeps the tax exemption it was issued with.
+            taxExempt: documentTaxExempt(doc, client),
+          })
+        : null,
     [doc, client],
   );
 
@@ -213,6 +219,8 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
     setDoc((d) => {
       if (!d) return d;
       const next: InvoiceDocument = { ...d, clientId };
+      // Another client: it is issued with that client's tax exemption.
+      if (clientId !== d.clientId) delete next.posting;
       if (picked) {
         if (isNew || d.totals.paid === 0) next.currency = picked.currency || company.currency;
         if (type === 'invoice' && isNew) {
@@ -540,12 +548,20 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                 </>
               ) : null}
               {priced ? (
-                <Field label={t('Currency')}>
+                <Field
+                  label={t('Currency')}
+                  hint={
+                    doc.totals.paid !== 0
+                      ? t('Payments or credits are recorded on it, so its currency stays.')
+                      : undefined
+                  }
+                >
                   {(fid) => (
                     <CurrencySelect
                       id={fid}
                       value={doc.currency}
                       onChange={(currency) => update({ currency })}
+                      disabled={doc.totals.paid !== 0}
                     />
                   )}
                 </Field>
@@ -665,7 +681,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
                     currencySymbol={symbol}
                     money={money}
                     percent={fmt.percent}
-                    taxExempt={Boolean(client?.taxExempt)}
+                    taxExempt={documentTaxExempt(doc, client)}
                     allowDeposit={type === 'invoice' || type === 'proforma'}
                     contact={client}
                   />

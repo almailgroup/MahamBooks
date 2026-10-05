@@ -7,6 +7,7 @@ import type {
   InvoiceDocument,
   ManualJournal,
   Payment,
+  PostingSnapshot,
   StockEntry,
   StockMovement,
   TaxKind,
@@ -143,6 +144,12 @@ export interface LedgerContext {
    * receivable (payable).
    */
   retentionAccounts?: { receivable?: ID | null; payable?: ID | null };
+  /**
+   * What each payment and credit application clears from a document in
+   * another currency, in company-currency minor units (see
+   * `documentClearing`). Without it each part is converted on its own.
+   */
+  clearing?: Map<string, number>;
 }
 
 /** Accounts and items the stock postings need (see lib/inventory/accounts.ts). */
@@ -215,6 +222,38 @@ export function needsRate(
 export function isPosted(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean {
   if (!postsToLedger(doc.type)) return false;
   return doc.status !== 'draft' && doc.status !== 'void';
+}
+
+/**
+ * Whether a document posts without tax: as fixed when it was issued, or
+ * (documents issued before that was kept) as its contact is now.
+ */
+export function postingTaxExempt(
+  doc: Pick<InvoiceDocument, 'clientId' | 'posting'>,
+  taxExempt: (clientId: ID) => boolean,
+): boolean {
+  if (doc.posting) return doc.posting.taxExempt;
+  return doc.clientId ? taxExempt(doc.clientId) : false;
+}
+
+/**
+ * What a document posts with, fixed when it is issued: its contact's tax
+ * exemption and, on sales documents, the income account of each line's
+ * product (lines with an account of their own keep it).
+ */
+export function postingSnapshot(
+  doc: Pick<InvoiceDocument, 'type' | 'items'>,
+  taxExempt: boolean,
+  productAccounts: Map<ID, ID | null | undefined>,
+): PostingSnapshot {
+  const accounts: Record<ID, ID> = {};
+  if (doc.type === 'invoice' || doc.type === 'credit') {
+    for (const item of doc.items) {
+      const account = item.productId ? productAccounts.get(item.productId) : null;
+      if (item.kind !== 'heading' && account) accounts[item.id] = account;
+    }
+  }
+  return { taxExempt, accounts };
 }
 
 function role(ctx: LedgerContext, name: AccountRole, fallback?: AccountRole): ID {
@@ -348,7 +387,7 @@ function weighDocument(
   doc: InvoiceDocument,
   ctx: Pick<LedgerContext, 'companyCurrency' | 'precision' | 'taxExempt'>,
 ) {
-  const exempt = doc.clientId ? ctx.taxExempt(doc.clientId) : false;
+  const exempt = postingTaxExempt(doc, ctx.taxExempt);
   const result = computeDocument(doc, { taxExempt: exempt });
   const rate = rateOf(doc, ctx);
   const p = ctx.precision;
@@ -499,11 +538,15 @@ export function postDocument(doc: InvoiceDocument, ctx: LedgerContext): LedgerLi
     else if (e.kind === 'charge') account = role(ctx, rule.charges, rule.line);
     else {
       const item = doc.items[e.index];
+      // The product's income account as it was when the document was issued.
+      const productAccount = doc.posting
+        ? doc.posting.accounts[item.id]
+        : item.productId
+          ? ctx.productAccounts.get(item.productId)
+          : null;
       account =
         usable(ctx, item.accountId) ??
-        (sales
-          ? usable(ctx, item.productId ? ctx.productAccounts.get(item.productId) : null)
-          : null) ??
+        (sales ? usable(ctx, productAccount) : null) ??
         role(ctx, rule.line);
     }
     add(account, e.weight, parts ? parts[i] : 0, e.label, e.taxes);
@@ -719,9 +762,10 @@ export function chequeReversalDate(
 
 /**
  * Ledger lines of a payment received from a client or made to a vendor.
- * Credit-note applications only match documents and move no money. A
- * returned or cancelled cheque stays on its date and is reversed on the
- * day it came back; any other void payment leaves the books.
+ * Credit-note applications move no money; they only post the exchange
+ * difference when the credit and the invoice were booked at different
+ * rates. A returned or cancelled cheque stays on its date and is reversed
+ * on the day it came back; any other void payment leaves the books.
  *
  * The money side is the account stored on the payment (the clearing account
  * for KNET and cards, post-dated cheques for cheques) or, for payments
@@ -729,7 +773,7 @@ export function chequeReversalDate(
  * out of that same account on the payment date.
  */
 export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] {
-  if (payment.method === 'credit_note') return [];
+  if (payment.method === 'credit_note') return postCreditApplication(payment, ctx);
   const reversedOn = chequeReversalDate(payment);
   if (payment.voided && !reversedOn) return [];
   const out = payment.direction === 'out';
@@ -744,7 +788,9 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
   let allocated = new Decimal(0);
   for (const a of payment.allocations) {
     const doc = ctx.documents.get(a.documentId);
-    cleared += toMinor(dec(a.amount).times(doc ? rateOf(doc, ctx) : rate), p);
+    cleared +=
+      ctx.clearing?.get(clearingKey(payment.id, a.documentId)) ??
+      toMinor(dec(a.amount).times(doc ? rateOf(doc, ctx) : rate), p);
     allocated = allocated.plus(dec(a.amount));
   }
   const unapplied = dec(payment.amount).minus(allocated);
@@ -806,6 +852,136 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
     ...kept,
     ...kept.map((l) => ({ ...l, date: reversedOn, amount: -l.amount, ...reversal })),
   ];
+}
+
+/** Key of what a payment (or credit application) clears from one document. */
+function clearingKey(paymentId: ID, documentId: ID, side: 'document' | 'credit' = 'document') {
+  return side === 'credit' ? `${paymentId}|${documentId}|credit` : `${paymentId}|${documentId}`;
+}
+
+/**
+ * A credit note (vendor credit) applied to an invoice (bill) moves no money.
+ * When the two were booked at different rates, the credit clears its own
+ * share of the receivable (payable) at its rate and the invoice's at the
+ * invoice's rate: the difference is an exchange gain or loss, so nothing is
+ * left on the receivable once both are settled.
+ */
+function postCreditApplication(payment: Payment, ctx: LedgerContext): LedgerLine[] {
+  const credit = payment.creditId ? ctx.documents.get(payment.creditId) : undefined;
+  if (!credit || payment.voided) return [];
+  const out = payment.direction === 'out';
+  const p = ctx.precision;
+  let difference = 0;
+  for (const a of payment.allocations) {
+    const doc = ctx.documents.get(a.documentId);
+    if (!doc) continue;
+    const creditSide =
+      ctx.clearing?.get(clearingKey(payment.id, a.documentId, 'credit')) ??
+      toMinor(dec(a.amount).times(rateOf(credit, ctx)), p);
+    const documentSide =
+      ctx.clearing?.get(clearingKey(payment.id, a.documentId)) ??
+      toMinor(dec(a.amount).times(rateOf(doc, ctx)), p);
+    // Sales: the credit note's credit is cleared (a debit), the invoice's debit
+    // (a credit). Purchases the other way round.
+    difference += out ? documentSide - creditSide : creditSide - documentSide;
+  }
+  if (difference === 0) return [];
+  const base = {
+    date: payment.date,
+    source: 'payment' as const,
+    sourceId: payment.id,
+    number: payment.number,
+    contactId: payment.clientId || null,
+  };
+  const text = described(msg('Exchange difference {number}'), { number: payment.number });
+  return [
+    { ...base, accountId: role(ctx, out ? 'payable' : 'receivable'), amount: difference, ...text },
+    { ...base, accountId: role(ctx, 'fx'), amount: -difference, ...text },
+  ];
+}
+
+/**
+ * Company-currency value (minor units) each payment and credit application
+ * clears from a document in another currency. Like retention releases, the
+ * parts are converted cumulatively in date order, so a document settled in
+ * instalments at its own rate is cleared to the last fils. A returned or
+ * cancelled cheque gives back exactly what it cleared. Keys: see
+ * `clearingKey` ("…|credit" is what an application clears from its credit
+ * note). Documents in the company currency convert exactly and need none.
+ */
+export function documentClearing(
+  payments: Payment[],
+  ctx: Pick<LedgerContext, 'companyCurrency' | 'precision' | 'documents'>,
+): Map<string, number> {
+  interface Part {
+    date: ISODate;
+    /** A reversal comes after what is received on the same day. */
+    rank: 0 | 1;
+    order: string;
+    key: string;
+    amount: Decimal;
+    /** The part a reversal gives back. */
+    reverses?: string;
+  }
+  const byDocument = new Map<ID, Part[]>();
+  const add = (documentId: ID, part: Part) => {
+    const doc = ctx.documents.get(documentId);
+    if (!doc || doc.currency === ctx.companyCurrency) return;
+    const list = byDocument.get(documentId);
+    if (list) list.push(part);
+    else byDocument.set(documentId, [part]);
+  };
+  for (const payment of payments) {
+    const reversedOn = chequeReversalDate(payment);
+    if (payment.voided && !reversedOn) continue;
+    const order = `${payment.createdAt}|${payment.id}`;
+    for (const a of payment.allocations) {
+      const key = clearingKey(payment.id, a.documentId);
+      add(a.documentId, { date: payment.date, rank: 0, order, key, amount: dec(a.amount) });
+      if (reversedOn) {
+        add(a.documentId, {
+          date: reversedOn,
+          rank: 1,
+          order,
+          key: `${key}|reversal`,
+          amount: dec(a.amount).negated(),
+          reverses: key,
+        });
+      }
+      if (payment.method === 'credit_note' && payment.creditId) {
+        add(payment.creditId, {
+          date: payment.date,
+          rank: 0,
+          order,
+          key: clearingKey(payment.id, a.documentId, 'credit'),
+          amount: dec(a.amount),
+        });
+      }
+    }
+  }
+  const out = new Map<string, number>();
+  for (const [documentId, parts] of byDocument) {
+    const rate = rateOf(ctx.documents.get(documentId)!, ctx);
+    parts.sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        a.rank - b.rank ||
+        a.order.localeCompare(b.order) ||
+        a.key.localeCompare(b.key),
+    );
+    let total = new Decimal(0);
+    let cleared = 0;
+    for (const part of parts) {
+      total = total.plus(part.amount);
+      const minor =
+        part.reverses !== undefined
+          ? -(out.get(part.reverses) ?? 0)
+          : toMinor(total.times(rate), ctx.precision) - cleared;
+      cleared += minor;
+      out.set(part.key, minor);
+    }
+  }
+  return out;
 }
 
 /** Ledger lines of an expense: the category and input tax, paid from a money account. */
@@ -970,6 +1146,10 @@ export function buildLedger(
       );
     }
   }
+  // Documents in other currencies are cleared cumulatively, to the last fils.
+  const payCtx: LedgerContext = ctx.clearing
+    ? ctx
+    : { ...ctx, clearing: documentClearing(data.payments, ctx) };
   for (const payment of data.payments) {
     const posted = !payment.voided || chequeReversalDate(payment) !== null;
     if (payment.method !== 'credit_note' && posted && needsRate(payment, ctx)) {
@@ -980,7 +1160,7 @@ export function buildLedger(
         ...rateProblem(payment.currency),
       });
     }
-    attempt('payment', payment.id, payment.number, () => postPayment(payment, ctx));
+    attempt('payment', payment.id, payment.number, () => postPayment(payment, payCtx));
   }
   for (const expense of data.expenses ?? []) {
     if (needsRate(expense, ctx)) {

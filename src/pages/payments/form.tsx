@@ -136,10 +136,8 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         (d) =>
           d.type === copy.docType &&
           d.currency === payment.currency &&
-          (d.status === 'sent' ||
-            d.status === 'partial' ||
-            d.status === 'draft' ||
-            previous.has(d.id)),
+          // Drafts are not in the books yet: they are issued first.
+          (d.status === 'sent' || d.status === 'partial' || previous.has(d.id)),
       )
       .map((d) => ({
         doc: d,

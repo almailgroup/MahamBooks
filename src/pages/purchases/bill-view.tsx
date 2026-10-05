@@ -32,7 +32,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { computeDocument } from '@/lib/document-calc';
+import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
 import { displayStatus } from '@/lib/status';
 import { daysBetween, today } from '@/lib/dates';
 import { t, tp } from '@/i18n';
@@ -177,7 +177,10 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
   const status = displayStatus(doc, today());
   const money = (n: number) => fmt.money(n, doc.currency);
   const overdueDays = status === 'overdue' && doc.dueDate ? daysBetween(doc.dueDate, today()) : 0;
-  const result = computeDocument(doc, { paid: doc.totals.paid, taxExempt: vendor?.taxExempt });
+  const result = computeDocument(doc, {
+    paid: doc.totals.paid,
+    taxExempt: documentTaxExempt(doc, vendor),
+  });
   const accountName = (accountId?: string | null) => {
     const account = accounts.find((a) => a.id === accountId);
     return account ? `${account.code} ${localName(account)}` : t('General expenses');
@@ -213,13 +216,27 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
 
   const setStatus = (next: DocumentStatus) => run(next, () => setDocumentStatus(doc.id, next));
 
+  // Vendor credits applied to this bill, or this vendor credit's applications:
+  // voiding or deleting it takes them off.
+  const credits = (payments ?? []).filter((p) => p.method === 'credit_note');
+  const creditsNote = credits.length
+    ? type === 'vendor_credit'
+      ? t('It is taken off the bills it was applied to, so they are owed again.')
+      : t('Vendor credits applied to it are taken off, so they can be used again.')
+    : '';
+  const moneyPaid = (payments ?? []).some((p) => p.method !== 'credit_note' && !p.voided);
+
   const remove = async () => {
     const ok = await confirm({
       title: t('Delete {document} {number}?', { document: documentNoun(type), number: doc.number }),
-      description:
-        isBill && doc.totals.paid > 0
+      description: [
+        isBill && moneyPaid
           ? t('Payments made against it will be kept as an unapplied advance to the vendor.')
           : t('This cannot be undone.'),
+        creditsNote,
+      ]
+        .filter(Boolean)
+        .join(' '),
       confirmLabel: t('Delete'),
       danger: true,
     });
@@ -234,7 +251,12 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
   const voidDoc = async () => {
     const ok = await confirm({
       title: t('Void {number}?', { number: doc.number }),
-      description: t('A void document stays in your records for reference but leaves the books.'),
+      description: [
+        t('A void document stays in your records for reference but leaves the books.'),
+        creditsNote,
+      ]
+        .filter(Boolean)
+        .join(' '),
       confirmLabel: t('Void document'),
       danger: true,
     });

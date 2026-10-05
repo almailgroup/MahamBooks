@@ -233,28 +233,47 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const setStatus = (status: DocumentStatus) =>
     run(status, () => setDocumentStatus(doc.id, status));
 
+  // Credit notes applied to this invoice, or this credit note's applications:
+  // voiding or deleting it takes them off.
+  const credits = (payments ?? []).filter((p) => p.method === 'credit_note');
+  const creditsNote = credits.length
+    ? type === 'credit'
+      ? t('It is taken off the invoices it was applied to, so they are owed again.')
+      : t('Credit notes applied to it are taken off, so they can be used again.')
+    : '';
+  const moneyPaid = (payments ?? []).some((p) => p.method !== 'credit_note' && !p.voided);
+
   const remove = async () => {
     const ok = await confirm({
       title: t('Delete {document} {number}?', { document: documentNoun(type), number: doc.number }),
-      description:
-        doc.type === 'invoice' && doc.totals.paid > 0
+      description: [
+        doc.type === 'invoice' && moneyPaid
           ? t('Payments recorded against it will be kept as unapplied client credit.')
           : t('This cannot be undone.'),
+        creditsNote,
+      ]
+        .filter(Boolean)
+        .join(' '),
       confirmLabel: t('Delete'),
       danger: true,
     });
     if (!ok) return;
-    await deleteDocument(doc.id);
-    toast.success(t('{document} deleted', { document: t(labels.singular) }));
-    navigate(base);
+    await run('delete', async () => {
+      await deleteDocument(doc.id);
+      toast.success(t('{document} deleted', { document: t(labels.singular) }));
+      navigate(base);
+    });
   };
 
   const voidDoc = async () => {
     const ok = await confirm({
       title: t('Void {number}?', { number: doc.number }),
-      description: t(
-        'A void document stays in your records for reference but no longer counts as owed.',
-      ),
+      description: [
+        t('A void document stays in your records for reference but no longer counts as owed.'),
+        creditsNote,
+      ]
+        .filter(Boolean)
+        .join(' '),
       confirmLabel: t('Void document'),
       danger: true,
     });

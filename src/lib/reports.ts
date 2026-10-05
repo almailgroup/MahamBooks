@@ -1,5 +1,6 @@
-import type { Client, InvoiceDocument, ISODate, Payment } from '@/db/types';
+import type { Account, Client, InvoiceDocument, ISODate, Payment } from '@/db/types';
 import { msg } from '@/i18n';
+import type { LedgerLine } from './accounting/ledger';
 import { computeDocument } from './document-calc';
 import { daysBetween, toISODate, parseISODate } from './dates';
 import { round, currencyPrecision, dec, toMinor } from './money';
@@ -116,10 +117,17 @@ export function agingReport(
   };
 }
 
+/** Label of the aging row that ties the documents to the books (see `agingAt`). */
+export const UNAPPLIED_LABEL = msg('Payments and credits not applied');
+
 /**
  * Aging at a past date (for the auditor pack), in the company currency at
  * each document's own rate: what was still owed on invoices or bills issued
- * by `asOf`, after payments and credits applied by then. Minor units.
+ * by `asOf`, after payments and credits applied by then. A payment counts
+ * until the day it was voided (a cheque returned later had paid the invoice
+ * at `asOf`). With the ledger, `unapplied` is what the documents don't
+ * explain (payments and credit notes not applied yet), so that `total`
+ * equals trade receivables (payables) in the books. Minor units.
  */
 export function agingAt(
   docs: InvoiceDocument[],
@@ -128,14 +136,18 @@ export function agingAt(
   asOf: ISODate,
   type: 'invoice' | 'bill',
   companyCurrency: string,
-): { rows: AgingRow[]; totals: number[]; total: number } {
+  ledger?: { lines: LedgerLine[]; accounts: Pick<Account, 'id' | 'type'>[] },
+): { rows: AgingRow[]; totals: number[]; unapplied: number; total: number } {
   const p = currencyPrecision(companyCurrency);
   const names = new Map(clients.map((c) => [c.id, c.name]));
-  const applied = new Map<string, number>();
+  const applied = new Map<string, ReturnType<typeof dec>>();
   for (const payment of payments) {
-    if (payment.date > asOf || (payment as Payment & { voided?: boolean }).voided) continue;
+    if (payment.date > asOf) continue;
+    // Voided on the day the cheque came back (or was cancelled), not before.
+    const voidedOn = payment.voidedOn ?? payment.cheque?.returnedOn ?? payment.date;
+    if (payment.voided && voidedOn <= asOf) continue;
     for (const a of payment.allocations) {
-      applied.set(a.documentId, (applied.get(a.documentId) ?? 0) + a.amount);
+      applied.set(a.documentId, (applied.get(a.documentId) ?? dec(0)).plus(dec(a.amount)));
     }
   }
   const byClient = new Map<string, number[]>();
@@ -149,7 +161,7 @@ export function agingAt(
     const owed = dec(d.totals.total)
       .minus(dec(d.totals.retention ?? 0))
       .plus(released)
-      .minus(dec(applied.get(d.id) ?? 0));
+      .minus(applied.get(d.id) ?? dec(0));
     if (owed.lte(0)) continue;
     const rate = d.currency === companyCurrency ? 1 : d.exchangeRate || 1;
     const minor = toMinor(owed.times(rate), p);
@@ -168,7 +180,16 @@ export function agingAt(
     }))
     .sort((a, b) => b.total - a.total);
   const totals = [0, 1, 2, 3, 4].map((i) => rows.reduce((s, r) => s + r.buckets[i], 0));
-  return { rows, totals, total: totals.reduce((s, v) => s + v, 0) };
+  const aged = totals.reduce((s, v) => s + v, 0);
+  if (!ledger) return { rows, totals, unapplied: 0, total: aged };
+  // What the books hold on trade receivables (payables) at that date.
+  const accountType = type === 'invoice' ? 'asset_receivable' : 'liability_payable';
+  const trade = new Set(ledger.accounts.filter((a) => a.type === accountType).map((a) => a.id));
+  const balance = ledger.lines
+    .filter((l) => l.date <= asOf && trade.has(l.accountId))
+    .reduce((s, l) => s + l.amount, 0);
+  const owedInBooks = type === 'invoice' ? balance : -balance;
+  return { rows, totals, unapplied: owedInBooks - aged, total: owedInBooks };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -204,7 +225,10 @@ export function taxReport(
     if ((d.type !== 'invoice' && d.type !== 'credit') || d.currency !== currency) continue;
     if (!counts(d) || !inRange(d.issueDate, range)) continue;
     const sign = d.type === 'credit' ? -1 : 1;
-    const result = computeDocument(d, { taxExempt: exempt.get(d.clientId) });
+    // An issued document keeps the tax exemption it was issued with.
+    const result = computeDocument(d, {
+      taxExempt: d.posting ? d.posting.taxExempt : exempt.get(d.clientId),
+    });
     documents += 1;
     net += sign * result.netTotal;
     tax += sign * result.taxTotal;

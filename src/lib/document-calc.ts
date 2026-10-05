@@ -1,6 +1,17 @@
-import type { InvoiceDocument } from '@/db/types';
+import type { Client, InvoiceDocument } from '@/db/types';
 import { calculate, type CalcInput, type CalcResult } from './calc';
 import { currencyPrecision, dec, round } from './money';
+
+/**
+ * Whether a document is worked out without tax: as fixed when it was issued
+ * (`posting`), else as its contact is now.
+ */
+export function documentTaxExempt(
+  doc: Partial<Pick<InvoiceDocument, 'posting'>>,
+  contact: Pick<Client, 'taxExempt'> | null | undefined,
+): boolean {
+  return doc.posting ? doc.posting.taxExempt : Boolean(contact?.taxExempt);
+}
 
 export type CalculableDocument = Pick<
   InvoiceDocument,

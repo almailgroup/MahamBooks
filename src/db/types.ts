@@ -785,9 +785,24 @@ export interface InvoiceDocument {
   retentionKind?: RetentionKind;
   /** Parts of the retention released so far, oldest first. */
   retentionReleases?: RetentionRelease[];
+  /**
+   * What an issued invoice, credit note, bill or vendor credit posts with,
+   * fixed when it is issued (or saved as issued). Later changes to the
+   * contact's tax exemption or a product's income account don't change it.
+   * Documents issued before it existed have none and follow the settings.
+   */
+  posting?: PostingSnapshot;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** See `InvoiceDocument.posting`. */
+export interface PostingSnapshot {
+  /** The contact's tax exemption when the document was issued. */
+  taxExempt: boolean;
+  /** Sales documents: the income account of each line's product then, by line id. */
+  accounts: Record<ID, ID>;
 }
 
 /** Payment providers that issue payment links in Kuwait. */
@@ -970,7 +985,9 @@ export type RecurringTemplate = Pick<
   | 'footer'
   | 'privateNotes'
   | 'templateId'
->;
+> &
+  /** Company-currency value of 1 unit of `currency`, given to each invoice. */
+  Partial<Pick<InvoiceDocument, 'exchangeRate'>>;
 
 export interface RecurringProfile {
   id: ID;

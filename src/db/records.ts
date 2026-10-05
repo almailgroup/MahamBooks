@@ -2,6 +2,7 @@ import { db, setMeta, getMeta, DATA_TABLES } from './db';
 import { createCompany, createTaxRate, nowStamp } from './defaults';
 import { chartAccounts, defaultAccountingSettings } from './chart-setup';
 import { logActivity } from './activity';
+import { freezeLockedPostings, sellsProduct } from './posting';
 import type {
   Branding,
   Client,
@@ -144,8 +145,14 @@ export async function deleteCompany(id: ID): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function saveClient(input: Client): Promise<Client> {
-  return db.transaction('rw', [db.clients, db.companies, db.activities], async () => {
+  const tables = [db.clients, db.companies, db.activities, db.documents, db.products];
+  return db.transaction('rw', tables, async () => {
     const existing = await db.clients.get(input.id);
+    if (existing && Boolean(existing.taxExempt) !== Boolean(input.taxExempt)) {
+      // Issued documents of a closed period keep the tax they were posted with.
+      const company = await db.companies.get(existing.companyId);
+      if (company) await freezeLockedPostings(company, (d) => d.clientId === existing.id);
+    }
     let client: Client = { ...input, name: input.name.trim(), updatedAt: nowStamp() };
     if (!client.number.trim()) {
       const company = await db.companies.get(client.companyId);
@@ -224,9 +231,17 @@ export async function deleteClient(id: ID): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function saveProduct(product: Product): Promise<Product> {
-  const updated = { ...product, name: product.name.trim(), updatedAt: nowStamp() };
-  await db.products.put(updated);
-  return updated;
+  return db.transaction('rw', [db.products, db.companies, db.clients, db.documents], async () => {
+    const existing = await db.products.get(product.id);
+    if (existing && (existing.incomeAccountId ?? null) !== (product.incomeAccountId ?? null)) {
+      // Sales of a closed period keep the income account they were posted to.
+      const company = await db.companies.get(existing.companyId);
+      if (company) await freezeLockedPostings(company, sellsProduct(existing.id));
+    }
+    const updated = { ...product, name: product.name.trim(), updatedAt: nowStamp() };
+    await db.products.put(updated);
+    return updated;
+  });
 }
 
 export async function deleteProduct(id: ID): Promise<void> {

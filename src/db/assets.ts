@@ -10,6 +10,7 @@ import {
   roleMap,
   saveJournal,
 } from './accounting';
+import { accountingSettings } from './chart-setup';
 import type {
   Account,
   Company,
@@ -20,6 +21,7 @@ import type {
   InvoiceDocument,
   JournalLine,
   LineItem,
+  ManualJournal,
 } from './types';
 import {
   accumulatedAt,
@@ -395,6 +397,29 @@ async function acquisitionLines(
   return null;
 }
 
+/**
+ * Whether a journal already posts what an asset's acquisition entry should:
+ * same kind, date, accounts and amounts (its wording may differ).
+ */
+function sameEntry(
+  journal: Pick<ManualJournal, 'kind' | 'date' | 'lines'>,
+  wanted: Pick<ManualJournal, 'kind' | 'date' | 'lines'>,
+  precision: number,
+): boolean {
+  const key = (lines: JournalLine[]) =>
+    lines
+      .map((l) => [l.accountId, toMinor(l.debit, precision), toMinor(l.credit, precision)])
+      .filter(([, debit, credit]) => debit !== 0 || credit !== 0)
+      .map((x) => x.join('|'))
+      .sort()
+      .join('\n');
+  return (
+    journal.kind === wanted.kind &&
+    journal.date === wanted.date &&
+    key(journal.lines) === key(wanted.lines)
+  );
+}
+
 /** Next free asset number, e.g. "FA-0007". */
 function nextNumber(assets: FixedAsset[]): string {
   const max = assets.reduce((m, a) => {
@@ -496,10 +521,18 @@ export async function saveAsset(input: FixedAsset): Promise<FixedAsset> {
       throw new AssetError(t('Asset number {number} is already used.', { number: asset.number }));
     }
 
-    // Keep the purchase or opening entry in step with the asset.
+    // Keep the purchase or opening entry in step with the asset. In a locked
+    // period an entry whose date, accounts and amounts stay the same is left
+    // as it is: only the asset's details changed (name, location, notes…).
     const wanted = await acquisitionLines(company, asset, accounts);
     const current = asset.journalId ? await db.journals.get(asset.journalId) : undefined;
-    if (wanted) {
+    const lock = accountingSettings(company).lockDate;
+    const kept = Boolean(
+      wanted && current && lock && current.date <= lock && sameEntry(current, wanted, p),
+    );
+    if (kept) {
+      // The entry already posts what the asset needs.
+    } else if (wanted) {
       const journal = await saveJournal(
         {
           ...(current && current.kind === wanted.kind

@@ -9,6 +9,7 @@ import type {
   ChequeDetails,
   Company,
   ID,
+  InvoiceDocument,
   Payment,
   PaymentAllocation,
   PaymentLink,
@@ -17,6 +18,7 @@ import type {
 import { allocateNumber } from '@/lib/numbering';
 import { formatMoney } from '@/lib/format';
 import { dec, round, currencyPrecision, toMinor } from '@/lib/money';
+import { isPosted } from '@/lib/accounting/ledger';
 import { newId } from '@/lib/ids';
 import { today } from '@/lib/dates';
 import { isValidCivilId } from '@/lib/kuwait';
@@ -241,6 +243,84 @@ async function checkCheque(
   return details;
 }
 
+/** Why nothing (more) can be applied to a document that is not in the books. */
+function notIssuedError(doc: InvoiceDocument): AllocationError {
+  const number = doc.number;
+  if (doc.status === 'void') {
+    return new AllocationError(
+      t('{number} is void, so nothing more can be applied to it.', { number }),
+    );
+  }
+  switch (doc.type) {
+    case 'invoice':
+      return new AllocationError(t('Issue invoice {number} first.', { number }));
+    case 'bill':
+      return new AllocationError(t('Mark bill {number} as open first.', { number }));
+    case 'credit':
+      return new AllocationError(t('Issue credit note {number} first.', { number }));
+    case 'vendor_credit':
+      return new AllocationError(t('Mark vendor credit {number} as open first.', { number }));
+    default:
+      return new AllocationError(t('{number} can’t take payments.', { number }));
+  }
+}
+
+/**
+ * Payments and credits are only applied to documents in the books: a draft
+ * is issued first. What a payment already holds on a document that has
+ * since left the books (voided) may stay or shrink, so its notes can still
+ * be edited.
+ */
+function checkIssued(
+  allocations: PaymentAllocation[],
+  docs: Map<ID, InvoiceDocument>,
+  existing: Payment | undefined,
+  precision: number,
+): void {
+  for (const a of allocations) {
+    const doc = docs.get(a.documentId);
+    if (!doc || isPosted(doc)) continue;
+    const before = existing?.allocations.find((x) => x.documentId === a.documentId)?.amount ?? 0;
+    if (toMinor(a.amount, precision) > toMinor(before, precision)) throw notIssuedError(doc);
+  }
+}
+
+/**
+ * Whether saving `next` over `before` leaves the books as they are: only the
+ * documents it is applied to (or its notes) change, and everything is in the
+ * company currency, so moving money between documents moves no amount.
+ * Such a change is allowed in a locked period, e.g. applying an advance
+ * received before the lock date to a later invoice.
+ */
+function sameEntries(
+  before: Payment,
+  next: Payment,
+  docs: Map<ID, InvoiceDocument>,
+  company: Company,
+): boolean {
+  const currency = company.currency;
+  const precision = currencyPrecision(currency);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  if (
+    before.currency !== currency ||
+    next.currency !== currency ||
+    before.date !== next.date ||
+    toMinor(before.amount, precision) !== toMinor(next.amount, precision) ||
+    (before.direction ?? 'in') !== (next.direction ?? 'in') ||
+    before.method !== next.method ||
+    before.clientId !== next.clientId ||
+    !same(before.accountId, next.accountId) ||
+    !same(before.fee || null, next.fee || null) ||
+    !same(before.feeAccountId, next.feeAccountId) ||
+    !same(before.creditId, next.creditId) ||
+    Boolean(before.voided) !== Boolean(next.voided)
+  ) {
+    return false;
+  }
+  const ids = [...before.documentIds, ...next.documentIds, before.creditId, next.creditId];
+  return ids.every((id) => !id || docs.get(id)?.currency === currency);
+}
+
 export async function savePayment(input: Payment): Promise<Payment> {
   return db.transaction(
     'rw',
@@ -249,7 +329,6 @@ export async function savePayment(input: Payment): Promise<Payment> {
       const company = await db.companies.get(input.companyId);
       if (!company) throw new PaymentError(t('Company not found.'));
       const existing = await db.payments.get(input.id);
-      assertUnlocked(company, input.date, existing?.date);
       if (existing?.voided) {
         throw new PaymentError(t('This payment is void and can no longer be changed.'));
       }
@@ -265,6 +344,30 @@ export async function savePayment(input: Payment): Promise<Payment> {
             ? t('The amounts applied to bills are larger than the payment.')
             : t('The amounts applied to invoices are larger than the payment.'),
         );
+      }
+      const creditId = input.creditId ?? null;
+      const related = [
+        ...new Set(
+          [
+            ...allocations.map((a) => a.documentId),
+            ...(existing?.documentIds ?? []),
+            creditId,
+            existing?.creditId,
+          ].filter((id): id is ID => Boolean(id)),
+        ),
+      ];
+      const docs = new Map(
+        (await db.documents.bulkGet(related))
+          .filter((d): d is InvoiceDocument => Boolean(d))
+          .map((d) => [d.id, d]),
+      );
+      checkIssued(allocations, docs, existing, precision);
+      if (input.method === 'credit_note' && creditId) {
+        const credit = docs.get(creditId);
+        const kept =
+          existing?.creditId === creditId &&
+          toMinor(amount, precision) <= toMinor(existing.amount, precision);
+        if (credit && !isPosted(credit) && !kept) throw notIssuedError(credit);
       }
 
       const cheque = await checkCheque(input, existing);
@@ -330,6 +433,11 @@ export async function savePayment(input: Payment): Promise<Payment> {
         updatedAt: nowStamp(),
       };
       if (!fee) delete payment.fee;
+      // A closed period keeps its entries; a change that posts nothing new
+      // (applying an advance to another invoice) is fine.
+      if (!existing || !sameEntries(existing, payment, docs, company)) {
+        assertUnlocked(company, payment.date, existing?.date);
+      }
       if (!payment.number.trim()) {
         const taken = new Set(
           (await db.payments.where('companyId').equals(company.id).toArray()).map((p) =>
@@ -358,8 +466,8 @@ export async function savePayment(input: Payment): Promise<Payment> {
         ...(payment.creditId ? [payment.creditId] : []),
       ]);
 
-      const docs = await db.documents.bulkGet(payment.documentIds);
-      const numbers = docs.filter(Boolean).map((d) => d!.number);
+      const paid = await db.documents.bulkGet(payment.documentIds);
+      const numbers = paid.filter(Boolean).map((d) => d!.number);
       const vars = {
         number: payment.number,
         amount: formatMoney(

@@ -334,6 +334,25 @@ export default function RecurringEditorPage() {
                   />
                 )}
               </Field>
+              {profile.template.currency !== company.currency ? (
+                <Field
+                  label={t('Exchange rate')}
+                  hint={t('1 {currency} = {rate} {base}, used for your books', {
+                    currency: profile.template.currency,
+                    rate: profile.template.exchangeRate || '?',
+                    base: company.currency,
+                  })}
+                >
+                  {(fid) => (
+                    <NumberInput
+                      id={fid}
+                      value={profile.template.exchangeRate ?? 0}
+                      onValueChange={(exchangeRate) => setTemplate({ exchangeRate })}
+                      allowNegative={false}
+                    />
+                  )}
+                </Field>
+              ) : null}
               <Field label={t('Template')}>
                 {(fid) => (
                   <Select

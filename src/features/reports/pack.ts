@@ -3,7 +3,7 @@ import { msg, type Dictionary } from '@/i18n';
 import { toCsv } from '@/lib/csv';
 import { downloadName } from '@/lib/file-names';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
-import { agingAt, AGING_BUCKETS } from '@/lib/reports';
+import { agingAt, AGING_BUCKETS, UNAPPLIED_LABEL } from '@/lib/reports';
 import { ACCOUNT_TYPES } from '@/lib/accounting/account-types';
 import { generalLedger, type DateRange } from '@/lib/accounting/statements';
 import { lineDescription, type LedgerLine } from '@/lib/accounting/ledger';
@@ -165,6 +165,7 @@ export function buildAuditorPack(
       year.to,
       type,
       company.currency,
+      ledger,
     );
     const contacts = new Map(data.clients.map((c) => [c.id, c]));
     files.push({
@@ -182,6 +183,16 @@ export function buildAuditorPack(
             ...r.buckets.map(major),
             major(r.total),
           ]),
+          // Payments and credit notes not applied yet, so the total is the books' figure.
+          ...(aging.unapplied !== 0
+            ? [
+                [
+                  ...texts.map((t) => t.t(UNAPPLIED_LABEL)),
+                  ...AGING_BUCKETS.map(() => ''),
+                  major(aging.unapplied),
+                ],
+              ]
+            : []),
           [...texts.map((t) => t.t(msg('Total'))), ...aging.totals.map(major), major(aging.total)],
         ],
       ),

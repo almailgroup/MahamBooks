@@ -4,10 +4,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { MoreHorizontal, Pause, Pencil, Play, Plus, Repeat, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { FREQUENCY_LABEL, issueNow } from '@/db/recurring';
+import { FREQUENCY_LABEL, issueNow, lockedOutBy, lockedOutText } from '@/db/recurring';
 import type { Client, RecurringProfile } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { computeDocument } from '@/lib/document-calc';
+import { today } from '@/lib/dates';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
 import {
@@ -70,10 +71,14 @@ export default function RecurringListPage() {
   };
 
   const sendNow = async (p: RecurringProfile) => {
-    const invoice = await issueNow(p.id);
-    if (invoice) {
-      toast.success(t('Invoice {number} created', { number: invoice.number }));
-      navigate(`/invoices/${invoice.id}`);
+    try {
+      const invoice = await issueNow(p.id);
+      if (invoice) {
+        toast.success(t('Invoice {number} created', { number: invoice.number }));
+        navigate(`/invoices/${invoice.id}`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     }
   };
 
@@ -146,6 +151,20 @@ export default function RecurringListPage() {
                       .filter(Boolean)
                       .join(' · ')}
                   </span>
+                  {(() => {
+                    // Due in a closed period: nothing is created until that changes.
+                    const lock =
+                      profile.status === 'active' &&
+                      profile.nextIssueDate &&
+                      profile.nextIssueDate <= today()
+                        ? lockedOutBy(profile, company)
+                        : null;
+                    return lock && profile.nextIssueDate ? (
+                      <span role="alert" className="mt-1 block text-sm text-amber-700">
+                        {lockedOutText(company, profile.nextIssueDate, lock)}
+                      </span>
+                    ) : null;
+                  })()}
                 </Link>
                 <div className="flex items-center gap-4 sm:justify-end">
                   <div className="text-end">

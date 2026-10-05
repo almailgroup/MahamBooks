@@ -162,6 +162,8 @@ describe('documents', () => {
     const company = await freshCompany();
     const client = await saveClient(createClient(company.id, { name: 'A' }));
     const invoice = await invoiceFor(company, client.id);
+    // Credits and payments are applied to issued invoices only.
+    await markSent(invoice.id);
     const creditDraft = await draftDocument(company, 'credit', client);
     creditDraft.items[0] = { ...creditDraft.items[0], name: 'Refund', unitPrice: 50 };
     const credit = await saveDocument(creditDraft);
@@ -201,6 +203,7 @@ describe('documents', () => {
     const company = await freshCompany();
     const client = await saveClient(createClient(company.id, { name: 'A' }));
     const invoice = await invoiceFor(company, client.id);
+    await markSent(invoice.id);
     const payment = await savePayment(
       createPayment(company.id, {
         clientId: client.id,

@@ -6,7 +6,7 @@ import type {
   ISODate,
   PageSize,
 } from '@/db/types';
-import { computeDocument } from '@/lib/document-calc';
+import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
 import {
   formatDate,
   formatMoney,
@@ -193,7 +193,7 @@ export type RenderableDocument = Pick<
   | 'receiverName'
   | 'receiverCivilId'
 > &
-  Partial<Pick<InvoiceDocument, 'retentionPercent' | 'retentionReleases'>> & {
+  Partial<Pick<InvoiceDocument, 'retentionPercent' | 'retentionReleases' | 'posting'>> & {
     totals: Pick<InvoiceDocument['totals'], 'paid'>;
   };
 
@@ -432,7 +432,9 @@ export function buildRenderModel(
     return formatDate(d, company.dateFormat, locale);
   };
 
-  const result = computeDocument(doc, { paid: doc.totals.paid, taxExempt: client?.taxExempt });
+  // An issued document prints with the tax exemption it was issued with.
+  const exempt = documentTaxExempt(doc, client);
+  const result = computeDocument(doc, { paid: doc.totals.paid, taxExempt: exempt });
 
   if (!isPrintable(doc.type)) throw new Error(`${doc.type} documents are not printed`);
   const type = doc.type;
@@ -489,7 +491,7 @@ export function buildRenderModel(
     const line = result.lines[i];
     const quantity = formatQuantity(item.quantity, locale);
     const unit = clean(item.unit);
-    const taxes = client?.taxExempt ? [] : item.taxes.filter((t) => clean(t.name) !== '');
+    const taxes = exempt ? [] : item.taxes.filter((t) => clean(t.name) !== '');
     const serial = clean(item.serialNumber);
     const condition = item.condition === 'new' || item.condition === 'used' ? item.condition : null;
     return {

@@ -4,6 +4,7 @@ import { logActivity } from './activity';
 import { accountingSettings } from './chart-setup';
 import { nowStamp } from './defaults';
 import { assertUnlocked, ensureSpecAccount, LockedPeriodError, roleMap } from './accounting';
+import { freezeLockedPostings, sellsProduct } from './posting';
 import type {
   AdjustmentReason,
   Company,
@@ -512,6 +513,10 @@ export async function saveItem(
       updatedAt: nowStamp(),
     };
     if (!existing) product.createdAt = product.updatedAt;
+    if (existing && (existing.incomeAccountId ?? null) !== (product.incomeAccountId ?? null)) {
+      // Sales of a closed period keep the income account they were posted to.
+      await freezeLockedPostings(company, sellsProduct(existing.id));
+    }
     await db.products.put(product);
 
     if (kind === 'stock') {
