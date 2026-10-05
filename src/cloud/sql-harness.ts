@@ -14,6 +14,12 @@ export const MIGRATION = join(
   '../../supabase/migrations/20261004000000_almailbooks_cloud.sql',
 );
 
+/** Every migration, in the order the owner runs them. */
+export const MIGRATIONS = [
+  MIGRATION,
+  join(__dirname, '../../supabase/migrations/20261006000000_sync_fixes.sql'),
+];
+
 const SUPABASE_STUB = `
 create role anon nologin;
 create role authenticated nologin;
@@ -111,11 +117,21 @@ function queryOn(tx: Pick<Transaction, 'query'>): Query {
     (await tx.query<T>(sql, params)).rows as T[];
 }
 
-export async function startDatabase(runs = 1): Promise<Harness> {
+/**
+ * A database with the migrations run in order, each `runs` times (running a
+ * file again must be safe). `migrations` limits it to the first ones, to
+ * check what an app finds before the owner runs the latest.
+ */
+export async function startDatabase(
+  runs = 1,
+  migrations: number = MIGRATIONS.length,
+): Promise<Harness> {
   const db = new PGlite();
   await db.exec(SUPABASE_STUB);
-  const migration = readFileSync(MIGRATION, 'utf8');
-  for (let i = 0; i < runs; i++) await db.exec(migration);
+  for (const file of MIGRATIONS.slice(0, migrations)) {
+    const migration = readFileSync(file, 'utf8');
+    for (let i = 0; i < runs; i++) await db.exec(migration);
+  }
   const admin = queryOn(db);
   let counter = 0;
 

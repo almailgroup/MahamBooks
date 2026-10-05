@@ -4,6 +4,7 @@ import { syncStatus } from './status';
 import { applyRole, downloadMissingFiles, syncCompany, type SyncContext } from './sync';
 import { EAGER_DOWNLOAD_BYTES } from './files';
 import { downloadAccountCompanies } from './auto-download';
+import { syncLockName, withLock } from './lock';
 import { db } from '@/db/db';
 
 /**
@@ -38,11 +39,6 @@ export function backoff(attempt: number, random = Math.random): number {
   return Math.round(base * (0.8 + 0.4 * random()));
 }
 
-function webLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
-  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-  return locks ? locks.request(name, fn) : fn();
-}
-
 export class SyncManager {
   private readonly timers = new Map<string, { at: number; timer: Timer }>();
   private readonly failures = new Map<string, number>();
@@ -65,7 +61,7 @@ export class SyncManager {
       clearTimeout: options.clearTimeout ?? ((timer) => clearTimeout(timer)),
       now: options.now ?? (() => Date.now()),
       random: options.random ?? Math.random,
-      lock: options.lock ?? webLock,
+      lock: options.lock ?? withLock,
       intervalMs: options.intervalMs ?? MINUTE,
       autoDownload: options.autoDownload ?? true,
     };
@@ -221,7 +217,7 @@ export class SyncManager {
     syncStatus.set(companyId, { phase: 'syncing' });
     const job = (async () => {
       try {
-        await this.o.lock(`almailbooks-sync-${companyId}`, () =>
+        await this.o.lock(syncLockName(companyId), () =>
           syncCompany(companyId, {
             ...this.ctx,
             onProgress: (progress) => syncStatus.set(companyId, { progress }),

@@ -430,4 +430,37 @@ export default {
   'Getting it ready…': 'جارٍ تجهيزها…',
   'Removed from this device': 'أُزيلت من هذا الجهاز',
   'Opening your company…': 'جارٍ فتح شركتك…',
+  // Sync fixes: company already in the cloud, merged company settings,
+  // numbers two devices gave at once, files the cloud refused or kept.
+  'This company is already in your cloud account. Download it instead.':
+    'هذه الشركة موجودة في حسابك على السحابة. نزّلها بدلاً من ذلك.',
+  'Company settings were also changed on another device. The values saved on this device were kept for: {fields}.':
+    'تغيّرت إعدادات الشركة على جهاز آخر أيضاً. احتُفظ بالقيم المحفوظة على هذا الجهاز للحقول: {fields}.',
+  'Only the owner can delete the company.': 'لا يحذف الشركة إلا مالكها.',
+  'Some files could not be removed from the cloud. Try again.':
+    'تعذّرت إزالة بعض الملفات من السحابة. حاول مرة أخرى.',
+  '{name} is already in your cloud account': '{name} موجودة في حسابك على السحابة',
+  'The copy in the cloud may have newer work from your team, so it is not replaced. Download it to this device instead? The copy on this device is replaced.':
+    'قد تحتوي النسخة الموجودة في السحابة على عمل أحدث من فريقك، لذلك لا تُستبدل. هل تريد تنزيلها إلى هذا الجهاز بدلاً من ذلك؟ ستُستبدل النسخة الموجودة على هذا الجهاز.',
+  'Download from the cloud': 'التنزيل من السحابة',
+  '{name} is coming from the cloud.': 'جارٍ تنزيل {name} من السحابة.',
+  'Also in your cloud account': 'موجودة أيضاً في حسابك على السحابة',
+  '{count} numbers are each used by more than one document': {
+    one: 'رقم واحد مستخدم في أكثر من مستند',
+    two: 'رقمان كلٌّ منهما مستخدم في أكثر من مستند',
+    few: '{count} أرقام كلٌّ منها مستخدم في أكثر من مستند',
+    many: '{count} رقماً كلٌّ منها مستخدم في أكثر من مستند',
+    other: '{count} رقم كلٌّ منها مستخدم في أكثر من مستند',
+  },
+  'They were numbered on several devices at once, without the cloud. Open one and give it a new number.':
+    'رُقّمت على عدة أجهزة في الوقت نفسه دون السحابة. افتح أحدها وأعطه رقماً جديداً.',
+  'Dated {date}': 'بتاريخ {date}',
+  '{count} deleted files could not be removed from the cloud.': {
+    one: 'تعذّرت إزالة ملف محذوف من السحابة.',
+    two: 'تعذّرت إزالة ملفين محذوفين من السحابة.',
+    few: 'تعذّرت إزالة {count} ملفات محذوفة من السحابة.',
+    many: 'تعذّرت إزالة {count} ملفاً محذوفاً من السحابة.',
+    other: 'تعذّرت إزالة {count} ملف محذوف من السحابة.',
+  },
+  'The cloud did not take its file.': 'لم تقبل السحابة ملفه.',
 } satisfies Dictionary;

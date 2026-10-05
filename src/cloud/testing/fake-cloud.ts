@@ -2,6 +2,7 @@ import {
   CloudError,
   type CloudApi,
   type CloudCompany,
+  type CompanyOp,
   type Invite,
   type PulledRow,
   type PushChange,
@@ -18,6 +19,9 @@ import {
   type MemberRole,
 } from '../roles';
 import { mergeNumbering } from '../numbering';
+import { rebaseCompany } from '../company-patch';
+import { periodKey } from '@/lib/numbering';
+import type { CounterReset } from '@/db/types';
 
 /**
  * An in-memory cloud with the database's rules (see the migration): revs,
@@ -49,8 +53,21 @@ const fail = (code: CloudError['code'], detail: string = code) =>
 export class FakeCloud {
   companies = new Map<
     string,
-    { id: string; name: string; purgedUntilRev: number; createdAt: string }
+    {
+      id: string;
+      name: string;
+      purgedUntilRev: number;
+      createdAt: string;
+      /** Set by beginDeleteCompany: uploads are refused until then (ms). */
+      deletingUntil?: number;
+    }
   >();
+  /**
+   * A server without the second migration (20261006000000_sync_fixes.sql):
+   * patchCompany, reserveNumber, storedFiles and beginDeleteCompany are
+   * missing, and createCompany takes up the owner's existing company.
+   */
+  legacy = false;
   members = new Map<string, Map<string, MemberRole>>();
   records = new Map<string, Row>();
   markers = new Map<string, Marker>();
@@ -169,7 +186,14 @@ export class FakeCloud {
         guard('createCompany');
         const existing = this.companies.get(id);
         if (existing) {
-          if (this.role(id, user) !== 'owner') throw fail('company_taken');
+          const role = this.role(id, user);
+          if (this.legacy) {
+            if (role !== 'owner') throw fail('company_taken');
+          } else {
+            if (!role) throw fail('company_taken');
+            // Only an empty one of the person's own is taken up again.
+            if (role !== 'owner' || this.rows(id).length > 0) throw fail('company_exists');
+          }
           existing.name = name;
           return;
         }
@@ -286,6 +310,10 @@ export class FakeCloud {
         const [company] = path.split('/');
         member(company);
         if (!this.canUseFile(user, path, true)) throw fail('permission');
+        // The owner is deleting the company: no new uploads.
+        if ((this.companies.get(company)?.deletingUntil ?? 0) > Date.now()) {
+          throw fail('permission');
+        }
         this.files.set(path, { blob: data, createdAt: new Date().toISOString(), owner: user });
       },
 
@@ -296,15 +324,23 @@ export class FakeCloud {
         return file.blob;
       },
 
-      // Like Storage: what the rules hide is skipped without an error.
+      // Like Storage: what the rules hide is skipped without an error; the
+      // answer lists what was removed.
       removeFiles: async (paths) => {
         guard('removeFiles');
         if (this.storageDown) throw fail('server');
+        const removed: string[] = [];
         for (const path of paths) {
-          if (this.canUseFile(user, path, false) && this.canUseFile(user, path, true)) {
+          if (
+            this.files.has(path) &&
+            this.canUseFile(user, path, false) &&
+            this.canUseFile(user, path, true)
+          ) {
             this.files.delete(path);
+            removed.push(path);
           }
         }
+        return removed;
       },
 
       listFiles: async (company): Promise<StoredFile[]> => {
@@ -313,6 +349,71 @@ export class FakeCloud {
         return [...this.files.entries()]
           .filter(([path]) => path.startsWith(`${company}/`) && this.canUseFile(user, path, false))
           .map(([path, file]) => ({ path, createdAt: file.createdAt }));
+      },
+
+      storedFiles: async (company, paths) => {
+        guard('storedFiles');
+        if (this.legacy) return null;
+        member(company);
+        return paths.filter((path) => path.startsWith(`${company}/`) && this.files.has(path));
+      },
+
+      // Mirrors public.patch_company.
+      patchCompany: async (company, ops: CompanyOp[]) => {
+        guard('patchCompany');
+        if (this.legacy) return null;
+        const role = member(company);
+        const key = this.key(company, 'companies', company);
+        const old = this.records.get(key);
+        if (!old) return null;
+        if (ops.some((change) => change.path[0] === 'id')) throw fail('invalid');
+        if (!this.canWrite(company, user, 'companies', old.data)) throw fail('permission');
+        const { data, conflicts } = rebaseCompany(old.data, ops);
+        if (role === 'staff' && !staffCompanyChangeOk(old.data, data)) throw fail('permission');
+        if (sameData(data, old.data)) return { rev: old.rev, conflicts };
+        const rev = ++this.rev;
+        this.records.set(key, { ...old, data, rev });
+        this.notify(company);
+        return { rev, conflicts };
+      },
+
+      // Mirrors public.reserve_number.
+      reserveNumber: async (company, kind, date, min) => {
+        guard('reserveNumber');
+        if (this.legacy) return null;
+        member(company);
+        const key = this.key(company, 'companies', company);
+        const row = this.records.get(key);
+        if (!row) return null;
+        if (!this.canWrite(company, user, 'companies', row.data)) throw fail('permission');
+        const numbering = (row.data.numbering ?? {}) as Record<string, Record<string, unknown>>;
+        const rule = numbering[kind];
+        if (!rule) return null;
+        const reset = (rule.reset ?? 'never') as CounterReset;
+        const period = periodKey(reset, date);
+        const rulePeriod = String(rule.period ?? '');
+        let counter = typeof rule.next === 'number' ? Math.max(1, Math.trunc(rule.next)) : 1;
+        if (reset !== 'never' && rulePeriod !== '' && period !== rulePeriod) {
+          if (period < rulePeriod) return null;
+          counter = 1;
+        }
+        counter = Math.max(counter, min, 1);
+        const data = {
+          ...row.data,
+          numbering: { ...numbering, [kind]: { ...rule, next: counter + 1, period } },
+        };
+        const rev = ++this.rev;
+        this.records.set(key, { ...row, data, rev });
+        this.notify(company);
+        return { counter, period };
+      },
+
+      beginDeleteCompany: async (company) => {
+        guard('beginDeleteCompany');
+        if (this.legacy) return false;
+        if (member(company) !== 'owner') throw fail('permission');
+        this.companies.get(company)!.deletingUntil = Date.now() + 60 * 60 * 1000;
+        return true;
       },
 
       companyTeam: async (company): Promise<TeamMember[]> => {

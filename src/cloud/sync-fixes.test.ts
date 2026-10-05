@@ -1,0 +1,656 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '@/db/db';
+import { createClient } from '@/db/defaults';
+import { deleteCompany, saveClient, setupCompany } from '@/db/records';
+import { draftDocument, isNumberTaken, saveDocument } from '@/db/documents';
+import { addAttachment } from '@/db/purchases';
+import { createEmployee, saveEmployee } from '@/db/people';
+import { exportBackup, importBackup, wipeAllData } from '@/db/backup';
+import {
+  createComplianceDocument,
+  deleteComplianceDocument,
+  saveComplianceDocument,
+} from '@/db/renewals';
+import type { Company, InvoiceDocument } from '@/db/types';
+import { setCounterReserver } from '@/lib/numbering';
+import { today } from '@/lib/dates';
+import { storageCloudError } from './api';
+import { downloadAccountCompanies } from './auto-download';
+import { FakeCloud } from './testing/fake-cloud';
+import { withSyncLock } from './lock';
+import { failedFileRemovals, numberProblems } from './problems';
+import { cloudCounterReserver } from './reserve';
+import {
+  applyRole,
+  applyRows,
+  deleteFromCloud,
+  retryFileRemovals,
+  startDownload,
+  startUpload,
+  syncCompany,
+  type SyncContext,
+} from './sync';
+
+/**
+ * Regressions found in the review of cloud sync: two devices, two tabs, role
+ * changes and deletes. Devices other than "this one" are played by pushing to
+ * the fake server what that device would send.
+ */
+
+const OWNER = 'user-owner';
+const STAFF = 'user-staff';
+const PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+let server: FakeCloud;
+let ctx: SyncContext;
+
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
+  server = new FakeCloud();
+  ctx = { api: server.client(OWNER), userId: OWNER };
+});
+
+afterEach(() => setCounterReserver(null));
+
+async function newDevice(userId = OWNER): Promise<SyncContext> {
+  await db.delete();
+  await db.open();
+  return { api: server.client(userId), userId };
+}
+
+async function uploaded(): Promise<{ company: Company; invoice: InvoiceDocument }> {
+  const company = await setupCompany({ name: 'Al Mail Trading' });
+  const client = await saveClient(createClient(company.id, { name: 'Gulf Pearl Hotel' }));
+  const draft = await draftDocument(company, 'invoice', client);
+  draft.items[0] = { ...draft.items[0], name: 'Installation', quantity: 2, unitPrice: 150.25 };
+  const invoice = await saveDocument({ ...draft, status: 'sent' });
+  await startUpload(company.id, ctx);
+  await syncCompany(company.id, ctx);
+  return { company: (await db.companies.get(company.id))!, invoice };
+}
+
+/** Issues an invoice on this device. */
+async function issueInvoice(companyId: string): Promise<InvoiceDocument> {
+  const company = (await db.companies.get(companyId))!;
+  const client = (await db.clients.where('companyId').equals(companyId).first())!;
+  const draft = await draftDocument(company, 'invoice', client);
+  draft.items[0] = { ...draft.items[0], name: 'Service', quantity: 1, unitPrice: 10 };
+  return saveDocument({ ...draft, status: 'sent' });
+}
+
+/** Another device of the team changes the company record. */
+async function otherDeviceChangesCompany(companyId: string, patch: Record<string, unknown>) {
+  const remote = server.record(companyId, 'companies', companyId)!;
+  await server
+    .client(OWNER)
+    .pushRecords(companyId, [{ tbl: 'companies', id: companyId, data: { ...remote, ...patch } }]);
+}
+
+async function settle() {
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe('removing a company from this device', () => {
+  it('never deletes records in the cloud, even while a sync is under way', async () => {
+    const { company, invoice } = await uploaded();
+    const client = (await db.clients.where('companyId').equals(company.id).first())!;
+    await addAttachment(company.id, invoice.id, { name: 'r.png', type: 'image/png', dataUrl: PNG });
+    await saveClient({ ...client, phone: '+965 9999 0000' });
+    await saveDocument({ ...invoice, notes: 'Delivered' });
+    // While the receipt uploads, the company is removed from this device.
+    const api = ctx.api;
+    ctx = {
+      ...ctx,
+      api: {
+        ...api,
+        uploadFile: async (path, blob, type) => {
+          // The person confirmed losing the changes not sent yet.
+          await deleteCompany(company.id, { force: true });
+          return api.uploadFile(path, blob, type);
+        },
+      },
+    };
+    await syncCompany(company.id, ctx).catch(() => undefined);
+    // A record gone without a delete is dropped from the outbox, never sent as one.
+    expect(server.record(company.id, 'clients', client.id)).toBeDefined();
+    expect(server.record(company.id, 'documents', invoice.id)).toBeDefined();
+    expect(server.markers.size).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('waits for a sync under way to finish', async () => {
+    const { company } = await uploaded();
+    const client = (await db.clients.where('companyId').equals(company.id).first())!;
+    await saveClient({ ...client, phone: '+965 9999 0000' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const api = ctx.api;
+    ctx = {
+      ...ctx,
+      api: {
+        ...api,
+        pushRecords: async (id, changes) => {
+          await gate;
+          return api.pushRecords(id, changes);
+        },
+      },
+    };
+    const order: string[] = [];
+    const sync = withSyncLock(company.id, async () => {
+      await syncCompany(company.id, ctx);
+      order.push('synced');
+    });
+    await settle();
+    const removal = withSyncLock(company.id, async () => {
+      await deleteCompany(company.id);
+      order.push('removed');
+    });
+    await settle();
+    expect(order).toEqual([]);
+    release();
+    await Promise.all([sync, removal]);
+    expect(order).toEqual(['synced', 'removed']);
+    expect(server.record(company.id, 'clients', client.id)?.phone).toBe('+965 9999 0000');
+    expect(await db.companies.get(company.id)).toBeUndefined();
+  });
+});
+
+describe('a file the cloud refuses', () => {
+  it('is parked with its reason, and the sync goes on (a viewer with a receipt to send)', async () => {
+    const { company, invoice } = await uploaded();
+    const receipt = await addAttachment(company.id, invoice.id, {
+      name: 'r.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    server.addMember(company.id, 'user-boss', 'owner');
+    server.addMember(company.id, OWNER, 'viewer');
+    await applyRole(company.id, 'viewer');
+    await server.client('user-boss').pushRecords(company.id, [
+      {
+        tbl: 'products',
+        id: 'p-later',
+        data: { id: 'p-later', companyId: company.id, name: 'Later', unitPrice: 1 },
+      },
+    ]);
+    const result = await syncCompany(company.id, ctx);
+    expect(result.parked).toBe(1);
+    expect(await db.products.get('p-later')).toBeDefined();
+    expect(await db.outbox.where('[companyId+parked]').equals([company.id, 1]).toArray()).toEqual([
+      expect.objectContaining({
+        table: 'attachments',
+        id: receipt.id,
+        error: 'permission',
+        file: 1,
+      }),
+    ]);
+  });
+
+  it('is not retried as it is when Storage says no (4xx); network trouble is', () => {
+    const code = (error: unknown) => storageCloudError(error).code;
+    expect(
+      code({
+        status: 400,
+        statusCode: '403',
+        message: 'new row violates row-level security policy',
+      }),
+    ).toBe('permission');
+    expect(code({ status: 413, statusCode: '413', message: 'Payload too large' })).toBe(
+      'too_large',
+    );
+    expect(
+      code({ status: 400, statusCode: '415', message: 'mime type text/html is not supported' }),
+    ).toBe('invalid');
+    expect(code({ status: 400, statusCode: '404', message: 'Object not found' })).toBe('invalid');
+    expect(code({ status: 400, statusCode: 'InvalidJWT', message: 'jwt expired' })).toBe('auth');
+    expect(code({ status: 503, statusCode: '503', message: 'Service unavailable' })).toBe('server');
+    expect(code({ status: 429, statusCode: '429', message: 'Too many requests' })).toBe('server');
+    expect(code(new TypeError('Failed to fetch'))).toBe('offline');
+    expect(storageCloudError({ status: 400, statusCode: '403' }).retryable).toBe(false);
+  });
+});
+
+describe('the company record', () => {
+  it('keeps a settings change made on another device when this one numbers a document', async () => {
+    const { company } = await uploaded();
+    const accounting = server.record(company.id, 'companies', company.id)!.accounting as object;
+    await otherDeviceChangesCompany(company.id, {
+      phone: '+965 2222 0000',
+      accounting: { ...accounting, lockDate: '2026-09-30' },
+    });
+    server.offline = true;
+    const mine = await issueInvoice(company.id);
+    server.offline = false;
+    const result = await syncCompany(company.id, ctx);
+    const cloud = server.record(company.id, 'companies', company.id)!;
+    expect(cloud.phone).toBe('+965 2222 0000');
+    expect((cloud.accounting as { lockDate: string | null }).lockDate).toBe('2026-09-30');
+    // This device's counter went up with it.
+    expect((cloud.numbering as Company['numbering']).invoice.next).toBe(
+      (await db.companies.get(company.id))!.numbering.invoice.next,
+    );
+    const local = (await db.companies.get(company.id))!;
+    expect(local.phone).toBe('+965 2222 0000');
+    expect(local.accounting?.lockDate).toBe('2026-09-30');
+    expect(result.conflicts).toBe(0);
+    expect(mine.number).toBeTruthy();
+  });
+
+  it('notes the fields both devices changed, keeping this device’s value', async () => {
+    const { company } = await uploaded();
+    await otherDeviceChangesCompany(company.id, {
+      phone: '+965 2222 0000',
+      website: 'gulf.example',
+    });
+    server.offline = true;
+    await db.companies.update(company.id, { phone: '+965 3333 0000' });
+    server.offline = false;
+    const result = await syncCompany(company.id, ctx);
+    expect(result.conflicts).toBe(1);
+    expect(server.record(company.id, 'companies', company.id)).toMatchObject({
+      phone: '+965 3333 0000',
+      website: 'gulf.example',
+    });
+    const [note] = await db.activities.filter((a) => a.action === 'sync_conflict').toArray();
+    expect(note).toMatchObject({ entity: 'company', messageVars: { fields: 'phone' } });
+  });
+
+  it('lays this device’s unsent changes over a newer copy from the cloud', async () => {
+    const { company } = await uploaded();
+    const cursor = (await db.syncState.get(company.id))!.cursor;
+    await db.companies.update(company.id, { website: 'almail.example' });
+    await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+    await applyRows(company.id, await ctx.api.pullRecords(company.id, cursor, 100));
+    expect(await db.companies.get(company.id)).toMatchObject({
+      website: 'almail.example',
+      phone: '+965 2222 0000',
+    });
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'companies', company.id)).toMatchObject({
+      website: 'almail.example',
+      phone: '+965 2222 0000',
+    });
+  });
+
+  it('lets staff number documents after the owner changed the company details', async () => {
+    const { company } = await uploaded();
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+    await issueInvoice(company.id);
+    const result = await syncCompany(company.id, staff);
+    expect(result.parked).toBe(0);
+    expect((await db.companies.get(company.id))?.phone).toBe('+965 2222 0000');
+    const cloud = server.record(company.id, 'companies', company.id)!
+      .numbering as Company['numbering'];
+    expect(cloud.invoice.next).toBe((await db.companies.get(company.id))!.numbering.invoice.next);
+  });
+
+  it('gets staff unstuck on a device synced by the previous version (no base copy)', async () => {
+    const { company } = await uploaded();
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    // The previous version kept no base copy of the company record.
+    await db.syncRevs.update(['companies', company.id], { base: undefined });
+    await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+    await issueInvoice(company.id);
+    // Sent whole, refused (an older copy), then laid over the cloud's copy and sent again.
+    await syncCompany(company.id, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.outbox.count()).toBe(0);
+    expect((await db.companies.get(company.id))?.phone).toBe('+965 2222 0000');
+    const cloud = server.record(company.id, 'companies', company.id)!
+      .numbering as Company['numbering'];
+    expect(cloud.invoice.next).toBe((await db.companies.get(company.id))!.numbering.invoice.next);
+  });
+
+  describe('on a server without the new functions', () => {
+    it('is laid over the copy the cloud has, so others’ changes stay', async () => {
+      const { company } = await uploaded();
+      server.legacy = true;
+      await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+      server.offline = true;
+      await issueInvoice(company.id);
+      server.offline = false;
+      await syncCompany(company.id, ctx);
+      expect(server.record(company.id, 'companies', company.id)?.phone).toBe('+965 2222 0000');
+    });
+
+    it('lets staff number documents, never stuck', async () => {
+      const { company } = await uploaded();
+      server.legacy = true;
+      server.addMember(company.id, STAFF, 'staff');
+      const staff = await newDevice(STAFF);
+      await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+      await syncCompany(company.id, staff);
+      await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+      await issueInvoice(company.id);
+      expect((await syncCompany(company.id, staff)).parked).toBe(0);
+      expect(await db.outbox.count()).toBe(0);
+    });
+  });
+});
+
+describe('document numbers', () => {
+  it('online, are taken from the cloud’s counter, so two devices never share one', async () => {
+    const { company } = await uploaded();
+    setCounterReserver(cloudCounterReserver(ctx.api, OWNER));
+    // Another device takes the next invoice number a moment before this one.
+    const theirs = await server.client(OWNER).reserveNumber(company.id, 'invoice', today(), 1);
+    const mine = await issueInvoice(company.id);
+    expect(theirs).not.toBeNull();
+    expect(mine.number).toContain(String(theirs!.counter + 1).padStart(4, '0'));
+  });
+
+  it('offline, a duplicate from another device is listed as a problem, and both can be saved', async () => {
+    const { company, invoice } = await uploaded();
+    server.offline = true;
+    const mine = await issueInvoice(company.id);
+    server.offline = false;
+    const theirs = {
+      ...server.record(company.id, 'documents', invoice.id)!,
+      id: 'invoice-from-the-other-device',
+      number: mine.number,
+    };
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [{ tbl: 'documents', id: theirs.id, data: theirs }]);
+    await syncCompany(company.id, ctx);
+
+    const problems = await numberProblems(company.id);
+    expect(problems.map((docs) => docs.map((d) => d.id).sort())).toEqual([
+      [mine.id, theirs.id].sort(),
+    ]);
+    // Nothing is renumbered by itself, and saving either again is never refused.
+    expect((await db.documents.get(mine.id))?.number).toBe(mine.number);
+    await expect(saveDocument({ ...mine, notes: 'Paid by cheque' })).resolves.toBeDefined();
+    expect(await isNumberTaken(company.id, 'invoice', mine.number, mine.id)).toBe(false);
+    // Giving one a new number clears the problem.
+    await saveDocument({ ...(await db.documents.get(mine.id))!, number: 'INV-2026-0900' });
+    expect(await numberProblems(company.id)).toEqual([]);
+  });
+});
+
+describe('deleting a company in the cloud', () => {
+  it('removes no file when the person is no longer the owner', async () => {
+    const { company, invoice } = await uploaded();
+    await addAttachment(company.id, invoice.id, { name: 'r.png', type: 'image/png', dataUrl: PNG });
+    await syncCompany(company.id, ctx);
+    // Ownership was transferred; this device still shows the person as owner.
+    server.addMember(company.id, 'user-new-owner', 'owner');
+    server.addMember(company.id, OWNER, 'admin');
+    await expect(deleteFromCloud(company.id, ctx)).rejects.toMatchObject({ code: 'permission' });
+    expect(server.files.size).toBe(1);
+    expect(server.companies.has(company.id)).toBe(true);
+    // A server without begin_delete_company: the role is asked for first.
+    server.legacy = true;
+    await expect(deleteFromCloud(company.id, ctx)).rejects.toMatchObject({ code: 'permission' });
+    expect(server.files.size).toBe(1);
+  });
+
+  it('stops other members’ uploads while the files go', async () => {
+    const { company } = await uploaded();
+    server.addMember(company.id, STAFF, 'staff');
+    await ctx.api.beginDeleteCompany(company.id);
+    await expect(
+      server.client(STAFF).uploadFile(`${company.id}/late`, new Blob(['x']), 'image/png'),
+    ).rejects.toMatchObject({ code: 'permission' });
+    await deleteFromCloud(company.id, ctx);
+    expect(server.companies.has(company.id)).toBe(false);
+  });
+});
+
+describe('keeping a company in the cloud', () => {
+  it('never overwrites the team’s newer data with an older copy from this device', async () => {
+    const { company } = await uploaded();
+    const backup = await exportBackup();
+    const id = (await db.clients.where('companyId').equals(company.id).first())!.id;
+    const remote = server.record(company.id, 'clients', id)!;
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [
+        { tbl: 'clients', id, data: { ...remote, name: 'Gulf Pearl Hotel – Salmiya' } },
+      ]);
+    await importBackup(backup, 'replace');
+    await expect(startUpload(company.id, ctx)).rejects.toMatchObject({ code: 'company_exists' });
+    // The same on a server without the change to create_company.
+    server.legacy = true;
+    await expect(startUpload(company.id, ctx)).rejects.toMatchObject({ code: 'company_exists' });
+    expect(await db.syncState.get(company.id)).toBeUndefined();
+    expect(server.record(company.id, 'clients', id)?.name).toBe('Gulf Pearl Hotel – Salmiya');
+  });
+
+  it('takes up an empty company of the person’s own (an upload that stopped early)', async () => {
+    const company = await setupCompany({ name: 'Al Mail Trading' });
+    await ctx.api.createCompany(company.id, company.name);
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'companies', company.id)).toBeDefined();
+    // The server refuses it too once it has records.
+    await expect(ctx.api.createCompany(company.id, 'Again')).rejects.toMatchObject({
+      code: 'company_exists',
+    });
+  });
+});
+
+describe('role changes', () => {
+  async function staffDevice() {
+    const { company, invoice } = await uploaded();
+    await saveEmployee(createEmployee(company.id, { name: 'Rajesh Kumar', basicSalary: 450 }));
+    await syncCompany(company.id, ctx);
+    // Work goes on after the employee was added (the usual case).
+    const client = (await db.clients.where('companyId').equals(company.id).first())!;
+    await saveClient({ ...client, phone: '+965 2200 1100' });
+    await syncCompany(company.id, ctx);
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.employees.count()).toBe(0);
+    return { company, invoice, staff };
+  }
+
+  it('a promotion brings in the people data even when a pull is under way', async () => {
+    const { company, staff } = await staffDevice();
+    await server.client(OWNER).pushRecords(company.id, [
+      {
+        tbl: 'products',
+        id: 'p-new',
+        data: { id: 'p-new', companyId: company.id, name: 'New', unitPrice: 1 },
+      },
+    ]);
+    // Made accountant; the device notices while a pull is on its way.
+    server.addMember(company.id, STAFF, 'accountant');
+    const api = staff.api;
+    let noticed = false;
+    staff.api = {
+      ...api,
+      pullRecords: async (id, since, limit) => {
+        const rows = await api.pullRecords(id, since, limit);
+        if (!noticed) {
+          noticed = true;
+          await applyRole(company.id, 'accountant');
+        }
+        return rows;
+      },
+    };
+    await syncCompany(company.id, staff);
+    expect(await db.employees.count()).toBe(1);
+  });
+
+  it('a demotion leaves no people data, even with a page pulled before it', async () => {
+    const ACC = 'user-accountant';
+    const { company } = await uploaded();
+    server.addMember(company.id, ACC, 'accountant');
+    const device = await newDevice(ACC);
+    await startDownload({ id: company.id, name: company.name, role: 'accountant' }, device);
+    await syncCompany(company.id, device);
+    const employee = createEmployee(company.id, { name: 'Rajesh Kumar', basicSalary: 450 });
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [
+        { tbl: 'employees', id: employee.id, data: employee as unknown as Record<string, unknown> },
+      ]);
+    // Answered as accountant; demoted to staff before the page is stored.
+    const api = device.api;
+    device.api = {
+      ...api,
+      pullRecords: async (id, since, limit) => {
+        const rows = await api.pullRecords(id, since, limit);
+        server.addMember(company.id, ACC, 'staff');
+        await applyRole(company.id, 'staff');
+        return rows;
+      },
+    };
+    await syncCompany(company.id, device);
+    expect(await db.employees.get(employee.id)).toBeUndefined();
+  });
+
+  it('a demotion whose clean-up failed is cleaned up next time', async () => {
+    const ACC = 'user-accountant';
+    const { company } = await uploaded();
+    await saveEmployee(createEmployee(company.id, { name: 'Rajesh Kumar', basicSalary: 450 }));
+    await syncCompany(company.id, ctx);
+    server.addMember(company.id, ACC, 'accountant');
+    const device = await newDevice(ACC);
+    await startDownload({ id: company.id, name: company.name, role: 'accountant' }, device);
+    await syncCompany(company.id, device);
+    expect(await db.employees.count()).toBe(1);
+    // The clean-up fails (IndexedDB aborts it): the role is not saved either.
+    const spy = vi.spyOn(db.syncRevs, 'bulkDelete').mockRejectedValueOnce(new Error('aborted'));
+    await expect(applyRole(company.id, 'staff')).rejects.toThrow('aborted');
+    spy.mockRestore();
+    expect((await db.syncState.get(company.id))?.role).toBe('accountant');
+    await applyRole(company.id, 'staff');
+    expect(await db.employees.count()).toBe(0);
+  });
+});
+
+describe('removing files of deleted records', () => {
+  async function receiptStillToRemove() {
+    const { company, invoice } = await uploaded();
+    const file = await addAttachment(company.id, invoice.id, {
+      name: 'r.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    await syncCompany(company.id, ctx);
+    return { company, file, path: `${company.id}/${file.id}` };
+  }
+
+  it('waits for the account that deleted the record', async () => {
+    const { company, file, path } = await receiptStillToRemove();
+    server.storageDown = true;
+    await db.attachments.delete(file.id);
+    await syncCompany(company.id, ctx);
+    expect(await db.fileQueue.toArray()).toEqual([
+      expect.objectContaining({ path, userId: OWNER }),
+    ]);
+    server.storageDown = false;
+    // A colleague signs in on this computer and their own company syncs.
+    const OTHER = 'user-other';
+    const theirs = await setupCompany({ name: 'Other Co' });
+    const other = { api: server.client(OTHER), userId: OTHER };
+    await startUpload(theirs.id, other);
+    await syncCompany(theirs.id, other);
+    expect(await db.fileQueue.count()).toBe(1);
+    // Back as the owner: removed.
+    await syncCompany(company.id, ctx);
+    expect(server.files.has(path)).toBe(false);
+    expect(await db.fileQueue.count()).toBe(0);
+  });
+
+  it('counts a removal that removed nothing as a failure, retried then shown', async () => {
+    const { company, file, path } = await receiptStillToRemove();
+    // Storage answers without removing it (its rules hid it from this person).
+    const api = ctx.api;
+    ctx = { ...ctx, api: { ...api, removeFiles: async () => [] } };
+    await db.attachments.delete(file.id);
+    await syncCompany(company.id, ctx);
+    expect(await db.fileQueue.count()).toBe(1);
+    for (let i = 0; i < 4; i++) await syncCompany(company.id, ctx);
+    expect(await failedFileRemovals(company.id)).toEqual([
+      expect.objectContaining({ path, attempts: 5, failed: 1 }),
+    ]);
+    // Shown until tried again, with a working Storage this time.
+    ctx = { ...ctx, api };
+    await retryFileRemovals(company.id);
+    await syncCompany(company.id, ctx);
+    expect(server.files.has(path)).toBe(false);
+    expect(await db.fileQueue.count()).toBe(0);
+  });
+
+  it('a removal of a file that is already gone is done', async () => {
+    const { company, file, path } = await receiptStillToRemove();
+    server.files.delete(path);
+    await db.attachments.delete(file.id);
+    await syncCompany(company.id, ctx);
+    expect(await db.fileQueue.count()).toBe(0);
+  });
+});
+
+describe('a server without the new functions (feature detection)', () => {
+  it('numbers on the device and syncs as before', async () => {
+    server.legacy = true;
+    const { company } = await uploaded();
+    setCounterReserver(cloudCounterReserver(ctx.api, OWNER));
+    const invoice = await issueInvoice(company.id);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'documents', invoice.id)?.number).toBe(invoice.number);
+    expect(await db.outbox.count()).toBe(0);
+  });
+});
+
+// Handled in other changes; kept here as the scenarios found in the review.
+describe.skip('handled separately', () => {
+  it('a form open while another device’s change arrives does not undo it', async () => {
+    const { company } = await uploaded();
+    const id = (await db.clients.where('companyId').equals(company.id).first())!.id;
+    const form = (await db.clients.get(id))!;
+    const remote = server.record(company.id, 'clients', id)!;
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [
+        { tbl: 'clients', id, data: { ...remote, phone: '+965 2222 3333' } },
+      ]);
+    await syncCompany(company.id, ctx);
+    await saveClient({ ...form, email: 'accounts@gulfpearl.example' });
+    await syncCompany(company.id, ctx);
+    const noted = await db.activities.filter((a) => a.action === 'sync_conflict').count();
+    expect(server.record(company.id, 'clients', id)?.phone === '+965 2222 3333' || noted > 0).toBe(
+      true,
+    );
+  });
+
+  it('the log entry about deleting an employee’s document stays private', async () => {
+    const { company } = await uploaded();
+    const employee = await saveEmployee(createEmployee(company.id, { name: 'Rajesh Kumar' }));
+    const licence = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: employee.id,
+        title: 'Driving licence – Rajesh Kumar',
+      }),
+    );
+    await syncCompany(company.id, ctx);
+    await deleteComplianceDocument(licence.id);
+    await syncCompany(company.id, ctx);
+    server.addMember(company.id, STAFF, 'staff');
+    const seen = await server.client(STAFF).pullRecords(company.id, 0, 1000);
+    expect(seen.filter((r) => JSON.stringify(r.data).includes('Rajesh'))).toEqual([]);
+  });
+
+  it('"Delete all data in this browser" keeps the account’s companies off it', async () => {
+    const { company } = await uploaded();
+    await wipeAllData();
+    const started = await downloadAccountCompanies(await ctx.api.myCompanies(), ctx);
+    expect(started).not.toContain(company.id);
+  });
+});

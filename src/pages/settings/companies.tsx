@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany, unsentChanges } from '@/db/records';
 import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
+import { withSyncLock } from '@/cloud/lock';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
@@ -49,11 +50,14 @@ export default function CompaniesSettings() {
     try {
       // Removed on purpose: it doesn't come back to this device by itself.
       if (link) await keepOffDevice(link.userId, id);
-      // Only the changes counted above may be lost; any queued since stop it.
-      await deleteCompany(id, { force: unsent > 0 }).catch(async (error: unknown) => {
-        if (link) await allowOnDevice(link.userId, id);
-        throw error;
-      });
+      // After a sync under way, never in the middle of one. Only the changes
+      // counted above may be lost; any queued since stop it.
+      await withSyncLock(id, () => deleteCompany(id, { force: unsent > 0 })).catch(
+        async (error: unknown) => {
+          if (link) await allowOnDevice(link.userId, id);
+          throw error;
+        },
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not delete the data.'));
       return;

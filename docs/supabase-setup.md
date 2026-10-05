@@ -26,10 +26,13 @@ has to be added to the app or to Vercel.
    query has "destructive operations", choose **Run this query**: the script
    only replaces its own rules and never deletes data.
 5. It should finish with "Success. No rows returned".
+6. Do the same with
+   [`supabase/migrations/20261006000000_sync_fixes.sql`](../supabase/migrations/20261006000000_sync_fixes.sql)
+   (a new query, paste, **Run**). It must come after the first file.
 
-Running the script again later is safe: it creates what is missing and
-replaces its own rules with the same ones. Run it again whenever a new
-version of the file is published.
+Running the scripts again later is safe: they create what is missing and
+replace their own rules with the same ones. Run them again, in this order,
+whenever a new version is published.
 
 **Optional, recommended: the daily clean-up.** Deleted records leave a small
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a

@@ -1,4 +1,4 @@
-import type { CounterReset, ISODate, NumberingRule } from '@/db/types';
+import type { CounterReset, ID, ISODate, NumberedEntity, NumberingRule } from '@/db/types';
 
 export const NUMBER_PLACEHOLDERS = [
   { token: '{counter}', description: 'Sequential counter, zero padded (required)' },
@@ -67,6 +67,73 @@ export function allocateNumber(
     number,
     rule: { ...rule, next: counter + 1, period: periodKey(rule.reset, date) },
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Numbers taken on the server                                                */
+/* -------------------------------------------------------------------------- */
+
+/** A counter taken on the server for one new number (see cloud/reserve.ts). */
+export interface ReservedCounter {
+  counter: number;
+  /** Period key the counter belongs to. */
+  period: string;
+}
+
+export interface CounterRequest {
+  companyId: ID;
+  kind: NumberedEntity;
+  date: ISODate;
+  /** The counter this device would use itself; the one taken is never lower. */
+  min: number;
+}
+
+/** Takes the next counter on the server, or null to number on this device. */
+export type CounterReserver = (request: CounterRequest) => Promise<ReservedCounter | null>;
+
+let reserver: CounterReserver | null = null;
+
+/**
+ * Set while someone is signed in: devices that share a company take new
+ * numbers from its counter in the cloud when they can, so two of them never
+ * give the same number. Offline (or for a company kept on this device only)
+ * numbers are allocated here, as always.
+ */
+export function setCounterReserver(next: CounterReserver | null): void {
+  reserver = next;
+}
+
+/** Whether new numbers may come from the server (someone is signed in). */
+export function canReserveCounters(): boolean {
+  return reserver !== null;
+}
+
+/** A counter taken on the server for this number, or null to number on this device. */
+export async function reserveCounter(request: CounterRequest): Promise<ReservedCounter | null> {
+  if (!reserver) return null;
+  try {
+    return await reserver(request);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * allocateNumber, starting from a counter taken on the server when there is
+ * one for the document's period (never below this device's own counter).
+ */
+export function allocateFrom(
+  rule: NumberingRule,
+  date: ISODate,
+  isTaken: (candidate: string) => boolean,
+  clientNumber: string,
+  reserved: ReservedCounter | null,
+): { number: string; rule: NumberingRule } {
+  if (!reserved || reserved.period !== periodKey(rule.reset, date)) {
+    return allocateNumber(rule, date, isTaken, clientNumber);
+  }
+  const next = Math.max(reserved.counter, currentCounter(rule, date));
+  return allocateNumber({ ...rule, next, period: reserved.period }, date, isTaken, clientNumber);
 }
 
 export function previewNumber(rule: NumberingRule, date: ISODate, clientNumber = 'C-0001'): string {

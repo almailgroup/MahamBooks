@@ -38,6 +38,7 @@ import {
   DialogFooter,
   useConfirm,
 } from '@/components/ui/overlay';
+import { withAllSyncLocks } from '@/cloud/lock';
 import { SettingsSection } from './shared';
 
 /** Why a backup could not be made, for a person. */
@@ -187,10 +188,10 @@ export default function DataSettings() {
     setBusy(mode);
     try {
       // Changes queued after the count are not lost unseen: the restore is
-      // refused and says so.
-      const result = await importBackup(chosen.backup, mode, (logo) => normalizeImage(logo), {
-        force: agreed,
-      });
+      // refused and says so. Not in the middle of a sync of a company it replaces.
+      const result = await withAllSyncLocks(() =>
+        importBackup(chosen.backup, mode, (logo) => normalizeImage(logo), { force: agreed }),
+      );
       if (mode === 'merge') {
         toast.success(t('Backup merged'), {
           description: tp(
@@ -239,7 +240,8 @@ export default function DataSettings() {
       if (!agreed) await assertNothingUnsent();
       // Signed out first, so the account's companies don't come straight back.
       if (user) await signOutCloud({ removeCompanies: false });
-      await wipeAllData({ force: agreed });
+      // Not in the middle of a sync: it would see its records disappear.
+      await withAllSyncLocks(() => wipeAllData({ force: agreed }));
       window.location.reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not delete the data.'));

@@ -1,18 +1,20 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { startDatabase, type Harness } from './sql-harness';
+import { MIGRATIONS, startDatabase, type Harness } from './sql-harness';
 
 /**
- * The cloud migration, run in an in-process Postgres with a stand-in for
- * Supabase's auth and storage schemas. Every check runs as a signed-in
- * account, so row-level security applies exactly as it does in Supabase.
+ * The cloud migrations, run in order in an in-process Postgres with a
+ * stand-in for Supabase's auth and storage schemas. Every check runs as a
+ * signed-in account, so row-level security applies exactly as it does in
+ * Supabase.
  */
 
 let h: Harness;
 let companySeq = 0;
 
 beforeAll(async () => {
-  // Twice: running the script again must be safe.
+  // Each file twice: running a script again must be safe.
   h = await startDatabase(2);
 }, 60_000);
 
@@ -1190,4 +1192,264 @@ describe('realtime', () => {
       ),
     ).toEqual([]);
   });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 20261006000000_sync_fixes.sql                                              */
+/* -------------------------------------------------------------------------- */
+
+const putFile = (user: string, name: string) =>
+  h.as(user, (q) =>
+    q(
+      `insert into storage.objects as o (bucket_id, name, owner, owner_id, metadata, version)
+       values ('company-files', $1, $2::uuid, $2, '{}', gen_random_uuid()::text)
+       on conflict (name, bucket_id) do update set version = excluded.version
+       returning o.name`,
+      [name, user],
+    ),
+  );
+
+const dropFiles = async (user: string, ...names: string[]) =>
+  (
+    await h.as(user, (q) =>
+      q<{ name: string }>(
+        `delete from storage.objects
+         where bucket_id = 'company-files' and name = any($1::text[])
+         returning name`,
+        [names],
+      ),
+    )
+  ).map((r) => r.name);
+
+async function companyRow(company: string) {
+  const [row] = await h.admin<{ data: Record<string, unknown>; rev: number }>(
+    `select data, rev from public.records where company_id = $1 and tbl = 'companies'`,
+    [company],
+  );
+  return row;
+}
+
+function patch(user: string, company: string, ops: unknown[]) {
+  return h.rpc<{ rev: number; conflicts: string[][] }>(user, 'patch_company', {
+    p_company: company,
+    p_ops: json(ops),
+  });
+}
+
+const counters = (next: number, before: number, period = '2026') => [
+  { path: ['numbering', 'invoice', 'next'], value: next, base: before },
+  { path: ['numbering', 'invoice', 'period'], value: period, base: period },
+];
+
+describe('company settings sent by field (patch_company)', () => {
+  it('lay a device’s changes over the cloud’s copy, keeping what others changed', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [
+      {
+        tbl: 'companies',
+        id: c,
+        data: companyRecord(c, { phone: '', accounting: { lockDate: null } }),
+      },
+    ]);
+    // The accountant locks the books on their device.
+    await patch(t.accountant, c, [
+      { path: ['accounting', 'lockDate'], value: '2026-09-30', base: null },
+    ]);
+    // An admin's device, not yet in step, changes the phone and numbers an invoice.
+    const [row] = await patch(t.admin, c, [
+      { path: ['phone'], value: '+965 2222 0000', base: '' },
+      ...counters(6, 5),
+    ]);
+    expect(row.conflicts).toEqual([]);
+    const { data, rev } = await companyRow(c);
+    expect(Number(rev)).toBe(Number(row.rev));
+    expect(data).toMatchObject({
+      phone: '+965 2222 0000',
+      accounting: { lockDate: '2026-09-30' },
+      numbering: { invoice: { next: 6 }, payment: { next: 3 } },
+    });
+  });
+
+  it('report the fields both sides changed, and never take a counter back', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [
+      {
+        tbl: 'companies',
+        id: c,
+        data: companyRecord(c, { phone: '+965 1111 0000', numbering: { invoice: rule(9) } }),
+      },
+    ]);
+    const [row] = await patch(t.admin, c, [
+      { path: ['phone'], value: '+965 3333 0000', base: '' },
+      ...counters(6, 5),
+    ]);
+    expect(row.conflicts).toEqual([['phone']]);
+    const { data } = await companyRow(c);
+    expect(data).toMatchObject({ phone: '+965 3333 0000', numbering: { invoice: { next: 9 } } });
+    // A field removed here goes; setting a field to what it is changes nothing.
+    await patch(t.owner, c, [{ path: ['phone'], remove: true, base: '+965 3333 0000' }]);
+    expect((await companyRow(c)).data).not.toHaveProperty('phone');
+    const before = (await companyRow(c)).rev;
+    const [same] = await patch(t.owner, c, [{ path: ['name'], value: 'Acme', base: 'Acme' }]);
+    expect(Number(same.rev)).toBe(Number(before));
+  });
+
+  it('let staff move counters on an older copy, and nothing else', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c, { phone: '' }) }]);
+    await patch(t.owner, c, [{ path: ['phone'], value: '+965 2222 0000', base: '' }]);
+    const [row] = await patch(t.staff, c, counters(6, 5));
+    expect(row.conflicts).toEqual([]);
+    expect((await companyRow(c)).data).toMatchObject({
+      phone: '+965 2222 0000',
+      numbering: { invoice: { next: 6 } },
+    });
+    await expect(
+      patch(t.staff, c, [{ path: ['phone'], value: '+965 9999 0000', base: '+965 2222 0000' }]),
+    ).rejects.toThrow(/almail:permission/);
+    await expect(patch(t.viewer, c, counters(7, 6))).rejects.toThrow(/almail:permission/);
+    await expect(patch(t.outsider, c, counters(7, 6))).rejects.toThrow(/almail:not_member/);
+    await expect(patch(t.owner, c, [{ path: ['id'], value: 'other-id' }])).rejects.toThrow(
+      /almail:invalid/,
+    );
+  });
+
+  it('answer nothing when the company record is not in the cloud yet', async () => {
+    const t = await team();
+    expect(await patch(t.owner, t.company, counters(6, 5))).toEqual([]);
+  });
+});
+
+describe('document numbers taken in the cloud (reserve_number)', () => {
+  const reserve = (user: string, company: string, date: string, min = 1, kind = 'invoice') =>
+    h.rpc<{ counter: number; period: string }>(user, 'reserve_number', {
+      p_company: company,
+      p_kind: kind,
+      p_date: date,
+      p_min: min,
+    });
+
+  it('are given once each, never below the device’s own counter, and follow the period', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c) }]);
+    const taken = async (user: string, date: string, min = 1) =>
+      (await reserve(user, c, date, min)).map((r) => [Number(r.counter), r.period]);
+    expect(await taken(t.staff, '2026-10-05')).toEqual([[5, '2026']]);
+    expect(await taken(t.owner, '2026-10-05')).toEqual([[6, '2026']]);
+    // The device skips numbers it has used itself (typed by hand, say).
+    expect(await taken(t.accountant, '2026-10-06', 20)).toEqual([[20, '2026']]);
+    expect(await taken(t.staff, '2026-10-06')).toEqual([[21, '2026']]);
+    // A new year starts again; a document of the year before is numbered on the device.
+    expect(await taken(t.staff, '2027-01-02')).toEqual([[1, '2027']]);
+    expect(await taken(t.staff, '2026-12-30')).toEqual([]);
+    expect((await companyRow(c)).data).toMatchObject({
+      numbering: { invoice: { next: 2, period: '2027' } },
+    });
+    // No rule for this kind yet: numbered on the device.
+    expect(await reserve(t.owner, c, '2027-01-02', 1, 'delivery_note')).toEqual([]);
+    await expect(reserve(t.viewer, c, '2027-01-02')).rejects.toThrow(/almail:permission/);
+    await expect(reserve(t.owner, c, 'tomorrow')).rejects.toThrow(/almail:invalid/);
+  });
+});
+
+describe('deleting a company, files first (begin_delete_company)', () => {
+  it('checks the owner before any file is removed, and stops new uploads meanwhile', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [
+      { tbl: 'companies', id: c, data: companyRecord(c) },
+      { tbl: 'attachments', id: 'att-receipt', data: rec(c, 'att-receipt', { ownerId: 'inv-1' }) },
+    ]);
+    await putFile(t.owner, `${c}/att-receipt`);
+    // Ownership moved on; the former owner's device still says "owner".
+    await h.rpc(t.owner, 'transfer_ownership', { p_company: c, p_user: t.admin });
+    await expect(h.rpc(t.owner, 'begin_delete_company', { p_company: c })).rejects.toThrow(
+      /almail:permission/,
+    );
+    expect(await h.rpc(t.admin, 'begin_delete_company', { p_company: c })).toEqual([
+      { begin_delete_company: true },
+    ]);
+    // Meanwhile nobody uploads; removing still works.
+    await expect(putFile(t.staff, `${c}/att-new`)).rejects.toThrow(/row-level security/);
+    expect(await dropFiles(t.admin, `${c}/att-receipt`)).toEqual([`${c}/att-receipt`]);
+    await h.rpc(t.admin, 'delete_company', { p_company: c });
+    expect(await h.admin('select 1 from public.companies where id = $1', [c])).toEqual([]);
+  });
+
+  it('lets uploads in again when a deletion was started and not finished', async () => {
+    const t = await team();
+    const c = t.company;
+    await h.rpc(t.owner, 'begin_delete_company', { p_company: c });
+    await h.admin(
+      `update public.companies set deleting_until = now() - interval '1 minute' where id = $1`,
+      [c],
+    );
+    expect(await putFile(t.owner, `${c}/att-later`)).toEqual([{ name: `${c}/att-later` }]);
+  });
+});
+
+describe('creating a company that is already in the cloud', () => {
+  it('is refused, except an empty one of the owner’s own', async () => {
+    const t = await team();
+    const c = t.company;
+    // Empty (an upload that stopped before its first record): taken up again.
+    await h.rpc(t.owner, 'create_company', { p_id: c, p_name: 'Acme again' });
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c) }]);
+    for (const user of [t.owner, t.admin, t.viewer]) {
+      await expect(h.rpc(user, 'create_company', { p_id: c, p_name: 'Old copy' })).rejects.toThrow(
+        /almail:company_exists/,
+      );
+    }
+    await expect(h.rpc(t.outsider, 'create_company', { p_id: c, p_name: 'Mine' })).rejects.toThrow(
+      /almail:company_taken/,
+    );
+    expect((await h.rpc<{ name: string }>(t.owner, 'my_companies'))[0].name).toBe('Acme again');
+  });
+});
+
+describe('files still stored (stored_files)', () => {
+  it('tell members which files are still there, whatever they may see', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [
+      { tbl: 'employees', id: 'emp-1', data: rec(c, 'emp-1') },
+      { tbl: 'attachments', id: 'att-emp', data: rec(c, 'att-emp', { ownerId: 'emp-1' }) },
+    ]);
+    await putFile(t.owner, `${c}/att-emp`);
+    const stored = await h.rpc<{ stored_files: string }>(t.staff, 'stored_files', {
+      p_company: c,
+      p_names: [`${c}/att-emp`, `${c}/gone`, `other-company/att-emp`],
+    });
+    expect(stored.map((r) => r.stored_files)).toEqual([`${c}/att-emp`]);
+    await expect(
+      h.rpc(t.outsider, 'stored_files', { p_company: c, p_names: [`${c}/att-emp`] }),
+    ).rejects.toThrow(/almail:not_member/);
+  });
+});
+
+describe('an app before the second migration', () => {
+  it('finds none of the new functions, and works with the first file alone', async () => {
+    const early = await startDatabase(1, 1);
+    const owner = await early.user('early@example.com');
+    await early.rpc(owner, 'create_company', { p_id: 'early-00001', p_name: 'Early' });
+    for (const name of [
+      'patch_company',
+      'reserve_number',
+      'begin_delete_company',
+      'stored_files',
+    ]) {
+      await expect(early.rpc(owner, name, { p_company: 'early-00001' })).rejects.toThrow(
+        /does not exist/,
+      );
+    }
+    // Running the second file over it later keeps everything.
+    await early.db.exec(readFileSync(MIGRATIONS[1], 'utf8'));
+    expect(await early.rpc(owner, 'my_companies')).toEqual([
+      expect.objectContaining({ id: 'early-00001', role: 'owner' }),
+    ]);
+  }, 60_000);
 });

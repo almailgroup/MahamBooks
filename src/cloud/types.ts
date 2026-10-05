@@ -35,6 +35,13 @@ export interface CloudLink {
   pendingCompanyRev?: number;
   /** Why the company is removed: deleted by its owner or access withdrawn. */
   removedReason?: 'deleted' | 'access';
+  /**
+   * Bumped when the cursor goes back to 0 (a role that sees more): a page of
+   * changes asked for before that is thrown away and asked for again.
+   */
+  epoch?: number;
+  /** Documents that arrived with a number another document here already has. */
+  duplicates?: string[];
 }
 
 /** A change made here that the server has not confirmed yet (table `outbox`). */
@@ -51,6 +58,8 @@ export interface OutboxEntry {
   error?: string;
   /** The server's own explanation. */
   detail?: string;
+  /** 1 when it was the file of an attachment the cloud refused, not the record. */
+  file?: 1;
 }
 
 /** The server version of a record this device has (table `syncRevs`). */
@@ -59,6 +68,11 @@ export interface SyncRev {
   id: string;
   companyId: string;
   rev: number;
+  /**
+   * The company record only: the copy that rev stands for, so this device
+   * knows which of its fields it changed since (see company-patch.ts).
+   */
+  base?: Record<string, unknown>;
 }
 
 /** A file to remove from Storage, kept until it is gone (table `fileQueue`). */
@@ -69,4 +83,8 @@ export interface FileTask {
   at: string;
   attempts: number;
   lastError?: string;
+  /** Account that removed the file's record; only that account removes the file. */
+  userId?: string;
+  /** 1 once retrying stopped: shown as a problem until tried again. */
+  failed?: 1;
 }

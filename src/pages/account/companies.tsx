@@ -16,7 +16,8 @@ import { cloudErrorMessage, type CloudCompany } from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
 import { useCloudStatus } from '@/cloud/hooks';
 import { ROLE_LABELS } from '@/cloud/roles';
-import { isDemoCompany, startDownload, startUpload } from '@/cloud/sync';
+import { isDemoCompany, startDownload } from '@/cloud/sync';
+import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import { arrivals, downloadAccountCompanies } from '@/cloud/auto-download';
 import { allowOnDevice } from '@/cloud/kept-off';
 import type { CloudLink } from '@/cloud/types';
@@ -42,6 +43,7 @@ export default function CloudCompaniesPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const userId = user?.id;
+  const keepInCloud = useKeepInCloud();
   const arrival = useLiveQuery(
     () => (cloud && userId ? arrivals(cloud, userId) : undefined),
     [cloud, userId],
@@ -103,8 +105,10 @@ export default function CloudCompaniesPage() {
     setBusy(company.id);
     setError('');
     try {
-      await startUpload(company.id, ctx);
-      toast.success(t('{name} is going to the cloud.', { name: localName(company) }));
+      const name = localName(company);
+      const started = await keepInCloud(company, ctx);
+      if (started === 'upload') toast.success(t('{name} is going to the cloud.', { name }));
+      if (started === 'download') toast.success(t('{name} is coming from the cloud.', { name }));
     } catch (err) {
       setError(cloudErrorMessage(err));
     } finally {
@@ -250,6 +254,8 @@ export default function CloudCompaniesPage() {
                 const link = linkOf.get(company.id);
                 const demo = isDemoCompany(company);
                 const other = link && link.userId !== user.id;
+                // Also in the account's cloud: downloaded from above, never uploaded over it.
+                const inCloud = !link && (cloud ?? []).some((c) => c.id === company.id);
                 return (
                   <Row
                     key={company.id}
@@ -261,6 +267,8 @@ export default function CloudCompaniesPage() {
                         <Badge>{t('Demo: stays on this device')}</Badge>
                       ) : other ? (
                         <Badge tone="amber">{t('Linked to another account')}</Badge>
+                      ) : inCloud ? (
+                        <Badge tone="amber">{t('Also in your cloud account')}</Badge>
                       ) : !link || link.status === 'removed' ? (
                         <Button
                           size="sm"

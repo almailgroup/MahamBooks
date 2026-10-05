@@ -5,18 +5,22 @@ import { logActivity } from '@/db/activity';
 import type { ActivityEntity, Attachment, Company, DocumentType, ID } from '@/db/types';
 import { msg, t } from '@/i18n';
 import {
+  CLOUD_ERROR_MESSAGES,
   cloudError,
   CloudError,
   type CloudApi,
+  type CompanyOp,
   type PulledRow,
   type PushChange,
   type PushResult,
 } from './api';
+import { companyOps, onlyCounters, rebaseCompany } from './company-patch';
 import { blobToDataUrl, contentHash, dataUrlToBlob, filePath } from './files';
+import { withSyncLock } from './lock';
 import { markRemote } from './outbox';
 import { mergeNumbering } from './numbering';
 import { canSeePeople, isPrivateRecord, PEOPLE_TABLES, sameData, type MemberRole } from './roles';
-import type { CloudLink, OutboxEntry } from './types';
+import type { CloudLink, FileTask, OutboxEntry } from './types';
 
 /**
  * The sync engine. For each company kept in the cloud: send the changes
@@ -27,7 +31,8 @@ import type { CloudLink, OutboxEntry } from './types';
  * confirmed that exact change; a change the server refuses is parked with its
  * reason and shown; a record with unsent changes here is never overwritten or
  * deleted by what comes from the cloud (the local change is sent and wins,
- * and the activity log notes the conflict).
+ * and the activity log notes the conflict). The company record, which every
+ * device changes, is the exception that merges: see company-patch.ts.
  */
 
 export const PUSH_BATCH = 200;
@@ -36,6 +41,8 @@ export const PULL_PAGE = 500;
 const ID_PAGE = 1000;
 /** Files younger than this are left alone by the clean-up: they may be on their way. */
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
+/** Tries to remove a file before it is shown as a problem. */
+const FILE_ATTEMPTS = 5;
 
 export interface SyncProgress {
   companyId: string;
@@ -70,6 +77,12 @@ const tablesForApply = () => [
   db.syncRevs,
   db.outbox,
 ];
+
+/** Whether the company still syncs here for this account (it may have left the device meanwhile). */
+async function stillLinked(companyId: string, ctx: SyncContext): Promise<boolean> {
+  const link = await db.syncState.get(companyId);
+  return Boolean(link && link.status !== 'removed' && link.userId === ctx.userId);
+}
 
 /* -------------------------------------------------------------------------- */
 /* Demo and links                                                             */
@@ -112,6 +125,10 @@ function newLink(
  * Keeps a company of this device in the cloud: creates it there with the
  * person as owner and queues every one of its records for upload. The
  * upload itself is the next sync (with progress).
+ *
+ * A company already in the person's cloud account (a restored backup, a copy
+ * kept on this device) is refused with `company_exists`: its copy in the
+ * cloud may have the team's newer work, so it is downloaded instead.
  */
 export async function startUpload(companyId: ID, ctx: SyncContext): Promise<void> {
   const company = await db.companies.get(companyId);
@@ -122,6 +139,15 @@ export async function startUpload(companyId: ID, ctx: SyncContext): Promise<void
   const existing = await db.syncState.get(companyId);
   if (existing && existing.status !== 'removed') return;
   try {
+    const inCloud = (await ctx.api.myCompanies()).find((c) => c.id === companyId);
+    // Only an empty one of the person's own (an upload that stopped before
+    // its first record) is taken up again.
+    if (
+      inCloud &&
+      !(inCloud.role === 'owner' && (await ctx.api.syncInfo(companyId)).recordCount === 0)
+    ) {
+      throw new CloudError('company_exists', t(CLOUD_ERROR_MESSAGES.company_exists));
+    }
     await ctx.api.createCompany(companyId, company.name);
   } catch (error) {
     throw cloudError(error);
@@ -249,6 +275,27 @@ interface Outgoing {
   seqs: number[];
   /** Attachment content uploaded with this change. */
   file?: { storagePath: string; contentHash: string };
+  /** The company record: the copy sent, kept as the base of later changes. */
+  base?: Record<string, unknown>;
+  /** The company record: fields that had also changed in the cloud. */
+  companyConflicts?: string[][];
+}
+
+/** The company record's change: the fields changed since the cloud's copy this device had. */
+interface CompanyOutgoing {
+  seqs: number[];
+  /** The record as it is here, as the cloud keeps it. */
+  local: Record<string, unknown>;
+  /** Null when that copy isn't known (records synced by an earlier version). */
+  ops: CompanyOp[] | null;
+  baseRev: number | null;
+}
+
+interface Plan {
+  batch: Outgoing[];
+  company: CompanyOutgoing | null;
+  /** Entries were dropped or parked: the outbox moved on, even with nothing to send. */
+  progressed: boolean;
 }
 
 async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult): Promise<void> {
@@ -261,9 +308,12 @@ async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult):
       .limit(PUSH_BATCH * 5)
       .toArray();
     if (entries.length === 0) return;
-    const batch = await buildBatch(companyId, entries, ctx);
-    if (batch.length === 0) return;
-    await sendBatch(companyId, batch, ctx, result);
+    const plan = await buildBatch(companyId, entries, ctx, result);
+    // The company may have left this device while the batch was prepared.
+    if (!(await stillLinked(companyId, ctx))) return;
+    if (plan.company) await sendCompany(companyId, plan.company, ctx, result);
+    if (plan.batch.length) await sendBatch(companyId, plan.batch, ctx, result);
+    if (!plan.company && plan.batch.length === 0 && !plan.progressed) return;
     if (total) {
       ctx.onProgress?.({
         companyId,
@@ -275,26 +325,47 @@ async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult):
   }
 }
 
+/** Parks entries the server refused, with the reason shown in Settings → Cloud. */
+async function park(seqs: number[], e: CloudError, file = false): Promise<void> {
+  await db.outbox
+    .where('seq')
+    .anyOf(seqs)
+    .modify((entry) => {
+      entry.parked = 1;
+      entry.error = e.code;
+      entry.detail = e.detail.slice(0, 500);
+      if (file) entry.file = 1;
+      else delete entry.file;
+    });
+}
+
 async function buildBatch(
   companyId: string,
   entries: OutboxEntry[],
   ctx: SyncContext,
-): Promise<Outgoing[]> {
-  const groups = new Map<string, { table: string; id: string; seqs: number[] }>();
+  result: SyncResult,
+): Promise<Plan> {
+  const groups = new Map<
+    string,
+    { table: string; id: string; seqs: number[]; last: OutboxEntry }
+  >();
   for (const entry of entries) {
     const key = `${entry.table}/${entry.id}`;
     let group = groups.get(key);
-    if (!group) groups.set(key, (group = { table: entry.table, id: entry.id, seqs: [] }));
+    if (!group)
+      groups.set(key, (group = { table: entry.table, id: entry.id, seqs: [], last: entry }));
     group.seqs.push(entry.seq!);
+    if (entry.seq! >= group.last.seq!) group.last = entry;
   }
   const privateOwners = await privateOwnerIds(companyId);
-  const batch: Outgoing[] = [];
+  const plan: Plan = { batch: [], company: null, progressed: false };
   let bytes = 0;
   for (const group of groups.values()) {
-    if (batch.length >= PUSH_BATCH) break;
+    if (plan.batch.length >= PUSH_BATCH) break;
     if (!SYNCED.has(group.table)) {
       // Not something the cloud keeps: drop it.
       await db.outbox.bulkDelete(group.seqs);
+      plan.progressed = true;
       continue;
     }
     const record = await table(group.table).get(group.id);
@@ -302,27 +373,62 @@ async function buildBatch(
       record &&
       (group.table === 'companies' ? group.id === companyId : record.companyId === companyId);
     const base = (await db.syncRevs.get([group.table, group.id]))?.rev ?? null;
+    if (!ours) {
+      if (group.last.op !== 'delete') {
+        // Gone from this device without being deleted (the company was taken
+        // off it while this sync ran): nothing to tell the cloud.
+        await db.outbox.bulkDelete(group.seqs);
+        plan.progressed = true;
+        continue;
+      }
+      const item: Outgoing = {
+        change: { tbl: group.table, id: group.id, deleted: true, base_rev: base },
+        seqs: group.seqs,
+      };
+      bytes += JSON.stringify(item.change).length;
+      plan.batch.push(item);
+      continue;
+    }
+    if (group.table === 'companies') {
+      const local = cloudCopy(group.table, record, privateOwners);
+      const known = await db.syncRevs.get(['companies', companyId]);
+      plan.company = {
+        seqs: group.seqs,
+        local,
+        ops: known?.base ? companyOps(known.base, local) : null,
+        baseRev: base,
+      };
+      continue;
+    }
+    const data = cloudCopy(group.table, record, privateOwners);
     const item: Outgoing = {
-      change: { tbl: group.table, id: group.id, deleted: true, base_rev: base },
+      change: { tbl: group.table, id: group.id, data, base_rev: base },
       seqs: group.seqs,
     };
-    if (ours) {
-      const data = cloudCopy(group.table, record, privateOwners);
-      if (group.table === 'attachments') {
+    if (group.table === 'attachments') {
+      try {
         item.file = await uploadContent(companyId, record as unknown as Attachment, ctx);
-        if (item.file) Object.assign(data, { dataUrl: '', ...item.file });
+      } catch (error) {
+        // A file Storage refuses waits with its reason; the rest goes on.
+        const e = cloudError(error);
+        if (e.retryable || e.code === 'not_member') throw e;
+        await park(group.seqs, e, true);
+        result.parked += 1;
+        plan.progressed = true;
+        continue;
       }
-      item.change = { tbl: group.table, id: group.id, data, base_rev: base };
+      if (item.file) Object.assign(data, { dataUrl: '', ...item.file });
     }
     const size = JSON.stringify(item.change).length;
-    if (batch.length > 0 && bytes + size > PUSH_BYTES) break;
+    if (plan.batch.length > 0 && bytes + size > PUSH_BYTES) break;
     bytes += size;
-    batch.push(item);
+    plan.batch.push(item);
   }
-  return batch.sort(
+  plan.batch.sort(
     (a, b) =>
       (PUSH_ORDER[a.change.tbl as DataTable] ?? 5) - (PUSH_ORDER[b.change.tbl as DataTable] ?? 5),
   );
+  return plan;
 }
 
 /** Ids of employees and of their documents and renewals: what makes a file private. */
@@ -387,6 +493,81 @@ async function uploadContent(
   return { storagePath: path, contentHash: hash };
 }
 
+/**
+ * Sends the company record's change: the changed fields, merged into the
+ * cloud's copy. A server that can't merge (an older version) gets the whole
+ * record, laid over the copy it has now, so fields others changed stay.
+ */
+async function sendCompany(
+  companyId: string,
+  item: CompanyOutgoing,
+  ctx: SyncContext,
+  result: SyncResult,
+): Promise<void> {
+  if (item.ops && item.ops.length === 0) {
+    // Nothing differs from the cloud's copy this device has.
+    await db.outbox.bulkDelete(item.seqs);
+    return;
+  }
+  let data = item.local;
+  let baseRev = item.baseRev;
+  let conflicts: string[][] = [];
+  try {
+    if (item.ops) {
+      const answer = await ctx.api.patchCompany(companyId, item.ops);
+      if (answer) {
+        await confirmCompany(companyId, item, answer.rev);
+        result.pushed += 1;
+        if (answer.conflicts.length && (await logCompanyConflicts(companyId, answer.conflicts))) {
+          result.conflicts += 1;
+        }
+        return;
+      }
+      const current = await ctx.api.getRecord(companyId, 'companies', companyId);
+      if (current) {
+        const rebased = rebaseCompany(current.data, item.ops);
+        data = rebased.data;
+        conflicts = rebased.conflicts;
+        baseRev = current.rev;
+      }
+    }
+  } catch (error) {
+    const e = cloudError(error);
+    if (e.retryable || e.code === 'not_member' || e.code === 'resync') throw e;
+    await park(item.seqs, e);
+    result.parked += 1;
+    return;
+  }
+  await sendBatch(
+    companyId,
+    [
+      {
+        change: { tbl: 'companies', id: companyId, data, base_rev: baseRev },
+        seqs: item.seqs,
+        base: data,
+        companyConflicts: conflicts,
+      },
+    ],
+    ctx,
+    result,
+  );
+}
+
+/** The cloud merged this device's company change: forget it, and keep what was sent as the new base. */
+async function confirmCompany(companyId: string, item: CompanyOutgoing, rev: number) {
+  await db.transaction('rw', [db.outbox, db.syncRevs, db.syncState], async () => {
+    markRemote();
+    await db.outbox.bulkDelete(item.seqs);
+    await db.outbox
+      .where('[table+id]')
+      .equals(['companies', companyId])
+      .filter((e) => e.parked === 1)
+      .delete();
+    if (!(await db.syncState.get(companyId))) return;
+    await db.syncRevs.put({ table: 'companies', id: companyId, companyId, rev, base: item.local });
+  });
+}
+
 async function sendBatch(
   companyId: string,
   batch: Outgoing[],
@@ -404,10 +585,7 @@ async function sendBatch(
     if (e.retryable || e.code === 'not_member' || e.code === 'resync') throw e;
     // The server refused something in the batch: find it by halves and park it.
     if (batch.length === 1) {
-      await db.outbox
-        .where('seq')
-        .anyOf(batch[0].seqs)
-        .modify({ parked: 1, error: e.code, detail: e.detail.slice(0, 500) });
+      await park(batch[0].seqs, e);
       result.parked += 1;
       return;
     }
@@ -430,8 +608,10 @@ async function confirm(
   const byKey = new Map(results.map((r) => [`${r.tbl}/${r.id}`, r]));
   const conflicts: Outgoing[] = [];
   const removedFiles: string[] = [];
-  await db.transaction('rw', [db.outbox, db.syncRevs, db.attachments], async () => {
+  await db.transaction('rw', [db.outbox, db.syncRevs, db.attachments, db.syncState], async () => {
     markRemote();
+    // Taken off this device meanwhile: the outbox is all that is left to tidy.
+    const linked = Boolean(await db.syncState.get(companyId));
     for (const item of batch) {
       const { tbl, id } = item.change;
       const answer = byKey.get(`${tbl}/${id}`);
@@ -443,12 +623,18 @@ async function confirm(
         .filter((e) => e.parked === 1)
         .delete();
       if (item.change.deleted) {
-        await db.syncRevs.delete([tbl, id]);
         if (tbl === 'attachments') removedFiles.push(filePath(companyId, id));
-      } else if (answer?.rev != null) {
-        await db.syncRevs.put({ table: tbl, id, companyId, rev: answer.rev });
+        if (linked) await db.syncRevs.delete([tbl, id]);
+      } else if (answer?.rev != null && linked) {
+        await db.syncRevs.put({
+          table: tbl,
+          id,
+          companyId,
+          rev: answer.rev,
+          ...(item.base ? { base: item.base } : {}),
+        });
       }
-      if (item.file) {
+      if (item.file && linked) {
         await db.attachments.where('id').equals(id).modify(item.file);
       }
       if (answer?.conflict) conflicts.push(item);
@@ -458,6 +644,14 @@ async function confirm(
   if (removedFiles.length) await removeFiles(companyId, removedFiles, ctx);
   for (const item of conflicts) {
     if (await logConflict(companyId, item.change)) result.conflicts += 1;
+  }
+  for (const item of batch) {
+    if (
+      item.companyConflicts?.length &&
+      (await logCompanyConflicts(companyId, item.companyConflicts))
+    ) {
+      result.conflicts += 1;
+    }
   }
 }
 
@@ -484,7 +678,11 @@ const ENTITY: Partial<Record<DataTable, ActivityEntity>> = {
   stockEntries: 'stock',
 };
 
-/** Changes of these are expected on several devices at once and merge on their own. */
+/**
+ * Changes of these are expected on several devices at once and merge on
+ * their own (the company record's real conflicts, fields both sides changed,
+ * are noted by logCompanyConflicts).
+ */
 const QUIET = new Set<string>(['companies', 'activities', 'stockMovements', 'syncRevs']);
 
 async function logConflict(companyId: string, change: PushChange): Promise<boolean> {
@@ -527,6 +725,22 @@ async function logConflict(companyId: string, change: PushChange): Promise<boole
   }
 }
 
+/** Notes company settings changed here and on another device (this device's values were kept). */
+async function logCompanyConflicts(companyId: string, paths: string[][]): Promise<boolean> {
+  const fields = [...new Set(paths.map((path) => path.join('.')))].join(', ');
+  try {
+    await logActivity(companyId, 'company', companyId, 'sync_conflict', {
+      text: msg(
+        'Company settings were also changed on another device. The values saved on this device were kept for: {fields}.',
+      ),
+      vars: { fields },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Receiving                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -536,12 +750,16 @@ interface Touched {
   documents: Set<string>;
 }
 
+/** What became of a page of changes. */
+type Applied = 'applied' | 'stale' | 'gone';
+
 async function pullAll(companyId: string, ctx: SyncContext, result: SyncResult): Promise<Touched> {
   const touched: Touched = { tables: new Set(), documents: new Set() };
   let resynced = false;
   for (;;) {
     const link = await db.syncState.get(companyId);
     if (!link || link.status === 'removed') return touched;
+    const asked = { since: link.cursor, epoch: link.epoch ?? 0 };
     let rows: PulledRow[];
     try {
       rows = await ctx.api.pullRecords(companyId, link.cursor, ctx.pullPage ?? PULL_PAGE);
@@ -552,7 +770,12 @@ async function pullAll(companyId: string, ctx: SyncContext, result: SyncResult):
       await fullResync(companyId, ctx, touched);
       continue;
     }
-    if (rows.length) await applyRows(companyId, rows, touched);
+    if (rows.length) {
+      const applied = await applyRows(companyId, rows, touched, asked);
+      if (applied === 'gone') return touched;
+      // The cursor was reset while the page was on its way: ask again from there.
+      if (applied === 'stale') continue;
+    }
     result.pulled += rows.length;
     if (link.status === 'downloading' && link.total) {
       ctx.onProgress?.({
@@ -568,41 +791,71 @@ async function pullAll(companyId: string, ctx: SyncContext, result: SyncResult):
   return touched;
 }
 
-/** Stores a page of the cloud's changes in one transaction and moves the cursor past it. */
+/** Ids of employees and their documents and renewals in a page of changes. */
+function pageOwners(rows: PulledRow[]): Set<string> {
+  const owners = new Set<string>();
+  for (const row of rows) {
+    if (row.deleted || !row.data) continue;
+    const employeeOwned = typeof row.data.employeeId === 'string' && row.data.employeeId !== '';
+    if (
+      row.tbl === 'employees' ||
+      ((row.tbl === 'complianceDocuments' || row.tbl === 'renewals') && employeeOwned)
+    ) {
+      owners.add(row.id);
+    }
+  }
+  return owners;
+}
+
+/**
+ * Stores a page of the cloud's changes in one transaction and moves the
+ * cursor past it. `asked` is where the page was asked from: when the cursor
+ * was reset meanwhile (a role that now sees more), the page is thrown away
+ * ('stale') and asked for again. Rows the person's role may not hold (a page
+ * asked for before the role changed) are left out.
+ */
 export async function applyRows(
   companyId: string,
   rows: PulledRow[],
   touched: Touched = { tables: new Set(), documents: new Set() },
-): Promise<void> {
+  asked?: { since: number; epoch: number },
+): Promise<Applied> {
+  let outcome: Applied = 'applied';
   await db.transaction('rw', tablesForApply(), async () => {
     markRemote();
     const link = await db.syncState.get(companyId);
-    if (!link || link.status === 'removed') return;
-    const pending = new Set(
-      (await db.outbox.where('companyId').equals(companyId).toArray()).map(
-        (e) => `${e.table}/${e.id}`,
-      ),
-    );
+    if (!link || link.status === 'removed') {
+      outcome = 'gone';
+      return;
+    }
+    if (asked && ((link.epoch ?? 0) !== asked.epoch || link.cursor < asked.since)) {
+      outcome = 'stale';
+      return;
+    }
+    const entries = await db.outbox.where('companyId').equals(companyId).toArray();
+    const pending = new Set(entries.map((e) => `${e.table}/${e.id}`));
+    const hidePeople = !canSeePeople(link.role);
+    const owners = hidePeople ? pageOwners(rows) : new Set<string>();
+    const lookup = (_table: string, id: string) => (owners.has(id) ? { employeeId: id } : null);
     const holding = link.status === 'downloading';
+    const duplicates = new Set(link.duplicates ?? []);
     let cursor = link.cursor;
     let pendingCompany = link.pendingCompany ?? null;
     let pendingCompanyRev = link.pendingCompanyRev;
     for (const row of rows) {
       cursor = Math.max(cursor, row.rev);
       if (!SYNCED.has(row.tbl)) continue;
+      // Payroll and people data this role may not hold.
+      if (hidePeople && !row.deleted && isPrivateRecord(row.tbl, row.data, lookup)) continue;
       const store = table(row.tbl);
       const local = await store.get(row.id);
       // A record of another company with the same id is never touched.
       if (local && row.tbl !== 'companies' && local.companyId !== companyId) continue;
       if (pending.has(`${row.tbl}/${row.id}`)) {
-        // This device's own change goes up and wins; only the document
-        // counters are taken from the cloud, so numbers aren't used twice.
+        // This device's own change goes up and wins. The company record is
+        // the exception: this device's changes are laid over the newer copy.
         if (row.tbl === 'companies' && row.data && local) {
-          const numbering = mergeNumbering(
-            local.numbering as Company['numbering'],
-            row.data.numbering as Company['numbering'],
-          );
-          if (!sameData(numbering, local.numbering)) await store.put({ ...local, numbering });
+          await rebaseCompanyHere(companyId, row, local, entries, link.role);
         }
         continue;
       }
@@ -628,10 +881,117 @@ export async function applyRows(
         noteTouched(touched, row.tbl, data);
         await store.put(data);
       }
-      await db.syncRevs.put({ table: row.tbl, id: row.id, companyId, rev: row.rev });
+      await db.syncRevs.put({
+        table: row.tbl,
+        id: row.id,
+        companyId,
+        rev: row.rev,
+        ...(row.tbl === 'companies' ? { base: data } : {}),
+      });
+      if (row.tbl === 'documents') await noteDuplicates(companyId, data, duplicates);
     }
-    await db.syncState.update(companyId, { cursor, pendingCompany, pendingCompanyRev });
+    await db.syncState.update(companyId, {
+      cursor,
+      pendingCompany,
+      pendingCompanyRev,
+      duplicates: await stillDuplicated(companyId, duplicates),
+    });
   });
+  return outcome;
+}
+
+/**
+ * The company record has unsent changes here and a newer copy arrived: this
+ * device's changes (since its base) are laid over the newer copy, which
+ * becomes the base. A counter change the cloud refused (staff on an older
+ * copy, with an older server) goes again.
+ */
+async function rebaseCompanyHere(
+  companyId: string,
+  row: PulledRow,
+  local: Record<string, unknown>,
+  entries: OutboxEntry[],
+  role: MemberRole,
+): Promise<void> {
+  const remote = localCopy(companyId, row, local);
+  if (!remote) return;
+  const known = await db.syncRevs.get(['companies', companyId]);
+  // Staff only ever change counters here (the outbox refuses the rest), so
+  // without a base (synced by an earlier version) their change is the counters.
+  const base =
+    known?.base ?? (role === 'staff' ? { ...local, numbering: remote.numbering } : undefined);
+  if (!base) {
+    // What changed here isn't known (synced by an earlier version): keep this
+    // copy, with the cloud's document counters so numbers aren't used twice.
+    const numbering = mergeNumbering(
+      local.numbering as Company['numbering'],
+      remote.numbering as Company['numbering'],
+    );
+    if (!sameData(numbering, local.numbering)) {
+      await table('companies').put({ ...local, numbering });
+    }
+    return;
+  }
+  const ops = companyOps(base, local);
+  const { data } = rebaseCompany(remote, ops);
+  if (!sameData(data, local)) await table('companies').put(data);
+  await db.syncRevs.put({
+    table: 'companies',
+    id: companyId,
+    companyId,
+    rev: row.rev,
+    base: remote,
+  });
+  // Nothing but counters (or nothing at all) left to send: a refusal of it
+  // was about the older copy, so it goes again (or is dropped as sent).
+  if (ops.length === 0 || onlyCounters(ops)) {
+    const parked = entries
+      .filter((e) => e.table === 'companies' && e.id === companyId && e.parked === 1)
+      .map((e) => e.seq!);
+    if (parked.length) {
+      await db.outbox
+        .where('seq')
+        .anyOf(parked)
+        .modify((entry) => {
+          entry.parked = 0;
+          delete entry.error;
+          delete entry.detail;
+        });
+    }
+  }
+}
+
+/** Notes a document that arrived with the number of another document here. */
+async function noteDuplicates(
+  companyId: string,
+  doc: Record<string, unknown>,
+  duplicates: Set<string>,
+): Promise<void> {
+  const number = typeof doc.number === 'string' ? doc.number : '';
+  if (!number.trim() || typeof doc.type !== 'string') return;
+  const same = (
+    await db.documents
+      .where('[companyId+type+number]')
+      .equals([companyId, doc.type, number])
+      .primaryKeys()
+  ).map(String);
+  if (same.length < 2) return;
+  for (const id of same) duplicates.add(id);
+}
+
+/** The noted documents that still share their number with another one. */
+async function stillDuplicated(companyId: string, ids: Set<string>): Promise<string[]> {
+  const left: string[] = [];
+  for (const id of ids) {
+    const doc = await db.documents.get(id);
+    if (!doc || doc.companyId !== companyId) continue;
+    const count = await db.documents
+      .where('[companyId+type+number]')
+      .equals([companyId, doc.type, doc.number])
+      .count();
+    if (count > 1) left.push(id);
+  }
+  return left;
 }
 
 function noteTouched(touched: Touched, name: string, record: Record<string, unknown>) {
@@ -698,6 +1058,7 @@ async function finishPull(companyId: string, ctx: SyncContext, resynced: boolean
           id: companyId,
           companyId,
           rev: current.pendingCompanyRev,
+          base: current.pendingCompany,
         });
       }
       Object.assign(patch, { status: 'ready', pendingCompany: null, pendingCompanyRev: undefined });
@@ -808,85 +1169,171 @@ async function keepsStock(companyId: string): Promise<boolean> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Applies a role change. A role that no longer sees payroll and people data
- * loses this device's copy of it; a role that sees more brings everything in
- * again, since it was left out before.
+ * Applies a role change, in one transaction with what follows from it: a
+ * role that no longer sees payroll and people data loses this device's copy
+ * of it; a role that sees more brings everything in again, since it was left
+ * out before (a page asked for under the old role is then thrown away).
  */
 export async function applyRole(companyId: string, role: MemberRole): Promise<void> {
-  const link = await db.syncState.get(companyId);
-  if (!link || link.role === role) return;
-  const seesMore = !canSeePeople(link.role) && canSeePeople(role);
-  await db.syncState.update(companyId, { role, ...(seesMore ? { cursor: 0 } : {}) });
-  if (!canSeePeople(role)) await removeHiddenData(companyId);
+  await db.transaction('rw', tablesForApply(), async () => {
+    markRemote();
+    const link = await db.syncState.get(companyId);
+    if (!link || link.role === role) return;
+    const seesMore = !canSeePeople(link.role) && canSeePeople(role);
+    await db.syncState.update(companyId, {
+      role,
+      ...(seesMore ? { cursor: 0, epoch: (link.epoch ?? 0) + 1 } : {}),
+    });
+    if (!canSeePeople(role)) await removeHiddenRecords(companyId);
+  });
 }
 
 /** Removes from this device what the person's role may not see (payroll and people data). */
 export async function removeHiddenData(companyId: string): Promise<void> {
   await db.transaction('rw', tablesForApply(), async () => {
     markRemote();
-    const owners = await privateOwnerIds(companyId);
-    const lookup = (_table: string, id: string) => (owners.has(id) ? { employeeId: id } : null);
-    for (const name of DATA_TABLES) {
-      if (name === 'companies') continue;
-      const records = await table(name).where('companyId').equals(companyId).toArray();
-      const hidden = records.filter(
-        (r) =>
-          (PEOPLE_TABLES as readonly string[]).includes(name) ||
-          isPrivateRecord(name, r, lookup) ||
-          owners.has(String(r.id)),
-      );
-      if (hidden.length === 0) continue;
-      const keys = hidden.map((r) => String(r.id));
-      await table(name).bulkDelete(keys);
-      await db.syncRevs.bulkDelete(keys.map((id) => [name, id] as [string, string]));
-      await db.outbox
-        .where('companyId')
-        .equals(companyId)
-        .filter((e) => e.table === name && keys.includes(e.id))
-        .delete();
-    }
+    await removeHiddenRecords(companyId);
   });
+}
+
+/** removeHiddenData's work, in the transaction already running. */
+async function removeHiddenRecords(companyId: string): Promise<void> {
+  const owners = await privateOwnerIds(companyId);
+  const lookup = (_table: string, id: string) => (owners.has(id) ? { employeeId: id } : null);
+  for (const name of DATA_TABLES) {
+    if (name === 'companies') continue;
+    const records = await table(name).where('companyId').equals(companyId).toArray();
+    const hidden = records.filter(
+      (r) =>
+        (PEOPLE_TABLES as readonly string[]).includes(name) ||
+        isPrivateRecord(name, r, lookup) ||
+        owners.has(String(r.id)),
+    );
+    if (hidden.length === 0) continue;
+    const keys = hidden.map((r) => String(r.id));
+    await table(name).bulkDelete(keys);
+    await db.syncRevs.bulkDelete(keys.map((id) => [name, id] as [string, string]));
+    await db.outbox
+      .where('companyId')
+      .equals(companyId)
+      .filter((e) => e.table === name && keys.includes(e.id))
+      .delete();
+  }
 }
 
 /* -------------------------------------------------------------------------- */
 /* Files                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Removes files and returns those still stored afterwards. Storage skips
+ * what its rules hide without an error, so what wasn't removed is checked:
+ * with the server (stored_files), or, on an older server, against the files
+ * this person can see.
+ */
+async function removeAndCheck(
+  companyId: string,
+  paths: string[],
+  ctx: SyncContext,
+): Promise<string[]> {
+  const removed = new Set(await ctx.api.removeFiles(paths));
+  const rest = paths.filter((path) => !removed.has(path));
+  if (rest.length === 0) return [];
+  const stored = await ctx.api.storedFiles(companyId, rest);
+  const still = new Set(stored ?? (await ctx.api.listFiles(companyId)).map((f) => f.path));
+  return rest.filter((path) => still.has(path));
+}
+
 /** Removes files from Storage; what can't be removed now waits in the file queue. */
 async function removeFiles(companyId: string, paths: string[], ctx: SyncContext): Promise<void> {
+  let left: string[];
+  let code: string;
   try {
-    await ctx.api.removeFiles(paths);
+    left = await removeAndCheck(companyId, paths, ctx);
+    code = 'permission';
   } catch (error) {
-    const at = new Date().toISOString();
-    await db.fileQueue.bulkAdd(
-      paths.map((path) => ({
-        companyId,
-        path,
-        at,
-        attempts: 1,
-        lastError: cloudError(error).code,
-      })),
-    );
+    left = paths;
+    code = cloudError(error).code;
+  }
+  if (left.length === 0) return;
+  const at = new Date().toISOString();
+  await db.fileQueue.bulkAdd(
+    left.map((path) => ({
+      companyId,
+      path,
+      at,
+      attempts: 1,
+      lastError: code,
+      userId: ctx.userId,
+    })),
+  );
+}
+
+/**
+ * Tries the file removals that failed before: this account's only (a
+ * removal waits for the account that deleted the record). A removal that
+ * still removes nothing after a few tries is shown as a problem.
+ */
+export async function processFileQueue(ctx: SyncContext): Promise<void> {
+  const mine = new Set(
+    (await db.syncState.filter((l) => l.userId === ctx.userId).primaryKeys()).map(String),
+  );
+  const tasks = (await db.fileQueue.toArray())
+    .filter((task) => !task.failed)
+    .filter((task) => (task.userId ? task.userId === ctx.userId : mine.has(task.companyId)))
+    .slice(0, 100);
+  const byCompany = new Map<string, FileTask[]>();
+  for (const task of tasks) {
+    byCompany.set(task.companyId, [...(byCompany.get(task.companyId) ?? []), task]);
+  }
+  for (const [companyId, group] of byCompany) {
+    let left: Set<string>;
+    let code = 'permission';
+    let retryable = false;
+    try {
+      left = new Set(
+        await removeAndCheck(
+          companyId,
+          group.map((task) => task.path),
+          ctx,
+        ),
+      );
+    } catch (error) {
+      const e = cloudError(error);
+      if (e.code === 'not_member') {
+        // Not in the company any more: its owner's clean-up takes care of them.
+        await db.fileQueue.bulkDelete(group.map((task) => task.seq!));
+        continue;
+      }
+      left = new Set(group.map((task) => task.path));
+      code = e.code;
+      retryable = e.retryable;
+    }
+    const done = group.filter((task) => !left.has(task.path)).map((task) => task.seq!);
+    if (done.length) await db.fileQueue.bulkDelete(done);
+    const again = group.filter((task) => left.has(task.path)).map((task) => task.seq!);
+    if (again.length) {
+      await db.fileQueue
+        .where('seq')
+        .anyOf(again)
+        .modify((task) => {
+          task.attempts += 1;
+          task.lastError = code;
+          if (!retryable && task.attempts >= FILE_ATTEMPTS) task.failed = 1;
+        });
+    }
   }
 }
 
-/** Tries the file removals that failed before. */
-export async function processFileQueue(ctx: SyncContext): Promise<void> {
-  const tasks = await db.fileQueue.limit(100).toArray();
-  if (tasks.length === 0) return;
-  try {
-    await ctx.api.removeFiles(tasks.map((task) => task.path));
-    await db.fileQueue.bulkDelete(tasks.map((task) => task.seq!));
-  } catch (error) {
-    const code = cloudError(error).code;
-    await db.fileQueue
-      .where('seq')
-      .anyOf(tasks.map((task) => task.seq!))
-      .modify((task) => {
-        task.attempts += 1;
-        task.lastError = code;
-      });
-  }
+/** Tries the failed file removals of a company again at the next sync. */
+export async function retryFileRemovals(companyId: string): Promise<void> {
+  await db.fileQueue
+    .where('companyId')
+    .equals(companyId)
+    .modify((task) => {
+      delete task.failed;
+      task.attempts = 0;
+    });
 }
 
 /** Downloads the content of attachments that arrived without it (small ones). */
@@ -953,10 +1400,11 @@ export async function cleanupFiles(companyId: string, ctx: SyncContext): Promise
       .filter((file) => !used.has(file.path))
       .filter((file) => !file.createdAt || Date.parse(file.createdAt) < cutoff)
       .map((file) => file.path);
+    let removed = 0;
     for (let i = 0; i < orphans.length; i += 100) {
-      await ctx.api.removeFiles(orphans.slice(i, i + 100));
+      removed += (await ctx.api.removeFiles(orphans.slice(i, i + 100))).length;
     }
-    return orphans.length;
+    return removed;
   } catch (error) {
     throw cloudError(error);
   }
@@ -971,7 +1419,12 @@ export async function retryParked(companyId: string): Promise<void> {
   await db.outbox
     .where('[companyId+parked]')
     .equals([companyId, 1])
-    .modify({ parked: 0, error: undefined, detail: undefined });
+    .modify((entry) => {
+      entry.parked = 0;
+      delete entry.error;
+      delete entry.detail;
+      delete entry.file;
+    });
 }
 
 /**
@@ -1005,7 +1458,13 @@ export async function discardParked(
       local,
     );
     if (data) await store.put(data);
-    await db.syncRevs.put({ table: entry.table, id: entry.id, companyId, rev: remote.rev });
+    await db.syncRevs.put({
+      table: entry.table,
+      id: entry.id,
+      companyId,
+      rev: remote.rev,
+      ...(entry.table === 'companies' && data ? { base: data } : {}),
+    });
   });
 }
 
@@ -1014,22 +1473,43 @@ export async function discardParked(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Deletes the company in the cloud (owners): its files first, then the
- * company with everything in it, then this device's copy.
+ * Deletes the company in the cloud (owners): first the server confirms the
+ * person is still the owner (and stops new uploads), then its files go, then
+ * the company with everything in it, then this device's copy. Nothing is
+ * removed when the person is no longer the owner.
  */
 export async function deleteFromCloud(companyId: string, ctx: SyncContext): Promise<void> {
-  try {
-    const files = await ctx.api.listFiles(companyId);
-    for (let i = 0; i < files.length; i += 100) {
-      await ctx.api.removeFiles(files.slice(i, i + 100).map((file) => file.path));
+  await withSyncLock(companyId, async () => {
+    try {
+      if (!(await ctx.api.beginDeleteCompany(companyId))) {
+        // An older server: ask it for the person's role before removing anything.
+        const role = (await ctx.api.myCompanies()).find((c) => c.id === companyId)?.role;
+        if (role !== 'owner') {
+          throw new CloudError('permission', t('Only the owner can delete the company.'));
+        }
+      }
+      for (let round = 0; ; round += 1) {
+        const files = await ctx.api.listFiles(companyId);
+        if (files.length === 0) break;
+        if (round === 3) {
+          throw new CloudError(
+            'server',
+            t('Some files could not be removed from the cloud. Try again.'),
+          );
+        }
+        for (let i = 0; i < files.length; i += 100) {
+          await ctx.api.removeFiles(files.slice(i, i + 100).map((file) => file.path));
+        }
+      }
+      await ctx.api.deleteCompany(companyId);
+    } catch (error) {
+      throw cloudError(error);
     }
-    await ctx.api.deleteCompany(companyId);
-  } catch (error) {
-    throw cloudError(error);
-  }
-  await db.fileQueue.where('companyId').equals(companyId).delete();
-  const { deleteCompany } = await import('@/db/records');
-  await deleteCompany(companyId);
+    await db.fileQueue.where('companyId').equals(companyId).delete();
+    const { deleteCompany } = await import('@/db/records');
+    // Gone from the cloud: changes not sent yet have nowhere to go.
+    await deleteCompany(companyId, { force: true });
+  });
 }
 
 /** Stops syncing a company here and keeps this device's copy as a local company. */

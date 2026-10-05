@@ -1,9 +1,14 @@
 # Maham Books cloud (Supabase)
 
-`migrations/20261004000000_almailbooks_cloud.sql` is the whole server: tables,
+`migrations/20261004000000_almailbooks_cloud.sql` is the server: tables,
 row-level security, the functions the app calls, the Storage bucket and its
-policies, and the Realtime publication. It is safe to run again. The owner's
-step-by-step guide is [`docs/supabase-setup.md`](../docs/supabase-setup.md).
+policies, and the Realtime publication. `migrations/20261006000000_sync_fixes.sql`
+comes after it: company settings merged by field, document numbers taken in
+the cloud, deleting a company safely, and the file checks below. Both are safe
+to run again, in this order (run the second again after the first if the first
+is ever run again). Until the second runs, the app notices its functions are
+missing and works as before. The owner's step-by-step guide is
+[`docs/supabase-setup.md`](../docs/supabase-setup.md).
 
 The app stays local-first: every screen reads IndexedDB on the device, and the
 cloud keeps a copy of each company that is synced in the background. A company
@@ -67,6 +72,14 @@ The app calls these (all `revoke`d from `anon` and `public`, granted to
 | `create_invite`, `list_invites`, `revoke_invite`                           | definer | Owners and admins only; never as owner.                                                   |
 | `invite_details(token)`, `accept_invite(token)`                            | definer | See "Invitations".                                                                        |
 | `set_member_role`, `remove_member`, `transfer_ownership`, `delete_company` | definer | Role checks inside; the owner can't be demoted or removed.                                |
+| `patch_company(company, ops)`                                              | invoker | The fields a device changed, laid over the cloud's company record; conflicts reported.    |
+| `reserve_number(company, kind, date, min)`                                 | invoker | The next number of a kind of document, taken from the company's counter at once.          |
+| `begin_delete_company(company)`                                            | definer | Owners only, before the app removes any file; uploads are refused for an hour.            |
+| `stored_files(company, names)`                                             | definer | Which of these files are still stored, for members: a removal that removed nothing.       |
+
+`create_company` refuses a company that is already in the cloud with records
+(`almail:company_exists`): the app offers to download it instead, so an older
+copy (a restored backup) never replaces the team's newer work.
 
 Helpers used by the policies live in the schema `almailbooks`, which the Data
 API does not expose, so nobody can call them through the API.

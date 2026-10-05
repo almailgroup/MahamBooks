@@ -30,7 +30,7 @@ import {
   useConfirm,
 } from '@/components/ui/overlay';
 import { ReadOnlyContext } from '@/components/ui/read-only';
-import { cloudErrorMessage, type Invite, type TeamMember } from '@/cloud/api';
+import { cloudError, cloudErrorMessage, type Invite, type TeamMember } from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
 import { useCloudLink } from '@/cloud/hooks';
 import { emailInvite, inviteUrl, whatsappInvite } from '@/cloud/invite';
@@ -41,10 +41,12 @@ import {
   ROLE_LABELS,
   type MemberRole,
 } from '@/cloud/roles';
-import { deleteFromCloud, isDemoCompany, startUpload } from '@/cloud/sync';
+import { withSyncLock } from '@/cloud/lock';
+import { deleteFromCloud, isDemoCompany } from '@/cloud/sync';
 import { Avatar } from '@/features/cloud/account-menu';
 import { FormError } from '@/features/cloud/auth-shell';
 import { unsentWarning } from '@/features/cloud/unsent';
+import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import { SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -55,6 +57,7 @@ export default function TeamSettings() {
   const { user, api } = useCloud();
   const link = useCloudLink(company.id);
   const navigate = useNavigate();
+  const keepInCloud = useKeepInCloud();
   const [busy, setBusy] = useState(false);
 
   if (link === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
@@ -83,8 +86,13 @@ export default function TeamSettings() {
                 onClick={async () => {
                   setBusy(true);
                   try {
-                    await startUpload(company.id, { api, userId: user.id });
-                    toast.success(t('{name} is going to the cloud.', { name: localName(company) }));
+                    const name = localName(company);
+                    const started = await keepInCloud(company, { api, userId: user.id });
+                    if (started === 'upload')
+                      toast.success(t('{name} is going to the cloud.', { name }));
+                    if (started === 'download') {
+                      toast.success(t('{name} is coming from the cloud.', { name }));
+                    }
                   } catch (err) {
                     toast.error(cloudErrorMessage(err));
                   } finally {
@@ -115,7 +123,7 @@ export default function TeamSettings() {
 function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
   const company = useCompany();
   const fmt = useFormat();
-  const { user, api } = useCloud();
+  const { user, api, manager } = useCloud();
   const confirm = useConfirm();
   const navigate = useNavigate();
   const [members, setMembers] = useState<TeamMember[] | null>(null);
@@ -193,8 +201,9 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     if (!ok) return;
     try {
       await api.removeMember(companyId, user.id);
-      // No longer a member: changes not sent yet can't reach the company (the person was told).
-      await deleteCompany(companyId, { force: true });
+      // No longer a member: changes not sent yet can't reach the company (the
+      // person was told). After a sync under way, never in the middle of one.
+      await withSyncLock(companyId, () => deleteCompany(companyId, { force: true }));
       toast.success(t('You left {company}.', { company: name }));
       navigate('/');
     } catch (err) {
@@ -226,6 +235,8 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
       navigate('/');
     } catch (err) {
       toast.error(cloudErrorMessage(err));
+      // Refused: this device's idea of the role may be out of date (ownership moved on).
+      if (cloudError(err).code === 'permission') void manager?.refreshMembership();
     }
   };
 

@@ -5,6 +5,7 @@ import type { CloudErrorCode } from './api';
 import type { MemberRole } from './roles';
 import { useCloud } from './store';
 import { useOnline, useRuntimeStatus } from './status';
+import { failedFileRemovals, numberProblems } from './problems';
 import type { SyncProgress } from './sync';
 import type { CloudLink } from './types';
 
@@ -40,7 +41,10 @@ export interface CloudStatusView {
   link: CloudLink | null;
   /** Changes waiting to be sent. */
   pending: number;
-  /** Changes the cloud refused. */
+  /**
+   * Problems to look at in Settings → Cloud: changes the cloud refused,
+   * numbers two documents share, deleted files the cloud still has.
+   */
   parked: number;
   error?: CloudErrorCode;
   message?: string;
@@ -59,11 +63,15 @@ export function useCloudStatus(companyId: string | null | undefined): CloudStatu
         ? Promise.all([
             db.outbox.where('[companyId+parked]').equals([companyId, 0]).count(),
             db.outbox.where('[companyId+parked]').equals([companyId, 1]).count(),
+            // Documents sharing a number, and deleted files the cloud still has.
+            numberProblems(companyId).then((groups) => groups.length),
+            failedFileRemovals(companyId).then((tasks) => tasks.length),
           ])
-        : [0, 0],
+        : [0, 0, 0, 0],
     [companyId],
-  ) ?? [0, 0];
-  const [pending, parked] = counts;
+  ) ?? [0, 0, 0, 0];
+  const [pending, refused, duplicates, unremoved] = counts;
+  const parked = refused + duplicates + unremoved;
   const base = { link, pending, parked, progress: runtime.progress };
   if (!link) return { ...base, kind: 'local' };
   if (link.status === 'removed') return { ...base, kind: 'removed' };

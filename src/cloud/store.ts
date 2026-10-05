@@ -11,6 +11,9 @@ import { loadProfile, signOut as authSignOut, toCloudUser, type CloudUser } from
 import { SyncManager } from './manager';
 import { syncStatus } from './status';
 import { supabaseApi } from './supabase-api';
+import { withSyncLock } from './lock';
+import { cloudCounterReserver } from './reserve';
+import { setCounterReserver } from '@/lib/numbering';
 
 /**
  * The account and the cloud, for the whole app (outside React, so a change
@@ -114,6 +117,7 @@ function startSync(userId: string) {
   if (!snapshot.api) return;
   const manager = new SyncManager({ api: snapshot.api, userId });
   manager.start();
+  setCounterReserver(cloudCounterReserver(snapshot.api, userId));
   update({ manager });
   links = liveQuery(() =>
     db.syncState.filter((l) => l.userId === userId && l.status !== 'removed').primaryKeys(),
@@ -126,6 +130,7 @@ function startSync(userId: string) {
 function stopSync() {
   links?.unsubscribe();
   links = null;
+  setCounterReserver(null);
   snapshot.manager?.stop();
   syncStatus.clear();
   update({ manager: null });
@@ -140,8 +145,11 @@ export async function signOutCloud({ removeCompanies }: { removeCompanies: boole
   stopSync();
   if (removeCompanies && userId) {
     const linked = await db.syncState.filter((l) => l.userId === userId).toArray();
-    // The sign-out dialog counts the changes not sent yet before this.
-    for (const link of linked) await deleteCompany(link.companyId, { force: true });
+    // The sign-out dialog counts the changes not sent yet before this; each
+    // removal waits for a sync of that company still under way.
+    for (const link of linked) {
+      await withSyncLock(link.companyId, () => deleteCompany(link.companyId, { force: true }));
+    }
   }
   await authSignOut();
   update({ user: null });

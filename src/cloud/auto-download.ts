@@ -2,6 +2,7 @@ import { db } from '@/db/db';
 import type { CloudCompany } from './api';
 import { startDownload, type SyncContext } from './sync';
 import { keptOffDevice } from './kept-off';
+import { withLock } from './lock';
 
 /**
  * The account's companies come to every device it signs in on by
@@ -41,11 +42,6 @@ export async function arrivals(
   );
 }
 
-function webLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
-  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-  return locks ? locks.request(name, fn) : fn();
-}
-
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
@@ -59,7 +55,7 @@ export function downloadAccountCompanies(
   ctx: SyncContext,
 ): Promise<string[]> {
   const run = queue.then(() =>
-    webLock('almailbooks-auto-download', async () => {
+    withLock('almailbooks-auto-download', async () => {
       const started: string[] = [];
       for (const company of companies) {
         const arrival = (await arrivals([company], ctx.userId)).get(company.id);

@@ -122,7 +122,8 @@ describe('upload', () => {
     for (const name of DATA_TABLES) {
       expect(byId(remote[name]), name).toEqual(byId(local[name]));
     }
-    expect(server.calls[0]).toBe(`${OWNER} createCompany`);
+    // Whether the account already has it in the cloud is asked first.
+    expect(server.calls.slice(0, 2)).toEqual([`${OWNER} myCompanies`, `${OWNER} createCompany`]);
   });
 
   it('never takes the demo company to the cloud', async () => {

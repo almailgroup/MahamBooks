@@ -14,8 +14,8 @@ import {
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany, UnsentChangesError } from '@/db/records';
-import type { Company } from '@/db/types';
-import { useCompanyContext } from '@/app/company';
+import type { Company, InvoiceDocument } from '@/db/types';
+import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompanyContext, useFormat } from '@/app/company';
 import { msg, t, tp } from '@/i18n';
 import { tr } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
@@ -34,12 +34,15 @@ import {
   discardParked,
   isDemoCompany,
   keepAsLocal,
+  retryFileRemovals,
   retryParked,
-  startUpload,
 } from '@/cloud/sync';
-import type { OutboxEntry } from '@/cloud/types';
+import { failedFileRemovals, numberProblems } from '@/cloud/problems';
+import { withSyncLock } from '@/cloud/lock';
+import type { FileTask, OutboxEntry } from '@/cloud/types';
 import { LastSynced, SyncStatusLine } from '@/features/cloud/sync-status';
 import { unsentWarning } from '@/features/cloud/unsent';
+import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import type { DataTable } from '@/db/db';
 import { SettingsSection } from './shared';
 
@@ -107,6 +110,9 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
     () => db.outbox.where('[companyId+parked]').equals([company.id, 1]).toArray(),
     [company.id],
   );
+  const numbers = useLiveQuery(() => numberProblems(company.id), [company.id]);
+  const unremoved = useLiveQuery(() => failedFileRemovals(company.id), [company.id]);
+  const keepInCloud = useKeepInCloud();
   const [busy, setBusy] = useState<string | null>(null);
   const name = localName(company);
   const ctx = api && user ? { api, userId: user.id } : null;
@@ -142,8 +148,11 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
       async () => {
         // Removed on purpose: it doesn't come back to this device by itself.
         if (user) await keepOffDevice(user.id, company.id);
-        // Only the changes counted above may be lost; any queued since stop it.
-        await deleteCompany(company.id, { force: unsent > 0 }).catch(async (error: unknown) => {
+        // After a sync under way, never in the middle of one. Only the
+        // changes counted above may be lost; any queued since stop it.
+        await withSyncLock(company.id, () =>
+          deleteCompany(company.id, { force: unsent > 0 }),
+        ).catch(async (error: unknown) => {
           if (user) await allowOnDevice(user.id, company.id);
           throw error;
         });
@@ -209,11 +218,14 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
               size="sm"
               loading={busy === 'upload'}
               onClick={() =>
-                void run(
-                  'upload',
-                  () => startUpload(company.id, ctx),
-                  t('{name} is going to the cloud.', { name }),
-                )
+                void run('upload', async () => {
+                  const started = await keepInCloud(company, ctx);
+                  if (started === 'upload')
+                    toast.success(t('{name} is going to the cloud.', { name }));
+                  if (started === 'download') {
+                    toast.success(t('{name} is coming from the cloud.', { name }));
+                  }
+                })
               }
             >
               <CloudUpload /> {t('Keep in the cloud')}
@@ -281,6 +293,91 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
       </div>
 
       {parked && parked.length > 0 ? <Problems companyId={company.id} entries={parked} /> : null}
+      {numbers && numbers.length > 0 ? <NumberProblems groups={numbers} current={current} /> : null}
+      {unremoved && unremoved.length > 0 ? (
+        <FileProblems companyId={company.id} tasks={unremoved} />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Documents that share a number, found when another device's documents
+ * arrived (both were numbered without the cloud, offline). Nothing is
+ * renumbered by itself: the person opens one and gives it a new number.
+ */
+function NumberProblems({ groups, current }: { groups: InvoiceDocument[][]; current: boolean }) {
+  const fmt = useFormat();
+  return (
+    <div className="rounded-lg bg-amber-50/70 p-3 ring-1 ring-amber-600/20">
+      <p className="text-sm font-medium text-amber-900">
+        {tp(
+          groups.length,
+          '{count} number is used by more than one document',
+          '{count} numbers are each used by more than one document',
+        )}
+      </p>
+      <p className="mt-1 text-sm text-amber-900/80">
+        {t(
+          'They were numbered on several devices at once, without the cloud. Open one and give it a new number.',
+        )}
+      </p>
+      <ul className="mt-2 divide-y divide-amber-600/10">
+        {groups.map((docs) => (
+          <li key={`${docs[0].type}/${docs[0].number}`} className="py-2 text-sm">
+            <span className="font-medium text-slate-900">
+              {t(DOCUMENT_LABELS[docs[0].type].singular)} {docs[0].number}
+            </span>
+            <span className="flex flex-wrap gap-x-3 gap-y-1">
+              {docs.map((doc) =>
+                current ? (
+                  <Link
+                    key={doc.id}
+                    to={`${DOCUMENT_ROUTES[doc.type]}/${doc.id}`}
+                    className="text-primary-700 hover:underline"
+                  >
+                    {t('Dated {date}', { date: fmt.date(doc.issueDate) })}
+                  </Link>
+                ) : (
+                  <span key={doc.id} className="text-slate-600">
+                    {t('Dated {date}', { date: fmt.date(doc.issueDate) })}
+                  </span>
+                ),
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Files whose removal from the cloud kept failing (their records are deleted). */
+function FileProblems({ companyId, tasks }: { companyId: string; tasks: FileTask[] }) {
+  const { manager } = useCloud();
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-red-50/60 p-3 ring-1 ring-red-600/15">
+      <p className="min-w-0 flex-1 text-sm text-red-800">
+        {tp(
+          tasks.length,
+          '{count} deleted file could not be removed from the cloud.',
+          '{count} deleted files could not be removed from the cloud.',
+        )}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        loading={busy}
+        onClick={async () => {
+          setBusy(true);
+          await retryFileRemovals(companyId);
+          await manager?.syncNow(companyId).catch(() => undefined);
+          setBusy(false);
+        }}
+      >
+        <RotateCcw /> {t('Try again')}
+      </Button>
     </div>
   );
 }
@@ -321,7 +418,7 @@ function Problems({ companyId, entries }: { companyId: string; entries: OutboxEn
                 {t(RECORD_LABELS[entry.table as DataTable] ?? msg('Record'))}
               </span>{' '}
               <span className="text-slate-600">
-                ·{' '}
+                · {entry.file ? `${t('The cloud did not take its file.')} ` : ''}
                 {t(
                   PARKED_REASONS[entry.error as keyof typeof PARKED_REASONS] ??
                     msg('The cloud did not accept it.'),

@@ -3,6 +3,7 @@ import { isMemberRole, type MemberRole } from './roles';
 import { FILES_BUCKET } from './config';
 import {
   cloudError,
+  storageCloudError,
   type CloudApi,
   type CloudCompany,
   type Invite,
@@ -13,6 +14,12 @@ import {
   type StoredFile,
   type TeamMember,
 } from './api';
+
+/** A database function this server doesn't have (the owner hasn't run the latest migration). */
+const MISSING = Symbol('missing');
+
+/** How long a missing function is taken as missing before asking again. */
+const RECHECK_MS = 10 * 60 * 1000;
 
 /** The cloud as Supabase: the database's functions, Storage and Realtime. */
 export function supabaseApi(supabase: SupabaseClient): CloudApi {
@@ -26,13 +33,34 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
       });
     return data as T;
   }
+  const missingUntil = new Map<string, number>();
+  /**
+   * A function added by a later migration: MISSING when the server doesn't
+   * have it yet (PostgREST answers PGRST202 or 404), so the caller does what
+   * the older server allows.
+   */
+  async function optionalRpc<T>(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<T | typeof MISSING> {
+    if ((missingUntil.get(name) ?? 0) > Date.now()) return MISSING;
+    const { data, error, status } = await supabase.rpc(name, args);
+    if (error) {
+      if (error.code === 'PGRST202' || status === 404) {
+        missingUntil.set(name, Date.now() + RECHECK_MS);
+        return MISSING;
+      }
+      throw cloudError({
+        ...error,
+        status: status || undefined,
+        name: status === 0 ? 'TypeError' : '',
+      });
+    }
+    // These functions always answer with a body; none means a stand-in that doesn't know them.
+    if (status === 204 || data === null || data === undefined) return MISSING;
+    return data as T;
+  }
   const files = () => supabase.storage.from(FILES_BUCKET);
-  const storageError = (error: { message?: string; statusCode?: string; status?: number }) =>
-    cloudError({
-      message: error.message,
-      status: error.status,
-      code: error.statusCode === '403' ? '42501' : undefined,
-    });
   const role = (value: unknown): MemberRole => (isMemberRole(value) ? value : 'viewer');
 
   return {
@@ -108,20 +136,29 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
 
     async uploadFile(path, data, contentType) {
       const { error } = await files().upload(path, data, { contentType, upsert: true });
-      if (error) throw storageError(error);
+      if (error) throw storageCloudError(error);
     },
 
     async downloadFile(path) {
       const { data, error } = await files().download(path);
-      if (error) throw storageError(error);
+      if (error) throw storageCloudError(error);
       return data;
     },
 
     async removeFiles(paths) {
+      const removed: string[] = [];
       for (let i = 0; i < paths.length; i += 100) {
-        const { error } = await files().remove(paths.slice(i, i + 100));
-        if (error) throw storageError(error);
+        const batch = paths.slice(i, i + 100);
+        const { data, error } = await files().remove(batch);
+        if (error) throw storageCloudError(error);
+        // Storage answers with the objects it removed; what the rules hide is skipped.
+        for (const item of data ?? []) {
+          const name = String(item.name ?? '');
+          const path = batch.includes(name) ? name : batch.find((p) => p.endsWith(`/${name}`));
+          if (path) removed.push(path);
+        }
       }
+      return removed;
     },
 
     async listFiles(companyId) {
@@ -132,13 +169,51 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
           offset,
           sortBy: { column: 'name', order: 'asc' },
         });
-        if (error) throw storageError(error);
+        if (error) throw storageCloudError(error);
         for (const item of data ?? []) {
           if (item.id)
             found.push({ path: `${companyId}/${item.name}`, createdAt: item.created_at });
         }
         if (!data || data.length < 1000) return found;
       }
+    },
+
+    async storedFiles(companyId, paths) {
+      if (paths.length === 0) return [];
+      const result = await optionalRpc<string[]>('stored_files', {
+        p_company: companyId,
+        p_names: paths,
+      });
+      return result === MISSING ? null : result.map(String);
+    },
+
+    async patchCompany(companyId, ops) {
+      const result = await optionalRpc<{ rev: number; conflicts: unknown }[]>('patch_company', {
+        p_company: companyId,
+        p_ops: ops,
+      });
+      if (result === MISSING) return null;
+      const [row] = result;
+      if (!row) return null;
+      const conflicts = Array.isArray(row.conflicts) ? (row.conflicts as unknown[][]) : [];
+      return { rev: Number(row.rev), conflicts: conflicts.map((path) => path.map(String)) };
+    },
+
+    async reserveNumber(companyId, kind, date, min) {
+      const result = await optionalRpc<{ counter: number; period: string }[]>('reserve_number', {
+        p_company: companyId,
+        p_kind: kind,
+        p_date: date,
+        p_min: min,
+      });
+      if (result === MISSING) return null;
+      const [row] = result;
+      return row ? { counter: Number(row.counter), period: String(row.period ?? '') } : null;
+    },
+
+    async beginDeleteCompany(companyId) {
+      const result = await optionalRpc<boolean>('begin_delete_company', { p_company: companyId });
+      return result === true;
     },
 
     async companyTeam(companyId) {

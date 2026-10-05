@@ -88,6 +88,32 @@ export interface RecordKey {
   id: string;
 }
 
+/**
+ * One field of the company record that changed on this device: set to
+ * `value`, or removed. `base` is what it was in the copy this device last
+ * had from the cloud (left out when it had none).
+ */
+export interface CompanyOp {
+  path: string[];
+  value?: unknown;
+  remove?: true;
+  base?: unknown;
+}
+
+export interface CompanyPatchResult {
+  /** New server version of the company record. */
+  rev: number;
+  /** Fields that had also changed in the cloud; this device's value was kept. */
+  conflicts: string[][];
+}
+
+/** A document counter taken on the server for one new number. */
+export interface ReservedCounter {
+  counter: number;
+  /** Period the counter belongs to ("2026", "2026-10" or "" for counters that never reset). */
+  period: string;
+}
+
 export interface CloudApi {
   createCompany(id: string, name: string): Promise<void>;
   myCompanies(): Promise<CloudCompany[]>;
@@ -108,8 +134,34 @@ export interface CloudApi {
   ): Promise<{ data: Record<string, unknown>; rev: number } | null>;
   uploadFile(path: string, data: Blob, contentType: string): Promise<void>;
   downloadFile(path: string): Promise<Blob>;
-  removeFiles(paths: string[]): Promise<void>;
+  /** Removes files; returns the paths that were removed (what Storage hides is skipped). */
+  removeFiles(paths: string[]): Promise<string[]>;
   listFiles(companyId: string): Promise<StoredFile[]>;
+  /** Which of these files of the company are still stored; null when the server can't tell. */
+  storedFiles(companyId: string, paths: string[]): Promise<string[] | null>;
+  /**
+   * Applies changed fields to the cloud's copy of the company record. Null
+   * when the server can't (an older version) or the record isn't there yet:
+   * the whole record is sent instead.
+   */
+  patchCompany(companyId: string, ops: CompanyOp[]): Promise<CompanyPatchResult | null>;
+  /**
+   * Takes the next counter for a new number of `kind` (an invoice…) dated
+   * `date`, never below `min`. Null when the server can't, or numbers this
+   * one on the device (a date in an earlier period).
+   */
+  reserveNumber(
+    companyId: string,
+    kind: string,
+    date: string,
+    min: number,
+  ): Promise<ReservedCounter | null>;
+  /**
+   * Owners: starts deleting the company in the cloud (new uploads are
+   * refused meanwhile). False when the server can't (an older version);
+   * throws when the person is not the owner.
+   */
+  beginDeleteCompany(companyId: string): Promise<boolean>;
   companyTeam(companyId: string): Promise<TeamMember[]>;
   createInvite(companyId: string, email: string, role: MemberRole): Promise<Invite>;
   listInvites(companyId: string): Promise<Invite[]>;
@@ -139,6 +191,7 @@ export type CloudErrorCode =
   | 'too_large'
   | 'resync'
   | 'company_taken'
+  | 'company_exists'
   | 'limit'
   | 'already_member'
   | 'invite_invalid'
@@ -177,6 +230,7 @@ export const CLOUD_ERROR_MESSAGES: Record<CloudErrorCode, string> = {
   too_large: msg('This record is too large to sync. Remove some images or attachments.'),
   resync: msg('This device needs a full sync.'),
   company_taken: msg('This company is already in the cloud under another account.'),
+  company_exists: msg('This company is already in your cloud account. Download it instead.'),
   limit: msg('You have reached the limit for this account.'),
   already_member: msg('This person is already a member.'),
   invite_invalid: msg('This invitation link is not valid.'),
@@ -218,6 +272,30 @@ export function cloudError(error: unknown): CloudError {
     return make('offline');
   }
   return make('server');
+}
+
+/**
+ * Turns what Storage said into a CloudError. A refusal (4xx: the rules, a
+ * file too large or of a kind the bucket doesn't take) is not worth trying
+ * again as it is; network trouble, rate limits and server errors are.
+ */
+export function storageCloudError(error: unknown): CloudError {
+  if (error instanceof CloudError) return error;
+  const e = (error ?? {}) as { message?: string; status?: number; statusCode?: string | number };
+  const message = String(e.message ?? error ?? '');
+  const status = Number(e.statusCode) || Number(e.status) || 0;
+  const make = (code: CloudErrorCode) =>
+    new CloudError(code, t(CLOUD_ERROR_MESSAGES[code]), message);
+  if (status === 401 || /jwt|token is expired|not authenticated|invalid token/i.test(message)) {
+    return make('auth');
+  }
+  if (status === 403 || /row-level security|access denied|unauthorized/i.test(message)) {
+    return make('permission');
+  }
+  if (status === 413 || /too large|exceeded the maximum/i.test(message)) return make('too_large');
+  if (status === 429 || status >= 500) return make('server');
+  if (status >= 400) return make('invalid');
+  return cloudError(error);
 }
 
 /** The message to show for any error from the cloud. */

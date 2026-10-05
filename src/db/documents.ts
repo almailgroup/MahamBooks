@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from './db';
 import { createDocument, defaultNumbering, emptyTotals, nowStamp } from './defaults';
 import { logActivity, type ActivityMessage } from './activity';
@@ -20,7 +21,13 @@ import {
 } from '@/lib/document-calc';
 import { retentionDefaults } from '@/lib/retention';
 import { taxLineOf } from '@/lib/calc';
-import { allocateNumber } from '@/lib/numbering';
+import {
+  allocateFrom,
+  allocateNumber,
+  canReserveCounters,
+  reserveCounter,
+  type ReservedCounter,
+} from '@/lib/numbering';
 import { issuedStatus, settledStatus } from '@/lib/status';
 import { addDaysISO, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
@@ -325,14 +332,46 @@ async function takenNumbers(
   return new Set(docs.filter((d) => d.id !== exceptId).map((d) => d.number.trim().toLowerCase()));
 }
 
+const sameNumber = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * Whether another document of this kind has the number. A document keeps the
+ * number it was saved with, even when another device gave it to a document
+ * too (that is listed as a sync problem, in Settings → Cloud).
+ */
 export async function isNumberTaken(
   companyId: ID,
   type: DocumentType,
   number: string,
   exceptId?: ID,
 ): Promise<boolean> {
+  const own = exceptId ? await db.documents.get(exceptId) : undefined;
+  if (own && own.type === type && sameNumber(own.number, number)) return false;
   const taken = await takenNumbers(companyId, type, exceptId);
   return taken.has(number.trim().toLowerCase());
+}
+
+/**
+ * For a new document without a number in a company kept in the cloud: the
+ * next counter taken on the server while online, so two devices never give
+ * the same number. Null to number on this device (offline, kept on this
+ * device only, or called inside a transaction, which can't wait for the
+ * network).
+ */
+async function reserveDocumentCounter(input: InvoiceDocument): Promise<ReservedCounter | null> {
+  if (!canReserveCounters() || input.number.trim() || Dexie.currentTransaction) return null;
+  if (await db.documents.get(input.id)) return null;
+  const company = await db.companies.get(input.companyId);
+  if (!company) return null;
+  const rule = company.numbering[input.type] ?? defaultNumbering()[input.type];
+  const taken = await takenNumbers(company.id, input.type, input.id);
+  const local = allocateNumber(rule, input.issueDate, (n) => taken.has(n.toLowerCase()));
+  return reserveCounter({
+    companyId: company.id,
+    kind: input.type,
+    date: input.issueDate,
+    min: local.rule.next - 1,
+  });
 }
 
 /** Next number that would be assigned, for display before saving. */
@@ -534,6 +573,7 @@ async function takeOffCredits(doc: InvoiceDocument, company: Company): Promise<I
  * date. Returns the stored document.
  */
 export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocument> {
+  const reserved = await reserveDocumentCounter(input);
   return db.transaction(
     'rw',
     withStockTables([
@@ -567,18 +607,24 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
       if (!doc.number) {
         // Companies created before a document type existed have no rule for it yet.
         const rule = company.numbering[doc.type] ?? defaultNumbering()[doc.type];
-        const allocated = allocateNumber(
+        const allocated = allocateFrom(
           rule,
           doc.issueDate,
           (n) => taken.has(n.toLowerCase()),
           client?.number ?? '',
+          reserved,
         );
         doc.number = allocated.number;
         await db.companies.put({
           ...company,
           numbering: { ...company.numbering, [doc.type]: allocated.rule },
         });
-      } else if (taken.has(doc.number.toLowerCase())) {
+      } else if (
+        taken.has(doc.number.toLowerCase()) &&
+        // Saved again with the number it has: never refused, even when
+        // another device gave the same number to a document.
+        !(existing && existing.type === doc.type && sameNumber(existing.number, doc.number))
+      ) {
         throw new DuplicateNumberError(doc.number);
       }
 
