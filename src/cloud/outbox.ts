@@ -205,7 +205,7 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
   const synced = new Set(tables);
   return {
     stack: 'dbcore',
-    name: 'AlmailBooksOutbox',
+    name: 'MahamBooksOutbox',
     // Above Dexie's own middleware, so it sees the same transaction objects as Dexie.
     level: 20,
     create(down) {

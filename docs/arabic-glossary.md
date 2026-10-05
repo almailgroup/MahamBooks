@@ -12,7 +12,7 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
   receipts. Numbers are formatted by the app, never written into the text.
 - Currency: د.ك (Kuwaiti dinar), فلس (fils). "KWD" stays as is inside codes.
 - Dates: the app formats dates; do not write month names into text.
-- Brand: AlmailBooks is never translated.
+- Brand: Maham Books, written مهام بوكس on Arabic screens.
 - Placeholders such as `{name}` and `{count}` stay exactly as they are.
 - Use the comma "،" and the question mark "؟" in Arabic text.
 - Buttons and menu items: short nouns (حفظ، إلغاء، حذف، تعديل، إرسال، طباعة).

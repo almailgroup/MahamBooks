@@ -407,7 +407,7 @@ export default function AssetsPage() {
             icon={<Landmark />}
             title={t('No fixed assets yet')}
             description={t(
-              'Add what the business owns, such as computers, furniture or vehicles. AlmailBooks works out the depreciation every month.',
+              'Add what the business owns, such as computers, furniture or vehicles. Maham Books works out the depreciation every month.',
             )}
             action={
               <ButtonLink to="/assets/new">

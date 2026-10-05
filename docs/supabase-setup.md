@@ -1,6 +1,6 @@
 # Setting up the cloud (Supabase)
 
-This guide turns on accounts, teams and sync for AlmailBooks. It is written
+This guide turns on accounts, teams and sync for Maham Books. It is written
 for the owner of the Supabase project; no programming is needed. It takes about
 15 minutes.
 
@@ -105,7 +105,7 @@ custom SMTP**):
   domain (for example `almailgroup.com`, by adding the DNS records Resend
   shows), create an API key. In Supabase: host `smtp.resend.com`, port `465`,
   username `resend`, password = the API key, sender email for example
-  `no-reply@almailgroup.com`, sender name `AlmailBooks`.
+  `no-reply@almailgroup.com`, sender name `Maham Books`.
 - **Google Workspace**: create an app password for a mailbox (or use the SMTP
   relay in the Workspace admin console). Host `smtp.gmail.com`, port `465`,
   username = the mailbox address, password = the app password. Google limits

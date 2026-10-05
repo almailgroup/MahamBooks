@@ -41,20 +41,20 @@ export default {
   Actions: 'إجراءات',
   'Add from a bill': 'إضافة من فاتورة مشتريات',
   'Add line': 'إضافة بند',
-  'Add what the business owns, such as computers, furniture or vehicles. AlmailBooks works out the depreciation every month.':
-    'أضف ما تملكه الشركة مثل أجهزة الحاسب والأثاث والسيارات، وسيحتسب AlmailBooks الإهلاك كل شهر.',
+  'Add what the business owns, such as computers, furniture or vehicles. Maham Books works out the depreciation every month.':
+    'أضف ما تملكه الشركة مثل أجهزة الحاسب والأثاث والسيارات، وسيحتسب مهام بوكس الإهلاك كل شهر.',
   Additions: 'الإضافات',
   'Adjustments for:': 'تسويات لـ:',
   'Agrees with cash and bank': 'مطابق للنقد والبنوك',
   'All accounts': 'كل الحسابات',
   'All time': 'كل الفترات',
   All: 'الكل',
-  'AlmailBooks made this entry in {place}, so it can only be changed there.':
-    'أنشأ AlmailBooks هذا القيد في {place}، ولا يمكن تعديله إلا من هناك.',
-  'AlmailBooks posts to this account automatically, so its type is fixed. You can rename it or change its code.':
-    'يرحّل AlmailBooks إلى هذا الحساب تلقائياً، لذا نوعه ثابت. يمكنك تغيير اسمه أو رمزه.',
-  'AlmailBooks works out each return from your books. You then submit the figures to the tax office.':
-    'يحتسب AlmailBooks كل إقرار من دفاترك، ثم تقدّم الأرقام إلى الجهة الضريبية.',
+  'Maham Books made this entry in {place}, so it can only be changed there.':
+    'أنشأ مهام بوكس هذا القيد في {place}، ولا يمكن تعديله إلا من هناك.',
+  'Maham Books posts to this account automatically, so its type is fixed. You can rename it or change its code.':
+    'يرحّل مهام بوكس إلى هذا الحساب تلقائياً، لذا نوعه ثابت. يمكنك تغيير اسمه أو رمزه.',
+  'Maham Books works out each return from your books. You then submit the figures to the tax office.':
+    'يحتسب مهام بوكس كل إقرار من دفاترك، ثم تقدّم الأرقام إلى الجهة الضريبية.',
   'Already in the books': 'مسجّل في الدفاتر',
   Amount: 'المبلغ',
   'Amounts can’t be negative.': 'لا يمكن أن تكون المبالغ سالبة.',
@@ -110,8 +110,8 @@ export default {
   'Book value at end': 'القيمة الدفترية في النهاية',
   'Book value': 'القيمة الدفترية',
   Both: 'اللغتان',
-  'Bought before you used AlmailBooks: records its cost and the depreciation so far.':
-    'اشتُري قبل استخدامك AlmailBooks: تُسجَّل تكلفته والإهلاك حتى الآن.',
+  'Bought before you used Maham Books: records its cost and the depreciation so far.':
+    'اشتُري قبل استخدامك مهام بوكس: تُسجَّل تكلفته والإهلاك حتى الآن.',
   Bought: 'الشراء',
   'Capital introduced or withdrawn': 'رأس المال المضاف أو المسحوب',
   'Share capital': 'رأس المال',
@@ -271,8 +271,8 @@ export default {
   'Enter the purchase date and when depreciation starts.':
     'أدخل تاريخ الشراء وتاريخ بداية الإهلاك.',
   'Enter the useful life in whole months.': 'أدخل العمر الإنتاجي بالأشهر الكاملة.',
-  'Entries that don’t come from an invoice or payment: owner investments, opening balances, corrections. Entries made by AlmailBooks are marked.':
-    'القيود التي لا تأتي من فاتورة أو دفعة: استثمارات المالك والأرصدة الافتتاحية والتصحيحات. القيود التي ينشئها AlmailBooks مميزة.',
+  'Entries that don’t come from an invoice or payment: owner investments, opening balances, corrections. Entries made by Maham Books are marked.':
+    'القيود التي لا تأتي من فاتورة أو دفعة: استثمارات المالك والأرصدة الافتتاحية والتصحيحات. القيود التي ينشئها مهام بوكس مميزة.',
   Entries: 'القيود',
   'Equipment, vehicles, furniture and other things the business keeps for more than a year, and their depreciation.':
     'المعدات والسيارات والأثاث وغيرها مما تحتفظ به الشركة لأكثر من سنة، وإهلاكها.',
@@ -375,7 +375,7 @@ export default {
   'Loss for the year': 'خسارة السنة',
   'Loss on disposal': 'خسارة الاستبعاد',
   'Losses brought forward': 'الخسائر المرحّلة',
-  'Made by AlmailBooks': 'أنشأها AlmailBooks',
+  'Made by Maham Books': 'أنشأها مهام بوكس',
   Manual: 'يدوية',
   'March, June, September and December': 'مارس ويونيو وسبتمبر وديسمبر',
   'May, August, November and February': 'مايو وأغسطس ونوفمبر وفبراير',
@@ -618,8 +618,8 @@ export default {
     'يُدار هذا القيد من {place}. عدّله من هناك.',
   'This entry moves the period’s VAT to the VAT liability account. It was made when the return was filed and can only be removed by undoing the filing.':
     'ينقل هذا القيد ضريبة الفترة إلى حساب التزام ضريبة القيمة المضافة. أُنشئ عند تقديم الإقرار ولا يُحذف إلا بإلغاء التقديم.',
-  'This entry was made by AlmailBooks and cannot be changed here.':
-    'أنشأ AlmailBooks هذا القيد ولا يمكن تعديله هنا.',
+  'This entry was made by Maham Books and cannot be changed here.':
+    'أنشأ مهام بوكس هذا القيد ولا يمكن تعديله هنا.',
   'This financial year is already closed.': 'هذه السنة المالية مقفلة بالفعل.',
   'This financial year': 'السنة المالية الحالية',
   'This journal could not be found.': 'تعذّر العثور على هذا القيد.',

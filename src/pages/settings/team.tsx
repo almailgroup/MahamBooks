@@ -570,7 +570,7 @@ function InviteLink({
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const text = t('Join {company} on AlmailBooks as {role}:', {
+  const text = t('Join {company} on Maham Books as {role}:', {
     company,
     role: t(ROLE_LABELS[invite.role]),
   });

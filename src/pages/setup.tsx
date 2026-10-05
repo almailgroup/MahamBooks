@@ -19,7 +19,7 @@ import { normalizeImage } from '@/lib/image';
 import { isValidEmail } from '@/lib/email';
 import { normalizeKuwaitPhone } from '@/lib/kuwait';
 import { normalizeDigits } from '@/lib/money';
-import { APP_NAME } from '@/lib/brand';
+import { appName } from '@/lib/brand';
 import { regionDefaults } from '@/lib/regions';
 import { requestPersistentStorage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
@@ -503,7 +503,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
           <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
             <FileText className="size-4.5" aria-hidden />
           </span>
-          {APP_NAME}
+          {appName()}
         </span>
         <LanguageSwitch className="bg-surface shadow-xs ring-1 ring-slate-200" />
       </header>
@@ -511,7 +511,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
       <main className="mx-auto max-w-2xl px-4 pt-6 pb-12 sm:pt-10">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-balance text-slate-900 sm:text-4xl">
-            {t('Welcome to {app}', { app: APP_NAME })}
+            {t('Welcome to {app}', { app: appName() })}
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-base text-pretty text-slate-600">
             {configured

@@ -69,10 +69,10 @@ describe('invitation links', () => {
 
   it('are shared by WhatsApp or email with the message', () => {
     const url = `${BASE}#/invite/${TOKEN}`;
-    const whatsapp = whatsappInvite(url, 'Join Al Mail Trading on AlmailBooks as Staff:');
+    const whatsapp = whatsappInvite(url, 'Join Al Mail Trading on Maham Books as Staff:');
     expect(whatsapp.startsWith('https://wa.me/?text=')).toBe(true);
     expect(decodeURIComponent(whatsapp.split('?text=')[1])).toBe(
-      `Join Al Mail Trading on AlmailBooks as Staff:\n${url}`,
+      `Join Al Mail Trading on Maham Books as Staff:\n${url}`,
     );
     const email = emailInvite('rajesh@example.com', 'Invitation to Al Mail Trading', 'Join', url);
     expect(email.startsWith('mailto:rajesh%40example.com?subject=Invitation%20to')).toBe(true);

@@ -153,7 +153,7 @@ export default function StockEntryForm() {
             ? t('Write off damaged or expired goods, or correct the quantity after a count.')
             : kind === 'transfer'
               ? t('Move stock from one warehouse to another. Its value stays the same.')
-              : t('Stock you had before you started using AlmailBooks, valued at its cost.')
+              : t('Stock you had before you started using Maham Books, valued at its cost.')
         }
       />
 

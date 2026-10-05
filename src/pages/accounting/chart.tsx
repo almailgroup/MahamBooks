@@ -118,7 +118,7 @@ function AccountDialog({
             <p className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
               <Lock className="mt-0.5 size-4 shrink-0 text-slate-400" />
               {t(
-                'AlmailBooks posts to this account automatically, so its type is fixed. You can rename it or change its code.',
+                'Maham Books posts to this account automatically, so its type is fixed. You can rename it or change its code.',
               )}
             </p>
           ) : null}

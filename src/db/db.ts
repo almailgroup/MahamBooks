@@ -34,7 +34,7 @@ import type {
   StockEntry,
   LandedCost,
 } from './types';
-import { APP_NAME } from '@/lib/brand';
+import { DATABASE_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
 import { outboxMiddleware } from '@/cloud/outbox';
 import type { CloudLink, FileTask, OutboxEntry, SyncRev } from '@/cloud/types';
@@ -83,7 +83,7 @@ export class InvoiceDatabase extends Dexie {
   syncRevs!: Table<SyncRev, [string, string]>;
   fileQueue!: Table<FileTask, number>;
 
-  constructor(name = APP_NAME) {
+  constructor(name = DATABASE_NAME) {
     super(name);
     this.version(1).stores({
       companies: 'id, name',

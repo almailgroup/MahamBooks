@@ -27,7 +27,7 @@ export default function AppearanceSettings() {
       id="appearance"
       title={t('Appearance')}
       description={t(
-        'Choose how AlmailBooks looks on this device. Documents always print on white paper.',
+        'Choose how Maham Books looks on this device. Documents always print on white paper.',
       )}
     >
       <Switch

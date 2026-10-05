@@ -499,8 +499,21 @@ export interface Company {
   openingBalances?: { date: ISODate; journalIds: ID[] };
   /** The demo company: it stays on the device it was made on and never goes to the cloud. */
   demo?: boolean;
+  /** The company's other tools (a task manager, an HR portal…), in the sidebar. */
+  links?: CompanyLink[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** A link in the sidebar to another tool; it opens in a new tab. */
+export interface CompanyLink {
+  id: ID;
+  /** Name in the sidebar. */
+  label: string;
+  /** Name when the app is in Arabic; empty to use the name. */
+  labelAr?: string;
+  /** Web address: http or https only. */
+  url: string;
 }
 
 export interface ClientContact {
@@ -1308,7 +1321,7 @@ export type DepreciationMethod = 'straight_line' | 'declining_balance';
 /**
  * How the cost of an asset reached the books: a bill line (posted by the
  * bill), a purchase paid from a money account, an opening balance for an
- * asset bought before the company used AlmailBooks, or an entry made some
+ * asset bought before the company used Maham Books, or an entry made some
  * other way (nothing is posted for it).
  */
 export type AssetSource = 'bill' | 'purchase' | 'opening' | 'existing';

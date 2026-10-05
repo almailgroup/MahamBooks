@@ -163,7 +163,7 @@ function Editor({ initial, isNew }: { initial: ManualJournal; isNew: boolean }) 
         <div className="mb-6 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
           <Lock className="mt-0.5 size-4 shrink-0 text-slate-400" />
           <span>
-            {t('AlmailBooks made this entry in {place}, so it can only be changed there.', {
+            {t('Maham Books made this entry in {place}, so it can only be changed there.', {
               place: t(kind.owner),
             })}{' '}
             {ownerLink ? (

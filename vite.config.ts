@@ -22,8 +22,8 @@ export default defineConfig({
       includeManifestIcons: false,
       manifest: {
         id: './',
-        name: 'AlmailBooks',
-        short_name: 'AlmailBooks',
+        name: 'Maham Books',
+        short_name: 'Maham Books',
         description:
           'Free accounting and invoicing for Kuwaiti businesses, in Arabic and English. محاسبة وفوترة مجانية للأعمال في الكويت.',
         lang: 'ar',

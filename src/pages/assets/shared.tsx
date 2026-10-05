@@ -115,7 +115,7 @@ export const SOURCE_LABELS: Record<AssetSource, { label: string; hint: string }>
   },
   opening: {
     label: msg('Owned before'),
-    hint: msg('Bought before you used AlmailBooks: records its cost and the depreciation so far.'),
+    hint: msg('Bought before you used Maham Books: records its cost and the depreciation so far.'),
   },
   existing: {
     label: msg('Already in the books'),

@@ -432,8 +432,8 @@ export default {
   'Invoices to customers': 'فواتير للعملاء',
   'Bills from vendors': 'فواتير مشتريات من الموردين',
   'Balances as at': 'الأرصدة بتاريخ',
-  'Usually the last day before you start using AlmailBooks.':
-    'عادةً آخر يوم قبل بدء استخدام AlmailBooks.',
+  'Usually the last day before you start using Maham Books.':
+    'عادةً آخر يوم قبل بدء استخدام مهام بوكس.',
   'Dates in the file look like': 'شكل التواريخ في الملف',
   '31/12/2026 (day first)': '31/12/2026 (اليوم أولاً)',
   '12/31/2026 (month first)': '12/31/2026 (الشهر أولاً)',

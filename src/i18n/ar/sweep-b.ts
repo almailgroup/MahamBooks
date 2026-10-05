@@ -41,7 +41,7 @@ export default {
   // Backups
   'This file is not a valid backup (it is not JSON).':
     'هذا الملف ليس نسخة احتياطية صالحة (ليس بصيغة JSON).',
-  'This file is not an {app} backup, or it is damaged.':
+  'This file is not a {app} backup, or it is damaged.':
     'هذا الملف ليس نسخة احتياطية من {app}، أو أنه تالف.',
   'This backup was made by a newer version of the app. Please update first.':
     'أُنشئت هذه النسخة الاحتياطية بإصدار أحدث من التطبيق. حدّث التطبيق أولاً.',

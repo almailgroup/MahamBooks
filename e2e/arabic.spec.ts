@@ -59,16 +59,7 @@ async function englishInInterface(page: Page, typed: string[]): Promise<string[]
     const selector =
       'h1, h2, h3, h4, [role="heading"], button, [role="button"], [role="tab"], label, nav a';
     const skipped = 'svg, kbd, [lang^="en"], [data-sonner-toaster], [role="img"]';
-    const allowed = [
-      'AlmailBooks',
-      'English',
-      'Ctrl',
-      'WhatsApp',
-      'MyFatoorah',
-      'Tabby',
-      'Taly',
-      'Deema',
-    ];
+    const allowed = ['English', 'Ctrl', 'WhatsApp', 'MyFatoorah', 'Tabby', 'Taly', 'Deema'];
     const found: string[] = [];
     for (const element of document.querySelectorAll<HTMLElement>(selector)) {
       if (!element.closest(areas) || element.closest(skipped)) continue;

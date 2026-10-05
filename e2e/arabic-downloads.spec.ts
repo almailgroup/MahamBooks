@@ -112,7 +112,5 @@ test('files downloaded in Arabic keep meaningful names', async ({ page }) => {
   const backup = await downloadFrom(page, () =>
     page.getByRole('button', { name: /^نسخ احتياطي لـ/ }).click(),
   );
-  expect(backup.file.suggestedFilename()).toMatch(
-    new RegExp(`^AlmailBooks-backup-${DATE}\\.json$`),
-  );
+  expect(backup.file.suggestedFilename()).toMatch(new RegExp(`^MahamBooks-backup-${DATE}\\.json$`));
 });

@@ -549,7 +549,7 @@ export default function ImportSettings() {
           {kind === 'contacts' || kind === 'opening' ? (
             <Field
               label={t('Balances as at')}
-              hint={t('Usually the last day before you start using AlmailBooks.')}
+              hint={t('Usually the last day before you start using Maham Books.')}
             >
               {(id) => (
                 <DateField id={id} value={asOf} max={today()} onChange={(iso) => setAsOf(iso)} />

@@ -35,7 +35,7 @@ export default function JournalsPage() {
       <PageHeader
         title={t('Manual journals')}
         description={t(
-          'Entries that don’t come from an invoice or payment: owner investments, opening balances, corrections. Entries made by AlmailBooks are marked.',
+          'Entries that don’t come from an invoice or payment: owner investments, opening balances, corrections. Entries made by Maham Books are marked.',
         )}
         actions={
           <ButtonLink to="/journals/new">
@@ -68,7 +68,7 @@ export default function JournalsPage() {
                   options={[
                     { value: 'all', label: t('All'), count: journals.length },
                     { value: 'manual', label: t('Manual'), count: journals.length - systemCount },
-                    { value: 'system', label: t('Made by AlmailBooks'), count: systemCount },
+                    { value: 'system', label: t('Made by Maham Books'), count: systemCount },
                   ]}
                 />
               </div>

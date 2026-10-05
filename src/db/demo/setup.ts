@@ -57,7 +57,7 @@ const P = 3;
 const JOINS_LATER: EmployeeKey[] = ['sherif'];
 
 /**
- * Creates the company as it stood the day it started using AlmailBooks: its
+ * Creates the company as it stood the day it started using Maham Books: its
  * profile and bank accounts, contacts, items, warehouses with their opening
  * stock, staff with their leave balances, fixed assets, and one opening
  * entry for everything else (bank balances, provisions, capital, reserves).
@@ -111,7 +111,7 @@ export async function setUpCompany(books: DemoBooks, opening: ISODate): Promise<
       showAmountInWords: true,
       showHijriDate: true,
     },
-    // The company started using AlmailBooks on the day its books were opened.
+    // The company started using Maham Books on the day its books were opened.
     createdAt: `${opening}T06:00:00.000Z`,
     updatedAt: `${opening}T06:00:00.000Z`,
   });

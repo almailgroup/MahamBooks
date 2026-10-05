@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Eye, EyeOff, FileText } from 'lucide-react';
-import { APP_NAME } from '@/lib/brand';
+import { appName } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { LanguageSwitch } from '@/i18n/language-switch';
@@ -32,7 +32,7 @@ export function AuthShell({
           <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
             <FileText className="size-4.5" aria-hidden />
           </span>
-          {APP_NAME}
+          {appName()}
         </Link>
         <div className="flex items-center gap-1">
           <ThemeMenu className="size-9 rounded-lg text-slate-500" />

@@ -229,7 +229,7 @@ export default function AccountingSettings() {
       <SettingsSection
         title={t('VAT returns')}
         description={t(
-          'AlmailBooks works out each return from your books. You then submit the figures to the tax office.',
+          'Maham Books works out each return from your books. You then submit the figures to the tax office.',
         )}
         actions={
           vat.registered ? (

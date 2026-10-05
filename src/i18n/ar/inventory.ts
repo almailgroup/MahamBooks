@@ -221,8 +221,8 @@ export default {
   'Stock value': 'قيمة المخزون',
   'Stock valued at weighted average cost (IAS 2), at the end of {date}.':
     'المخزون مقيّم بالمتوسط المرجح للتكلفة (معيار المحاسبة الدولي 2)، في نهاية {date}.',
-  'Stock you had before you started using AlmailBooks, valued at its cost.':
-    'المخزون الذي كان لديك قبل بدء استخدام AlmailBooks، مقيّماً بتكلفته.',
+  'Stock you had before you started using Maham Books, valued at its cost.':
+    'المخزون الذي كان لديك قبل بدء استخدام مهام بوكس، مقيّماً بتكلفته.',
   'Suggested order': 'الكمية المقترحة للطلب',
   'The bill from the customs broker, the shipper or the insurer.':
     'فاتورة المخلص الجمركي أو شركة الشحن أو شركة التأمين.',

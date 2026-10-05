@@ -5,13 +5,13 @@ test.use({ serviceWorkers: 'allow' });
 test('keeps working without a connection once loaded', async ({ page, context }) => {
   test.setTimeout(120_000);
   await page.goto('./');
-  await expect(page.getByText('AlmailBooks now works offline')).toBeVisible();
+  await expect(page.getByText('Maham Books now works offline')).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
 
   // The demo, with its logo and stamp, comes from the cache too.
   await context.setOffline(true);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome to Maham Books' })).toBeVisible();
   await page.getByRole('button', { name: 'Explore with demo data' }).click();
   await expect(
     page.getByText('Demo company created. You can delete it later in Settings.'),

@@ -1,11 +1,11 @@
-# AlmailBooks
+# Maham Books
 
 Free accounting and invoicing for businesses in Kuwait, in Arabic and English.
 Built by AL Mail Group.
 
 <p dir="rtl" lang="ar">برنامج مجاني للمحاسبة والفواتير، مصمم للشركات في الكويت، باللغتين العربية والإنجليزية.</p>
 
-AlmailBooks runs in the browser and is hosted on Vercel. It works on one
+Maham Books runs in the browser and is hosted on Vercel. It works on one
 device without an account, or with an account that keeps your companies in the
 cloud (Supabase), on all your devices and with your team, and still works
 offline.

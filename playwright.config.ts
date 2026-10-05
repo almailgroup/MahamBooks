@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
 // sub-path GitHub Pages uses. Build first: `npm run build` (or `npm run test:e2e`).
 // E2E_PORT lets several checkouts run their tests side by side.
 const PORT = Number(process.env.E2E_PORT ?? 4173);
-const BASE_PATH = '/AlmailBooks/';
+const BASE_PATH = '/MahamBooks/';
 const CI = Boolean(process.env.CI);
 
 export default defineConfig({

@@ -308,7 +308,7 @@ function ownedError(journal: ManualJournal): JournalError {
   return new JournalError(
     owner
       ? t('This entry is managed in {place}. Change it there.', { place: t(owner) })
-      : t('This entry was made by AlmailBooks and cannot be changed here.'),
+      : t('This entry was made by Maham Books and cannot be changed here.'),
   );
 }
 

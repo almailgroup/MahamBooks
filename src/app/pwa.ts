@@ -1,6 +1,6 @@
 import { registerSW } from 'virtual:pwa-register';
 import { toast } from 'sonner';
-import { APP_NAME } from '@/lib/brand';
+import { appName } from '@/lib/brand';
 import { t } from '@/i18n';
 import { activateUpdate } from './update';
 
@@ -18,7 +18,7 @@ export function registerServiceWorker(): void {
   registerSW({
     onNeedRefresh() {
       // Called more than once for updates found by a background check.
-      toast(t('A new version of {app} is available', { app: APP_NAME }), {
+      toast(t('A new version of {app} is available', { app: appName() }), {
         id: 'app-update',
         description: t('Save your work, then reload to update.'),
         duration: Infinity,
@@ -26,7 +26,7 @@ export function registerServiceWorker(): void {
       });
     },
     onOfflineReady() {
-      toast.success(t('{app} now works offline', { app: APP_NAME }), {
+      toast.success(t('{app} now works offline', { app: appName() }), {
         description: t('You can also install it as an app from your browser menu.'),
       });
     },

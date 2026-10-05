@@ -1,4 +1,4 @@
-# AlmailBooks cloud (Supabase)
+# Maham Books cloud (Supabase)
 
 `migrations/20261004000000_almailbooks_cloud.sql` is the whole server: tables,
 row-level security, the functions the app calls, the Storage bucket and its

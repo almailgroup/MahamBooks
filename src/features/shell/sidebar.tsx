@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
-import { Building2, Check, ChevronDown, ChevronsUpDown, Plus } from 'lucide-react';
+import { Building2, Check, ChevronDown, ChevronsUpDown, ExternalLink, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { APP_NAME } from '@/lib/brand';
+import { appName } from '@/lib/brand';
+import { sidebarLinks } from '@/lib/links';
 import { useCompanyContext } from '@/app/company';
 import {
   DropdownContent,
@@ -91,7 +92,7 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
               {localName(company)}
             </span>
             <span className="block truncate text-xs text-slate-500">
-              {company.currency} · {APP_NAME}
+              {company.currency} · {appName()}
             </span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-slate-400" aria-hidden />
@@ -146,6 +147,34 @@ function useGroupState(active: string | null) {
   return { state, toggle };
 }
 
+/** The company's other tools (Settings → Links); they open in a new tab. */
+function CompanyLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const { company } = useCompanyContext();
+  const links = sidebarLinks(company.links);
+  if (!links.length) return null;
+  return (
+    <ul className="mt-3 space-y-0.5" aria-label={t('Links')}>
+      {links.map((link) => (
+        <li key={link.id}>
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNavigate}
+            className={cn(itemBase, itemHeight, itemIdle)}
+          >
+            <ExternalLink aria-hidden />
+            <span className="min-w-0 flex-1 truncate">
+              {localName({ name: link.label, nameAr: link.labelAr })}
+            </span>
+            <span className="sr-only">{t('(opens in a new tab)')}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const taxesOn = useTaxesEnabled();
   const { pathname } = useLocation();
@@ -197,6 +226,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             ),
           )}
         </ul>
+        <CompanyLinks onNavigate={onNavigate} />
       </nav>
       <div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <ul className="space-y-0.5">

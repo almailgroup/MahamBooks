@@ -39,7 +39,7 @@ async function signOutRemovingCompanies(page: Page, account: ReturnType<Page['ge
   const dialog = page.getByRole('dialog', { name: 'Sign out?' });
   await dialog.getByText('Remove them from this device').click();
   await dialog.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('heading', { name: 'Welcome to AlmailBooks' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome to Maham Books' })).toBeVisible();
 }
 
 test('creating an account asks to confirm the email address', async ({ page }) => {

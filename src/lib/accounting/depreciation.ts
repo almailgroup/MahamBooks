@@ -109,7 +109,7 @@ export function decliningRateOf(
 }
 
 interface Start {
-  /** First day AlmailBooks charges depreciation for. */
+  /** First day Maham Books charges depreciation for. */
   begin: ISODate;
   /** Depreciation already charged at `begin` (minor units). */
   accumulated: number;
@@ -137,7 +137,7 @@ export function depreciableAmount(terms: DepreciationTerms, precision: number): 
 }
 
 /**
- * Walks the months from the first day AlmailBooks depreciates, calling
+ * Walks the months from the first day Maham Books depreciates, calling
  * `visit` with the accumulated depreciation at the end of each piece. Stops
  * when the asset is fully depreciated, at `until`, or after 100 years.
  */
@@ -208,7 +208,7 @@ export interface ScheduleRow {
   bookValue: number;
 }
 
-/** Month-by-month depreciation from the first month AlmailBooks depreciates to the end of the life. */
+/** Month-by-month depreciation from the first month Maham Books depreciates to the end of the life. */
 export function depreciationSchedule(terms: DepreciationTerms, precision: number): ScheduleRow[] {
   const start = startOf(terms, precision);
   const cost = toMinor(terms.cost, precision);

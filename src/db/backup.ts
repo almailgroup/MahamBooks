@@ -3,7 +3,7 @@ import { db, DATA_TABLES, setMeta, getMeta, type DataTable } from './db';
 import { CURRENT_COMPANY_KEY, SYNC_TABLES } from './records';
 import { seedMissingCharts } from './chart-setup';
 import type { Company, ID } from './types';
-import { APP_NAME } from '@/lib/brand';
+import { APP_NAME, appName, FILE_PREFIX } from '@/lib/brand';
 import { t } from '@/i18n';
 
 export const BACKUP_FORMAT = 1;
@@ -94,7 +94,7 @@ export function backupFileName(company?: Pick<Company, 'name'>): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  return `${APP_NAME}-backup${slug ? `-${slug}` : ''}-${stamp}.json`;
+  return `${FILE_PREFIX}-backup${slug ? `-${slug}` : ''}-${stamp}.json`;
 }
 
 export function parseBackup(text: string): Backup {
@@ -107,7 +107,7 @@ export function parseBackup(text: string): Backup {
   const result = backupSchema.safeParse(json);
   if (!result.success) {
     throw new BackupError(
-      t('This file is not an {app} backup, or it is damaged.', { app: APP_NAME }),
+      t('This file is not a {app} backup, or it is damaged.', { app: appName() }),
     );
   }
   if (result.data.format > BACKUP_FORMAT) {

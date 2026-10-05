@@ -59,13 +59,13 @@ describe('backup', () => {
   it('labels backups with the app name and accepts any label with the right structure', async () => {
     const a = await setupCompany({ name: 'A' });
     const backup = await exportBackup(a.id);
-    expect(backup.app).toBe('AlmailBooks');
+    expect(backup.app).toBe('Maham Books');
     expect(backupFileName({ name: 'A Co' })).toMatch(
-      /^AlmailBooks-backup-a-co-\d{4}-\d{2}-\d{2}\.json$/,
+      /^MahamBooks-backup-a-co-\d{4}-\d{2}-\d{2}\.json$/,
     );
     // A name in Arabic letters only is left out, without a double dash.
     expect(backupFileName({ name: 'شركة الميل' })).toMatch(
-      /^AlmailBooks-backup-\d{4}-\d{2}-\d{2}\.json$/,
+      /^MahamBooks-backup-\d{4}-\d{2}-\d{2}\.json$/,
     );
     const earlierBuild = JSON.stringify({ ...backup, app: 'earlier-build' });
     await db.delete();
@@ -80,6 +80,7 @@ describe('backup', () => {
     expect(() =>
       parseBackup(
         JSON.stringify({
+          // Made before the product was renamed: still read.
           app: 'AlmailBooks',
           format: 99,
           exportedAt: '',

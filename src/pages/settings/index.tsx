@@ -12,6 +12,7 @@ import {
   Hash,
   Languages,
   Layers,
+  Link2,
   Mail,
   Palette,
   Percent,
@@ -36,6 +37,7 @@ const AppearanceSettings = lazy(() => import('./appearance'));
 const AccountSettings = lazy(() => import('./account'));
 const TeamSettings = lazy(() => import('./team'));
 const CloudSettings = lazy(() => import('./cloud'));
+const LinkSettings = lazy(() => import('./links'));
 
 const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
   {
@@ -43,6 +45,7 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
     items: [
       { path: 'company', label: msg('Company profile'), icon: <Building2 /> },
       { path: 'companies', label: msg('Companies'), icon: <Layers /> },
+      { path: 'links', label: msg('Links'), icon: <Link2 /> },
     ],
   },
   {
@@ -161,6 +164,7 @@ export default function SettingsPage() {
               <Route path="account" element={<AccountSettings />} />
               <Route path="team" element={<TeamSettings />} />
               <Route path="cloud" element={<CloudSettings />} />
+              <Route path="links" element={<LinkSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

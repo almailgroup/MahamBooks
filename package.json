@@ -1,8 +1,8 @@
 {
-  "name": "AlmailBooks",
+  "name": "maham-books",
   "private": true,
   "version": "0.1.0",
-  "description": "AlmailBooks: invoices, quotes, payments and reports with modern templates. Runs entirely in the browser and deploys to GitHub Pages.",
+  "description": "Maham Books: accounting, invoicing and payroll for Kuwaiti businesses, in Arabic and English. Runs in the browser, with optional cloud sync.",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
