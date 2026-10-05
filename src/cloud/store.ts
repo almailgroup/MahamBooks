@@ -140,7 +140,8 @@ export async function signOutCloud({ removeCompanies }: { removeCompanies: boole
   stopSync();
   if (removeCompanies && userId) {
     const linked = await db.syncState.filter((l) => l.userId === userId).toArray();
-    for (const link of linked) await deleteCompany(link.companyId);
+    // The sign-out dialog counts the changes not sent yet before this.
+    for (const link of linked) await deleteCompany(link.companyId, { force: true });
   }
   await authSignOut();
   update({ user: null });

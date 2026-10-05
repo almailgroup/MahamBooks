@@ -1,11 +1,12 @@
 import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { Eye, Lock } from 'lucide-react';
+import { Eye, Info, Lock } from 'lucide-react';
 import { useCompany } from '@/app/company';
 import { t } from '@/i18n';
 import { buttonClass } from '@/components/ui/button';
 import { Card, EmptyState } from '@/components/ui/misc';
 import type { ReadOnlyState } from '@/components/ui/read-only';
+import { cn } from '@/lib/cn';
 import { useCloudLink } from '@/cloud/hooks';
 import { canSeePeople, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
 
@@ -14,6 +15,8 @@ export interface RoleView {
   role: MemberRole | null;
   /** Payroll and people pages are hidden. */
   peopleHidden: boolean;
+  /** The company's link to the cloud has been read (until then the role is not known). */
+  known: boolean;
   readOnly: ReadOnlyState;
 }
 
@@ -28,6 +31,7 @@ export function useRoleView(): RoleView {
     return {
       role,
       peopleHidden: !canSeePeople(role),
+      known: link !== undefined,
       readOnly: {
         readOnly: viewer || removed,
         reason: removed ? t('No longer shared with you') : viewer ? t('View only') : '',
@@ -38,7 +42,9 @@ export function useRoleView(): RoleView {
 
 /** Payroll and people pages: shown only to roles that may see them. */
 export function PeopleGate({ children }: { children: ReactNode }) {
-  const { peopleHidden, role } = useRoleView();
+  const { peopleHidden, role, known } = useRoleView();
+  // Nothing until the role is known: a page of salaries must not flash up.
+  if (!known) return null;
   if (!peopleHidden) return <>{children}</>;
   return (
     <Card className="mx-auto max-w-xl">
@@ -56,6 +62,28 @@ export function PeopleGate({ children }: { children: ReactNode }) {
         }
       />
     </Card>
+  );
+}
+
+/**
+ * Next to bank balances, the profit and loss, balance sheet, trial balance,
+ * cash flow and dashboard totals of people who don't see payroll (staff and
+ * viewers): payroll entries are private, so those figures leave them out.
+ */
+export function PayrollNotIncluded({ className }: { className?: string }) {
+  const { peopleHidden } = useRoleView();
+  if (!peopleHidden) return null;
+  return (
+    <p
+      role="note"
+      className={cn(
+        'flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 ring-1 ring-slate-200',
+        className,
+      )}
+    >
+      <Info className="mt-0.5 size-4 shrink-0 text-slate-400" aria-hidden />
+      {t('Payroll isn’t included in what you see.')}
+    </p>
   );
 }
 

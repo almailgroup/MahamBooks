@@ -25,12 +25,13 @@ import { useTaxesEnabled } from '@/features/company/taxes';
 import { NAV, NAV_FOOTER } from '@/features/shell/nav';
 import { CREATE_GROUPS } from '@/features/shell/create';
 import { useLanguage } from '@/i18n/provider';
+import { useSwitchLanguage } from '@/hooks/use-switch-language';
 import { msg, t, tp } from '@/i18n';
 import { useTheme } from '@/features/theme/provider';
 import { chooseTheme } from '@/lib/themes';
 import { makeEntry, searchEntries, type SearchEntry, type SearchKind } from './rank';
 import { recordEntries, staticEntries } from './sources';
-import { loadRecent, rememberRecent, type RecentItem } from './recent';
+import { isPeopleItem, loadRecent, rememberRecent, type RecentItem } from './recent';
 import { toast } from 'sonner';
 import { useCloud } from '@/cloud/store';
 import { useCloudStatus } from '@/cloud/hooks';
@@ -142,16 +143,24 @@ function PaletteBody({
   const fmt = useFormat();
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
-  const { language, setLanguage } = useLanguage();
+  const { language } = useLanguage();
+  const switchLanguage = useSwitchLanguage();
   const { preference, theme, setPreference } = useTheme();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const [recent] = useState<RecentItem[]>(() => loadRecent(company.id));
+  const [saved] = useState<RecentItem[]>(() => loadRecent(company.id));
   const deferred = useDeferredValue(query);
   const listId = useId();
 
   const dark = theme.scheme === 'dark';
-  const { peopleHidden } = useRoleView();
+  const { peopleHidden, known } = useRoleView();
+  // Until the role is known, nothing of payroll and people is offered.
+  const hidePeople = peopleHidden || !known;
+  // Items opened before a role change (or by someone else here) stay out too.
+  const recent = useMemo(
+    () => (hidePeople ? saved.filter((item) => !isPeopleItem(item)) : saved),
+    [saved, hidePeople],
+  );
   const sync = useCloudStatus(company.id);
   const { manager } = useCloud();
   const syncText = syncLabel(sync);
@@ -159,7 +168,7 @@ function PaletteBody({
   const fixed = useMemo(() => {
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
-      ...staticEntries(taxesOn, { people: !peopleHidden }),
+      ...staticEntries(taxesOn, { people: !hidePeople }),
       makeEntry({
         key: 'action:sync-status',
         kind: 'action',
@@ -216,11 +225,15 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, language, dark, peopleHidden, syncText, syncing]);
-  const records = useLiveQuery(
+  }, [taxesOn, language, dark, hidePeople, syncText, syncing]);
+  const found = useLiveQuery(
     () => recordEntries(company, fmt),
     // `language` changes the names and words shown.
     [company, fmt, language],
+  );
+  const records = useMemo(
+    () => (hidePeople ? found?.filter((entry) => !isPeopleItem(entry)) : found),
+    [found, hidePeople],
   );
 
   const sections = useMemo<Section[]>(() => {
@@ -276,7 +289,8 @@ function PaletteBody({
     if (!entry) return;
     onClose();
     if (entry.key === LANGUAGE_KEY) {
-      void setLanguage(language === 'ar' ? 'en' : 'ar');
+      // Asks first when a form has unsaved changes.
+      void switchLanguage(language === 'ar' ? 'en' : 'ar');
       return;
     }
     if (entry.key === THEME_SWITCH_KEY) {

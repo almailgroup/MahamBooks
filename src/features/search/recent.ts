@@ -10,6 +10,18 @@ export interface RecentItem {
 }
 
 const MAX_RECENT = 6;
+
+/** Pages of payroll and people data. */
+const PEOPLE_PATHS = /^\/(employees|payroll)(\/|$)/;
+
+/**
+ * Whether something in the palette is payroll or people data: an employee,
+ * or a payroll or employee page. Staff and viewers don't see these, not even
+ * among the items opened before their role changed.
+ */
+export function isPeopleItem(item: Pick<RecentItem, 'kind' | 'to'>): boolean {
+  return item.kind === 'employee' || PEOPLE_PATHS.test(item.to.split(/[?#]/)[0]);
+}
 const storageKey = (companyId: string) => `almailbooks.palette.recent:${companyId}`;
 
 export function loadRecent(companyId: string): RecentItem[] {

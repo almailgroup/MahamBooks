@@ -6,6 +6,7 @@ import type { Account, AccountType } from '@/db/types';
 import { accountInUse, createAccount, deleteAccount, saveAccount } from '@/db/accounting';
 import { useCompany, useFormat } from '@/app/company';
 import { useLedger } from '@/features/accounting/use-ledger';
+import { PayrollNotIncluded } from '@/features/cloud/role-gates';
 import {
   ACCOUNT_GROUP_LABELS,
   ACCOUNT_TYPE_ORDER,
@@ -356,6 +357,7 @@ export default function ChartOfAccountsPage() {
           </Button>
         }
       />
+      <PayrollNotIncluded className="mb-4" />
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div className="relative w-full max-w-xs">

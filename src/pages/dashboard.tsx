@@ -43,6 +43,7 @@ import { daysText, entryTitle } from '@/features/renewals/display';
 import { usePayRuns, usePayrollSettings } from '@/features/payroll/hooks';
 import { useEmployees } from '@/features/people/hooks';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { PayrollNotIncluded } from '@/features/cloud/role-gates';
 import { ButtonLink } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
@@ -387,6 +388,7 @@ export default function DashboardPage() {
         </section>
       ) : null}
 
+      <PayrollNotIncluded className="order-1 lg:order-none" />
       <section
         aria-label={t('Key figures')}
         className="order-1 grid grid-cols-2 gap-3 lg:order-none lg:grid-cols-4 lg:gap-4"

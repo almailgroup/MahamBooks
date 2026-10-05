@@ -2,8 +2,9 @@ import { useNavigate } from 'react-router';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deleteCompany } from '@/db/records';
-import { keepOffDevice } from '@/cloud/kept-off';
+import { deleteCompany, unsentChanges } from '@/db/records';
+import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
+import { unsentWarning } from '@/features/cloud/unsent';
 import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
 import { countryName, currencyName } from '@/lib/geo';
@@ -25,24 +26,38 @@ export default function CompaniesSettings() {
     // everyone from Settings → Team, by its owner.
     const link = await db.syncState.get(id);
     const inCloud = Boolean(link);
+    // Changes not sent yet are lost with this device's copy (as Settings →
+    // Cloud and sync says).
+    const unsent = inCloud ? await unsentChanges(id) : 0;
     const ok = await confirm({
       title: inCloud
         ? t('Remove {name} from this device?', { name })
         : t('Delete {name}?', { name }),
-      description: inCloud
-        ? t(
-            'It stays in the cloud for you and your team, and you can download it again. To delete it for everyone, the owner uses Settings → Team.',
-          )
-        : t(
-            'All of its clients, products, invoices, quotes, payments and settings are permanently deleted from this browser. Download a backup first if you may need them.',
-          ),
+      description: unsent
+        ? unsentWarning(unsent)
+        : inCloud
+          ? t(
+              'It stays in the cloud for you and your team, and you can download it again. To delete it for everyone, the owner uses Settings → Team.',
+            )
+          : t(
+              'All of its clients, products, invoices, quotes, payments and settings are permanently deleted from this browser. Download a backup first if you may need them.',
+            ),
       confirmLabel: inCloud ? t('Remove from this device') : t('Delete company'),
       danger: true,
     });
     if (!ok) return;
-    // Removed on purpose: it doesn't come back to this device by itself.
-    if (link) await keepOffDevice(link.userId, id);
-    await deleteCompany(id);
+    try {
+      // Removed on purpose: it doesn't come back to this device by itself.
+      if (link) await keepOffDevice(link.userId, id);
+      // Only the changes counted above may be lost; any queued since stop it.
+      await deleteCompany(id, { force: unsent > 0 }).catch(async (error: unknown) => {
+        if (link) await allowOnDevice(link.userId, id);
+        throw error;
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Could not delete the data.'));
+      return;
+    }
     toast.success(
       inCloud ? t('{name} was removed from this device.', { name }) : t('{name} deleted', { name }),
     );

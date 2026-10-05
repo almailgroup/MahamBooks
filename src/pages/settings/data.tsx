@@ -6,14 +6,18 @@ import { db, getMeta } from '@/db/db';
 import {
   backupFileName,
   exportBackup,
+  fetchMissingFiles,
   importBackup,
   LAST_BACKUP_KEY,
   markBackedUp,
   parseBackup,
+  restoreImpact,
   summarizeBackup,
   wipeAllData,
   type Backup,
+  type RestoreImpact,
 } from '@/db/backup';
+import { assertNothingUnsent, unsentChanges } from '@/db/records';
 import { useCompany, useFormat } from '@/app/company';
 import { localName } from '@/i18n/names';
 import { normalizeImage } from '@/lib/image';
@@ -21,7 +25,9 @@ import { appName } from '@/lib/brand';
 import { downloadName } from '@/lib/file-names';
 import { formatBytes, requestPersistentStorage, storageStatus } from '@/lib/storage';
 import { daysBetween, today } from '@/lib/dates';
-import { msg, t, tp } from '@/i18n';
+import { currentLanguage, msg, t, tp } from '@/i18n';
+import { signOutCloud, useCloud } from '@/cloud/store';
+import { unsentWarning } from '@/features/cloud/unsent';
 import { tr } from '@/i18n/provider';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge } from '@/components/ui/misc';
@@ -33,6 +39,18 @@ import {
   useConfirm,
 } from '@/components/ui/overlay';
 import { SettingsSection } from './shared';
+
+/** Why a backup could not be made, for a person. */
+function backupProblem(error: unknown): string {
+  // JSON.stringify can't build a text this long (hundreds of MB of scans).
+  if (error instanceof RangeError) return t('The backup is too large to save as one file.');
+  return error instanceof Error && error.message ? error.message : t('Could not make the backup.');
+}
+
+/** Company names in a sentence. */
+function namesOf(companies: Parameters<typeof localName>[0][]): string {
+  return companies.map((c) => localName(c)).join(currentLanguage() === 'ar' ? '، ' : ', ');
+}
 
 function downloadJson(data: unknown, name: string) {
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
@@ -67,10 +85,12 @@ export default function DataSettings() {
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
+  const { user } = useCloud();
   const input = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Awaited<ReturnType<typeof storageStatus>> | null>(null);
-  const [pending, setPending] = useState<Backup | null>(null);
+  const [chosen, setChosen] = useState<{ backup: Backup; impact: RestoreImpact } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [files, setFiles] = useState<{ done: number; total: number } | null>(null);
   const lastBackup = useLiveQuery(() => getMeta<string | null>(LAST_BACKUP_KEY, null), []);
   const companyCount = useLiveQuery(() => db.companies.count(), []);
 
@@ -81,11 +101,42 @@ export default function DataSettings() {
   const backup = async (all: boolean) => {
     setBusy(all ? 'all' : 'one');
     try {
-      const data = await exportBackup(all ? undefined : company.id);
+      const companyId = all ? undefined : company.id;
+      // Files kept in the cloud and not on this device yet come here first,
+      // so that the backup holds them. One that can't come is asked about below.
+      const { failed } = await fetchMissingFiles(
+        companyId,
+        async (file) => (await import('@/cloud/attachments')).attachmentContent(file.id),
+        (done, total) => setFiles(total ? { done, total } : null),
+      );
+      setFiles(null);
+      if (failed.length) {
+        const ok = await confirm({
+          title: tp(
+            failed.length,
+            'Back up without {count} file?',
+            'Back up without {count} files?',
+          ),
+          description: t(
+            'They are kept in the cloud and could not be downloaded now, for example because this device is offline or signed out. The backup lists them, without their content.',
+          ),
+          confirmLabel: t('Back up without them'),
+        });
+        if (!ok) return;
+      }
+      const data = await exportBackup(companyId);
       downloadJson(data, backupFileName(all ? undefined : company));
       await markBackedUp();
-      toast.success(t('Backup downloaded. Keep it somewhere safe, such as a cloud drive.'));
+      const left = data.missingFiles?.length ?? 0;
+      toast.success(t('Backup downloaded. Keep it somewhere safe, such as a cloud drive.'), {
+        description: left
+          ? tp(left, '{count} file is not in this backup.', '{count} files are not in this backup.')
+          : undefined,
+      });
+    } catch (error) {
+      toast.error(backupProblem(error));
     } finally {
+      setFiles(null);
       setBusy(null);
     }
   };
@@ -93,28 +144,63 @@ export default function DataSettings() {
   const chooseFile = async (file: File | undefined) => {
     if (!file) return;
     try {
-      setPending(parseBackup(await file.text()));
+      const backup = parseBackup(await file.text());
+      setChosen({ backup, impact: await restoreImpact(backup) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not read the file.'));
     }
   };
 
   const restore = async (mode: 'replace' | 'merge') => {
-    if (!pending) return;
+    if (!chosen) return;
+    // Changes not sent yet that the person agreed to lose (Replace only).
+    let agreed = false;
     if (mode === 'replace') {
+      // Counted again: changes may have been made since the file was chosen.
+      const impact = await restoreImpact(chosen.backup);
       const ok = await confirm({
         title: t('Replace all data?'),
-        description: t('Everything stored in this browser is deleted and replaced by the backup.'),
+        description: (
+          <div className="space-y-2">
+            <p>{t('Everything stored in this browser is deleted and replaced by the backup.')}</p>
+            {impact.inCloud.length ? (
+              <p>
+                {tp(
+                  impact.inCloud.length,
+                  'Afterwards {names} is a copy on this device only and no longer syncs with your team. The cloud copy is not changed.',
+                  'Afterwards {names} are copies on this device only and no longer sync with your team. The cloud copies are not changed.',
+                  { names: namesOf(impact.inCloud) },
+                )}
+              </p>
+            ) : null}
+            {impact.unsent ? (
+              <p className="font-medium text-red-700">{unsentWarning(impact.unsent)}</p>
+            ) : null}
+          </div>
+        ),
         confirmLabel: t('Replace everything'),
         danger: true,
       });
       if (!ok) return;
+      agreed = impact.unsent > 0;
     }
     setBusy(mode);
     try {
-      await importBackup(pending, mode, (logo) => normalizeImage(logo));
-      toast.success(t('Backup restored'));
-      setPending(null);
+      // Changes queued after the count are not lost unseen: the restore is
+      // refused and says so.
+      const result = await importBackup(chosen.backup, mode, (logo) => normalizeImage(logo), {
+        force: agreed,
+      });
+      if (mode === 'merge') {
+        toast.success(t('Backup merged'), {
+          description: tp(
+            result.added,
+            '{count} record added. Records already here were kept as they are.',
+            '{count} records added. Records already here were kept as they are.',
+          ),
+        });
+      } else toast.success(t('Backup restored'));
+      setChosen(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not restore the backup.'));
     } finally {
@@ -123,17 +209,41 @@ export default function DataSettings() {
   };
 
   const wipe = async () => {
+    const unsent = await unsentChanges();
     const ok = await confirm({
       title: t('Delete all data in this browser?'),
-      description: t(
-        'All companies, clients, invoices and payments stored here are removed permanently. Download a backup first.',
+      description: (
+        <div className="space-y-2">
+          <p>
+            {t(
+              'All companies, clients, invoices and payments stored here are removed permanently. Download a backup first.',
+            )}
+          </p>
+          {user ? (
+            <p>
+              {t(
+                'You are also signed out on this device, so your companies kept in the cloud don’t download again until you sign in.',
+              )}
+            </p>
+          ) : null}
+          {unsent ? <p className="font-medium text-red-700">{unsentWarning(unsent)}</p> : null}
+        </div>
       ),
       confirmLabel: t('Delete everything'),
       danger: true,
     });
     if (!ok) return;
-    await wipeAllData();
-    window.location.reload();
+    // Only the changes counted above may be lost; any queued since stop it.
+    const agreed = unsent > 0;
+    try {
+      if (!agreed) await assertNothingUnsent();
+      // Signed out first, so the account's companies don't come straight back.
+      if (user) await signOutCloud({ removeCompanies: false });
+      await wipeAllData({ force: agreed });
+      window.location.reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Could not delete the data.'));
+    }
   };
 
   const age = lastBackup ? daysBetween(lastBackup.slice(0, 10), today()) : null;
@@ -176,6 +286,11 @@ export default function DataSettings() {
             </Button>
           ) : null}
         </div>
+        {files ? (
+          <p role="status" className="text-sm text-slate-600">
+            {t('Downloading files from the cloud: {done} of {total}', files)}
+          </p>
+        ) : null}
       </SettingsSection>
 
       <SettingsSection
@@ -255,15 +370,15 @@ export default function DataSettings() {
         </div>
       </SettingsSection>
 
-      <Dialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
-        {pending ? (
+      <Dialog open={chosen !== null} onOpenChange={(open) => !open && setChosen(null)}>
+        {chosen ? (
           <DialogContent
             title={t('Restore backup')}
-            description={t('Created {date}', { date: fmt.dateTime(pending.exportedAt) })}
+            description={t('Created {date}', { date: fmt.dateTime(chosen.backup.exportedAt) })}
           >
             <DialogBody>
               <ul className="divide-y divide-slate-100 text-sm">
-                {Object.entries(summarizeBackup(pending)).map(([table, count]) => (
+                {Object.entries(summarizeBackup(chosen.backup)).map(([table, count]) => (
                   <li key={table} className="flex justify-between py-1.5">
                     <span className="text-slate-600">
                       {TABLE_LABELS[table] ? t(TABLE_LABELS[table]) : table}
@@ -272,18 +387,46 @@ export default function DataSettings() {
                   </li>
                 ))}
               </ul>
+              {chosen.backup.missingFiles?.length ? (
+                <p className="text-sm text-amber-800">
+                  {tp(
+                    chosen.backup.missingFiles.length,
+                    '{count} file could not be included when this backup was made.',
+                    '{count} files could not be included when this backup was made.',
+                  )}
+                </p>
+              ) : null}
               <p className="text-sm text-slate-500">
                 {tr(
-                  '{merge} adds the backup to what is already here (records with the same id are updated). {replace} deletes everything first.',
+                  '{merge} adds what this device doesn’t have and keeps every record already here as it is. {replace} deletes everything first.',
                   {
                     merge: <strong>{t('Merge')}</strong>,
                     replace: <strong>{t('Replace')}</strong>,
                   },
                 )}
               </p>
+              {chosen.impact.inCloud.length ? (
+                <div className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-600/20">
+                  <p>
+                    {tp(
+                      chosen.impact.inCloud.length,
+                      '{names} is kept in the cloud: Merge sends the records the backup adds to your team.',
+                      '{names} are kept in the cloud: Merge sends the records the backup adds to your team.',
+                      { names: namesOf(chosen.impact.inCloud) },
+                    )}
+                  </p>
+                  <p>
+                    {tp(
+                      chosen.impact.inCloud.length,
+                      'After Replace it is a copy on this device only and no longer syncs.',
+                      'After Replace they are copies on this device only and no longer sync.',
+                    )}
+                  </p>
+                </div>
+              ) : null}
             </DialogBody>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setPending(null)}>
+              <Button variant="outline" onClick={() => setChosen(null)}>
                 {t('Cancel')}
               </Button>
               <Button

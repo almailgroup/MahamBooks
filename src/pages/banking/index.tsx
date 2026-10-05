@@ -30,6 +30,7 @@ import { SOURCE_LABELS, sourceLink } from '@/features/accounting/source-link';
 import { categoryOptions } from '@/features/accounting/account-pickers';
 import { ImportStatementDialog } from '@/features/banking/import-dialog';
 import { TransferDialog } from '@/features/banking/transfer-dialog';
+import { PayrollNotIncluded } from '@/features/cloud/role-gates';
 import { TaxSelect } from '@/features/editor/tax-select';
 import {
   bookEntries,
@@ -120,6 +121,7 @@ function BankingOverview() {
           ) : null
         }
       />
+      <PayrollNotIncluded className="mb-4" />
       {moneyAccounts.length === 0 ? (
         <Card>
           <EmptyState
@@ -325,6 +327,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
         </div>
       </div>
 
+      <PayrollNotIncluded className="mb-6" />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Card className="p-5">
           <p className="text-sm text-slate-500">

@@ -22,7 +22,11 @@ export interface StatementLine {
 /* CSV                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/** Splits CSV text into rows (quotes, doubled quotes, CRLF; `,` `;` or tab). */
+/**
+ * Splits CSV text into rows (quotes, doubled quotes, CRLF; `,` `;` or tab).
+ * A quote opens a quoted value only at the start of a cell (after spaces at
+ * most); elsewhere it is part of the text, as in `Monitor 27"`.
+ */
 export function parseCsvRows(text: string): string[][] {
   const clean = text.replace(/^\uFEFF/, '');
   const firstLine = clean.split(/\r?\n/, 1)[0] ?? '';
@@ -34,6 +38,8 @@ export function parseCsvRows(text: string): string[][] {
   let row: string[] = [];
   let cell = '';
   let quoted = false;
+  // The cell had a quoted part: later quotes are text.
+  let wasQuoted = false;
   for (let i = 0; i < clean.length; i++) {
     const c = clean[i];
     if (quoted) {
@@ -42,16 +48,21 @@ export function parseCsvRows(text: string): string[][] {
         i++;
       } else if (c === '"') quoted = false;
       else cell += c;
-    } else if (c === '"') quoted = true;
-    else if (c === delimiter) {
+    } else if (c === '"' && !wasQuoted && cell.trim() === '') {
+      quoted = true;
+      wasQuoted = true;
+      cell = '';
+    } else if (c === delimiter) {
       row.push(cell);
       cell = '';
+      wasQuoted = false;
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && clean[i + 1] === '\n') i++;
       row.push(cell);
       rows.push(row);
       row = [];
       cell = '';
+      wasQuoted = false;
     } else cell += c;
   }
   if (cell !== '' || row.length) {

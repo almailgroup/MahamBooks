@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deleteCompany } from '@/db/records';
+import { deleteCompany, UnsentChangesError } from '@/db/records';
 import type { Company } from '@/db/types';
 import { useCompanyContext } from '@/app/company';
 import { msg, t, tp } from '@/i18n';
@@ -25,7 +25,7 @@ import { useConfirm } from '@/components/ui/overlay';
 import { ReadOnlyContext } from '@/components/ui/read-only';
 import { CLOUD_ERROR_MESSAGES, cloudErrorMessage } from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
-import { keepOffDevice } from '@/cloud/kept-off';
+import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
 import { useCloudStatus } from '@/cloud/hooks';
 import { PARKED_REASONS, RECORD_LABELS } from '@/cloud/labels';
 import { ROLE_LABELS } from '@/cloud/roles';
@@ -39,6 +39,7 @@ import {
 } from '@/cloud/sync';
 import type { OutboxEntry } from '@/cloud/types';
 import { LastSynced, SyncStatusLine } from '@/features/cloud/sync-status';
+import { unsentWarning } from '@/features/cloud/unsent';
 import type { DataTable } from '@/db/db';
 import { SettingsSection } from './shared';
 
@@ -117,22 +118,20 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
       await work();
       if (done) toast.success(done);
     } catch (err) {
-      toast.error(cloudErrorMessage(err));
+      // A removal refused for changes not sent yet says how many.
+      toast.error(err instanceof UnsentChangesError ? err.message : cloudErrorMessage(err));
     } finally {
       setBusy(null);
     }
   };
 
   const removeHere = async () => {
+    const unsent = status.pending;
     const ok = await confirm({
       title: t('Remove {name} from this device?', { name }),
       description:
-        status.pending > 0
-          ? tp(
-              status.pending,
-              '{count} change has not reached the cloud yet and will be lost. Sync first if you can.',
-              '{count} changes have not reached the cloud yet and will be lost. Sync first if you can.',
-            )
+        unsent > 0
+          ? unsentWarning(unsent)
           : t('It stays in the cloud. You can download it again at any time.'),
       confirmLabel: t('Remove from this device'),
       danger: true,
@@ -143,7 +142,11 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
       async () => {
         // Removed on purpose: it doesn't come back to this device by itself.
         if (user) await keepOffDevice(user.id, company.id);
-        await deleteCompany(company.id);
+        // Only the changes counted above may be lost; any queued since stop it.
+        await deleteCompany(company.id, { force: unsent > 0 }).catch(async (error: unknown) => {
+          if (user) await allowOnDevice(user.id, company.id);
+          throw error;
+        });
       },
       t('{name} was removed from this device.', { name }),
     );

@@ -42,6 +42,7 @@ import { detectDateFormats, type DateFormat as CsvDateFormat } from '@/lib/banki
 import { downloadCsv } from '@/lib/csv';
 import { fromMinor, currencyPrecision } from '@/lib/money';
 import { addDaysISO, isISODate, today } from '@/lib/dates';
+import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { msg, t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
@@ -169,8 +170,17 @@ function StatusBadge({ row }: { row: PlannedRow }) {
   return <Badge tone="green">{t('Ready')}</Badge>;
 }
 
-/** The few values that identify a row, by kind; amounts as they will be booked. */
-function rowSummary(kind: ImportKind, row: PlannedRow, money: (amount: number) => string) {
+/**
+ * The few values that identify a row, by kind; amounts as they will be booked
+ * and dates as they were read (`date` writes the month as a word, so a day
+ * and month read the wrong way round are seen before importing).
+ */
+function rowSummary(
+  kind: ImportKind,
+  row: PlannedRow,
+  money: (amount: number) => string,
+  date: (value: string) => string,
+) {
   const { cells, record } = row;
   switch (kind) {
     case 'contacts': {
@@ -203,7 +213,9 @@ function rowSummary(kind: ImportKind, row: PlannedRow, money: (amount: number) =
       const doc = record?.kind === 'documents' ? record.value.doc : null;
       return {
         title: cells.number,
-        details: [cells.contact, cells.date, cells.dueDate ? `→ ${cells.dueDate}` : ''],
+        details: doc
+          ? [cells.contact, date(doc.issueDate), doc.dueDate ? `→ ${date(doc.dueDate)}` : '']
+          : [cells.contact, cells.date, cells.dueDate ? `→ ${cells.dueDate}` : ''],
         amount: doc ? money(doc.items[0]?.unitPrice ?? 0) : cells.amount,
       };
     }
@@ -824,7 +836,12 @@ export default function ImportSettings() {
               />
               <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
                 {visible.slice(0, PREVIEW_LIMIT).map((row) => {
-                  const summary = rowSummary(kind, row, (n) => fmt.money(n));
+                  const summary = rowSummary(
+                    kind,
+                    row,
+                    (n) => fmt.money(n),
+                    (value) => formatDate(value, 'd MMM yyyy', fmt.locale),
+                  );
                   return (
                     <li key={row.line} className="flex gap-3 px-3 py-2.5 sm:px-4">
                       <span className="tabular w-9 shrink-0 pt-0.5 text-xs text-slate-500">

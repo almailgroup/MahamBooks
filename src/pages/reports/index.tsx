@@ -6,6 +6,7 @@ import { ButtonLink } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/misc';
 import { Select } from '@/components/ui/form';
 import { ReportLanguageProvider } from '@/features/reports/report-language';
+import { PayrollNotIncluded } from '@/features/cloud/role-gates';
 import type { StatementId } from '@/features/reports/model';
 import { GeneralLedgerReport, StatementReport } from './financial';
 import { AuditorPack } from './auditor-pack';
@@ -150,6 +151,11 @@ export default function ReportsPage() {
               ))}
             </Select>
           </div>
+          {STATEMENTS.includes(current as StatementId) ||
+          current === 'general-ledger' ||
+          current === 'auditor-pack' ? (
+            <PayrollNotIncluded className="mb-4" />
+          ) : null}
           {STATEMENTS.includes(current as StatementId) ? (
             <StatementReport key={current} id={current as StatementId} />
           ) : null}

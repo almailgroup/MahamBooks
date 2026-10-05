@@ -10,6 +10,7 @@ import { activeRuns, monthLabel } from '@/db/assets';
 import { accountingSettings } from '@/db/chart-setup';
 import { useCompany, useFormat } from '@/app/company';
 import { useLedger } from '@/features/accounting/use-ledger';
+import { PayrollNotIncluded } from '@/features/cloud/role-gates';
 import { today } from '@/lib/dates';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { kuwaitProfile, LEGAL_FORMS } from '@/lib/kuwait-rules';
@@ -227,6 +228,7 @@ export default function YearEndPage() {
           'Works out the statutory reserve and the levies on the profit for the year, posts them and locks the year.',
         )}
       />
+      <PayrollNotIncluded className="mb-4" />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">

@@ -17,7 +17,7 @@ import type {
 import { allocateNumber } from '@/lib/numbering';
 import { taxKind } from '@/lib/calc';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
-import { msg, t } from '@/i18n';
+import { msg, t, tp } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
 /* Companies                                                                  */
@@ -115,15 +115,59 @@ export async function setupCompany(
 }
 
 /**
+ * Changes made on this device that have not reached the cloud yet (not
+ * counting those the cloud refused): of one company, or of every company.
+ */
+export async function unsentChanges(companyId?: ID): Promise<number> {
+  if (companyId) return db.outbox.where('[companyId+parked]').equals([companyId, 0]).count();
+  return db.outbox.filter((entry) => entry.parked === 0).count();
+}
+
+/**
+ * Thrown instead of removing companies whose changes have not reached the
+ * cloud yet. Screens show the count first and pass `force` once the person
+ * has agreed to lose them.
+ */
+export class UnsentChangesError extends Error {
+  constructor(readonly count: number) {
+    super(
+      tp(
+        count,
+        '{count} change has not reached the cloud yet. Sync first, or confirm that it may be lost.',
+        '{count} changes have not reached the cloud yet. Sync first, or confirm that they may be lost.',
+      ),
+    );
+    this.name = 'UnsentChangesError';
+  }
+}
+
+/**
+ * Refuses to go on while there are unsent changes (of one company, or of
+ * every company), unless `force` is set. Run it in the transaction that
+ * removes them, so nothing can be queued in between.
+ */
+export async function assertNothingUnsent(companyId?: ID, force = false): Promise<void> {
+  if (force) return;
+  const count = await unsentChanges(companyId);
+  if (count > 0) throw new UnsentChangesError(count);
+}
+
+/**
  * Deletes a company and everything that belongs to it from this device. A
  * company kept in the cloud is first unlinked here, so nothing is deleted
- * in the cloud (deleting it there is a separate, owner-only step).
+ * in the cloud (deleting it there is a separate, owner-only step). While the
+ * company has changes that have not reached the cloud yet it is refused
+ * (UnsentChangesError) unless `force` is given, after the person agreed.
  */
-export async function deleteCompany(id: ID): Promise<void> {
+export async function deleteCompany(
+  id: ID,
+  { force = false }: { force?: boolean } = {},
+): Promise<void> {
   await db.transaction(
     'rw',
     [...DATA_TABLES.map((t) => db[t]), ...SYNC_TABLES(), db.meta],
     async () => {
+      await assertNothingUnsent(id, force);
       await forgetCloudLink(id);
       for (const table of DATA_TABLES) {
         if (table === 'companies') continue;

@@ -53,7 +53,7 @@ import { findArea, findGovernorate, isValidCivilId, normalizeKuwaitPhone } from 
 import { currencyPrecision, dec, fromMinor, normalizeDigits, toMinor } from '@/lib/money';
 import { allocateNumber } from '@/lib/numbering';
 import { isValidEmail } from '@/lib/email';
-import { addDaysISO, today } from '@/lib/dates';
+import { addDaysISO, isISODate, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
 import { msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
@@ -205,6 +205,17 @@ function readMoney(
     };
   }
   return { amount };
+}
+
+/**
+ * A date from the file: yyyy-MM-dd as Excel's own date cells are read (see
+ * lib/xlsx.ts), whatever the format chosen for dates written as text; else
+ * as the file writes dates.
+ */
+export function readFileDate(value: string, format: CsvDateFormat): ISODate | null {
+  const v = normalizeDigits(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v) && isISODate(v)) return v;
+  return parseStatementDate(v, format);
 }
 
 function contactRole(value: string, fallback: 'customer' | 'vendor') {
@@ -560,14 +571,14 @@ export function planImport(
           text: sales ? t('Enter the customer.') : t('Enter the vendor.'),
         });
       }
-      const date = cells.date ? parseStatementDate(cells.date, options.dateFormat) : null;
+      const date = cells.date ? readFileDate(cells.date, options.dateFormat) : null;
       if (!cells.date) issues.push({ level: 'error', text: t('Enter the date.') });
       else if (!date) {
         issues.push({ level: 'error', text: t('“{value}” is not a date.', { value: cells.date }) });
       } else if (locked(date)) issues.push({ level: 'error', text: lockText() });
       let dueDate: ISODate | null = null;
       if (cells.dueDate) {
-        dueDate = parseStatementDate(cells.dueDate, options.dateFormat);
+        dueDate = readFileDate(cells.dueDate, options.dateFormat);
         if (!dueDate) {
           issues.push({
             level: 'error',

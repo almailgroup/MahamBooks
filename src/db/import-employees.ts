@@ -401,7 +401,18 @@ export function planEmployeeRows(
       if (gender) patch.gender = gender;
       else note(t('Gender “{value}” not recognised.', { value: isolate(cells.gender) }));
     }
-    const birthDate = readDate('birthDate', cells.birthDate, issues);
+    let birthDate = readDate('birthDate', cells.birthDate, issues);
+    if (birthDate && birthDate > on) {
+      // "02/07/94" reads as 2094: with a two-digit year, a birth date is the
+      // century before. A full year in the future is only pointed out.
+      const year = birthDate.slice(0, 4);
+      const earlier = `${Number(year) - 100}${birthDate.slice(4)}`;
+      if (!normalizeDigits(cells.birthDate).includes(year) && isISODate(earlier)) {
+        birthDate = earlier;
+      } else {
+        note(t('The date of birth is in the future ({date}).', { date: fmtDate(birthDate) }));
+      }
+    }
     if (birthDate) patch.birthDate = birthDate;
 
     // Civil ID and documents.

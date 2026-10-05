@@ -13,7 +13,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteCompany } from '@/db/records';
+import { deleteCompany, unsentChanges, UnsentChangesError } from '@/db/records';
 import { useCompany, useFormat } from '@/app/company';
 import { t } from '@/i18n';
 import { tr } from '@/i18n/provider';
@@ -44,6 +44,7 @@ import {
 import { deleteFromCloud, isDemoCompany, startUpload } from '@/cloud/sync';
 import { Avatar } from '@/features/cloud/account-menu';
 import { FormError } from '@/features/cloud/auth-shell';
+import { unsentWarning } from '@/features/cloud/unsent';
 import { SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -173,10 +174,18 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     });
 
   const leave = async () => {
+    const unsent = await unsentChanges(companyId);
     const ok = await confirm({
       title: t('Leave {company}?', { company: name }),
-      description: t(
-        'You will no longer see this company. Its copy is removed from this device; it stays in the cloud for the team.',
+      description: (
+        <div className="space-y-2">
+          <p>
+            {t(
+              'You will no longer see this company. Its copy is removed from this device; it stays in the cloud for the team.',
+            )}
+          </p>
+          {unsent ? <p className="font-medium text-red-700">{unsentWarning(unsent)}</p> : null}
+        </div>
       ),
       confirmLabel: t('Leave company'),
       danger: true,
@@ -184,7 +193,8 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     if (!ok) return;
     try {
       await api.removeMember(companyId, user.id);
-      await deleteCompany(companyId);
+      // No longer a member: changes not sent yet can't reach the company (the person was told).
+      await deleteCompany(companyId, { force: true });
       toast.success(t('You left {company}.', { company: name }));
       navigate('/');
     } catch (err) {
@@ -203,7 +213,15 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     });
     if (!ok) return;
     try {
-      await deleteFromCloud(companyId, { api, userId: user.id });
+      try {
+        await deleteFromCloud(companyId, { api, userId: user.id });
+      } catch (err) {
+        // Refused only at its last step, once the company is gone from the
+        // cloud: changes not sent yet have nowhere to go, so this device's
+        // copy goes too.
+        if (!(err instanceof UnsentChangesError)) throw err;
+        await deleteCompany(companyId, { force: true });
+      }
       toast.success(t('{name} deleted', { name }));
       navigate('/');
     } catch (err) {

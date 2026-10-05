@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/db';
 import { createClient } from '@/db/defaults';
-import { deleteCompany, saveClient, setupCompany } from '@/db/records';
+import { deleteCompany, saveClient, setupCompany, UnsentChangesError } from '@/db/records';
 import { wipeAllData } from '@/db/backup';
 import type { Company } from '@/db/types';
 import { CloudPermissionError, markRemote, onLocalChange } from './outbox';
@@ -145,13 +145,18 @@ describe('change capture', () => {
     const acme = await company();
     await link(acme);
     await saveClient(createClient(acme.id, { name: 'Kept in the cloud' }));
-    await deleteCompany(acme.id);
+    // The change not sent yet stops a removal until the person agrees to lose it.
+    await expect(deleteCompany(acme.id)).rejects.toBeInstanceOf(UnsentChangesError);
+    expect(await db.companies.get(acme.id)).toBeDefined();
+    await deleteCompany(acme.id, { force: true });
     expect(await db.outbox.count()).toBe(0);
     expect(await db.syncState.count()).toBe(0);
     const again = await company('Again');
     await link(again);
     await saveClient(createClient(again.id, { name: 'X' }));
-    await wipeAllData();
+    await expect(wipeAllData()).rejects.toBeInstanceOf(UnsentChangesError);
+    expect(await db.companies.get(again.id)).toBeDefined();
+    await wipeAllData({ force: true });
     expect(await db.outbox.count()).toBe(0);
   });
 });

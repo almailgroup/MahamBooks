@@ -36,6 +36,7 @@ describe('backup', () => {
     expect(await getCurrentCompanyId()).toBe(demo.id);
     const restored = await db.documents.where('companyId').equals(demo.id).first();
     expect(restored?.totals.total).toBeGreaterThan(0);
+    // Seeding the demo takes seconds on a busy machine (as in demo.test.ts).
   }, 120_000);
 
   it('exports a single company', async () => {
