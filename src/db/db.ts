@@ -163,6 +163,11 @@ export class InvoiceDatabase extends Dexie {
       syncRevs: '[table+id], companyId',
       fileQueue: '++seq, companyId',
     });
+    // Attachments found by owner and name, and those whose content is still
+    // in the cloud, without reading every file.
+    this.version(15).stores({
+      attachments: 'id, companyId, ownerId, [ownerId+name], [companyId+contentMissing]',
+    });
     // Every change to a company kept in the cloud is queued for the server.
     this.use(outboxMiddleware(DATA_TABLES));
   }

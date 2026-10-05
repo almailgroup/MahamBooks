@@ -27,6 +27,7 @@ import { today } from '@/lib/dates';
 import { EmployeeDocuments } from '@/features/people/employee-documents';
 import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
+import { EmployeePhotoEditor } from '@/features/people/employee-photo';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { EndOfServiceTab, LeaveTab, LoansTab } from '@/features/payroll/employee-tabs';
 import { cn } from '@/lib/cn';
@@ -216,37 +217,40 @@ export default function EmployeeDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <p className="mb-1 text-sm text-slate-500">
-            <Link to="/employees" className="hover:text-slate-700">
-              {t('Employees')}
-            </Link>
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              {localName(employee)}
-            </h1>
-            <Badge
-              tone={
-                employee.status === 'active'
-                  ? 'green'
-                  : employee.status === 'on_leave'
-                    ? 'blue'
-                    : 'slate'
-              }
-            >
-              {t(STATUS_LABELS[employee.status])}
-            </Badge>
-            <Badge tone="gray">{t(CATEGORY_LABELS[employee.category])}</Badge>
-          </div>
-          <p className="mt-1 text-sm text-slate-500">
-            {[employee.number, job, employee.department].filter(Boolean).join(' · ')}
-          </p>
-          {employee.nameAr?.trim() ? (
-            <p className="text-sm text-slate-500">
-              <bdi>{language === 'ar' ? employee.name : employee.nameAr}</bdi>
+        <div className="flex min-w-0 items-center gap-4">
+          <EmployeePhotoEditor employee={employee} />
+          <div className="min-w-0">
+            <p className="mb-1 text-sm text-slate-500">
+              <Link to="/employees" className="hover:text-slate-700">
+                {t('Employees')}
+              </Link>
             </p>
-          ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                {localName(employee)}
+              </h1>
+              <Badge
+                tone={
+                  employee.status === 'active'
+                    ? 'green'
+                    : employee.status === 'on_leave'
+                      ? 'blue'
+                      : 'slate'
+                }
+              >
+                {t(STATUS_LABELS[employee.status])}
+              </Badge>
+              <Badge tone="gray">{t(CATEGORY_LABELS[employee.category])}</Badge>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              {[employee.number, job, employee.department].filter(Boolean).join(' · ')}
+            </p>
+            {employee.nameAr?.trim() ? (
+              <p className="text-sm text-slate-500">
+                <bdi>{language === 'ar' ? employee.name : employee.nameAr}</bdi>
+              </p>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <ButtonLink to={`/employees/${employee.id}/edit`} variant="outline">
@@ -317,7 +321,7 @@ export default function EmployeeDetailPage() {
               />
               <CardBody>
                 <FileList
-                  files={files}
+                  files={files.filter((file) => file.id !== employee.photoId)}
                   onAdd={async (file) => {
                     await addAttachment(company.id, employee.id, file);
                     toast.success(t('File added'));

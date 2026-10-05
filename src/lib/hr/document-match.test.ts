@@ -3,6 +3,7 @@ import {
   documentKind,
   matchDocuments,
   MAX_DOCUMENT_BYTES,
+  nameKey,
   numberInFileName,
   numberKey,
 } from './document-match';
@@ -70,5 +71,45 @@ describe('matching documents to employees', () => {
   it('allows a file of exactly 10 MB', () => {
     const [match] = matchDocuments([pdf('Limit 424.pdf', MAX_DOCUMENT_BYTES)], employees);
     expect(match.status).toBe('matched');
+  });
+});
+
+describe('matching photos to employees', () => {
+  const jpg = (name: string) => ({ name, size: 80_000, type: 'image/jpeg' });
+  const staff = [
+    { id: 'e101', number: '000101', name: 'TEST GUARD ONE', nameAr: 'موظف تجريبي واحد' },
+    { id: 'e102', number: '000102', name: 'Sample Cleaner Two', nameAr: 'موظفة تجريبية اثنان' },
+    { id: 'e103', number: '000103', name: 'Same Name', nameAr: '' },
+    { id: 'e104', number: '000104', name: 'same  name', nameAr: '' },
+  ];
+
+  it('matches by number, or else by the whole name in English or Arabic', () => {
+    const files = [
+      jpg('0102.jpg'),
+      jpg('Test Guard One.jpeg'),
+      jpg('موظفة تجريبيه اثنان.png'),
+      jpg('test_guard_one (2).jpg'),
+      jpg('Same Name.jpg'),
+      jpg('Test Guard.jpg'),
+      pdf('Test Guard One.pdf'),
+    ];
+    const result = matchDocuments(files, staff, { photosOnly: true });
+    expect(result.map(({ file, ...rest }) => [file.name, rest])).toEqual([
+      ['0102.jpg', { status: 'matched', employeeId: 'e102', number: '0102' }],
+      ['Test Guard One.jpeg', { status: 'matched', employeeId: 'e101', number: null }],
+      // Arabic spelling variants (ه / ة) are the same name.
+      ['موظفة تجريبيه اثنان.png', { status: 'matched', employeeId: 'e102', number: null }],
+      ['test_guard_one (2).jpg', { status: 'matched', employeeId: 'e101', number: null }],
+      ['Same Name.jpg', { status: 'unmatched', reason: 'several', number: null }],
+      // Only the whole name counts.
+      ['Test Guard.jpg', { status: 'unmatched', reason: 'none', number: null }],
+      ['Test Guard One.pdf', { status: 'refused', reason: 'type' }],
+    ]);
+    expect(nameKey('  Ali_Hassan-AL  ')).toBe('ali hassan al');
+  });
+
+  it('match documents by name too, when there is no number', () => {
+    const [match] = matchDocuments([pdf('Sample Cleaner Two.pdf')], staff);
+    expect(match).toMatchObject({ status: 'matched', employeeId: 'e102' });
   });
 });

@@ -384,10 +384,22 @@ describe('files', () => {
     await startDownload({ id: company.id, name: company.name, role: 'owner' }, device);
     await syncCompany(company.id, device);
     expect((await db.attachments.get(file.id))?.dataUrl).toBe('');
+    // Marked, so missing files are found without reading every file; the
+    // mark stays on this device.
+    expect((await db.attachments.get(file.id))?.contentMissing).toBe(1);
+    await db.attachments.update(file.id, { name: 'receipt-2.png' });
+    await syncCompany(company.id, device);
+    expect(server.record(company.id, 'attachments', file.id)).toMatchObject({
+      name: 'receipt-2.png',
+      dataUrl: '',
+      storagePath: path,
+    });
+    expect(server.record(company.id, 'attachments', file.id)).not.toHaveProperty('contentMissing');
     await downloadMissingFiles(company.id, device, 10);
     expect((await db.attachments.get(file.id))?.dataUrl).toBe('');
     await downloadMissingFiles(company.id, device, 1_000_000);
     expect((await db.attachments.get(file.id))?.dataUrl).toBe(PNG);
+    expect(await db.attachments.get(file.id)).not.toHaveProperty('contentMissing');
     await db.transaction('rw', db.attachments, async () => {
       markRemote();
       await db.attachments.update(file.id, { dataUrl: '' });

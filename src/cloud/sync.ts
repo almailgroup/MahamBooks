@@ -351,6 +351,8 @@ function cloudCopy(
 ): Record<string, unknown> {
   const data: Record<string, unknown> = JSON.parse(JSON.stringify(record));
   delete data._private;
+  // Bookkeeping of this device.
+  delete data.contentMissing;
   // Any owner in the set makes the record private, whatever kind it is.
   const lookup = (_table: string, id: string) =>
     privateOwners.has(id) ? { employeeId: id } : null;
@@ -662,6 +664,11 @@ function localCopy(
       local.dataUrl !== '' &&
       (local.contentHash === copy.contentHash || !copy.storagePath);
     copy.dataUrl = same ? local.dataUrl : typeof copy.dataUrl === 'string' ? copy.dataUrl : '';
+    if (copy.dataUrl === '' && typeof copy.storagePath === 'string' && copy.storagePath) {
+      copy.contentMissing = 1;
+    } else {
+      delete copy.contentMissing;
+    }
   }
   return copy;
 }
@@ -888,9 +895,11 @@ export async function downloadMissingFiles(
   ctx: SyncContext,
   maxBytes: number,
 ): Promise<void> {
+  // Only files marked missing are read: reading every file would load all
+  // their content.
   const missing = await db.attachments
-    .where('companyId')
-    .equals(companyId)
+    .where('[companyId+contentMissing]')
+    .equals([companyId, 1])
     .filter((a) => !a.dataUrl && Boolean(a.storagePath) && (a.size ?? 0) <= maxBytes)
     .toArray();
   for (const attachment of missing) {
@@ -916,7 +925,9 @@ export async function fetchAttachmentContent(
     markRemote();
     const current = await db.attachments.get(attachment.id);
     if (current && !current.dataUrl && current.contentHash === attachment.contentHash) {
-      await db.attachments.put({ ...current, dataUrl });
+      const filled: Attachment = { ...current, dataUrl };
+      delete filled.contentMissing;
+      await db.attachments.put(filled);
     }
   });
   return dataUrl;

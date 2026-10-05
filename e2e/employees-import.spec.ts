@@ -4,6 +4,11 @@ import { fakeCardNumber, zohoEmployees, zohoWorkbook } from '../src/test/workboo
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 // A tiny PDF: the app keeps PDF files as they are.
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n');
+// A tiny photo (1×1 PNG).
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 test('employees come over from a Zoho People spreadsheet with their Arabic names', async ({
   page,
@@ -117,4 +122,63 @@ test('scans go to the personnel files of the employees whose numbers end their n
     ]);
   await expect(dialog.getByText(/Already in their personnel file/)).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Add 0 files' })).toBeDisabled();
+});
+
+test('photos go next to the employees, matched by number or by name', async ({ page }) => {
+  await createCompany(page, 'Gulf Shield Security');
+  await page.goto('#/settings/import?kind=employees');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'staff.xlsx',
+    mimeType: XLSX,
+    buffer: Buffer.from(zohoWorkbook(zohoEmployees().slice(0, 2))),
+  });
+  await page.getByRole('button', { name: 'Import 2 employees' }).click();
+  await expect(page.getByText('2 employees imported').first()).toBeVisible();
+
+  // Initials until there is a photo.
+  await page.goto('#/employees');
+  const row = (name: string) => page.getByRole('row').filter({ hasText: name });
+  await expect(row('TEST GUARD ONE')).toContainText('TO');
+  await expect(row('TEST GUARD ONE').locator('img')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add photos' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add photos' });
+  await dialog.locator('input[type=file]').setInputFiles([
+    { name: '0102.png', mimeType: 'image/png', buffer: PNG },
+    { name: 'Test Guard One.png', mimeType: 'image/png', buffer: PNG },
+    { name: 'contract 101.pdf', mimeType: 'application/pdf', buffer: PDF },
+  ]);
+  await expect(dialog.getByText('2 files matched · 1 refused')).toBeVisible();
+  const file = (name: string) => dialog.getByRole('listitem').filter({ hasText: name });
+  await expect(file('0102.png')).toContainText('000102 · Sample Cleaner Two');
+  await expect(file('Test Guard One.png')).toContainText('000101 · TEST GUARD ONE');
+  await expect(dialog.getByText('Only photos can be added.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add 2 photos' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('2 photos added')).toBeVisible();
+  await expect(row('TEST GUARD ONE').locator('img')).toHaveCount(1);
+  await expect(row('Sample Cleaner Two').locator('img')).toHaveCount(1);
+
+  // On the employee's page: the photo, not listed with the personnel files,
+  // removed and added again.
+  await page.getByRole('link', { name: 'TEST GUARD ONE' }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('TEST GUARD ONE');
+  const photo = page.getByRole('button', { name: 'Photo of TEST GUARD ONE' });
+  await expect(photo.locator('img')).toBeVisible();
+  await expect(page.getByText('Test Guard One.jpg')).toHaveCount(0);
+  await photo.click();
+  await page.getByRole('menuitem', { name: 'Remove photo' }).click();
+  await page
+    .getByRole('dialog', { name: 'Remove the photo of TEST GUARD ONE?' })
+    .getByRole('button', { name: 'Remove' })
+    .click();
+  await expect(page.getByText('Photo removed')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add a photo of TEST GUARD ONE' })).toBeVisible();
+  await page
+    .getByLabel('Choose a photo')
+    .setInputFiles({ name: 'new.png', mimeType: 'image/png', buffer: PNG });
+  await expect(page.getByText('Photo saved')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Photo of TEST GUARD ONE' }).locator('img'),
+  ).toBeVisible();
 });

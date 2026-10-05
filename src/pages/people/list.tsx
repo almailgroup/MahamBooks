@@ -6,6 +6,7 @@ import {
   FileUp,
   FileWarning,
   IdCard,
+  ImagePlus,
   Plus,
   Search,
   Settings2,
@@ -24,6 +25,7 @@ import { useRegister } from '@/features/renewals/hooks';
 import { entryTitle, ExpiryBadge } from '@/features/renewals/display';
 import { ComplianceSettingsDialog } from '@/features/renewals/settings-dialog';
 import { BulkDocumentsDialog } from '@/features/people/bulk-documents-dialog';
+import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
@@ -61,7 +63,8 @@ export default function EmployeeListPage() {
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [bulk, setBulk] = useState<'documents' | 'photos' | null>(null);
+  const photos = useEmployeePhotos(employees);
 
   const on = today();
   const worst = useMemo(() => worstDocuments(register?.entries ?? [], on), [register, on]);
@@ -168,8 +171,11 @@ export default function EmployeeListPage() {
                 <ButtonLink to="/settings/import?kind=employees" variant="outline">
                   <FileUp /> {t('Import')}
                 </ButtonLink>
-                <Button variant="outline" onClick={() => setDocumentsOpen(true)}>
+                <Button variant="outline" onClick={() => setBulk('documents')}>
                   <FilePlus2 /> {t('Add documents')}
+                </Button>
+                <Button variant="outline" onClick={() => setBulk('photos')}>
+                  <ImagePlus /> {t('Add photos')}
                 </Button>
               </>
             ) : null}
@@ -391,21 +397,32 @@ export default function EmployeeListPage() {
                           className="cursor-pointer hover:bg-slate-50"
                         >
                           <td className="px-5 py-3">
-                            <Link
-                              to={`/employees/${e.id}`}
-                              onClick={(ev) => ev.stopPropagation()}
-                              className="hover:text-primary-700 font-medium text-slate-900"
-                            >
-                              {localName(e)}
-                            </Link>
-                            <span className="block text-xs text-slate-500">
-                              {[e.number, job].filter(Boolean).join(' · ')}
-                            </span>
-                            {e.status !== 'active' ? (
-                              <Badge tone={e.status === 'left' ? 'slate' : 'blue'} className="mt-1">
-                                {t(STATUS_LABELS[e.status])}
-                              </Badge>
-                            ) : null}
+                            <div className="flex items-center gap-3">
+                              <EmployeeAvatar
+                                employee={e}
+                                photo={e.photoId ? photos.get(e.photoId) : undefined}
+                              />
+                              <div className="min-w-0">
+                                <Link
+                                  to={`/employees/${e.id}`}
+                                  onClick={(ev) => ev.stopPropagation()}
+                                  className="hover:text-primary-700 font-medium text-slate-900"
+                                >
+                                  {localName(e)}
+                                </Link>
+                                <span className="block text-xs text-slate-500">
+                                  {[e.number, job].filter(Boolean).join(' · ')}
+                                </span>
+                                {e.status !== 'active' ? (
+                                  <Badge
+                                    tone={e.status === 'left' ? 'slate' : 'blue'}
+                                    className="mt-1"
+                                  >
+                                    {t(STATUS_LABELS[e.status])}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </div>
                           </td>
                           <td className="hidden px-3 py-3 text-slate-600 md:table-cell">
                             <span className="block">{t(CATEGORY_LABELS[e.category])}</span>
@@ -447,8 +464,8 @@ export default function EmployeeListPage() {
       {settingsOpen ? (
         <ComplianceSettingsDialog settings={settings} onClose={() => setSettingsOpen(false)} />
       ) : null}
-      {documentsOpen ? (
-        <BulkDocumentsDialog employees={employees} onClose={() => setDocumentsOpen(false)} />
+      {bulk ? (
+        <BulkDocumentsDialog kind={bulk} employees={employees} onClose={() => setBulk(null)} />
       ) : null}
     </div>
   );

@@ -5,10 +5,10 @@ import { toast } from 'sonner';
 import { useCompany } from '@/app/company';
 import { db } from '@/db/db';
 import { addAttachment } from '@/db/purchases';
-import { logPersonnelFilesAdded } from '@/db/people';
+import { logEmployeePhotosAdded, logPersonnelFilesAdded, setEmployeePhoto } from '@/db/people';
 import type { Employee } from '@/db/types';
 import { documentKind, matchDocuments, type DocumentMatch } from '@/lib/hr/document-match';
-import { receiptFromFile } from '@/lib/image';
+import { photoFromFile, receiptFromFile } from '@/lib/image';
 import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
@@ -16,17 +16,24 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 
+/** Scans for the personnel files, or the employees' photos. */
+export type BulkKind = 'documents' | 'photos';
+
 /** A file chosen in the dialog, with where it goes. */
 interface Entry {
   key: string;
   match: DocumentMatch<File>;
-  /** The employee it goes to: matched by number or chosen by hand; null: not added. */
+  /** The employee it goes to: matched by number or name, or chosen by hand; null: not added. */
   employeeId: string | null;
-  /** Already in that employee's personnel file (same name): not added again. */
-  duplicate: boolean;
+  /**
+   * Why it isn't added although it has an employee: the same file is already
+   * in their personnel file, or another photo is chosen for them.
+   */
+  skip: 'attached' | 'another_photo' | null;
 }
 
 const fileKey = (file: File) => `${file.name}|${file.size}|${file.lastModified}`;
+const pairKey = (employeeId: string, name: string) => `${employeeId}|${name}`;
 
 function FileIcon({ file }: { file: File }) {
   return documentKind(file) === 'image' ? (
@@ -37,36 +44,31 @@ function FileIcon({ file }: { file: File }) {
 }
 
 /**
- * "Add documents" on the employees page: many scans at once, each matched to
- * an employee by the number at the end of its name ("… 424.pdf" goes to
- * employee 000424), then added to their personnel files. Files that don't
- * match can be given an employee by hand; files over 10 MB and anything but
- * photos and PDF files are refused.
+ * "Add documents" and "Add photos" on the employees page: many files at
+ * once, each matched to an employee by the number at the end of its name
+ * ("… 424.pdf" goes to employee 000424) or by their whole name ("Ali
+ * Hassan.jpg"). Files that don't match can be given an employee by hand;
+ * files over 10 MB are refused, and so is anything but photos and PDF files
+ * (photos only, for photos). Documents go to the personnel files; photos
+ * become the employees' photos.
  */
 export function BulkDocumentsDialog({
+  kind = 'documents',
   employees,
   onClose,
 }: {
+  kind?: BulkKind;
   employees: Employee[];
   onClose: () => void;
 }) {
   const company = useCompany();
+  const photos = kind === 'photos';
   const input = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   /** Employee chosen by hand for a file, or '' to leave it out. */
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const ids = useMemo(() => employees.map((e) => e.id), [employees]);
-  const attached = useLiveQuery(
-    async () =>
-      new Set(
-        (await db.attachments.where('ownerId').anyOf(ids).toArray()).map(
-          (a) => `${a.ownerId}|${a.name}`,
-        ),
-      ),
-    [ids],
-  );
   const byId = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const sorted = useMemo(
     () =>
@@ -74,27 +76,59 @@ export function BulkDocumentsDialog({
     [employees],
   );
 
-  const entries: Entry[] = useMemo(
+  /** Each file with the employee it goes to, before checking what's there already. */
+  const targets = useMemo(
     () =>
-      matchDocuments(files, employees).map((match) => {
+      matchDocuments(files, employees, { photosOnly: photos }).map((match) => {
         const key = fileKey(match.file);
         const picked = chosen[key];
         const employeeId =
-          picked !== undefined
-            ? picked || null
-            : match.status === 'matched'
-              ? match.employeeId
-              : null;
-        return {
-          key,
-          match,
-          employeeId: match.status === 'refused' ? null : employeeId,
-          duplicate: Boolean(employeeId && attached?.has(`${employeeId}|${match.file.name}`)),
-        };
+          match.status === 'refused'
+            ? null
+            : picked !== undefined
+              ? picked || null
+              : match.status === 'matched'
+                ? match.employeeId
+                : null;
+        return { key, match, employeeId };
       }),
-    [files, employees, chosen, attached],
+    [files, employees, chosen, photos],
   );
-  const ready = entries.filter((e) => e.employeeId && !e.duplicate);
+
+  // Files already in a personnel file under the same name: found through an
+  // index, without reading any file's content.
+  const pairs = useMemo(
+    () =>
+      photos
+        ? []
+        : targets.flatMap((x) => (x.employeeId ? [[x.employeeId, x.match.file.name]] : [])),
+    [targets, photos],
+  );
+  const pairsKey = JSON.stringify(pairs);
+  const attached = useLiveQuery(
+    async () => {
+      if (!pairs.length) return new Set<string>();
+      const keys = await db.attachments.where('[ownerId+name]').anyOf(pairs).keys();
+      return new Set(keys.map((k) => pairKey(...(k as unknown as [string, string]))));
+    },
+    [pairsKey],
+    null,
+  );
+
+  const entries: Entry[] = useMemo(() => {
+    const photoFor = new Set<string>();
+    return targets.map(({ key, match, employeeId }) => {
+      let skip: Entry['skip'] = null;
+      if (employeeId && photos) {
+        if (photoFor.has(employeeId)) skip = 'another_photo';
+        photoFor.add(employeeId);
+      } else if (employeeId && attached?.has(pairKey(employeeId, match.file.name))) {
+        skip = 'attached';
+      }
+      return { key, match, employeeId, skip };
+    });
+  }, [targets, attached, photos]);
+  const ready = entries.filter((e) => e.employeeId && !e.skip);
   const matched = entries.filter((e) => e.match.status === 'matched');
   const unmatched = entries.filter((e) => e.match.status === 'unmatched');
   const refused = entries.filter((e) => e.match.status === 'refused');
@@ -127,9 +161,17 @@ export function BulkDocumentsDialog({
     const people = new Set<string>();
     for (const { file, employeeId } of work) {
       try {
-        // Photos are made smaller (JPEG, 1600 px at most); PDF files are kept as they are.
-        const { dataUrl, type } = await receiptFromFile(file);
-        await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
+        if (photos) {
+          // A square of at most 512 px, as JPEG.
+          await setEmployeePhoto(employeeId, {
+            name: file.name,
+            dataUrl: await photoFromFile(file),
+          });
+        } else {
+          // Photos are made smaller (JPEG, 1600 px at most); PDF files are kept as they are.
+          const { dataUrl, type } = await receiptFromFile(file);
+          await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
+        }
         added += 1;
         people.add(employeeId);
       } catch {
@@ -137,15 +179,18 @@ export function BulkDocumentsDialog({
       }
       setProgress({ done: added + failed.length, total: work.length });
     }
-    await logPersonnelFilesAdded(company.id, added, people.size);
+    if (photos) await logEmployeePhotosAdded(company.id, added);
+    else await logPersonnelFilesAdded(company.id, added, people.size);
     setProgress(null);
     if (added) {
       toast.success(
-        tp(
-          added,
-          '{count} file added to the personnel files',
-          '{count} files added to the personnel files',
-        ),
+        photos
+          ? tp(added, '{count} photo added', '{count} photos added')
+          : tp(
+              added,
+              '{count} file added to the personnel files',
+              '{count} files added to the personnel files',
+            ),
       );
     }
     if (failed.length) {
@@ -169,16 +214,24 @@ export function BulkDocumentsDialog({
   const reason = (entry: Entry): string => {
     const m = entry.match;
     if (m.status === 'refused') {
-      return m.reason === 'size'
-        ? t('Larger than 10 MB, the most a file can be.')
-        : t('Only photos and PDF files can be added.');
+      if (m.reason === 'size') return t('Larger than 10 MB, the most a file can be.');
+      return photos ? t('Only photos can be added.') : t('Only photos and PDF files can be added.');
     }
     if (m.status !== 'unmatched') return '';
-    if (m.reason === 'none') return t('No employee number at the end of the name.');
+    if (m.reason === 'none') return t('No employee number or name in the file name.');
     if (m.reason === 'several') {
-      return t('More than one employee has the number {number}.', { number: m.number ?? '' });
+      return m.number
+        ? t('More than one employee has the number {number}.', { number: m.number })
+        : t('More than one employee has this name.');
     }
     return t('No employee has the number {number}.', { number: m.number ?? '' });
+  };
+
+  const note = (entry: Entry): string => {
+    if (entry.skip === 'attached') return t('Already in their personnel file');
+    if (entry.skip === 'another_photo') return t('Another photo is chosen for this employee');
+    const employee = entry.employeeId ? byId.get(entry.employeeId) : undefined;
+    return photos && employee?.photoId ? t('Replaces their current photo') : '';
   };
 
   const fileName = (file: File) => (
@@ -194,10 +247,16 @@ export function BulkDocumentsDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent
-        title={t('Add documents')}
-        description={t(
-          'Choose many scans at once. Each goes to the employee whose number ends its name, like “Name 424.pdf” for employee 000424.',
-        )}
+        title={photos ? t('Add photos') : t('Add documents')}
+        description={
+          photos
+            ? t(
+                'Choose many photos at once. Each goes to the employee whose number ends its name, like “424.jpg” for employee 000424, or whose name it is.',
+              )
+            : t(
+                'Choose many scans at once. Each goes to the employee whose number ends its name, like “Name 424.pdf” for employee 000424.',
+              )
+        }
         size="lg"
       >
         <DialogBody>
@@ -227,14 +286,16 @@ export function BulkDocumentsDialog({
               {files.length ? t('Choose more files') : t('Choose files')}
             </span>
             <span className="text-sm text-slate-500">
-              {t('Or drop them here. Photos and PDF files up to 10 MB each.')}
+              {photos
+                ? t('Or drop them here. Photos up to 10 MB each.')
+                : t('Or drop them here. Photos and PDF files up to 10 MB each.')}
             </span>
           </button>
           <input
             ref={input}
             type="file"
             multiple
-            accept="image/*,application/pdf"
+            accept={photos ? 'image/*' : 'image/*,application/pdf'}
             className="sr-only"
             tabIndex={-1}
             aria-label={t('Choose files')}
@@ -270,11 +331,11 @@ export function BulkDocumentsDialog({
                       <span
                         className={cn(
                           'block truncate text-xs',
-                          entry.duplicate ? 'text-slate-500' : 'text-emerald-700',
+                          entry.skip ? 'text-slate-500' : 'text-emerald-700',
                         )}
                       >
                         <bdi>{employeeLabel(entry.employeeId ?? '')}</bdi>
-                        {entry.duplicate ? ` · ${t('Already in their personnel file')}` : null}
+                        {note(entry) ? ` · ${note(entry)}` : null}
                       </span>
                     </div>
                     <Button
@@ -305,7 +366,9 @@ export function BulkDocumentsDialog({
                       <FileIcon file={entry.match.file} />
                       <div className="min-w-0 flex-1">
                         {fileName(entry.match.file)}
-                        <span className="block text-xs text-amber-700">{reason(entry)}</span>
+                        <span className="block text-xs text-amber-700">
+                          {entry.employeeId && note(entry) ? note(entry) : reason(entry)}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 sm:w-60">
@@ -368,7 +431,7 @@ export function BulkDocumentsDialog({
             <div className="flex items-center gap-3" aria-live="polite">
               <div
                 role="progressbar"
-                aria-label={t('Adding documents')}
+                aria-label={photos ? t('Adding photos') : t('Adding documents')}
                 aria-valuemin={0}
                 aria-valuemax={progress.total}
                 aria-valuenow={progress.done}
@@ -390,7 +453,9 @@ export function BulkDocumentsDialog({
             {t('Cancel')}
           </Button>
           <Button onClick={() => void save()} loading={busy} disabled={ready.length === 0}>
-            {tp(ready.length, 'Add {count} file', 'Add {count} files')}
+            {photos
+              ? tp(ready.length, 'Add {count} photo', 'Add {count} photos')
+              : tp(ready.length, 'Add {count} file', 'Add {count} files')}
           </Button>
         </DialogFooter>
       </DialogContent>

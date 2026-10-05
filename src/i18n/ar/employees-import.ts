@@ -262,7 +262,6 @@ export default {
   'Employee for {name}': 'الموظف صاحب الملف {name}',
   'Larger than 10 MB, the most a file can be.': 'أكبر من 10 ميغابايت، وهو الحد الأقصى للملف.',
   'Only photos and PDF files can be added.': 'يمكن إضافة الصور وملفات PDF فقط.',
-  'No employee number at the end of the name.': 'لا يوجد رقم وظيفي في نهاية اسم الملف.',
   'More than one employee has the number {number}.': 'أكثر من موظف يحمل الرقم {number}.',
   'No employee has the number {number}.': 'لا يوجد موظف يحمل الرقم {number}.',
   'Adding documents': 'جارٍ إضافة المستندات',

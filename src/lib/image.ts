@@ -73,3 +73,36 @@ export async function receiptFromFile(file: File): Promise<{ dataUrl: string; ty
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.82), type: 'image/jpeg' };
 }
+
+const MAX_PHOTO_INPUT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * An employee photo: a square from the picture, at most 512 px, as JPEG
+ * (tens of kilobytes), so a list of many employees stays light. Portraits
+ * keep the top, where the face is.
+ */
+export async function photoFromFile(file: File, size = 512): Promise<string> {
+  if (file.size > MAX_PHOTO_INPUT_BYTES) {
+    throw new Error(t('Please choose a photo smaller than 10 MB.'));
+  }
+  if (file.type && !file.type.startsWith('image/')) {
+    throw new Error(t('Please choose a photo (JPG, PNG or WebP).'));
+  }
+  const img = await loadImage(await readAsDataUrl(file));
+  const width = img.naturalWidth || img.width || size;
+  const height = img.naturalHeight || img.height || size;
+  const side = Math.min(width, height);
+  const sx = (width - side) / 2;
+  const sy = height > width ? (height - side) * 0.15 : 0;
+  const out = Math.max(1, Math.min(size, side));
+  const canvas = document.createElement('canvas');
+  canvas.width = out;
+  canvas.height = out;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error(t('Your browser cannot process images.'));
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out, out);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}

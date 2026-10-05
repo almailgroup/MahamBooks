@@ -1,7 +1,7 @@
 import { db } from './db';
 import { logActivity } from './activity';
 import { defaultNumbering, nowStamp } from './defaults';
-import type { Employee, EmployeeAllowance, ID, PeopleSettings } from './types';
+import type { Attachment, Employee, EmployeeAllowance, ID, PeopleSettings } from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId, shortId } from '@/lib/ids';
 import { today } from '@/lib/dates';
@@ -106,6 +106,9 @@ export async function saveEmployee(
       accountNumber: compactAccountNumber(input.accountNumber),
       birthDate: input.birthDate || null,
       gender: input.gender === 'male' || input.gender === 'female' ? input.gender : null,
+      // Changed only by setEmployeePhoto and removeEmployeePhoto: a form
+      // opened before a new photo doesn't bring the old one back.
+      photoId: existing ? (existing.photoId ?? null) : (input.photoId ?? null),
       phone: input.phone.trim() ? (normalizeKuwaitPhone(input.phone) ?? input.phone.trim()) : '',
       email: input.email.trim(),
       basicSalary: round(Math.max(0, input.basicSalary), places),
@@ -309,6 +312,59 @@ export async function logPersonnelFilesAdded(
         ? msg('{count} file added to a personnel file')
         : msg('{count} files added to {employees} personnel files'),
     vars: { count: files, employees },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Photos                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Gives an employee a photo (a small square JPEG, see photoFromFile),
+ * replacing the one they had. The photo is one of their attachments, so it
+ * syncs and stays private like the rest of their personnel file.
+ */
+export async function setEmployeePhoto(
+  employeeId: ID,
+  photo: { name: string; dataUrl: string },
+): Promise<Employee> {
+  return db.transaction('rw', [db.employees, db.attachments], async () => {
+    const employee = await db.employees.get(employeeId);
+    if (!employee) throw new EmployeeError(t('This employee could not be found.'));
+    const attachment: Attachment = {
+      id: newId(),
+      companyId: employee.companyId,
+      ownerId: employee.id,
+      name: photo.name.replace(/\.[a-z0-9]{1,5}$/i, '') + '.jpg',
+      type: 'image/jpeg',
+      size: Math.round((photo.dataUrl.length * 3) / 4),
+      dataUrl: photo.dataUrl,
+      createdAt: nowStamp(),
+    };
+    await db.attachments.add(attachment);
+    if (employee.photoId) await db.attachments.delete(employee.photoId);
+    const updated: Employee = { ...employee, photoId: attachment.id, updatedAt: nowStamp() };
+    await db.employees.put(updated);
+    return updated;
+  });
+}
+
+/** Removes an employee's photo, and its file. */
+export async function removeEmployeePhoto(employeeId: ID): Promise<void> {
+  await db.transaction('rw', [db.employees, db.attachments], async () => {
+    const employee = await db.employees.get(employeeId);
+    if (!employee?.photoId) return;
+    await db.attachments.delete(employee.photoId);
+    await db.employees.put({ ...employee, photoId: null, updatedAt: nowStamp() });
+  });
+}
+
+/** One activity entry for photos given to several employees at once. */
+export async function logEmployeePhotosAdded(companyId: ID, photos: number): Promise<void> {
+  if (photos === 0) return;
+  await logActivity(companyId, 'employee', newId(), 'photos', {
+    text: photos === 1 ? msg('{count} employee photo added') : msg('{count} employee photos added'),
+    vars: { count: photos },
   });
 }
 

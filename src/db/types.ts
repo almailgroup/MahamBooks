@@ -1068,6 +1068,11 @@ export interface Attachment {
   storagePath?: string;
   /** SHA-256 of the content in cloud storage. */
   contentHash?: string;
+  /**
+   * This device only: set while the content is in the cloud but not here,
+   * so such files are found without reading every file.
+   */
+  contentMissing?: 1;
   createdAt: Timestamp;
 }
 
@@ -1170,6 +1175,8 @@ export interface Employee {
   leavingDate: ISODate | null;
   leavingReason: LeavingReason | null;
   notes: string;
+  /** The employee's photo: one of their attachments, a small square JPEG. */
+  photoId?: ID | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
