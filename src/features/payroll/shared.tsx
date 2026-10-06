@@ -114,6 +114,11 @@ export function useWarningText(): (warning: PayWarning) => string {
         return t('No PIFSS rates are set. Add them in the payroll settings.');
       case 'no_salary':
         return t('No salary on record.');
+      case 'pifss_owed':
+        return t(
+          'PIFSS share not covered by this month’s pay: {amount}, recorded as owed by {name}.',
+          { amount: fmt.money(w.amount), name: localName({ name: w.name, nameAr: w.nameAr }) },
+        );
     }
   };
 }

@@ -31,6 +31,7 @@ import type { ManualJournal, PayLine } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import {
   addPeriods,
+  calculatePayLine,
   formatPeriod,
   payDateFor,
   payLineWarnings,
@@ -188,12 +189,22 @@ export default function PayRunPage() {
       'Salaries, PIFSS and deductions are posted to the books on {date}. You can reopen the pay run until it is paid.',
       { date: fmt.date(run.date) },
     );
+    // PIFSS shares the month's pay doesn't cover: owed by the employees.
+    const owed = run.lines
+      .map((l) => calculatePayLine(l, run.rules, precision))
+      .flatMap((l) => payLineWarnings(l, run.rules, precision))
+      .filter((w) => w.code === 'pifss_owed');
     const ok = await confirm({
       title: t('Approve the payroll for {month}?', { month }),
       description:
-        needing.length > 0 ? (
+        needing.length > 0 || owed.length > 0 ? (
           <div className="space-y-2">
             <p>{posted}</p>
+            {owed.map((w, i) => (
+              <p key={i} className="text-amber-800">
+                {warningText(w)}
+              </p>
+            ))}
             {noOpening.length > 0 ? <p className="text-amber-800">{noOpeningText}</p> : null}
             {unconfirmed.length > 0 ? <p className="text-amber-800">{unconfirmedText}</p> : null}
           </div>
@@ -441,7 +452,13 @@ export default function PayRunPage() {
               <tbody className="divide-y divide-slate-100">
                 {run.lines.map((l: PayLine) => {
                   const flagged = warnings.some((w) => w.line.id === l.id);
-                  const deductions = l.pifssEmployee + l.loanDeduction + l.otherDeductions;
+                  const deductions = fromMinor(
+                    toMinor(l.pifssEmployee, precision) -
+                      toMinor(l.pifssOwed ?? 0, precision) +
+                      toMinor(l.loanDeduction, precision) +
+                      toMinor(l.otherDeductions, precision),
+                    precision,
+                  );
                   return (
                     <tr
                       key={l.id}

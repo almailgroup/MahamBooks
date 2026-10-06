@@ -76,11 +76,13 @@ describe('sick leave', () => {
     expect(leaveInPeriod(records, '2026-03', dayOff)).toEqual({
       unpaidDays: 0,
       reducedPay: [],
+      working: { unpaidDays: 0, reducedPay: [] },
       byType: { sick: 15 },
     });
     expect(leaveInPeriod(records, '2026-04', dayOff)).toEqual({
       unpaidDays: 2,
       reducedPay: [{ percent: 75, days: 5 }],
+      working: { unpaidDays: 2, reducedPay: [{ percent: 75, days: 5 }] },
       byType: { sick: 5, unpaid: 2 },
     });
     expect(sickDaysByTier(records, 2026, dayOff)).toEqual([
@@ -106,12 +108,15 @@ describe('sick leave', () => {
       unpaidDays: 3,
       // 22–31 March is 10 calendar days, 3 of them unpaid instead.
       reducedPay: [{ percent: 75, days: 7 }],
+      // As older versions count them: 8 working days, Thursday 26 unpaid.
+      working: { unpaidDays: 1, reducedPay: [{ percent: 75, days: 7 }] },
       byType: { sick: 23, unpaid: 3 },
     });
     // Thursday 2 April is the 25th working day; Friday and Saturday follow it.
     expect(leaveInPeriod(records, '2026-04', dayOff)).toEqual({
       unpaidDays: 0,
       reducedPay: [{ percent: 75, days: 4 }],
+      working: { unpaidDays: 0, reducedPay: [{ percent: 75, days: 2 }] },
       byType: { sick: 2 },
     });
     // Only days of the employment count.
@@ -152,6 +157,39 @@ describe('annual leave balance', () => {
       taken: 3,
       balance: 14.5,
     });
+  });
+
+  it('starts from leave brought forward, or an opening record that replaces it', () => {
+    const opening = (start: string, days: number) =>
+      record({ kind: 'opening', start, end: start, days });
+    const imported = { date: '2026-10-05', days: 0, confirmed: false };
+    // An opening record replaces an import's 0 days nobody confirmed, whatever its date.
+    expect(
+      annualLeaveBalance([opening('2026-10-01', 15)], '2021-03-01', '2026-10-31', imported),
+    ).toMatchObject({ from: '2026-10-01', opening: 15, accrued: 2.5, balance: 17.5 });
+    // Confirmed leave brought forward counts from its date; a record dated before it only
+    // before then, and a record on or after it from its own date.
+    const confirmed = { date: '2026-10-05', days: 10, confirmed: true };
+    const early = [opening('2026-10-01', 15)];
+    expect(annualLeaveBalance(early, '2021-03-01', '2026-10-31', confirmed).balance).toBe(10);
+    expect(annualLeaveBalance(early, '2021-03-01', '2026-10-03', confirmed).balance).toBe(15);
+    const late = [opening('2026-10-05', 12)];
+    expect(annualLeaveBalance(late, '2021-03-01', '2026-10-31', confirmed).balance).toBe(12);
+  });
+
+  it('works the balance back from the first opening, never from the hire date', () => {
+    const brought = { date: '2026-10-05', days: 12.5, confirmed: true };
+    const on = (date: string) => annualLeaveBalance([], '2021-03-01', date, brought);
+    // No complete month between 30 September and 5 October.
+    expect(on('2026-09-30')).toMatchObject({ from: '2026-10-05', opening: 12.5, balance: 12.5 });
+    // September is a complete month before it: 12.5 − 2.5.
+    expect(on('2026-08-31')).toMatchObject({ accrued: -2.5, balance: 10 });
+    // Never below 0, and nothing before the hire date.
+    expect(on('2026-03-31').balance).toBe(0);
+    expect(annualLeaveBalance([], '2026-09-01', '2026-08-31', brought).balance).toBe(0);
+    // An opening record after the day works the same way.
+    const records = [record({ kind: 'opening', start: '2026-10-01', end: '2026-10-01', days: 15 })];
+    expect(annualLeaveBalance(records, '2021-03-01', '2026-09-30').balance).toBe(15);
   });
 
   it('warns about leave over the balance, before nine months, over limits and overlapping', () => {

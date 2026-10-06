@@ -347,10 +347,15 @@ export function LoansTab({ employee }: { employee: Employee }) {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="font-medium text-slate-900">
-                        {t('Loan of {amount} paid on {date}', {
-                          amount: fmt.money(loan.amount),
-                          date: fmt.date(loan.date),
-                        })}
+                        {loan.payRunId
+                          ? t('PIFSS share of {amount} owed from the {month} pay', {
+                              amount: fmt.money(loan.amount),
+                              month: formatPeriod(loan.date.slice(0, 7), fmt.locale),
+                            })
+                          : t('Loan of {amount} paid on {date}', {
+                              amount: fmt.money(loan.amount),
+                              date: fmt.date(loan.date),
+                            })}
                       </p>
                       <p className="text-xs text-slate-500">
                         {t('{amount} a month from {month}', {
@@ -379,7 +384,7 @@ export function LoansTab({ employee }: { employee: Employee }) {
                           ? ` · ${tp(left, '{count} instalment to go', '{count} instalments to go')}`
                           : ''}
                       </p>
-                      {recovered === 0 ? (
+                      {recovered === 0 && !loan.payRunId ? (
                         <Button variant="ghost" size="xs" onClick={() => void cancel(loan.id)}>
                           {t('Cancel loan')}
                         </Button>

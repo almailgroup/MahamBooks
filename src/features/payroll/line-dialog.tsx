@@ -3,7 +3,14 @@ import { Plus, Printer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LoanRecovery, PayAdjustment, PayLine, PayRun, StaffLoan } from '@/db/types';
 import { updatePayLine } from '@/db/payroll';
-import { calculatePayLine, dailyRate, payLineWarnings, rateWage } from '@/lib/hr/payroll';
+import {
+  calculatePayLine,
+  dailyRate,
+  formatPeriod,
+  lineLeave,
+  payLineWarnings,
+  rateWage,
+} from '@/lib/hr/payroll';
 import { currencyPrecision } from '@/lib/money';
 import { shortId } from '@/lib/ids';
 import { useFormat } from '@/app/company';
@@ -47,6 +54,7 @@ export function PayLineDialog({
   );
   const warnings = payLineWarnings(result, run.rules, precision);
   const daily = dailyRate(rateWage(line, run.rules), run.rules.dailyDivisor).toNumber();
+  const leave = lineLeave(line);
 
   const save = async () => {
     setBusy(true);
@@ -151,24 +159,30 @@ export function PayLineDialog({
                     />
                   )}
                 </Field>
-                {line.unpaidLeaveDays > 0 || line.reducedPay.length > 0 ? (
+                {leave.unpaidDays > 0 || leave.reducedPay.length > 0 ? (
                   <ul className="mt-2 space-y-1 text-xs text-slate-600">
-                    {line.unpaidLeaveDays > 0 ? (
+                    {leave.unpaidDays > 0 ? (
                       <li>
-                        {t('From leave records: {days} calendar days without pay.', {
-                          days: fmt.quantity(line.unpaidLeaveDays),
-                        })}
+                        {leave.calendar
+                          ? t('From leave records: {days} calendar days without pay.', {
+                              days: fmt.quantity(leave.unpaidDays),
+                            })
+                          : t('From leave records: {days} working days without pay.', {
+                              days: fmt.quantity(leave.unpaidDays),
+                            })}
                       </li>
                     ) : null}
-                    {line.reducedPay.map((r) => (
+                    {leave.reducedPay.map((r) => (
                       <li key={r.percent}>
-                        {t(
-                          'From leave records: {days} calendar days of sick leave at {percent} pay.',
-                          {
-                            days: fmt.quantity(r.days),
-                            percent: fmt.percent(r.percent),
-                          },
-                        )}
+                        {leave.calendar
+                          ? t(
+                              'From leave records: {days} calendar days of sick leave at {percent} pay.',
+                              { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
+                            )
+                          : t(
+                              'From leave records: {days} working days of sick leave at {percent} pay.',
+                              { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
+                            )}
                       </li>
                     ))}
                   </ul>
@@ -184,12 +198,16 @@ export function PayLineDialog({
                       <Field
                         key={r.loanId}
                         label={
-                          loan
-                            ? t('Loan of {amount} from {date}', {
-                                amount: fmt.money(loan.amount),
-                                date: fmt.date(loan.date),
+                          loan?.payRunId
+                            ? t('PIFSS share owed from {month}', {
+                                month: formatPeriod(loan.date.slice(0, 7), fmt.locale),
                               })
-                            : t('Loan')
+                            : loan
+                              ? t('Loan of {amount} from {date}', {
+                                  amount: fmt.money(loan.amount),
+                                  date: fmt.date(loan.date),
+                                })
+                              : t('Loan')
                         }
                       >
                         {(id) => (
@@ -310,6 +328,12 @@ export function PayLineDialog({
                 <AmountRow
                   label={t('PIFSS – employee share')}
                   value={`−${fmt.money(result.pifssEmployee)}`}
+                />
+              ) : null}
+              {result.pifssOwed ? (
+                <AmountRow
+                  label={t('Owed by the employee, not covered by this month’s pay')}
+                  value={`+${fmt.money(result.pifssOwed)}`}
                 />
               ) : null}
               {result.loanDeduction > 0 ? (

@@ -249,12 +249,16 @@ describe('leave in pay runs', () => {
     const run = await createPayRun(c.id, '2026-10');
     const [fatima, ravi] = run.lines;
     // Sunday 25 October, the 16th working day; the weekend before it is still at full pay.
-    expect(fatima.reducedPay).toEqual([{ percent: 75, days: 1 }]);
+    expect(fatima.calendarLeave).toEqual({ unpaidDays: 0, reducedPay: [{ percent: 75, days: 1 }] });
     // A quarter of a day of KD 3,000 in a 31-day month: 3,000 − 30.75 days' pay.
     expect(fatima.absenceDeduction).toBe(24.194);
-    expect(ravi.unpaidLeaveDays).toBe(5);
+    expect(ravi.calendarLeave).toEqual({ unpaidDays: 5, reducedPay: [] });
     // 510 × 5 ÷ 31: KD 450 basic and KD 60 housing each for 26 days, 377.419 + 50.323.
     expect(ravi.absenceDeduction).toBe(82.258);
+    // Older versions of the app read working days at the daily rate, as they always did:
+    // the bridge day is off.
+    expect(ravi).toMatchObject({ unpaidLeaveDays: 4, reducedPay: [] });
+    expect(fatima).toMatchObject({ unpaidLeaveDays: 0, reducedPay: [{ percent: 75, days: 1 }] });
     await expect(
       saveLeaveRecord(
         createLeaveRecord(c.id, expat.id, { start: '2026-10-09', end: '2026-10-10' }),
@@ -274,12 +278,18 @@ describe('leave in pay runs', () => {
     );
     const september = await createPayRun(c.id, '2026-09');
     const ravi = september.lines.find((l) => l.employeeId === expat.id)!;
-    expect(ravi).toMatchObject({ daysWorked: 15, unpaidLeaveDays: 10, basic: 225 });
+    expect(ravi).toMatchObject({
+      daysWorked: 15,
+      calendarLeave: { unpaidDays: 10 },
+      // Working days, for older versions: 16 to 25 September less three weekend days.
+      unpaidLeaveDays: 7,
+      basic: 225,
+    });
     // Paid for 5 of 30 days: 450 × 5 ÷ 30 + 60 × 5 ÷ 30.
     expect(ravi.gross).toBe(85);
     const october = await createPayRun(c.id, '2026-10');
     const away = october.lines.find((l) => l.employeeId === expat.id)!;
-    expect(away).toMatchObject({ unpaidLeaveDays: 31, gross: 0, net: 0 });
+    expect(away).toMatchObject({ calendarLeave: { unpaidDays: 31 }, gross: 0, net: 0 });
   });
 });
 

@@ -114,10 +114,14 @@ export default function PayrollLoansPage() {
                             {employee ? localName(employee) : '—'}
                           </Link>
                           <span className="block text-xs text-slate-500">
-                            {t('Paid on {date}, from {month}', {
-                              date: fmt.date(loan.date),
-                              month: formatPeriod(loan.firstPeriod, fmt.locale),
-                            })}
+                            {loan.payRunId
+                              ? t('PIFSS share owed from {month}', {
+                                  month: formatPeriod(loan.date.slice(0, 7), fmt.locale),
+                                })
+                              : t('Paid on {date}, from {month}', {
+                                  date: fmt.date(loan.date),
+                                  month: formatPeriod(loan.firstPeriod, fmt.locale),
+                                })}
                           </span>
                         </td>
                         <td className="tabular hidden px-3 py-3 text-end text-slate-700 sm:table-cell">

@@ -1825,14 +1825,24 @@ export interface PayLine {
   overtime: { normal: number; restDay: number; holiday: number };
   /** Unpaid absence entered for the month, in days. */
   absentDays: number;
-  /** Unpaid leave and sick leave without pay taken in the month (from leave records). */
+  /**
+   * Unpaid leave and sick leave without pay taken in the month (from leave
+   * records), in working days: what versions of the app before October 2026
+   * deduct at the daily rate. This version pays from `calendarLeave`.
+   */
   unpaidLeaveDays: number;
-  /** Sick leave paid at a reduced rate in the month (from leave records). */
+  /** Sick leave paid at a reduced rate in the month, in working days (as above). */
   reducedPay: ReducedPayDays[];
   /**
-   * 'calendar': the leave days above are calendar days, and the pay they cost
-   * is a share of the month's pay (wage × days ÷ days in the month). Lines of
-   * runs prepared before had working days, deducted at the daily rate.
+   * The month's leave in calendar days (from leave records): the pay it costs
+   * is a share of the month's pay (wage × days ÷ days in the month), so a
+   * month of unpaid leave pays nothing. Older versions don't know it and keep
+   * reading the working days above, which mean to them what they always did.
+   */
+  calendarLeave?: { unpaidDays: number; reducedPay: ReducedPayDays[] };
+  /**
+   * 'calendar' on lines prepared on 5 and 6 October 2026, before
+   * `calendarLeave`: their unpaidLeaveDays and reducedPay are calendar days.
    */
   leaveBasis?: 'calendar';
   adjustments: PayAdjustment[];
@@ -1847,6 +1857,13 @@ export interface PayLine {
   pifssBase: number;
   pifssEmployee: number;
   pifssEmployer: number;
+  /**
+   * The employee's PIFSS share the month's pay doesn't cover (a month of
+   * unpaid leave): owed by the employee instead of a net pay below zero. The
+   * pay run records it in staff advances and recovers it from a later salary
+   * as a loan (StaffLoan.payRunId).
+   */
+  pifssOwed?: number;
   loanDeduction: number;
   otherDeductions: number;
   net: number;
@@ -1932,6 +1949,12 @@ export interface StaffLoan {
   status: 'active' | 'cancelled';
   /** Entry that reversed the loan when it was cancelled. */
   cancelJournalId: ID | null;
+  /**
+   * The pay run this is the PIFSS share of: what that month's pay didn't
+   * cover, owed by the employee. Its entry recorded it (no payment), and
+   * reopening the run removes it.
+   */
+  payRunId?: ID | null;
   notes: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;

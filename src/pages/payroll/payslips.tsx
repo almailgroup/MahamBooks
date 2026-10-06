@@ -8,6 +8,7 @@ import { formatPeriod } from '@/lib/hr/payroll';
 import { formatDate } from '@/lib/format';
 import { formatIban } from '@/lib/kuwait';
 import { amountInWords } from '@/lib/words';
+import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import {
   arabicOf,
   Both,
@@ -38,6 +39,7 @@ const L = {
   unpaid: msg('Unpaid days'),
   gross: msg('Gross pay'),
   pifss: msg('PIFSS – employee share'),
+  owed: msg('Owed by the employee, not covered by this month’s pay'),
   loan: msg('Loan recovery'),
   total: msg('Total deductions'),
   net: msg('Net pay'),
@@ -64,7 +66,15 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
   const minus = (n: number) => `−${money(n)}`;
   const additions = line.adjustments.filter((a) => a.type === 'addition' && a.amount > 0);
   const deductions = line.adjustments.filter((a) => a.type === 'deduction' && a.amount > 0);
-  const totalDeductions = line.pifssEmployee + line.loanDeduction + line.otherDeductions;
+  const owed = line.pifssOwed ?? 0;
+  const p = currencyPrecision(company.currency);
+  const totalDeductions = fromMinor(
+    toMinor(line.pifssEmployee, p) -
+      toMinor(owed, p) +
+      toMinor(line.loanDeduction, p) +
+      toMinor(line.otherDeductions, p),
+    p,
+  );
   const job = [line.jobTitle, line.jobTitleAr].filter(Boolean).join(' / ');
   return (
     <article
@@ -164,6 +174,7 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
             {line.pifssEmployee > 0 ? (
               <PrintRow label={<Both text={L.pifss} />} amount={money(line.pifssEmployee)} />
             ) : null}
+            {owed > 0 ? <PrintRow label={<Both text={L.owed} />} amount={minus(owed)} /> : null}
             {line.loanDeduction > 0 ? (
               <PrintRow label={<Both text={L.loan} />} amount={money(line.loanDeduction)} />
             ) : null}
@@ -175,7 +186,7 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
                 amount={money(a.amount)}
               />
             ))}
-            {totalDeductions === 0 ? (
+            {line.pifssEmployee === 0 && line.loanDeduction === 0 && deductions.length === 0 ? (
               <PrintRow label={<Both text={L.none} />} amount={money(0)} />
             ) : null}
             <PrintRow strong label={<Both text={L.total} />} amount={money(totalDeductions)} />

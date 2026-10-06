@@ -9,6 +9,7 @@ import type {
   PayLine,
   PayRules,
   PayrollAccountKey,
+  ReducedPayDays,
   SettlementSalary,
 } from '@/db/types';
 import { daysBetween } from '@/lib/dates';
@@ -202,6 +203,22 @@ export function rateWage(
 }
 
 /**
+ * The leave days a pay line loses pay for, and whether they are calendar
+ * days (a share of the month's pay) or working days at the daily rate (lines
+ * of runs prepared before October 2026). See PayLine.calendarLeave.
+ */
+export function lineLeave(
+  line: Pick<PayLine, 'unpaidLeaveDays' | 'reducedPay' | 'calendarLeave' | 'leaveBasis'>,
+): { unpaidDays: number; reducedPay: ReducedPayDays[]; calendar: boolean } {
+  if (line.calendarLeave) return { ...line.calendarLeave, calendar: true };
+  return {
+    unpaidDays: line.unpaidLeaveDays,
+    reducedPay: line.reducedPay,
+    calendar: line.leaveBasis === 'calendar',
+  };
+}
+
+/**
  * Works out a pay line from what was entered: pay for the days employed,
  * overtime, pay lost to unpaid days and reduced-pay sick days, additions,
  * contributions, loan recoveries and other deductions. Each amount is rounded
@@ -210,8 +227,12 @@ export function rateWage(
  * Leave costs a share of the month's pay, worked out like the pay for the
  * days employed (wage × days ÷ days in the month), so a month of unpaid leave
  * leaves exactly nothing; absence entered by hand is deducted at the daily
- * rate. Lines without `leaveBasis` (runs prepared before) keep the daily rate
- * for leave too.
+ * rate. Lines of runs prepared before keep the daily rate for leave too.
+ *
+ * When the month's pay doesn't cover the employee's PIFSS share (a month of
+ * unpaid leave), the rest is owed by the employee (`pifssOwed`) and net pay
+ * is 0, not below; loans and other deductions can still take it below zero,
+ * which stops the run from being approved.
  */
 export function calculatePayLine(line: PayLine, rules: PayRules, precision: number): PayLine {
   const p = precision;
@@ -236,16 +257,17 @@ export function calculatePayLine(line: PayLine, rules: PayRules, precision: numb
   const hourly = daily.dividedBy(PAYROLL_RULES.hoursPerDay);
   const overtime = overtimePay(hourly, line.overtime, p);
 
-  const leaveDays = dec(Math.max(0, line.unpaidLeaveDays)).plus(
+  const leave = lineLeave(line);
+  const leaveDays = dec(Math.max(0, leave.unpaidDays)).plus(
     total(
-      line.reducedPay.map((r) =>
+      leave.reducedPay.map((r) =>
         dec(Math.max(0, r.days))
           .times(100 - Math.min(100, Math.max(0, r.percent)))
           .dividedBy(100),
       ),
     ),
   );
-  const calendar = line.leaveBasis === 'calendar';
+  const calendar = leave.calendar;
   let leaveLost = dec(0);
   if (calendar) {
     const paidDays = leaveDays.gt(daysWorked) ? dec(0) : dec(daysWorked).minus(leaveDays);
@@ -270,13 +292,16 @@ export function calculatePayLine(line: PayLine, rules: PayRules, precision: numb
     ? contributions(monthlyWage(line), fraction, rates, p)
     : { base: 0, employee: 0, employer: 0 };
   const loanDeduction = round(total(line.loans.map((l) => Math.max(0, l.amount))), p);
+  const uncovered = dec(pifss.employee).minus(gross);
+  const pifssOwed = uncovered.gt(0) ? round(uncovered, p) : 0;
   const net = round(
-    dec(gross).minus(pifss.employee).minus(loanDeduction).minus(otherDeductions),
+    dec(gross).minus(pifss.employee).plus(pifssOwed).minus(loanDeduction).minus(otherDeductions),
     p,
   );
 
+  const { pifssOwed: _before, ...rest } = line;
   return {
-    ...line,
+    ...rest,
     daysWorked,
     daysInMonth,
     allowances,
@@ -289,6 +314,7 @@ export function calculatePayLine(line: PayLine, rules: PayRules, precision: numb
     pifssBase: pifss.base,
     pifssEmployee: pifss.employee,
     pifssEmployer: pifss.employer,
+    ...(pifssOwed > 0 ? { pifssOwed } : {}),
     loanDeduction,
     otherDeductions,
     net,
@@ -305,7 +331,8 @@ export type PayWarning =
   | { code: 'iban' }
   | { code: 'gcc_rates'; country: string }
   | { code: 'pifss_rates' }
-  | { code: 'no_salary' };
+  | { code: 'no_salary' }
+  | { code: 'pifss_owed'; amount: number; name: string; nameAr: string };
 
 /**
  * Checks a worked-out pay line against the law: loan recoveries over 10%
@@ -322,6 +349,14 @@ export function payLineWarnings(line: PayLine, rules: PayRules, precision: numbe
     out.push({ code: 'no_salary' });
   }
   if (minor(line.net) < 0) out.push({ code: 'negative_net' });
+  if (minor(line.pifssOwed ?? 0) > 0) {
+    out.push({
+      code: 'pifss_owed',
+      amount: line.pifssOwed ?? 0,
+      name: line.name,
+      nameAr: line.nameAr,
+    });
+  }
   const loanLimit = round(dec(line.gross).times(PAYROLL_RULES.loanCapPercent).dividedBy(100), p);
   if (minor(line.loanDeduction) > minor(loanLimit))
     out.push({ code: 'loan_cap', limit: loanLimit });
@@ -375,9 +410,11 @@ export interface PayRunTotals {
   absence: number;
   pifssEmployee: number;
   pifssEmployer: number;
+  /** Employee PIFSS shares the month's pay didn't cover, owed by the employees. */
+  pifssOwed: number;
   loans: number;
   otherDeductions: number;
-  /** Employee contributions, loan recoveries and other deductions. */
+  /** Employee contributions (less what is owed), loan recoveries and other deductions. */
   deductions: number;
   net: number;
   /** What the month costs the company: gross pay and employer contributions. */
@@ -395,6 +432,7 @@ export function payRunTotals(lines: PayLine[], precision: number): PayRunTotals 
     absence: 0,
     pifssEmployee: 0,
     pifssEmployer: 0,
+    pifssOwed: 0,
     loans: 0,
     otherDeductions: 0,
     net: 0,
@@ -411,6 +449,7 @@ export function payRunTotals(lines: PayLine[], precision: number): PayRunTotals 
     sums.absence += absence;
     sums.pifssEmployee += m(line.pifssEmployee);
     sums.pifssEmployer += m(line.pifssEmployer);
+    sums.pifssOwed += m(line.pifssOwed ?? 0);
     sums.loans += m(line.loanDeduction);
     sums.otherDeductions += m(line.otherDeductions);
     sums.net += m(line.net);
@@ -425,9 +464,10 @@ export function payRunTotals(lines: PayLine[], precision: number): PayRunTotals 
     absence: f(sums.absence),
     pifssEmployee: f(sums.pifssEmployee),
     pifssEmployer: f(sums.pifssEmployer),
+    pifssOwed: f(sums.pifssOwed),
     loans: f(sums.loans),
     otherDeductions: f(sums.otherDeductions),
-    deductions: f(sums.pifssEmployee + sums.loans + sums.otherDeductions),
+    deductions: f(sums.pifssEmployee - sums.pifssOwed + sums.loans + sums.otherDeductions),
     net: f(sums.net),
     cost: f(sums.gross + sums.pifssEmployer),
   };
@@ -448,6 +488,7 @@ export const POSTING_LABELS = {
   salariesPayable: msg('Net salaries payable'),
   pifssPayable: msg('PIFSS contributions'),
   advances: msg('Loan recoveries'),
+  pifssOwed: msg('PIFSS shares owed by employees'),
   otherDeductions: msg('Other deductions'),
   eosExpense: msg('End-of-service indemnity'),
   eosProvision: msg('End-of-service indemnity provision'),
@@ -469,7 +510,8 @@ function postings(entries: [PayrollAccountKey, number, string][]): Posting[] {
 
 /**
  * The entry that records a pay run: Dr 6010 basic, Dr 6020 allowances and
- * overtime, Dr 6030 employer PIFSS; Cr 2300 net pay, Cr 2310 employee and
+ * overtime, Dr 6030 employer PIFSS, Dr 1320 employee PIFSS shares the pay
+ * didn't cover (owed by the employees); Cr 2300 net pay, Cr 2310 employee and
  * employer PIFSS, Cr 1320 loan recoveries, Cr other deductions.
  */
 export function payRunPostings(totals: PayRunTotals, precision: number): Posting[] {
@@ -479,6 +521,7 @@ export function payRunPostings(totals: PayRunTotals, precision: number): Posting
     ['salaries', m(totals.salaries), L.salaries],
     ['allowances', m(totals.allowances), L.allowances],
     ['pifssExpense', m(totals.pifssEmployer), L.pifssExpense],
+    ['advances', m(totals.pifssOwed), L.pifssOwed],
     ['salariesPayable', -m(totals.net), L.salariesPayable],
     ['pifssPayable', -(m(totals.pifssEmployee) + m(totals.pifssEmployer)), L.pifssPayable],
     ['advances', -m(totals.loans), L.advances],

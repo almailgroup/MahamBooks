@@ -245,6 +245,63 @@ describe('pay lines', () => {
   });
 });
 
+describe('a PIFSS share the month’s pay doesn’t cover', () => {
+  const kuwaiti: Partial<PayLine> = {
+    category: 'kuwaiti',
+    nationality: 'KW',
+    name: 'Test Clerk',
+    nameAr: 'موظف تجريبي',
+    monthlyBasic: 900,
+    calendarLeave: { unpaidDays: 30, reducedPay: [] },
+  };
+
+  it('is owed by the employee: net pay is 0, not below', () => {
+    const result = calc(kuwaiti);
+    expect(result).toMatchObject({ gross: 0, pifssEmployee: 94.5, pifssOwed: 94.5, net: 0 });
+    expect(payLineWarnings(result, RULES, 3)).toContainEqual({
+      code: 'pifss_owed',
+      amount: 94.5,
+      name: 'Test Clerk',
+      nameAr: 'موظف تجريبي',
+    });
+    // Part of the month paid: the pay covers what it can.
+    const part = calc({ ...kuwaiti, calendarLeave: { unpaidDays: 29, reducedPay: [] } });
+    expect(part).toMatchObject({ gross: 30, pifssOwed: 64.5, net: 0 });
+    // Paid enough: nothing owed, and the field goes.
+    const paid = calc({ ...kuwaiti, calendarLeave: undefined, pifssOwed: 12 });
+    expect(paid.net).toBe(805.5);
+    expect('pifssOwed' in paid).toBe(false);
+  });
+
+  it('doesn’t let loans or other deductions take pay below zero', () => {
+    const result = calc({
+      ...kuwaiti,
+      loans: [{ loanId: 'loan', amount: 20 }],
+      adjustments: [{ id: 'd', type: 'deduction', amount: 5, note: '' }],
+    });
+    expect(result).toMatchObject({ pifssOwed: 94.5, net: -25 });
+    expect(payLineWarnings(result, RULES, 3).map((w) => w.code)).toContain('negative_net');
+  });
+
+  it('is posted to staff advances, and the entry balances', () => {
+    const lines = [calc(kuwaiti), calc({ id: 'l2', monthlyBasic: 400 })];
+    const totals = payRunTotals(lines, 3);
+    expect(totals).toMatchObject({ pifssEmployee: 94.5, pifssOwed: 94.5, deductions: 0, net: 400 });
+    const postings = payRunPostings(totals, 3);
+    expect(balanced(postings)).toBe(true);
+    expect(postings).toContainEqual({
+      key: 'advances',
+      amount: 94_500,
+      description: 'PIFSS shares owed by employees',
+    });
+    expect(postings).toContainEqual({
+      key: 'pifssPayable',
+      amount: -198_000,
+      description: 'PIFSS contributions',
+    });
+  });
+});
+
 describe('pay line checks', () => {
   const codes = (l: PayLine) => payLineWarnings(l, RULES, 3).map((w) => w.code);
 

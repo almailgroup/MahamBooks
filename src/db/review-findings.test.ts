@@ -301,6 +301,12 @@ describe('unpaid leave in a pay run', () => {
       createLeaveRecord(c.id, five.id, { type: 'unpaid', start: '2026-09-01', end: '2026-09-30' }),
     );
     const run = await createPayRun(c.id, '2026-09');
-    expect(run.lines[0]).toMatchObject({ unpaidLeaveDays: 30, absenceDeduction: 260, net: 0 });
+    expect(run.lines[0]).toMatchObject({
+      calendarLeave: { unpaidDays: 30, reducedPay: [] },
+      absenceDeduction: 260,
+      net: 0,
+    });
+    // What older versions of the app read: September's 22 working days, at the daily rate.
+    expect(run.lines[0].unpaidLeaveDays).toBe(22);
   });
 });

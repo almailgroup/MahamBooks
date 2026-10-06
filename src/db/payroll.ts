@@ -39,10 +39,11 @@ import type {
 import { newId, shortId } from '@/lib/ids';
 import { daysBetween, isISODate, today } from '@/lib/dates';
 import { formatDate } from '@/lib/format';
-import { currencyPrecision, fromMinor, round, toMinor } from '@/lib/money';
+import { currencyPrecision, dec, fromMinor, round, toMinor } from '@/lib/money';
 import { freeAccountCode, type SystemAccountSpec } from '@/lib/payment-methods';
 import { GCC_COUNTRIES, insuredWithPifss, LEAVING_REASON_LABELS } from '@/lib/hr/employees';
 import {
+  addPeriods,
   balanced,
   calculatePayLine,
   computeSettlement,
@@ -53,6 +54,7 @@ import {
   isPeriod,
   lastMonthDays,
   leaveValue,
+  monthlyWage,
   noticeMonthsFor,
   payDateFor,
   payLineWarnings,
@@ -623,6 +625,11 @@ export async function cancelStaffLoan(id: ID): Promise<StaffLoan> {
   return db.transaction('rw', TABLES(), async () => {
     const loan = await db.staffLoans.get(id);
     if (!loan || loan.status !== 'active') throw new PayrollError(t('This loan was cancelled.'));
+    if (loan.payRunId) {
+      throw new PayrollError(
+        t('This PIFSS share was recorded by a pay run: reopening that pay run cancels it.'),
+      );
+    }
     const company = await loadCompany(loan.companyId);
     const p = currencyPrecision(company.currency);
     const [runs, settlements] = await Promise.all([
@@ -770,6 +777,10 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
         record,
       ]);
       await db.leaveRecords.put(record);
+      // An opening balance replaces the 0 days an import brought forward that nobody confirmed.
+      if (record.kind === 'opening' && employee.leaveOpening && !employee.leaveOpening.confirmed) {
+        await db.employees.put({ ...employee, leaveOpening: null, updatedAt: nowStamp() });
+      }
       await logActivity(company.id, 'payroll', record.id, existing ? 'leave_updated' : 'leave', {
         text: existing ? msg('Leave of {name} updated') : msg('Leave recorded for {name}'),
         vars: { name: employee.name },
@@ -892,7 +903,11 @@ function loanRecoveries(
   previous: LoanRecovery[] | undefined,
 ): LoanRecovery[] {
   const out: LoanRecovery[] = [];
-  for (const loan of ctx.loans) {
+  // The oldest loan first.
+  const loans = [...ctx.loans].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt),
+  );
+  for (const loan of loans) {
     if (loan.employeeId !== employeeId || loan.status !== 'active' || loan.firstPeriod > period) {
       continue;
     }
@@ -941,9 +956,11 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     daysInMonth: daysInPeriod(run.period),
     overtime: previous?.overtime ?? { normal: 0, restDay: 0, holiday: 0 },
     absentDays: previous?.absentDays ?? 0,
-    unpaidLeaveDays: leave.unpaidDays,
-    reducedPay: leave.reducedPay,
-    leaveBasis: 'calendar',
+    // Working days for older versions of the app, which deduct them at the
+    // daily rate; this version pays from the calendar days.
+    unpaidLeaveDays: leave.working.unpaidDays,
+    reducedPay: leave.working.reducedPay,
+    calendarLeave: { unpaidDays: leave.unpaidDays, reducedPay: leave.reducedPay },
     adjustments: previous?.adjustments ?? [],
     loans: loanRecoveries(employee.id, run.period, ctx, run.id, previous?.loans),
     basic: 0,
@@ -959,7 +976,27 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     otherDeductions: 0,
     net: 0,
   };
-  return calculatePayLine(line, run.rules, ctx.precision);
+  const p = ctx.precision;
+  const worked = calculatePayLine(line, run.rules, p);
+  // PIFSS shares owed from earlier months (loans a pay run made) are recovered
+  // from pay that covers them, within the 10% of the wage loan recoveries may
+  // take (art. 59): never from a month without pay.
+  const owed = (r: LoanRecovery) => Boolean(ctx.loans.find((l) => l.id === r.loanId)?.payRunId);
+  const owedMinor = worked.loans.filter(owed).reduce((s, r) => s + toMinor(r.amount, p), 0);
+  if (owedMinor === 0) return worked;
+  const otherMinor = toMinor(worked.loanDeduction, p) - owedMinor;
+  const cap = toMinor(
+    round(dec(worked.gross).times(PAYROLL_RULES.loanCapPercent).dividedBy(100), p),
+    p,
+  );
+  let room = Math.max(0, Math.min(cap - otherMinor, toMinor(worked.net, p) + owedMinor));
+  const loans = worked.loans.flatMap((r) => {
+    if (!owed(r)) return [r];
+    const amount = Math.min(toMinor(r.amount, p), room);
+    room -= amount;
+    return amount > 0 ? [{ ...r, amount: fromMinor(amount, p) }] : [];
+  });
+  return calculatePayLine({ ...worked, loans }, run.rules, p);
 }
 
 /** Employees on the payroll in the month, as lines (keeping what was entered on `previous`). */
@@ -1158,7 +1195,7 @@ function provisionLines(ctx: Context, date: ISODate, rules: PayRules): Provision
         !ctx.settings.eosForInsured && insuredWithPifss(e.category)
           ? 0
           : eosProvisionFor(e, date, ctx.people.eosDailyDivisor, p);
-      // From the leave brought forward, when there is some: nothing before it is posted.
+      // From the opening balance by then; before the first one, worked back from it.
       const balance = employeeLeaveBalance(e, ctx.leave, date).balance;
       const leaveDays = Math.max(0, balance);
       const wage = e.allowances.reduce(
@@ -1299,6 +1336,24 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
       );
     }
 
+    // The PIFSS shares the pay didn't cover are owed by the employees: the
+    // entry put them in staff advances, and a loan recovers each one from a
+    // later salary, at most 10% of the wage a month (art. 59).
+    for (const line of lines) {
+      const owed = line.pifssOwed ?? 0;
+      if (!(owed > 0)) continue;
+      const cap = round(monthlyWage(line).times(PAYROLL_RULES.loanCapPercent).dividedBy(100), p);
+      await db.staffLoans.add(
+        createStaffLoan(company.id, line.employeeId, {
+          date: run.date,
+          amount: owed,
+          instalment: cap > 0 && cap < owed ? cap : owed,
+          firstPeriod: addPeriods(run.period, 1),
+          payRunId: run.id,
+        }),
+      );
+    }
+
     const next: PayRun = {
       ...run,
       lines,
@@ -1398,6 +1453,29 @@ export async function reopenPayRun(id: ID): Promise<PayRun> {
     if (run.status !== 'approved') throw new PayrollError(t('This pay run is not approved.'));
     const company = await loadCompany(run.companyId);
     assertOpen(company, run.date);
+    // The PIFSS shares it recorded as owed go with its entry (approving it
+    // again records them again), unless a later pay run or a settlement has
+    // recovered some already.
+    const owed = (await db.staffLoans.where('companyId').equals(company.id).toArray()).filter(
+      (l) => l.payRunId === run.id && l.status === 'active',
+    );
+    if (owed.length > 0) {
+      const p = currencyPrecision(company.currency);
+      const [runs, settlements] = await Promise.all([
+        db.payRuns.where('companyId').equals(company.id).toArray(),
+        db.finalSettlements.where('companyId').equals(company.id).toArray(),
+      ]);
+      const recovered = owed.find((l) => loanRecoveredMinor(l.id, runs, settlements, p) > 0);
+      if (recovered) {
+        throw new PayrollError(
+          t(
+            'The PIFSS share {name} owed from this pay run was already recovered from a later salary or a final settlement. Reopen or reverse that first.',
+            { name: run.lines.find((l) => l.employeeId === recovered.employeeId)?.name ?? '' },
+          ),
+        );
+      }
+      await db.staffLoans.bulkDelete(owed.map((l) => l.id));
+    }
     const reversals = [
       await reverseEntry(run.journalId),
       await reverseEntry(run.provisionJournalId),

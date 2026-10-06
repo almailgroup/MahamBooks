@@ -1,6 +1,7 @@
 import { addDays, addMonths, differenceInMonths } from 'date-fns';
 import type {
   Employee,
+  ID,
   ISODate,
   LeaveOpening,
   LeaveRecord,
@@ -162,8 +163,27 @@ export interface PeriodLeave {
   unpaidDays: number;
   /** Calendar days of sick leave at a reduced share of pay. */
   reducedPay: ReducedPayDays[];
+  /**
+   * The same days counting working days only, as versions of the app before
+   * October 2026 count them (and deduct them at the daily rate).
+   */
+  working: { unpaidDays: number; reducedPay: ReducedPayDays[] };
   /** Leave days in the month by type, counted as each type counts them. */
   byType: Partial<Record<LeaveType, number>>;
+}
+
+/** Days without pay, and days at each reduced share of pay, from each day's share of pay. */
+function payDays(shares: number[]): { unpaidDays: number; reducedPay: ReducedPayDays[] } {
+  let unpaidDays = 0;
+  const reduced = new Map<number, number>();
+  for (const percent of shares) {
+    if (percent === 0) unpaidDays += 1;
+    else if (percent < 100) reduced.set(percent, (reduced.get(percent) ?? 0) + 1);
+  }
+  const reducedPay = [...reduced.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([percent, days]) => ({ percent, days }));
+  return { unpaidDays, reducedPay };
 }
 
 /** Every date from `start` to `end` (at most MAX_LEAVE_SPAN of them). */
@@ -183,7 +203,8 @@ function calendarDates(start: ISODate, end: ISODate): ISODate[] {
  * last day): unpaid days, and sick days at a reduced share of pay. A weekend
  * or holiday within sick leave takes the share of the working day before it
  * (or after it, when the leave starts on a day off). A day on two kinds of
- * leave counts once, at the lower pay.
+ * leave counts once, at the lower pay. `working` has the working days among
+ * them, for pay lines read by older versions of the app (see PayLine).
  */
 export function leaveInPeriod(
   records: LeaveRecord[],
@@ -220,16 +241,8 @@ export function leaveInPeriod(
       if (percent < 100) lower(d, percent);
     }
   }
-  let unpaidDays = 0;
-  const reduced = new Map<number, number>();
-  for (const percent of pay.values()) {
-    if (percent === 0) unpaidDays += 1;
-    else if (percent < 100) reduced.set(percent, (reduced.get(percent) ?? 0) + 1);
-  }
-  const reducedPay = [...reduced.entries()]
-    .sort((a, b) => b[0] - a[0])
-    .map(([percent, days]) => ({ percent, days }));
-  return { unpaidDays, reducedPay, byType };
+  const working = [...pay].filter(([d]) => !isDayOff(d)).map(([, percent]) => percent);
+  return { ...payDays([...pay.values()]), working: payDays(working), byType };
 }
 
 export interface LeaveBalance {
@@ -255,14 +268,48 @@ export function completedMonths(from: ISODate, on: ISODate): number {
   return Math.max(0, differenceInMonths(addDays(parseISODate(on), 1), parseISODate(from)));
 }
 
+/** An opening balance: the annual leave an employee had left on a date. */
+interface Opening {
+  date: ISODate;
+  days: number;
+  /** The opening leave record, or null for the leave brought forward. */
+  record: LeaveRecord | null;
+}
+
 /**
- * Annual leave balance on a date: the opening balance (or nothing from the
- * hire date), 2.5 days for each month of service since, adjustments, less the
- * annual leave taken. Unused days carry forward.
+ * The opening balances that count: approved opening leave records, and the
+ * leave brought forward unless a record replaces it. A record replaces leave
+ * brought forward nobody has confirmed (an import's 0 days) whatever its
+ * date; confirmed leave brought forward gives way to a record from the
+ * record's date on, and counts before it.
+ */
+function openingsOf(annual: LeaveRecord[], brought: LeaveOpening | null): Opening[] {
+  const records = annual.filter((r) => r.kind === 'opening');
+  const out: Opening[] = records.map((r) => ({ date: r.start, days: r.days, record: r }));
+  if (brought && (brought.confirmed || records.length === 0)) {
+    out.push({ date: brought.date, days: brought.days, record: null });
+  }
+  return out;
+}
+
+/** On the same day a record counts before leave brought forward, and a newer record first. */
+const sameDay = (a: Opening, b: Opening) =>
+  Number(Boolean(b.record)) - Number(Boolean(a.record)) ||
+  (b.record?.createdAt ?? '').localeCompare(a.record?.createdAt ?? '');
+const latestFirst = (a: Opening, b: Opening) => b.date.localeCompare(a.date) || sameDay(a, b);
+const earliestFirst = (a: Opening, b: Opening) => a.date.localeCompare(b.date) || sameDay(a, b);
+
+/**
+ * Annual leave balance on a date: the latest opening balance by then (or
+ * nothing from the hire date), 2.5 days for each month of service since,
+ * adjustments, less the annual leave taken. Unused days carry forward.
  *
- * `brought` is the leave the employee brought forward (see Employee.leaveOpening):
- * leave accrues only from its date (or the hire date, when later), and nothing
- * before it counts. An opening balance recorded on or after its date replaces it.
+ * Opening balances are opening leave records and `brought`, the leave the
+ * employee brought forward (see Employee.leaveOpening and openingsOf). Leave
+ * brought forward accrues from its date, or the hire date when later. Before
+ * an employee's first opening balance their leave isn't here, so the balance
+ * is worked back from it, never from the hire date: its days less 2.5 for
+ * each complete month in between, never below 0.
  */
 export function annualLeaveBalance(
   records: LeaveRecord[],
@@ -270,36 +317,43 @@ export function annualLeaveBalance(
   on: ISODate,
   brought: LeaveOpening | null = null,
 ): LeaveBalance {
-  const annual = records.filter(
-    (r) => r.type === 'annual' && r.status === 'approved' && r.start <= on,
-  );
-  const latest = annual
-    .filter((r) => r.kind === 'opening')
-    .sort((a, b) => b.start.localeCompare(a.start) || b.createdAt.localeCompare(a.createdAt))[0];
+  const annual = records.filter((r) => r.type === 'annual' && r.status === 'approved');
   const eligibleFrom = hireDate
     ? toISODate(addMonths(parseISODate(hireDate), FIRST_YEAR_MONTHS))
     : null;
-  const useBrought = Boolean(brought && (!latest || latest.start < brought.date));
-  const opening = useBrought ? undefined : latest;
-  let from: ISODate | null;
-  let openingDays: number;
-  if (useBrought && brought) {
-    from = hireDate && hireDate > brought.date ? hireDate : brought.date;
-    openingDays = brought.days;
-  } else {
-    from = opening?.start ?? hireDate;
-    openingDays = opening?.days ?? 0;
+  const none = { opening: 0, accrued: 0, adjusted: 0, taken: 0, balance: 0, eligibleFrom };
+  const openings = openingsOf(annual, brought);
+  const opening = openings.filter((o) => o.date <= on).sort(latestFirst)[0];
+  if (!opening) {
+    if (hireDate && hireDate > on) return { from: hireDate, ...none };
+    const next = openings.filter((o) => o.date > on).sort(earliestFirst)[0];
+    if (next) {
+      const months = completedMonths(addDaysISO(on, 1), addDaysISO(next.date, -1));
+      const balance = twoPlaces(Math.max(0, next.days - (months * ANNUAL_LEAVE_DAYS) / 12));
+      return {
+        from: next.date,
+        opening: next.days,
+        accrued: twoPlaces(balance - next.days),
+        adjusted: 0,
+        taken: 0,
+        balance,
+        eligibleFrom,
+      };
+    }
   }
-  if (!from || from > on) {
-    return { from, opening: 0, accrued: 0, adjusted: 0, taken: 0, balance: 0, eligibleFrom };
-  }
-  const start = from;
-  const after = annual.filter((r) => r.start >= start && r !== opening && r.kind !== 'opening');
-  const accrued = twoPlaces((completedMonths(start, on) * ANNUAL_LEAVE_DAYS) / 12);
+  const from = !opening
+    ? hireDate
+    : !opening.record && hireDate && hireDate > opening.date
+      ? hireDate
+      : opening.date;
+  if (!from || from > on) return { from, ...none };
+  const after = annual.filter((r) => r.start >= from && r.start <= on && r.kind !== 'opening');
+  const accrued = twoPlaces((completedMonths(from, on) * ANNUAL_LEAVE_DAYS) / 12);
   const adjusted = twoPlaces(
     after.filter((r) => r.kind === 'adjustment').reduce((s, r) => s + r.days, 0),
   );
   const taken = twoPlaces(after.filter((r) => r.kind === 'leave').reduce((s, r) => s + r.days, 0));
+  const openingDays = opening?.days ?? 0;
   return {
     from,
     opening: openingDays,
@@ -343,21 +397,26 @@ type OpeningFields = Pick<Employee, 'id' | 'status' | 'hireDate' | 'createdAt' |
 
 /**
  * The employees who still need an opening leave balance: current staff
- * hired more than a month before they were added here (or without a hire
- * date), with neither a confirmed opening balance nor an opening leave
- * record, whose leave is counted from the hire date as if they had taken
- * none before; and staff an import brought in whose leave brought forward
- * nobody has confirmed. Staff added when they joined have all their leave
- * here and need none.
+ * whose balance counts no opening balance (see openingsOf) and who were hired
+ * more than a month before they were added here (or have no hire date), so
+ * their leave is counted from the hire date as if they had taken none
+ * before; and staff whose only opening is leave brought forward by an import
+ * that nobody has confirmed. Staff added when they joined have all their
+ * leave here and need none.
  */
 export function employeesNeedingLeaveOpening<T extends OpeningFields>(
   employees: T[],
   records: LeaveRecord[],
 ): T[] {
-  const opened = new Set(records.filter(isOpeningRecord).map((r) => r.employeeId));
+  const byEmployee = new Map<ID, LeaveRecord[]>();
+  for (const r of records.filter(isOpeningRecord)) {
+    byEmployee.set(r.employeeId, [...(byEmployee.get(r.employeeId) ?? []), r]);
+  }
   return employees.filter((e) => {
-    if (e.status === 'left' || opened.has(e.id)) return false;
-    if (e.leaveOpening) return !e.leaveOpening.confirmed;
+    if (e.status === 'left') return false;
+    const openings = openingsOf(byEmployee.get(e.id) ?? [], e.leaveOpening ?? null);
+    if (openings.some((o) => o.record)) return false;
+    if (openings.length > 0) return !e.leaveOpening?.confirmed;
     const added = e.createdAt?.slice(0, 10);
     if (!e.hireDate || !added) return true;
     return e.hireDate < addDaysISO(added, -ADDED_AT_HIRE_DAYS);

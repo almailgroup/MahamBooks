@@ -702,4 +702,24 @@ export default {
     'تم تحديد رصيد الإجازة المرحّل لـ{count} موظف: {days} يوم في {date}',
   'Leave brought forward set for {count} employees: {days} days on {date}':
     'تم تحديد أرصدة الإجازات المرحّلة لـ{count} من الموظفين: {days} يوم في {date}',
+
+  // Leave days on pay lines of runs prepared before October 2026
+  'From leave records: {days} working days without pay.':
+    'من سجل الإجازات: {days} يوم عمل بدون أجر.',
+  'From leave records: {days} working days of sick leave at {percent} pay.':
+    'من سجل الإجازات: {days} يوم عمل من الإجازة المرضية بنسبة {percent} من الأجر.',
+
+  // A PIFSS share the month's pay doesn't cover
+  'PIFSS share not covered by this month’s pay: {amount}, recorded as owed by {name}.':
+    'حصة التأمينات الاجتماعية التي لا يغطيها راتب هذا الشهر: {amount}، سُجّلت دينًا على {name}.',
+  'Owed by the employee, not covered by this month’s pay':
+    'دين على الموظف، لا يغطيه راتب هذا الشهر',
+  'PIFSS shares owed by employees': 'حصص تأمينات اجتماعية مستحقة على الموظفين',
+  'PIFSS share owed from {month}': 'حصة تأمينات اجتماعية مستحقة عن {month}',
+  'PIFSS share of {amount} owed from the {month} pay':
+    'حصة تأمينات اجتماعية بقيمة {amount} مستحقة عن راتب {month}',
+  'This PIFSS share was recorded by a pay run: reopening that pay run cancels it.':
+    'سجّل مسير الرواتب حصة التأمينات الاجتماعية هذه، وتُلغى بإعادة فتح ذلك المسير.',
+  'The PIFSS share {name} owed from this pay run was already recovered from a later salary or a final settlement. Reopen or reverse that first.':
+    'استُردّت حصة التأمينات الاجتماعية المستحقة على {name} من هذا المسير من راتب لاحق أو من مخالصة نهائية. أعد فتح ذلك المسير أو اعكس المخالصة أولًا.',
 } satisfies Dictionary;
