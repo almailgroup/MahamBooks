@@ -708,6 +708,12 @@ export async function setDocumentStatus(
         // Issued now: what it posts with is fixed from now on.
         if (!isPosted(doc)) next = await withPosting(next, client);
         next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
+      } else if (leaving) {
+        // Voided or back to draft: its totals follow what is still applied to
+        // it now that its credits are off; the status stays as asked.
+        const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
+        const { totals } = applyTotals(next, await paidAmount(doc), client ?? null);
+        next = { ...next, totals, paidAt: null };
       }
       if (company && isPosted(next) && next.totals.retention) {
         await ensureSpecAccount(
@@ -717,7 +723,7 @@ export async function setDocumentStatus(
       }
       await db.documents.put(next);
       // The credit is free again, and what it was applied to is owed again.
-      await recalculateDocuments([...credited, ...(status === 'void' ? [doc.id] : [])]);
+      await recalculateDocuments(credited);
       await syncDocumentStock(doc.companyId, doc.id);
       await logActivity(
         doc.companyId,

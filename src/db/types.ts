@@ -925,6 +925,13 @@ export interface Payment {
   voided?: boolean;
   voidReason?: string;
   voidedOn?: ISODate | null;
+  /**
+   * The posting rules the payment was saved under (`PAYMENT_POSTING_RULES`
+   * in the ledger). Payments saved before rules were numbered have none and
+   * keep posting as they did, so closed periods never change by themselves;
+   * saving one again moves it to the current rules.
+   */
+  postingRules?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

@@ -626,7 +626,8 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
               <CardHeader
                 title={type === 'credit' ? t('Applied to') : t('Payments')}
                 actions={
-                  type === 'invoice' && doc.status !== 'void' && doc.status !== 'paid' ? (
+                  // Payments go on issued invoices only (a draft is issued first).
+                  type === 'invoice' && (doc.status === 'sent' || doc.status === 'partial') ? (
                     <Button variant="ghost" size="sm" onClick={() => setRecordPayment(true)}>
                       {t('Add')}
                     </Button>

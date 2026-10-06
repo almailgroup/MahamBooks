@@ -773,7 +773,10 @@ export function chequeReversalDate(
  * out of that same account on the payment date.
  */
 export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] {
-  if (payment.method === 'credit_note') return postCreditApplication(payment, ctx);
+  if (payment.method === 'credit_note') {
+    // Applications saved before exchange differences were posted move nothing.
+    return postsUnderCurrentRules(payment) ? postCreditApplication(payment, ctx) : [];
+  }
   const reversedOn = chequeReversalDate(payment);
   if (payment.voided && !reversedOn) return [];
   const out = payment.direction === 'out';
@@ -854,6 +857,20 @@ export function postPayment(payment: Payment, ctx: LedgerContext): LedgerLine[] 
   ];
 }
 
+/**
+ * Posting rules of payments saved with this version: a credit applied at
+ * another rate than its invoice posts the exchange difference, and
+ * documents in other currencies are cleared cumulatively (see
+ * `documentClearing`). Payments saved earlier have no rules number and keep
+ * posting as they did, so closed periods never change by themselves.
+ */
+export const PAYMENT_POSTING_RULES = 2;
+
+/** Whether a payment was saved under the current posting rules. */
+export function postsUnderCurrentRules(payment: Pick<Payment, 'postingRules'>): boolean {
+  return (payment.postingRules ?? 1) >= PAYMENT_POSTING_RULES;
+}
+
 /** Key of what a payment (or credit application) clears from one document. */
 function clearingKey(paymentId: ID, documentId: ID, side: 'document' | 'credit' = 'document') {
   return side === 'credit' ? `${paymentId}|${documentId}|credit` : `${paymentId}|${documentId}`;
@@ -905,9 +922,14 @@ function postCreditApplication(payment: Payment, ctx: LedgerContext): LedgerLine
  * clears from a document in another currency. Like retention releases, the
  * parts are converted cumulatively in date order, so a document settled in
  * instalments at its own rate is cleared to the last fils. A returned or
- * cancelled cheque gives back exactly what it cleared. Keys: see
- * `clearingKey` ("…|credit" is what an application clears from its credit
- * note). Documents in the company currency convert exactly and need none.
+ * cancelled cheque gives back exactly what it cleared; on its day it comes
+ * before what is received (a replacement cheque), unless what it reverses
+ * was received that same day: then it comes straight after it. Either way
+ * a document settled again is cleared to the last fils. Payments saved
+ * before these rules (`postsUnderCurrentRules`) keep converting each part
+ * on its own, as they always did. Keys: see `clearingKey` ("…|credit" is
+ * what an application clears from its credit note). Documents in the
+ * company currency convert exactly and need none.
  */
 export function documentClearing(
   payments: Payment[],
@@ -915,46 +937,70 @@ export function documentClearing(
 ): Map<string, number> {
   interface Part {
     date: ISODate;
-    /** A reversal comes after what is received on the same day. */
+    /**
+     * Order on the same day: reversals of earlier days' receipts (0), then
+     * receipts in the order they were recorded, each followed by its
+     * reversal if it came back that same day (1).
+     */
     rank: 0 | 1;
     order: string;
     key: string;
     amount: Decimal;
+    /** What a payment saved before these rules cleared, converted alone. */
+    own?: number;
     /** The part a reversal gives back. */
     reverses?: string;
   }
   const byDocument = new Map<ID, Part[]>();
-  const add = (documentId: ID, part: Part) => {
+  const foreign = (documentId: ID) => {
     const doc = ctx.documents.get(documentId);
-    if (!doc || doc.currency === ctx.companyCurrency) return;
+    return doc && doc.currency !== ctx.companyCurrency ? doc : undefined;
+  };
+  const add = (documentId: ID, part: Part) => {
     const list = byDocument.get(documentId);
     if (list) list.push(part);
     else byDocument.set(documentId, [part]);
   };
+  const alone = (amount: number, doc: InvoiceDocument) =>
+    toMinor(dec(amount).times(rateOf(doc, ctx)), ctx.precision);
   for (const payment of payments) {
     const reversedOn = chequeReversalDate(payment);
     if (payment.voided && !reversedOn) continue;
+    const current = postsUnderCurrentRules(payment);
     const order = `${payment.createdAt}|${payment.id}`;
+    const credit =
+      payment.method === 'credit_note' && payment.creditId ? foreign(payment.creditId) : undefined;
     for (const a of payment.allocations) {
       const key = clearingKey(payment.id, a.documentId);
-      add(a.documentId, { date: payment.date, rank: 0, order, key, amount: dec(a.amount) });
-      if (reversedOn) {
-        add(a.documentId, {
-          date: reversedOn,
+      const doc = foreign(a.documentId);
+      if (doc) {
+        add(doc.id, {
+          date: payment.date,
           rank: 1,
           order,
-          key: `${key}|reversal`,
-          amount: dec(a.amount).negated(),
-          reverses: key,
+          key,
+          amount: dec(a.amount),
+          ...(current ? {} : { own: alone(a.amount, doc) }),
         });
+        if (reversedOn) {
+          add(doc.id, {
+            date: reversedOn,
+            rank: reversedOn === payment.date ? 1 : 0,
+            order,
+            key: `${key}|reversal`,
+            amount: dec(a.amount).negated(),
+            reverses: key,
+          });
+        }
       }
-      if (payment.method === 'credit_note' && payment.creditId) {
-        add(payment.creditId, {
+      if (credit) {
+        add(credit.id, {
           date: payment.date,
-          rank: 0,
+          rank: 1,
           order,
           key: clearingKey(payment.id, a.documentId, 'credit'),
           amount: dec(a.amount),
+          ...(current ? {} : { own: alone(a.amount, credit) }),
         });
       }
     }
@@ -967,6 +1013,7 @@ export function documentClearing(
         a.date.localeCompare(b.date) ||
         a.rank - b.rank ||
         a.order.localeCompare(b.order) ||
+        Number(a.reverses !== undefined) - Number(b.reverses !== undefined) ||
         a.key.localeCompare(b.key),
     );
     let total = new Decimal(0);
@@ -976,7 +1023,7 @@ export function documentClearing(
       const minor =
         part.reverses !== undefined
           ? -(out.get(part.reverses) ?? 0)
-          : toMinor(total.times(rate), ctx.precision) - cleared;
+          : (part.own ?? toMinor(total.times(rate), ctx.precision) - cleared);
       cleared += minor;
       out.set(part.key, minor);
     }

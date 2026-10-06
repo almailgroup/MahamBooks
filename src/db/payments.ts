@@ -18,7 +18,7 @@ import type {
 import { allocateNumber } from '@/lib/numbering';
 import { formatMoney } from '@/lib/format';
 import { dec, round, currencyPrecision, toMinor } from '@/lib/money';
-import { isPosted } from '@/lib/accounting/ledger';
+import { isPosted, PAYMENT_POSTING_RULES } from '@/lib/accounting/ledger';
 import { newId } from '@/lib/ids';
 import { today } from '@/lib/dates';
 import { isValidCivilId } from '@/lib/kuwait';
@@ -430,6 +430,9 @@ export async function savePayment(input: Payment): Promise<Payment> {
         fee,
         feeAccountId,
         cheque,
+        // Saved now, it posts under the current rules (an earlier payment
+        // moves to them here, in an open period).
+        postingRules: PAYMENT_POSTING_RULES,
         updatedAt: nowStamp(),
       };
       if (!fee) delete payment.fee;
