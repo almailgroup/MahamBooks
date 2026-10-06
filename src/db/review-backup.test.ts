@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import { createClient } from './defaults';
 import {
+  addCloudFiles,
+  backupFile,
+  backupSize,
+  contentSize,
+  dropContent,
   exportBackup,
-  fetchMissingFiles,
-  filesNotHere,
+  filesWithoutContent,
   importBackup,
   parseBackup,
   restoreImpact,
@@ -13,18 +17,17 @@ import { saveClient, setupCompany, UnsentChangesError } from './records';
 import { draftDocument, saveDocument } from './documents';
 import { createPayment, savePayment } from './payments';
 import { addAttachment, createExpense, deleteExpense, saveExpense } from './purchases';
-import type { Company } from './types';
+import type { Attachment, Company } from './types';
 import { FakeCloud } from '@/cloud/testing/fake-cloud';
 import {
   downloadMissingFiles,
-  fetchAttachmentContent,
   startDownload,
   startUpload,
   syncCompany,
   type SyncContext,
 } from '@/cloud/sync';
 import { EAGER_DOWNLOAD_BYTES } from '@/cloud/files';
-import { attachmentContent } from '@/cloud/attachments';
+import { attachmentContent, downloadForBackup } from '@/cloud/attachments';
 
 /**
  * Backups and restores that keep every file and every newer record.
@@ -73,26 +76,42 @@ async function laptopWithLargeScan() {
   await startDownload({ id: company.id, name: company.name, role: 'owner' }, ctx);
   await syncCompany(company.id, ctx);
   await downloadMissingFiles(company.id, ctx, EAGER_DOWNLOAD_BYTES);
-  expect((await filesNotHere(company.id)).map((f) => f.id)).toEqual([file.id]);
+  expect((await db.attachments.get(file.id))?.dataUrl).toBe('');
   return { server, ctx, company, file, content };
 }
 
 describe('backing up a company kept in the cloud', () => {
-  it('brings the files that are only in the cloud first, so the backup holds them', async () => {
+  it('can put the files kept only in the cloud into the backup, without keeping them here', async () => {
     const { ctx, company, file, content } = await laptopWithLargeScan();
+    const data = await exportBackup(company.id);
+    // What the screen tells the person before anything is downloaded.
+    expect(filesWithoutContent(data).map((f) => f.id)).toEqual([file.id]);
+    expect(data.missingFiles?.map((f) => f.id)).toEqual([file.id]);
+    const sizeWithout = backupSize(data);
+    const estimate = sizeWithout + contentSize(file);
+
     const progress: string[] = [];
-    const { total, failed } = await fetchMissingFiles(
-      company.id,
-      (f) => fetchAttachmentContent(f, ctx),
+    const { added, failed } = await addCloudFiles(
+      data,
+      (f) => downloadForBackup(f, ctx.api),
       (done, of) => progress.push(`${done}/${of}`),
     );
-    expect({ total, failed }).toEqual({ total: 1, failed: [] });
+    expect({ added: added.map((f) => f.id), failed }).toEqual({ added: [file.id], failed: [] });
     expect(progress).toEqual(['0/1', '1/1']);
+    expect(data.missingFiles).toBeUndefined();
+    // The estimate was right, a little over (the file left the list of missing ones).
+    expect(backupSize(data)).toBeLessThanOrEqual(estimate);
+    expect(estimate - backupSize(data)).toBeLessThan(1_000);
+    // Downloaded into the backup only: this device still keeps the file in the cloud.
+    expect(await db.attachments.get(file.id)).toMatchObject({ dataUrl: '', contentMissing: 1 });
 
-    const backup = parseBackup(JSON.stringify(await exportBackup(company.id)));
+    // The file written in parts reads back as the backup.
+    const text = await backupFile(data).text();
+    expect(text.length).toBe(backupSize(data));
+    const backup = parseBackup(text);
+    expect(backup).toEqual(JSON.parse(JSON.stringify(data)));
     const saved = backup.data.attachments.find((a) => a.id === file.id);
     expect(String(saved?.dataUrl ?? '').length).toBe(content.length);
-    expect(backup.missingFiles).toBeUndefined();
 
     // The backup opens its files on a device that has no cloud.
     await db.delete();
@@ -105,13 +124,54 @@ describe('backing up a company kept in the cloud', () => {
   it('lists the files it could not bring, offline', async () => {
     const { server, ctx, company, file } = await laptopWithLargeScan();
     server.offline = true;
-    const { failed } = await fetchMissingFiles(company.id, (f) => fetchAttachmentContent(f, ctx));
+    const data = await exportBackup(company.id);
+    const { failed } = await addCloudFiles(data, (f) => downloadForBackup(f, ctx.api));
     expect(failed.map((f) => f.id)).toEqual([file.id]);
     // Backed up without it (the person agreed): the backup says which file is missing.
-    const backup = parseBackup(JSON.stringify(await exportBackup(company.id)));
+    const backup = parseBackup(await backupFile(data).text());
     expect(backup.missingFiles).toEqual([
       expect.objectContaining({ id: file.id, companyId: company.id, name: 'contract.pdf' }),
     ]);
+  });
+
+  it('takes content out again when the person backs up without the cloud files', async () => {
+    const { ctx, company, file } = await laptopWithLargeScan();
+    const data = await exportBackup(company.id);
+    const sizeWithout = backupSize(data);
+    const { added } = await addCloudFiles(data, (f) => downloadForBackup(f, ctx.api));
+    expect(backupSize(data)).toBeGreaterThan(sizeWithout + 2_000_000);
+    dropContent(data, added);
+    expect(backupSize(data)).toBe(sizeWithout);
+    expect(data.missingFiles?.map((f) => f.id)).toEqual([file.id]);
+  });
+
+  it('refuses a file whose content changed in the cloud since this device synced', async () => {
+    const { server, ctx, company, file } = await laptopWithLargeScan();
+    server.files.set(`${company.id}/${file.id}`, {
+      ...server.files.get(`${company.id}/${file.id}`)!,
+      blob: new Blob(['changed elsewhere'], { type: 'application/pdf' }),
+    });
+    const data = await exportBackup(company.id);
+    const { failed } = await addCloudFiles(data, (f) => downloadForBackup(f, ctx.api));
+    expect(failed.map((f) => f.id)).toEqual([file.id]);
+  });
+
+  it('writes content that needs escaping as proper JSON', async () => {
+    const { company } = await companyWithInvoice();
+    await db.attachments.put({
+      id: 'note-1',
+      companyId: company.id,
+      ownerId: 'bill-1',
+      name: 'note.txt',
+      type: 'text/plain',
+      size: 20,
+      dataUrl: 'data:text/plain,say "hi"\\back\nslash',
+      createdAt: new Date().toISOString(),
+    });
+    const data = await exportBackup(company.id);
+    const text = await backupFile(data).text();
+    expect(parseBackup(text)).toEqual(JSON.parse(JSON.stringify(data)));
+    expect(text.length).toBe(backupSize(data));
   });
 });
 
@@ -201,6 +261,73 @@ describe('merging an older backup', () => {
     await importBackup(parseBackup(monday), 'merge');
     await syncCompany(company.id, ctx);
     expect(server.record(company.id, 'documents', invoice.id)?.notes).toBe('Updated on Tuesday');
+  });
+});
+
+describe('merging a backup that holds the content of files missing here', () => {
+  /** A file here without content, and a backup that has it. */
+  async function fileWithoutContent(hash?: string) {
+    const { company, invoice } = await companyWithInvoice();
+    const content = 'data:application/pdf;base64,QUJDREVG';
+    const file = await addAttachment(company.id, invoice.id, {
+      name: 'contract.pdf',
+      type: 'application/pdf',
+      dataUrl: content,
+    });
+    const backup = parseBackup(await backupFile(await exportBackup(company.id)).text());
+    await db.attachments.update(file.id, {
+      dataUrl: '',
+      contentMissing: 1,
+      storagePath: `${company.id}/${file.id}`,
+      ...(hash ? { contentHash: hash } : {}),
+    });
+    return { company, file, content, backup };
+  }
+
+  it('takes it when this device has no hash to compare with', async () => {
+    const { file, content, backup } = await fileWithoutContent();
+    const result = await importBackup(backup, 'merge');
+    expect(result.filled).toBe(1);
+    const here = (await db.attachments.get(file.id))!;
+    expect(here.dataUrl).toBe(content);
+    expect(here).not.toHaveProperty('contentMissing');
+  });
+
+  it('takes it when the backup’s content has the hash of the file here', async () => {
+    const { contentHash, dataUrlToBlob } = await import('@/cloud/files');
+    const hash = await contentHash(dataUrlToBlob('data:application/pdf;base64,QUJDREVG'));
+    const { file, content, backup } = await fileWithoutContent(hash);
+    expect((await importBackup(backup, 'merge')).filled).toBe(1);
+    expect((await db.attachments.get(file.id))?.dataUrl).toBe(content);
+  });
+
+  it('leaves it when the file here is another version (another hash)', async () => {
+    const { file, backup } = await fileWithoutContent('0'.repeat(64));
+    expect((await importBackup(backup, 'merge')).filled).toBe(0);
+    expect((await db.attachments.get(file.id))?.dataUrl).toBe('');
+  });
+
+  it('compares the hash of the backup’s content, not the hash its record gives', async () => {
+    const { file, backup } = await fileWithoutContent('0'.repeat(64));
+    const copy = (backup.data.attachments as unknown as Attachment[]).find(
+      (a) => a.id === file.id,
+    )!;
+    copy.contentHash = '0'.repeat(64);
+    expect((await importBackup(backup, 'merge')).filled).toBe(0);
+    expect((await db.attachments.get(file.id))?.dataUrl).toBe('');
+  });
+
+  it('is not a change sent to the cloud, so a viewer can merge it too', async () => {
+    const server = new FakeCloud();
+    const ctx = { api: server.client(OWNER), userId: OWNER };
+    const { company, file, content, backup } = await fileWithoutContent();
+    await startUpload(company.id, ctx);
+    await db.outbox.clear();
+    await db.syncState.update(company.id, { role: 'viewer', status: 'ready' });
+    const result = await importBackup(backup, 'merge');
+    expect(result).toMatchObject({ added: 0, filled: 1 });
+    expect((await db.attachments.get(file.id))?.dataUrl).toBe(content);
+    expect(await db.outbox.count()).toBe(0);
   });
 });
 

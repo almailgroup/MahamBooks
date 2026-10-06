@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { db } from '@/db/db';
 import { setupCompany } from '@/db/records';
 import { draftDocument } from '@/db/documents';
@@ -20,7 +20,11 @@ import type { CloudLink } from '@/cloud/types';
 const cloud = vi.hoisted(() => ({
   user: null as null | { id: string; email: string; fullName: string; language: 'en' },
   signOutCloud: vi.fn(async () => undefined),
-  attachmentContent: vi.fn(async (id: string): Promise<unknown> => id),
+  downloadForBackup: vi.fn(async (file: { storagePath?: string }): Promise<string> => {
+    throw new Error(`Not expected: ${file.storagePath}`);
+  }),
+  /** The longest backup in one file, lowered by a test. */
+  maxBackupSize: 400_000_000,
 }));
 
 vi.mock('@/cloud/store', async (original) => ({
@@ -28,7 +32,16 @@ vi.mock('@/cloud/store', async (original) => ({
   useCloud: () => ({ user: cloud.user, api: null, manager: null, configured: true, ready: true }),
   signOutCloud: cloud.signOutCloud,
 }));
-vi.mock('@/cloud/attachments', () => ({ attachmentContent: cloud.attachmentContent }));
+vi.mock('@/cloud/attachments', () => ({ downloadForBackup: cloud.downloadForBackup }));
+vi.mock('@/db/backup', async (original) => {
+  const actual = await original<typeof import('@/db/backup')>();
+  return {
+    ...actual,
+    get MAX_BACKUP_SIZE() {
+      return cloud.maxBackupSize;
+    },
+  };
+});
 
 const { default: DataSettings } = await import('./data');
 const { default: CompaniesSettings } = await import('./companies');
@@ -40,8 +53,9 @@ beforeEach(async () => {
   await db.open();
   downloads.length = 0;
   cloud.user = null;
+  cloud.maxBackupSize = 400_000_000;
   cloud.signOutCloud.mockClear();
-  cloud.attachmentContent.mockReset();
+  cloud.downloadForBackup.mockReset();
   URL.createObjectURL = vi.fn((blob: Blob) => {
     downloads.push(blob);
     return 'blob:made-up';
@@ -52,6 +66,8 @@ beforeEach(async () => {
 });
 afterEach(() => {
   cleanup();
+  // Sonner shows the next test's page every toast still open: close them.
+  toast.dismiss();
   vi.restoreAllMocks();
 });
 
@@ -124,38 +140,110 @@ const backedUp = async () =>
   };
 
 describe('Back up', () => {
-  it('downloads the files that are only in the cloud first', async () => {
+  /** Opens "Back up Review Trading" and returns the question about the cloud files. */
+  async function askedAboutCloudFiles(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('button', { name: /^Back up Review Trading/ }));
+    return screen.findByRole('dialog', { name: '1 file is kept only in the cloud' });
+  }
+
+  it('asks first, then downloads the cloud files into the backup without keeping them here', async () => {
     const company = await setupCompany({ name: 'Review Trading' });
     await inTheCloud(company);
     await scanInTheCloud(company);
-    cloud.attachmentContent.mockImplementation(async (id: string) => {
-      await db.attachments.update(id, { dataUrl: 'data:application/pdf;base64,QUJD' });
-    });
+    cloud.downloadForBackup.mockResolvedValue('data:application/pdf;base64,QUJD');
     const user = userEvent.setup();
     renderPage(<DataSettings />);
-    await user.click(await screen.findByRole('button', { name: /^Back up Review Trading/ }));
+    const dialog = await askedAboutCloudFiles(user);
+    expect(dialog).toHaveTextContent(
+      'It is 1.9 MB. Included, it is downloaded into this backup only',
+    );
+    expect(cloud.downloadForBackup).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Include them in the backup' }));
     await waitFor(() => expect(downloads).toHaveLength(1));
-    expect(cloud.attachmentContent).toHaveBeenCalledWith('scan-1');
+    expect(cloud.downloadForBackup).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'scan-1', storagePath: `${company.id}/scan-1` }),
+    );
     const backup = await backedUp();
     expect(backup.data.attachments[0].dataUrl).toBe('data:application/pdf;base64,QUJD');
     expect(backup.missingFiles).toBeUndefined();
-    expect(screen.queryByRole('dialog')).toBeNull();
+    // Not kept on this device: it stays a file kept in the cloud.
+    expect(await db.attachments.get('scan-1')).toMatchObject({ dataUrl: '', contentMissing: 1 });
+  });
+
+  it('backs up without them when asked, and they stay in the cloud', async () => {
+    const company = await setupCompany({ name: 'Review Trading' });
+    await inTheCloud(company);
+    await scanInTheCloud(company);
+    const user = userEvent.setup();
+    renderPage(<DataSettings />);
+    const dialog = await askedAboutCloudFiles(user);
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'Back up without them (they stay in the cloud)',
+      }),
+    );
+    await waitFor(() => expect(downloads).toHaveLength(1));
+    expect(cloud.downloadForBackup).not.toHaveBeenCalled();
+    expect((await backedUp()).missingFiles).toEqual([
+      expect.objectContaining({ id: 'scan-1', name: 'contract.pdf' }),
+    ]);
+    expect(await screen.findByText('1 file is not in this backup.')).toBeVisible();
+  });
+
+  it('only offers the backup without them when they would make it too large', async () => {
+    const company = await setupCompany({ name: 'Review Trading' });
+    await inTheCloud(company);
+    await scanInTheCloud(company);
+    cloud.maxBackupSize = 2_000_000;
+    const user = userEvent.setup();
+    renderPage(<DataSettings />);
+    const dialog = await askedAboutCloudFiles(user);
+    expect(dialog).toHaveTextContent('With it the backup would be about');
+    expect(dialog).toHaveTextContent('too large for one file.');
+    expect(within(dialog).queryByRole('button', { name: 'Include them in the backup' })).toBeNull();
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'Back up without them (they stay in the cloud)',
+      }),
+    );
+    await waitFor(() => expect(downloads).toHaveLength(1));
+    expect(cloud.downloadForBackup).not.toHaveBeenCalled();
+  });
+
+  it('says so when even the records are too large for one file', async () => {
+    await setupCompany({ name: 'Review Trading' });
+    cloud.maxBackupSize = 1_000;
+    const user = userEvent.setup();
+    renderPage(<DataSettings />);
+    await user.click(await screen.findByRole('button', { name: /^Back up Review Trading/ }));
+    expect(
+      await screen.findByText(/^The backup would be about .*, too large for one file\.$/),
+    ).toBeVisible();
+    expect(downloads).toHaveLength(0);
   });
 
   it('asks before leaving out files it could not download, and lists them', async () => {
     const company = await setupCompany({ name: 'Review Trading' });
     await inTheCloud(company);
     await scanInTheCloud(company);
-    cloud.attachmentContent.mockRejectedValue(new Error('Offline'));
+    cloud.downloadForBackup.mockRejectedValue(new Error('Offline'));
     const user = userEvent.setup();
     renderPage(<DataSettings />);
-    await user.click(await screen.findByRole('button', { name: /^Back up Review Trading/ }));
+    await user.click(
+      within(await askedAboutCloudFiles(user)).getByRole('button', {
+        name: 'Include them in the backup',
+      }),
+    );
     const dialog = await screen.findByRole('dialog', { name: 'Back up without 1 file?' });
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(downloads).toHaveLength(0);
 
-    await user.click(screen.getByRole('button', { name: /^Back up Review Trading/ }));
+    await user.click(
+      within(await askedAboutCloudFiles(user)).getByRole('button', {
+        name: 'Include them in the backup',
+      }),
+    );
     await user.click(
       within(await screen.findByRole('dialog', { name: 'Back up without 1 file?' })).getByRole(
         'button',

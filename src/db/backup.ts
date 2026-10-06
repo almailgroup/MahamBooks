@@ -7,6 +7,8 @@ import { rebuildStock } from './inventory';
 import type { Attachment, Company, ID, Payment } from './types';
 import { APP_NAME, appName, FILE_PREFIX } from '@/lib/brand';
 import { t } from '@/i18n';
+import { contentHash, dataUrlToBlob } from '@/cloud/files';
+import { markRemote } from '@/cloud/outbox';
 
 export const BACKUP_FORMAT = 1;
 export const LAST_BACKUP_KEY = 'lastBackupAt';
@@ -86,9 +88,10 @@ const backupSchema = z.object({
 export class BackupError extends Error {}
 
 /**
- * Exports all data, or a single company with everything that belongs to it.
- * Files whose content is not on this device go in without it and are listed
- * in `missingFiles`; bring them here first with `fetchMissingFiles`.
+ * Exports all data, or a single company with everything that belongs to it,
+ * as it is on this device. Files whose content is not here (kept in the
+ * cloud) go in without it and are listed in `missingFiles`; `addCloudFiles`
+ * can put their content in, for the backup only.
  */
 export async function exportBackup(companyId?: ID): Promise<Backup> {
   const data = {} as BackupData;
@@ -103,77 +106,152 @@ export async function exportBackup(companyId?: ID): Promise<Backup> {
       ? rows.filter((r) => r.id === companyId)
       : rows) as unknown as Record<string, unknown>[];
   }
-  const missingFiles = (data.attachments as unknown as Attachment[])
-    .filter((a) => !a.dataUrl)
-    .map((a): MissingFile => ({
-      id: a.id,
-      companyId: a.companyId,
-      ownerId: a.ownerId,
-      name: a.name,
-      type: a.type,
-      size: a.size,
-    }));
-  return {
+  const backup: Backup = {
     app: APP_NAME,
     format: BACKUP_FORMAT,
     exportedAt: new Date().toISOString(),
     data,
-    ...(missingFiles.length ? { missingFiles } : {}),
   };
+  listMissingFiles(backup);
+  return backup;
+}
+
+/** Keeps `missingFiles` in step with the files of the backup that have no content. */
+function listMissingFiles(backup: Backup): void {
+  const missing = filesWithoutContent(backup).map((a): MissingFile => ({
+    id: a.id,
+    companyId: a.companyId,
+    ownerId: a.ownerId,
+    name: a.name,
+    type: a.type,
+    size: a.size,
+  }));
+  if (missing.length) backup.missingFiles = missing;
+  else delete backup.missingFiles;
 }
 
 /**
- * Files (receipts, scans, employee photos…) whose content is not on this
- * device: kept in the cloud and not downloaded yet. Read one at a time, so
- * the content of the others is never all in memory.
+ * The longest backup written as one file, in characters. A browser can't
+ * hold much more than 500 million characters in one text, and a backup is
+ * read back as one (restore), so it stays well under that.
  */
-export async function filesNotHere(companyId?: ID): Promise<Attachment[]> {
-  const found: Attachment[] = [];
-  const files = companyId
-    ? db.attachments.where('companyId').equals(companyId)
-    : db.attachments.toCollection();
-  await files.each((file) => {
-    if (!file.dataUrl) found.push(file);
-  });
-  return found;
+export const MAX_BACKUP_SIZE = 400_000_000;
+
+/** Files of the backup whose content is not in it: kept in the cloud, not on this device. */
+export function filesWithoutContent(backup: Backup): Attachment[] {
+  return (backup.data.attachments as unknown as Attachment[]).filter((a) => !a.dataUrl);
 }
 
-/** Files downloaded at the same time before a backup. */
+/** Characters a file's content adds to a backup (a base64 data URL), from its size. */
+export function contentSize(file: Pick<Attachment, 'size' | 'type'>): number {
+  const header = `data:${file.type || 'application/octet-stream'};base64,`;
+  return header.length + Math.ceil(Math.max(0, file.size || 0) / 3) * 4;
+}
+
+/** Files downloaded at the same time for a backup. */
 const DOWNLOADS_AT_ONCE = 4;
 
 /**
- * Brings the content of every file that is not on this device yet, before a
- * backup. `fetchFile` downloads one and stores it (see cloud/attachments);
- * the files it could not bring (offline, signed out, no longer in the cloud)
- * are returned.
+ * Puts the content of the backup's files kept in the cloud into the backup.
+ * `download` brings one file's content as a data URL for the backup alone:
+ * nothing is stored on this device (see cloud/attachments). Returns the
+ * files it brought, and those it could not (offline, signed out, no longer
+ * in the cloud), which stay listed in `missingFiles`.
  */
-export async function fetchMissingFiles(
-  companyId: ID | undefined,
-  fetchFile: (file: Attachment) => Promise<unknown>,
+export async function addCloudFiles(
+  backup: Backup,
+  download: (file: Attachment) => Promise<string>,
   onProgress?: (done: number, total: number) => void,
-): Promise<{ total: number; failed: Attachment[] }> {
-  const missing = await filesNotHere(companyId);
+): Promise<{ added: Attachment[]; failed: Attachment[] }> {
+  // The backup's own rows: content put on them goes into the backup.
+  const files = filesWithoutContent(backup);
+  const added: Attachment[] = [];
   const failed: Attachment[] = [];
-  let done = 0;
-  onProgress?.(0, missing.length);
   let next = 0;
+  let done = 0;
+  onProgress?.(0, files.length);
   const worker = async () => {
-    while (next < missing.length) {
-      const file = missing[next++];
+    while (next < files.length) {
+      const file = files[next++];
       try {
-        await fetchFile(file);
-        // Only content that is stored here goes into the backup.
-        const stored = await db.attachments.get(file.id);
-        if (stored && !stored.dataUrl) failed.push(file);
+        const dataUrl = await download(file);
+        if (!/^data:/.test(dataUrl)) throw new Error('No content');
+        file.dataUrl = dataUrl;
+        delete file.contentMissing;
+        added.push(file);
       } catch {
         failed.push(file);
       }
       done += 1;
-      onProgress?.(done, missing.length);
+      onProgress?.(done, files.length);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(DOWNLOADS_AT_ONCE, missing.length) }, worker));
-  return { total: missing.length, failed };
+  await Promise.all(Array.from({ length: Math.min(DOWNLOADS_AT_ONCE, files.length) }, worker));
+  listMissingFiles(backup);
+  return { added, failed };
+}
+
+/** Takes the content of these files out of the backup again (they stay in the cloud). */
+export function dropContent(backup: Backup, files: Attachment[]): void {
+  for (const file of files) {
+    file.dataUrl = '';
+    if (file.storagePath) file.contentMissing = 1;
+  }
+  listMissingFiles(backup);
+}
+
+/** Whether text can go into JSON as it is: no quote, backslash or control character. */
+function plainJsonText(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code === 0x22 || code === 0x5c) return false;
+  }
+  return true;
+}
+
+/** One record as JSON; a file's content is a part of its own, not copied into a longer text. */
+function recordParts(table: DataTable, record: Record<string, unknown>): string[] {
+  const { dataUrl } = record;
+  if (table !== 'attachments' || typeof dataUrl !== 'string' || dataUrl === '') {
+    return [JSON.stringify(record)];
+  }
+  const rest = { ...record };
+  delete rest.dataUrl;
+  const tail = JSON.stringify(rest);
+  const content = plainJsonText(dataUrl) ? ['"', dataUrl, '"'] : [JSON.stringify(dataUrl)];
+  return ['{"dataUrl":', ...content, tail === '{}' ? '}' : `,${tail.slice(1)}`];
+}
+
+/**
+ * The backup file's text in parts, so that no single text holds it all (a
+ * browser limits how long one text can be).
+ */
+export function backupParts(backup: Backup): string[] {
+  const { data, missingFiles, ...head } = backup;
+  const start = JSON.stringify(head);
+  const parts = [start === '{}' ? '{"data":{' : `${start.slice(0, -1)},"data":{`];
+  DATA_TABLES.forEach((table, i) => {
+    parts.push(`${i ? ',' : ''}${JSON.stringify(table)}:[`);
+    (data[table] ?? []).forEach((record, j) => {
+      if (j) parts.push(',');
+      parts.push(...recordParts(table, record));
+    });
+    parts.push(']');
+  });
+  parts.push('}');
+  if (missingFiles?.length) parts.push(',"missingFiles":', JSON.stringify(missingFiles));
+  parts.push('}');
+  return parts;
+}
+
+/** Characters of the backup file, worked out without writing it. */
+export function backupSize(backup: Backup): number {
+  return backupParts(backup).reduce((size, part) => size + part.length, 0);
+}
+
+/** The backup as a file to download (JSON). */
+export function backupFile(backup: Backup): Blob {
+  return new Blob(backupParts(backup), { type: 'application/json' });
 }
 
 export function backupFileName(company?: Pick<Company, 'name'>): string {
@@ -235,6 +313,8 @@ export interface RestoreResult {
   added: number;
   /** Merge: records already on this device, kept as they are. */
   kept: number;
+  /** Merge: files here without their content that took it from the backup. */
+  filled: number;
 }
 
 type Rows = Record<string, unknown>[];
@@ -264,7 +344,9 @@ function uniqueRows(rows: Rows): Rows {
  *   already here is kept as it is. Balances of invoices and bills, order
  *   progress and stock are then worked out again where the backup's records
  *   meet this device's. For a company kept in the cloud the added records go
- *   to the team like any other change.
+ *   to the team like any other change. Files here without their content
+ *   (left in the cloud, or lost) take it from the backup when it is the same
+ *   file (see `fillContent`).
  *
  * `sanitizeLogo` lets the caller re-encode images (it must return a safe data
  * URL or null).
@@ -287,11 +369,13 @@ export async function importBackup(
       }
     }
   }
-  return db.transaction(
+  // Merge: the backup's files that were here already, perhaps without content.
+  let filesHere = new Set<unknown>();
+  const result = await db.transaction(
     'rw',
     [...DATA_TABLES.map((t) => db[t]), ...SYNC_TABLES(), db.meta],
     async () => {
-      const result: RestoreResult = { added: 0, kept: 0 };
+      const result: RestoreResult = { added: 0, kept: 0, filled: 0 };
       if (mode === 'replace') {
         await assertNothingUnsent(undefined, force);
         // Companies kept in the cloud stay there: this device stops syncing them
@@ -319,6 +403,7 @@ export async function importBackup(
               )
             : new Set<unknown>();
           added[table] = rows.filter((r) => !here.has(r.id));
+          if (table === 'attachments') filesHere = here;
           if (added[table].length) await store.bulkAdd(added[table]);
           result.added += added[table].length;
           result.kept += rows.length - added[table].length;
@@ -333,6 +418,58 @@ export async function importBackup(
       return result;
     },
   );
+  if (filesHere.size) result.filled = await fillContent(backup, filesHere);
+  return result;
+}
+
+/**
+ * Merge: files that are on this device without their content (left in the
+ * cloud, or lost) take it from the backup when it is the same file: the
+ * backup's content has the content hash of the file here, or the file here
+ * has no hash to compare with. The content is what this device keeps for
+ * itself, so this is not a change sent to the cloud.
+ */
+async function fillContent(backup: Backup, filesHere: Set<unknown>): Promise<number> {
+  let filled = 0;
+  for (const file of backup.data.attachments as unknown as Attachment[]) {
+    if (!filesHere.has(file.id)) continue;
+    const { dataUrl } = file;
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) continue;
+    // One at a time: the content of the files here is not all read at once.
+    const here = await db.attachments.get(file.id);
+    if (!here || here.dataUrl || here.companyId !== file.companyId) continue;
+    // The hash of the content itself, not the one the backup's record says.
+    const hash = here.contentHash;
+    if (hash && (await hashOf(dataUrl)) !== hash) continue;
+    try {
+      const done = await db.transaction('rw', db.attachments, async () => {
+        // Content this device keeps for itself: nothing to send to the team.
+        markRemote();
+        const now = await db.attachments.get(file.id);
+        // Changed meanwhile (downloaded, replaced): left as it is.
+        if (!now || now.dataUrl || now.companyId !== here.companyId) return false;
+        if (now.contentHash !== hash) return false;
+        const next: Attachment = { ...now, dataUrl };
+        delete next.contentMissing;
+        await db.attachments.put(next);
+        return true;
+      });
+      if (done) filled += 1;
+    } catch {
+      // No room for it on this device, for example: the file stays as it
+      // was, and the records the merge added stay too.
+    }
+  }
+  return filled;
+}
+
+/** The content hash of a data URL, or null when it can't be read. */
+async function hashOf(dataUrl: string): Promise<string | null> {
+  try {
+    return await contentHash(dataUrlToBlob(dataUrl));
+  } catch {
+    return null;
+  }
 }
 
 /** Tables whose records the stock levels and costs are worked out from. */

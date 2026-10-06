@@ -4,12 +4,18 @@ import { AlertTriangle, Download, FileUp, HardDrive, ShieldCheck, Upload } from 
 import { toast } from 'sonner';
 import { db, getMeta } from '@/db/db';
 import {
+  addCloudFiles,
+  backupFile,
   backupFileName,
+  backupSize,
+  contentSize,
+  dropContent,
   exportBackup,
-  fetchMissingFiles,
+  filesWithoutContent,
   importBackup,
   LAST_BACKUP_KEY,
   markBackedUp,
+  MAX_BACKUP_SIZE,
   parseBackup,
   restoreImpact,
   summarizeBackup,
@@ -53,8 +59,21 @@ function namesOf(companies: Parameters<typeof localName>[0][]): string {
   return companies.map((c) => localName(c)).join(currentLanguage() === 'ar' ? '، ' : ', ');
 }
 
-function downloadJson(data: unknown, name: string) {
-  const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+/** What to do with the files kept only in the cloud, as the person chose. */
+type CloudFilesChoice = 'include' | 'without';
+
+interface CloudFilesQuestion {
+  count: number;
+  /** Their size, in bytes. */
+  bytes: number;
+  /** The backup's size with them, in characters. */
+  sizeWith: number;
+  /** Whether the backup with them still fits in one file. */
+  fits: boolean;
+  answer: (choice: CloudFilesChoice | null) => void;
+}
+
+function saveFile(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -92,6 +111,7 @@ export default function DataSettings() {
   const [chosen, setChosen] = useState<{ backup: Backup; impact: RestoreImpact } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [files, setFiles] = useState<{ done: number; total: number } | null>(null);
+  const [cloudFiles, setCloudFiles] = useState<CloudFilesQuestion | null>(null);
   const lastBackup = useLiveQuery(() => getMeta<string | null>(LAST_BACKUP_KEY, null), []);
   const companyCount = useLiveQuery(() => db.companies.count(), []);
 
@@ -99,34 +119,88 @@ export default function DataSettings() {
     void storageStatus().then(setStatus);
   }, []);
 
+  /** Asks what to do with the files kept only in the cloud; null: not now. */
+  const askCloudFiles = (question: Omit<CloudFilesQuestion, 'answer'>) =>
+    new Promise<CloudFilesChoice | null>((resolve) =>
+      setCloudFiles({
+        ...question,
+        answer: (choice) => {
+          setCloudFiles(null);
+          resolve(choice);
+        },
+      }),
+    );
+
   const backup = async (all: boolean) => {
     setBusy(all ? 'all' : 'one');
     try {
-      const companyId = all ? undefined : company.id;
-      // Files kept in the cloud and not on this device yet come here first,
-      // so that the backup holds them. One that can't come is asked about below.
-      const { failed } = await fetchMissingFiles(
-        companyId,
-        async (file) => (await import('@/cloud/attachments')).attachmentContent(file.id),
-        (done, total) => setFiles(total ? { done, total } : null),
-      );
-      setFiles(null);
-      if (failed.length) {
-        const ok = await confirm({
-          title: tp(
-            failed.length,
-            'Back up without {count} file?',
-            'Back up without {count} files?',
-          ),
-          description: t(
-            'They are kept in the cloud and could not be downloaded now, for example because this device is offline or signed out. The backup lists them, without their content.',
-          ),
-          confirmLabel: t('Back up without them'),
-        });
-        if (!ok) return;
+      const data = await exportBackup(all ? undefined : company.id);
+      const size = backupSize(data);
+      if (size > MAX_BACKUP_SIZE) {
+        toast.error(
+          t('The backup would be about {size}, too large for one file.', {
+            size: formatBytes(size),
+          }),
+          { description: all ? t('Back up one company at a time instead.') : undefined },
+        );
+        return;
       }
-      const data = await exportBackup(companyId);
-      downloadJson(data, backupFileName(all ? undefined : company));
+      // Files kept only in the cloud: the person decides whether they go into
+      // the backup. They are downloaded into it, never kept on this device.
+      const inCloud = filesWithoutContent(data);
+      if (inCloud.length) {
+        const sizeWith = size + inCloud.reduce((sum, file) => sum + contentSize(file), 0);
+        const choice = await askCloudFiles({
+          count: inCloud.length,
+          bytes: inCloud.reduce((sum, file) => sum + (file.size || 0), 0),
+          sizeWith,
+          fits: sizeWith <= MAX_BACKUP_SIZE,
+        });
+        if (!choice) return;
+        if (choice === 'include') {
+          const { downloadForBackup } = await import('@/cloud/attachments');
+          const { added, failed } = await addCloudFiles(
+            data,
+            (file) => downloadForBackup(file),
+            (done, total) => setFiles(total ? { done, total } : null),
+          );
+          setFiles(null);
+          const sizeNow = backupSize(data);
+          if (sizeNow > MAX_BACKUP_SIZE) {
+            // The files were larger than their records said.
+            const ok = await confirm({
+              title: tp(
+                inCloud.length,
+                'Back up without {count} file?',
+                'Back up without {count} files?',
+              ),
+              description: tp(
+                inCloud.length,
+                'With it the backup would be about {size}, too large for one file.',
+                'With them the backup would be about {size}, too large for one file.',
+                { size: formatBytes(sizeNow) },
+              ),
+              confirmLabel: t('Back up without them (they stay in the cloud)'),
+            });
+            if (!ok) return;
+            dropContent(data, added);
+          } else if (failed.length) {
+            const ok = await confirm({
+              title: tp(
+                failed.length,
+                'Back up without {count} file?',
+                'Back up without {count} files?',
+              ),
+              description: t(
+                'They are kept in the cloud and could not be downloaded now, for example because this device is offline or signed out. The backup lists them, without their content.',
+              ),
+              confirmLabel: t('Back up without them'),
+            });
+            if (!ok) return;
+          }
+        }
+      }
+      saveFile(backupFile(data), backupFileName(all ? undefined : company));
       await markBackedUp();
       const left = data.missingFiles?.length ?? 0;
       toast.success(t('Backup downloaded. Keep it somewhere safe, such as a cloud drive.'), {
@@ -194,11 +268,22 @@ export default function DataSettings() {
       );
       if (mode === 'merge') {
         toast.success(t('Backup merged'), {
-          description: tp(
-            result.added,
-            '{count} record added. Records already here were kept as they are.',
-            '{count} records added. Records already here were kept as they are.',
-          ),
+          description: [
+            tp(
+              result.added,
+              '{count} record added. Records already here were kept as they are.',
+              '{count} records added. Records already here were kept as they are.',
+            ),
+            result.filled
+              ? tp(
+                  result.filled,
+                  '{count} file here got its content back from the backup.',
+                  '{count} files here got their content back from the backup.',
+                )
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' '),
         });
       } else toast.success(t('Backup restored'));
       setChosen(null);
@@ -371,6 +456,55 @@ export default function DataSettings() {
           </Button>
         </div>
       </SettingsSection>
+
+      <Dialog open={cloudFiles !== null} onOpenChange={(open) => !open && cloudFiles?.answer(null)}>
+        {cloudFiles ? (
+          <DialogContent
+            title={tp(
+              cloudFiles.count,
+              '{count} file is kept only in the cloud',
+              '{count} files are kept only in the cloud',
+            )}
+          >
+            <DialogBody>
+              <p className="text-sm text-slate-600">
+                {tp(
+                  cloudFiles.count,
+                  'It is {size}. Included, it is downloaded into this backup only and not kept on this device.',
+                  'Together they are {size}. Included, they are downloaded into this backup only and not kept on this device.',
+                  { size: formatBytes(cloudFiles.bytes) },
+                )}
+              </p>
+              {cloudFiles.fits ? null : (
+                <p className="text-sm font-medium text-amber-800">
+                  {tp(
+                    cloudFiles.count,
+                    'With it the backup would be about {size}, too large for one file.',
+                    'With them the backup would be about {size}, too large for one file.',
+                    { size: formatBytes(cloudFiles.sizeWith) },
+                  )}
+                </p>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => cloudFiles.answer(null)}>
+                {t('Cancel')}
+              </Button>
+              <Button
+                variant={cloudFiles.fits ? 'outline' : 'primary'}
+                onClick={() => cloudFiles.answer('without')}
+              >
+                {t('Back up without them (they stay in the cloud)')}
+              </Button>
+              {cloudFiles.fits ? (
+                <Button onClick={() => cloudFiles.answer('include')}>
+                  {t('Include them in the backup')}
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
 
       <Dialog open={chosen !== null} onOpenChange={(open) => !open && setChosen(null)}>
         {chosen ? (

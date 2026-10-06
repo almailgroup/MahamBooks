@@ -40,6 +40,33 @@ export default {
   },
   'The backup is too large to save as one file.': 'النسخة الاحتياطية أكبر من أن تُحفظ في ملف واحد.',
   'Could not make the backup.': 'تعذّر إنشاء النسخة الاحتياطية.',
+  'The backup would be about {size}, too large for one file.':
+    'سيبلغ حجم النسخة الاحتياطية نحو {size}، وهو أكبر من أن تُحفظ في ملف واحد.',
+  'Back up one company at a time instead.': 'أنشئ نسخة احتياطية لكل شركة على حدة بدلاً من ذلك.',
+
+  // Files kept only in the cloud, when backing up
+  '{count} files are kept only in the cloud': {
+    one: 'ملف واحد محفوظ في السحابة فقط',
+    two: 'ملفان محفوظان في السحابة فقط',
+    few: '{count} ملفات محفوظة في السحابة فقط',
+    many: '{count} ملفاً محفوظاً في السحابة فقط',
+    other: '{count} ملف محفوظ في السحابة فقط',
+  },
+  'Together they are {size}. Included, they are downloaded into this backup only and not kept on this device.':
+    {
+      one: 'حجمه {size}. إذا ضمّنته، يُنزَّل إلى هذه النسخة الاحتياطية فقط ولا يُحفظ على هذا الجهاز.',
+      two: 'حجمهما معاً {size}. إذا ضمّنتهما، يُنزَّلان إلى هذه النسخة الاحتياطية فقط ولا يُحفظان على هذا الجهاز.',
+      other:
+        'حجمها معاً {size}. إذا ضمّنتها، تُنزَّل إلى هذه النسخة الاحتياطية فقط ولا تُحفظ على هذا الجهاز.',
+    },
+  'With them the backup would be about {size}, too large for one file.': {
+    one: 'مع هذا الملف سيبلغ حجم النسخة الاحتياطية نحو {size}، وهو أكبر من أن تُحفظ في ملف واحد.',
+    two: 'مع هذين الملفين سيبلغ حجم النسخة الاحتياطية نحو {size}، وهو أكبر من أن تُحفظ في ملف واحد.',
+    other:
+      'مع هذه الملفات سيبلغ حجم النسخة الاحتياطية نحو {size}، وهو أكبر من أن تُحفظ في ملف واحد.',
+  },
+  'Include them in the backup': 'تضمينها في النسخة الاحتياطية',
+  'Back up without them (they stay in the cloud)': 'إنشاء النسخة بدونها (تبقى في السحابة)',
 
   // Restoring
   '{count} files could not be included when this backup was made.': {
@@ -71,6 +98,13 @@ export default {
     few: 'أُضيفت {count} سجلات، وبقيت السجلات الموجودة هنا كما هي.',
     many: 'أُضيف {count} سجلاً، وبقيت السجلات الموجودة هنا كما هي.',
     other: 'أُضيف {count} سجل، وبقيت السجلات الموجودة هنا كما هي.',
+  },
+  '{count} files here got their content back from the backup.': {
+    one: 'استُعيد محتوى ملف واحد هنا من النسخة الاحتياطية.',
+    two: 'استُعيد محتوى ملفين هنا من النسخة الاحتياطية.',
+    few: 'استُعيد محتوى {count} ملفات هنا من النسخة الاحتياطية.',
+    many: 'استُعيد محتوى {count} ملفاً هنا من النسخة الاحتياطية.',
+    other: 'استُعيد محتوى {count} ملف هنا من النسخة الاحتياطية.',
   },
 
   // Switching the language with unsaved changes
