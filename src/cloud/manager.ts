@@ -217,7 +217,7 @@ export class SyncManager {
     syncStatus.set(companyId, { phase: 'syncing' });
     const job = (async () => {
       try {
-        await this.o.lock(syncLockName(companyId), () =>
+        const result = await this.o.lock(syncLockName(companyId), () =>
           syncCompany(companyId, {
             ...this.ctx,
             onProgress: (progress) => syncStatus.set(companyId, { progress }),
@@ -229,9 +229,15 @@ export class SyncManager {
           error: undefined,
           message: undefined,
           progress: undefined,
-          syncedOnce: true,
+          // Stopped for the company to leave this device: it didn't catch up.
+          ...(result.stopped ? {} : { syncedOnce: true }),
         });
-        void downloadMissingFiles(companyId, this.ctx, EAGER_DOWNLOAD_BYTES).catch(() => undefined);
+        // Nor are its files needed.
+        if (!result.stopped) {
+          void downloadMissingFiles(companyId, this.ctx, EAGER_DOWNLOAD_BYTES).catch(
+            () => undefined,
+          );
+        }
       } catch (error) {
         const e = cloudError(error);
         const code: CloudErrorCode = e.code;

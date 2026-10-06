@@ -356,13 +356,23 @@ export async function isNumberTaken(
  * next counter taken on the server while online, so two devices never give
  * the same number. Null to number on this device (offline, kept on this
  * device only, or called inside a transaction, which can't wait for the
- * network).
+ * network). A save that is going to be refused takes none: a number taken
+ * in the cloud is used up even when the document isn't saved.
  */
 async function reserveDocumentCounter(input: InvoiceDocument): Promise<ReservedCounter | null> {
   if (!canReserveCounters() || input.number.trim() || Dexie.currentTransaction) return null;
   if (await db.documents.get(input.id)) return null;
   const company = await db.companies.get(input.companyId);
   if (!company) return null;
+  // What saveDocument refuses in a new document before numbering it: a date
+  // in the locked period (it says so itself).
+  if (isPosted(input)) {
+    try {
+      assertUnlocked(company, input.issueDate);
+    } catch {
+      return null;
+    }
+  }
   const rule = company.numbering[input.type] ?? defaultNumbering()[input.type];
   const taken = await takenNumbers(company.id, input.type, input.id);
   const local = allocateNumber(rule, input.issueDate, (n) => taken.has(n.toLowerCase()));

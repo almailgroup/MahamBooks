@@ -28,7 +28,7 @@ import { useCloud } from '@/cloud/store';
 import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
 import { useCloudStatus } from '@/cloud/hooks';
 import { PARKED_REASONS, RECORD_LABELS } from '@/cloud/labels';
-import { ROLE_LABELS } from '@/cloud/roles';
+import { canEdit, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
 import {
   cleanupFiles,
   discardParked,
@@ -36,6 +36,7 @@ import {
   keepAsLocal,
   retryFileRemovals,
   retryParked,
+  type SyncContext,
 } from '@/cloud/sync';
 import { failedFileRemovals, numberProblems } from '@/cloud/problems';
 import { withSyncLock } from '@/cloud/lock';
@@ -292,7 +293,9 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
         </div>
       </div>
 
-      {parked && parked.length > 0 ? <Problems companyId={company.id} entries={parked} /> : null}
+      {parked && parked.length > 0 ? (
+        <Problems companyId={company.id} entries={parked} role={link?.role} />
+      ) : null}
       {numbers && numbers.length > 0 ? <NumberProblems groups={numbers} current={current} /> : null}
       {unremoved && unremoved.length > 0 ? (
         <FileProblems companyId={company.id} tasks={unremoved} />
@@ -382,10 +385,39 @@ function FileProblems({ companyId, tasks }: { companyId: string; tasks: FileTask
   );
 }
 
-function Problems({ companyId, entries }: { companyId: string; entries: OutboxEntry[] }) {
+function Problems({
+  companyId,
+  entries,
+  role,
+}: {
+  companyId: string;
+  entries: OutboxEntry[];
+  role: MemberRole | undefined;
+}) {
   const { user, api, manager } = useCloud();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState<string | null>(null);
   const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
+
+  /** Takes the cloud's copy back; a record the cloud never had is only deleted once agreed. */
+  const undo = async (entry: OutboxEntry, ctx: SyncContext) => {
+    if ((await discardParked(companyId, entry, ctx)) === 'undone') return true;
+    if (entry.table === 'companies') {
+      toast.error(t('The cloud has no copy of the company settings to go back to.'));
+      return false;
+    }
+    const ok = await confirm({
+      title: t('Not in the cloud yet'),
+      description: t(
+        'The cloud never received this record, so undoing your change deletes it from this device.',
+      ),
+      confirmLabel: t('Delete from this device'),
+      danger: true,
+    });
+    if (!ok) return false;
+    await discardParked(companyId, entry, ctx, { deleteNew: true });
+    return true;
+  };
   return (
     <div className="rounded-lg bg-red-50/60 p-3 ring-1 ring-red-600/15">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -423,6 +455,9 @@ function Problems({ companyId, entries }: { companyId: string; entries: OutboxEn
                   PARKED_REASONS[entry.error as keyof typeof PARKED_REASONS] ??
                     msg('The cloud did not accept it.'),
                 )}
+                {entry.retryAt !== undefined && canEdit(role)
+                  ? ` ${t('This device tries again by itself.')}`
+                  : ''}
               </span>
             </span>
             {api && user ? (
@@ -433,8 +468,9 @@ function Problems({ companyId, entries }: { companyId: string; entries: OutboxEn
                 onClick={async () => {
                   setBusy(entry.id);
                   try {
-                    await discardParked(companyId, entry, { api, userId: user.id });
-                    toast.success(t('Your change was undone.'));
+                    if (await undo(entry, { api, userId: user.id })) {
+                      toast.success(t('Your change was undone.'));
+                    }
                   } catch (err) {
                     toast.error(cloudErrorMessage(err));
                   } finally {

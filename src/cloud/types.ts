@@ -60,6 +60,10 @@ export interface OutboxEntry {
   detail?: string;
   /** 1 when it was the file of an attachment the cloud refused, not the record. */
   file?: 1;
+  /** A refused file sent again by itself: refusals so far. */
+  attempts?: number;
+  /** A refused file sent again by itself: when (ms since 1970), unless "Try again" comes first. */
+  retryAt?: number;
 }
 
 /** The server version of a record this device has (table `syncRevs`). */

@@ -463,4 +463,14 @@ export default {
     other: 'تعذّرت إزالة {count} ملف محذوف من السحابة.',
   },
   'The cloud did not take its file.': 'لم تقبل السحابة ملفه.',
+  'A sync is still running. Try again in a moment.':
+    'لا تزال المزامنة جارية. أعد المحاولة بعد قليل.',
+  'Other settings': 'إعدادات أخرى',
+  'This device tries again by itself.': 'سيعيد هذا الجهاز المحاولة تلقائياً.',
+  'Not in the cloud yet': 'ليس في السحابة بعد',
+  'The cloud never received this record, so undoing your change deletes it from this device.':
+    'لم يصل هذا السجل إلى السحابة قط، لذا فإن التراجع عن تغييرك يحذفه من هذا الجهاز.',
+  'Delete from this device': 'حذف من هذا الجهاز',
+  'The cloud has no copy of the company settings to go back to.':
+    'لا توجد في السحابة نسخة من إعدادات الشركة للرجوع إليها.',
 } satisfies Dictionary;

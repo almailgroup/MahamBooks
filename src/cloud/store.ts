@@ -147,8 +147,14 @@ export async function signOutCloud({ removeCompanies }: { removeCompanies: boole
     const linked = await db.syncState.filter((l) => l.userId === userId).toArray();
     // The sign-out dialog counts the changes not sent yet before this; each
     // removal waits for a sync of that company still under way.
-    for (const link of linked) {
-      await withSyncLock(link.companyId, () => deleteCompany(link.companyId, { force: true }));
+    try {
+      for (const link of linked) {
+        await withSyncLock(link.companyId, () => deleteCompany(link.companyId, { force: true }));
+      }
+    } catch (error) {
+      // Still signed in (a sync kept a company busy, say): syncing goes on.
+      if (snapshot.user?.id === userId) startSync(userId);
+      throw error;
     }
   }
   await authSignOut();

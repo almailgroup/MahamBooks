@@ -16,10 +16,18 @@ import {
 } from './api';
 import { companyOps, onlyCounters, rebaseCompany } from './company-patch';
 import { blobToDataUrl, contentHash, dataUrlToBlob, filePath } from './files';
-import { withSyncLock } from './lock';
+import { companySettingLabels, inArabic } from './labels';
+import { syncStarted, withSyncLock } from './lock';
 import { markRemote } from './outbox';
 import { mergeNumbering } from './numbering';
-import { canSeePeople, isPrivateRecord, PEOPLE_TABLES, sameData, type MemberRole } from './roles';
+import {
+  canEdit,
+  canSeePeople,
+  isPrivateRecord,
+  PEOPLE_TABLES,
+  sameData,
+  type MemberRole,
+} from './roles';
 import type { CloudLink, FileTask, OutboxEntry } from './types';
 
 /**
@@ -43,6 +51,21 @@ const ID_PAGE = 1000;
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** Tries to remove a file before it is shown as a problem. */
 const FILE_ATTEMPTS = 5;
+const MINUTE = 60_000;
+/**
+ * How long a request of a sync may go unanswered (a dead connection after a
+ * network change) before it is given up: the sync ends, lets go of the lock
+ * and is tried again later. Files take longer.
+ */
+export const REQUEST_TIMEOUT_MS = 2 * MINUTE;
+export const FILE_TIMEOUT_MS = 10 * MINUTE;
+/**
+ * Pauses before a file the cloud's rules refused is sent again by itself,
+ * after the first, second… refusal: the refusal may not last (the owner
+ * started deleting the company on another device and stopped). After the
+ * last, it waits for "Try again" in Settings → Cloud.
+ */
+const FILE_RETRY_MS = [0, MINUTE, 5 * MINUTE, 15 * MINUTE, 60 * MINUTE, 180 * MINUTE, 360 * MINUTE];
 
 export interface SyncProgress {
   companyId: string;
@@ -57,6 +80,8 @@ export interface SyncContext {
   onProgress?: (progress: SyncProgress) => void;
   /** Records per pull (tests use small pages). */
   pullPage?: number;
+  /** How long any request may go unanswered (tests use short times). */
+  timeoutMs?: number;
 }
 
 export interface SyncResult {
@@ -64,6 +89,8 @@ export interface SyncResult {
   pulled: number;
   conflicts: number;
   parked: number;
+  /** Stopped before the end, for the company to leave this device (see lock.ts). */
+  stopped?: boolean;
 }
 
 const SYNCED = new Set<string>(DATA_TABLES);
@@ -82,6 +109,69 @@ const tablesForApply = () => [
 async function stillLinked(companyId: string, ctx: SyncContext): Promise<boolean> {
   const link = await db.syncState.get(companyId);
   return Boolean(link && link.status !== 'removed' && link.userId === ctx.userId);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Requests                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** What a sync asks for to bring changes in: given up at once when the sync is told to stop. */
+const RECEIVING = new Set<string>(['pullRecords', 'recordIds', 'syncInfo', 'downloadFile']);
+const FILE_TRANSFERS = new Set<string>(['uploadFile', 'downloadFile']);
+
+/** Detail of the error a request ends with when its sync was told to stop. */
+const STOPPED = 'stopped';
+
+/**
+ * Settles with `request`, or fails after `ms` (retryable, like network
+ * trouble) or as soon as `stop` fires. What the request answers later is
+ * ignored.
+ */
+function deadline<T>(request: Promise<T>, ms: number, stop?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const finish = (settle: () => void) => {
+      clearTimeout(timer);
+      stop?.removeEventListener('abort', onStop);
+      settle();
+    };
+    const onStop = () =>
+      finish(() => reject(new CloudError('server', t(CLOUD_ERROR_MESSAGES.server), STOPPED)));
+    const timer = setTimeout(
+      () =>
+        finish(() => reject(new CloudError('server', t(CLOUD_ERROR_MESSAGES.server), 'timeout'))),
+      ms,
+    );
+    stop?.addEventListener('abort', onStop, { once: true });
+    request.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
+/**
+ * The cloud as the sync talks to it: no request waits for an answer for
+ * ever, and once `stop` fires (the company is about to leave this device)
+ * what the sync brings in is given up at once. What it sends goes on.
+ */
+function guardedApi(ctx: SyncContext, stop?: AbortSignal): CloudApi {
+  return new Proxy(ctx.api, {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof value !== 'function' || typeof key !== 'string') return value;
+      return (...args: unknown[]) => {
+        const signal = RECEIVING.has(key) ? stop : undefined;
+        if (signal?.aborted) {
+          return Promise.reject(new CloudError('server', t(CLOUD_ERROR_MESSAGES.server), STOPPED));
+        }
+        const answer: unknown = value.apply(target, args);
+        if (!(answer instanceof Promise)) return answer;
+        const ms =
+          ctx.timeoutMs ?? (FILE_TRANSFERS.has(key) ? FILE_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+        return deadline(answer, ms, signal);
+      };
+    },
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -210,18 +300,25 @@ export async function startDownload(
 /* One sync                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Sends what is queued, then brings in what changed. Throws a CloudError when it can't. */
+/**
+ * Sends what is queued, then brings in what changed. Throws a CloudError when
+ * it can't. Told to stop (the company is about to leave this device, see
+ * lock.ts), it stops bringing changes in and ends with `stopped`.
+ */
 export async function syncCompany(companyId: string, ctx: SyncContext): Promise<SyncResult> {
   const result: SyncResult = { pushed: 0, pulled: 0, conflicts: 0, parked: 0 };
   const link = await db.syncState.get(companyId);
   if (!link || link.status === 'removed' || link.userId !== ctx.userId) return result;
+  const run = syncStarted(companyId);
+  const sync: SyncContext = { ...ctx, api: guardedApi(ctx, run.stop) };
   try {
-    await processFileQueue(ctx);
-    await pushAll(companyId, ctx, result);
-    const touched = await pullAll(companyId, ctx, result);
+    await retryRefusedFiles(companyId, link.role);
+    await processFileQueue(sync);
+    await pushAll(companyId, sync, result);
+    const touched = await pullAll(companyId, sync, result);
     await reconcile(companyId, touched);
     // Reconciling may have corrected something here: send that too.
-    await pushAll(companyId, ctx, result);
+    await pushAll(companyId, sync, result);
     const after = await db.syncState.get(companyId);
     if (after && after.status !== 'removed') {
       await db.syncState.update(companyId, {
@@ -236,6 +333,8 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
     }
     return result;
   } catch (error) {
+    // Stopped for the company to leave this device: nothing went wrong.
+    if (run.stop.aborted) return { ...result, stopped: true };
     const e = cloudError(error);
     if (e.code === 'not_member') {
       await db.syncState.update(companyId, { status: 'removed', removedReason: 'access' });
@@ -245,6 +344,8 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
       lastErrorAt: new Date().toISOString(),
     });
     throw e;
+  } finally {
+    run.end();
   }
 }
 
@@ -275,7 +376,7 @@ interface Outgoing {
   seqs: number[];
   /** Attachment content uploaded with this change. */
   file?: { storagePath: string; contentHash: string };
-  /** The company record: the copy sent, kept as the base of later changes. */
+  /** The company record: this device's copy, kept as the base of its later changes. */
   base?: Record<string, unknown>;
   /** The company record: fields that had also changed in the cloud. */
   companyConflicts?: string[][];
@@ -308,7 +409,7 @@ async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult):
       .limit(PUSH_BATCH * 5)
       .toArray();
     if (entries.length === 0) return;
-    const plan = await buildBatch(companyId, entries, ctx, result);
+    const plan = await buildBatch(companyId, entries, ctx, result, link?.role);
     // The company may have left this device while the batch was prepared.
     if (!(await stillLinked(companyId, ctx))) return;
     if (plan.company) await sendCompany(companyId, plan.company, ctx, result);
@@ -325,8 +426,17 @@ async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult):
   }
 }
 
-/** Parks entries the server refused, with the reason shown in Settings → Cloud. */
-async function park(seqs: number[], e: CloudError, file = false): Promise<void> {
+/**
+ * Parks entries the server refused, with the reason shown in Settings →
+ * Cloud. A refused file (`file`) that may be taken later (`retry`) is sent
+ * again by itself after a pause that grows with each refusal (FILE_RETRY_MS).
+ */
+async function park(
+  seqs: number[],
+  e: CloudError,
+  { file = false, retry = false }: { file?: boolean; retry?: boolean } = {},
+): Promise<void> {
+  const now = Date.now();
   await db.outbox
     .where('seq')
     .anyOf(seqs)
@@ -336,6 +446,32 @@ async function park(seqs: number[], e: CloudError, file = false): Promise<void> 
       entry.detail = e.detail.slice(0, 500);
       if (file) entry.file = 1;
       else delete entry.file;
+      const attempts = (entry.attempts ?? 0) + 1;
+      if (retry && attempts <= FILE_RETRY_MS.length) {
+        entry.attempts = attempts;
+        entry.retryAt = now + FILE_RETRY_MS[attempts - 1];
+      } else {
+        delete entry.attempts;
+        delete entry.retryAt;
+      }
+    });
+}
+
+/**
+ * Refused files whose pause is over go back in the queue, at the start of a
+ * sync. Never a viewer's: viewers can't send files, so retrying would never
+ * end.
+ */
+async function retryRefusedFiles(companyId: string, role: MemberRole): Promise<void> {
+  if (!canEdit(role)) return;
+  const now = Date.now();
+  await db.outbox
+    .where('[companyId+parked]')
+    .equals([companyId, 1])
+    .filter((entry) => entry.file === 1 && entry.retryAt !== undefined && entry.retryAt <= now)
+    .modify((entry) => {
+      entry.parked = 0;
+      delete entry.retryAt;
     });
 }
 
@@ -344,6 +480,7 @@ async function buildBatch(
   entries: OutboxEntry[],
   ctx: SyncContext,
   result: SyncResult,
+  role: MemberRole | undefined,
 ): Promise<Plan> {
   const groups = new Map<
     string,
@@ -409,10 +546,13 @@ async function buildBatch(
       try {
         item.file = await uploadContent(companyId, record as unknown as Attachment, ctx);
       } catch (error) {
-        // A file Storage refuses waits with its reason; the rest goes on.
+        // A file Storage refuses waits with its reason; the rest goes on. A
+        // refusal by the rules may not last (the owner started deleting the
+        // company and stopped): the file is sent again by itself later. One
+        // too large, or of a kind not taken, waits for the person.
         const e = cloudError(error);
         if (e.retryable || e.code === 'not_member') throw e;
-        await park(group.seqs, e, true);
+        await park(group.seqs, e, { file: true, retry: e.code === 'permission' && canEdit(role) });
         result.parked += 1;
         plan.progressed = true;
         continue;
@@ -544,7 +684,10 @@ async function sendCompany(
       {
         change: { tbl: 'companies', id: companyId, data, base_rev: baseRev },
         seqs: item.seqs,
-        base: data,
+        // This device's copy as sent, not the merged one: the fields others
+        // changed are not this device's changes, and they arrive with the
+        // next pull (a later push must not put back what this device had).
+        base: item.local,
         companyConflicts: conflicts,
       },
     ],
@@ -725,15 +868,21 @@ async function logConflict(companyId: string, change: PushChange): Promise<boole
   }
 }
 
-/** Notes company settings changed here and on another device (this device's values were kept). */
+/**
+ * Notes company settings changed here and on another device (this device's
+ * values were kept), named as Settings names them, in English and Arabic.
+ */
 async function logCompanyConflicts(companyId: string, paths: string[][]): Promise<boolean> {
-  const fields = [...new Set(paths.map((path) => path.join('.')))].join(', ');
+  const labels = companySettingLabels(paths);
+  // Without the Arabic words (not loaded offline), Arabic readers see the English ones.
+  const arabic = await inArabic(labels).catch(() => null);
   try {
     await logActivity(companyId, 'company', companyId, 'sync_conflict', {
       text: msg(
         'Company settings were also changed on another device. The values saved on this device were kept for: {fields}.',
       ),
-      vars: { fields },
+      vars: { fields: labels.join(', ') },
+      ...(arabic ? { arabic: { fields: arabic.join('، ') } } : {}),
     });
     return true;
   } catch {
@@ -1424,34 +1573,45 @@ export async function retryParked(companyId: string): Promise<void> {
       delete entry.error;
       delete entry.detail;
       delete entry.file;
+      delete entry.attempts;
+      delete entry.retryAt;
     });
 }
 
 /**
  * Gives up a refused change: this device takes the record back as the cloud
- * has it (or removes it when the cloud doesn't have it).
+ * has it. A record the cloud never had would be deleted from this device, so
+ * that only happens with `deleteNew` (the person agreed to it); without it
+ * nothing changes and the answer is 'not_in_cloud'. The company record itself
+ * is never deleted this way.
  */
 export async function discardParked(
   companyId: string,
   entry: Pick<OutboxEntry, 'table' | 'id'>,
   ctx: SyncContext,
-): Promise<void> {
+  { deleteNew = false }: { deleteNew?: boolean } = {},
+): Promise<'undone' | 'not_in_cloud'> {
   let remote: { data: Record<string, unknown>; rev: number } | null;
   try {
-    remote = await ctx.api.getRecord(companyId, entry.table, entry.id);
+    remote = await guardedApi(ctx).getRecord(companyId, entry.table, entry.id);
   } catch (error) {
     throw cloudError(error);
   }
+  let outcome: 'undone' | 'not_in_cloud' = 'undone';
   await db.transaction('rw', tablesForApply(), async () => {
     markRemote();
-    await db.outbox.where('[table+id]').equals([entry.table, entry.id]).delete();
     const store = table(entry.table);
+    const local = await store.get(entry.id);
+    if (!remote && local && (!deleteNew || entry.table === 'companies')) {
+      outcome = 'not_in_cloud';
+      return;
+    }
+    await db.outbox.where('[table+id]').equals([entry.table, entry.id]).delete();
     if (!remote) {
-      await store.delete(entry.id);
+      if (local) await store.delete(entry.id);
       await db.syncRevs.delete([entry.table, entry.id]);
       return;
     }
-    const local = await store.get(entry.id);
     const data = localCopy(
       companyId,
       { tbl: entry.table, id: entry.id, data: remote.data, rev: remote.rev, deleted: false },
@@ -1466,6 +1626,7 @@ export async function discardParked(
       ...(entry.table === 'companies' && data ? { base: data } : {}),
     });
   });
+  return outcome;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1479,17 +1640,19 @@ export async function discardParked(
  * removed when the person is no longer the owner.
  */
 export async function deleteFromCloud(companyId: string, ctx: SyncContext): Promise<void> {
+  // It holds the sync lock: no request may keep it waiting for ever.
+  const api = guardedApi(ctx);
   await withSyncLock(companyId, async () => {
     try {
-      if (!(await ctx.api.beginDeleteCompany(companyId))) {
+      if (!(await api.beginDeleteCompany(companyId))) {
         // An older server: ask it for the person's role before removing anything.
-        const role = (await ctx.api.myCompanies()).find((c) => c.id === companyId)?.role;
+        const role = (await api.myCompanies()).find((c) => c.id === companyId)?.role;
         if (role !== 'owner') {
           throw new CloudError('permission', t('Only the owner can delete the company.'));
         }
       }
       for (let round = 0; ; round += 1) {
-        const files = await ctx.api.listFiles(companyId);
+        const files = await api.listFiles(companyId);
         if (files.length === 0) break;
         if (round === 3) {
           throw new CloudError(
@@ -1498,10 +1661,10 @@ export async function deleteFromCloud(companyId: string, ctx: SyncContext): Prom
           );
         }
         for (let i = 0; i < files.length; i += 100) {
-          await ctx.api.removeFiles(files.slice(i, i + 100).map((file) => file.path));
+          await api.removeFiles(files.slice(i, i + 100).map((file) => file.path));
         }
       }
-      await ctx.api.deleteCompany(companyId);
+      await api.deleteCompany(companyId);
     } catch (error) {
       throw cloudError(error);
     }

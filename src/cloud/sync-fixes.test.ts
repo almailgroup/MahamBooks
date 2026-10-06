@@ -17,14 +17,18 @@ import { today } from '@/lib/dates';
 import { storageCloudError } from './api';
 import { downloadAccountCompanies } from './auto-download';
 import { FakeCloud } from './testing/fake-cloud';
-import { withSyncLock } from './lock';
+import { companySettingLabels } from './labels';
+import { withLock, withSyncLock } from './lock';
 import { failedFileRemovals, numberProblems } from './problems';
 import { cloudCounterReserver } from './reserve';
 import {
   applyRole,
   applyRows,
   deleteFromCloud,
+  discardParked,
+  parkedEntries,
   retryFileRemovals,
+  retryParked,
   startDownload,
   startUpload,
   syncCompany,
@@ -155,6 +159,63 @@ describe('removing a company from this device', () => {
     expect(server.record(company.id, 'clients', client.id)?.phone).toBe('+965 9999 0000');
     expect(await db.companies.get(company.id)).toBeUndefined();
   });
+
+  it('goes ahead when the sync under way waits for an answer that never comes', async () => {
+    const { company } = await uploaded();
+    // A request that never answers (a dead connection after a network change).
+    const api = ctx.api;
+    ctx = { ...ctx, api: { ...api, pullRecords: () => new Promise<never>(() => undefined) } };
+    const sync = withSyncLock(company.id, () => syncCompany(company.id, ctx));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // "Remove from this device", with nothing left to send.
+    const removal = withSyncLock(company.id, () => deleteCompany(company.id));
+    const outcome = await Promise.race([
+      removal.then(() => 'removed'),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 2000)),
+    ]);
+    expect(outcome).toBe('removed');
+    // The sync stopped quietly: not a problem to show.
+    await expect(sync).resolves.toMatchObject({ stopped: true });
+    expect(await db.companies.get(company.id)).toBeUndefined();
+  });
+
+  it('gives up waiting with a message when a sync keeps the lock (another tab’s)', async () => {
+    const name = 'almailbooks-sync-test';
+    let release!: () => void;
+    const held = withLock(name, () => new Promise<void>((resolve) => (release = resolve)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const ran: string[] = [];
+    await expect(withLock(name, async () => void ran.push('impatient'), 50)).rejects.toMatchObject({
+      message: 'A sync is still running. Try again in a moment.',
+    });
+    // Whoever waits without a limit still waits for the sync, then runs.
+    const patient = withLock(name, async () => void ran.push('patient'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ran).toEqual([]);
+    release();
+    await Promise.all([held, patient]);
+    expect(ran).toEqual(['patient']);
+  });
+});
+
+describe('a request of a sync that never answers', () => {
+  it('is given up, and nothing is lost', async () => {
+    const { company } = await uploaded();
+    const client = (await db.clients.where('companyId').equals(company.id).first())!;
+    await saveClient({ ...client, phone: '+965 9999 0000' });
+    const api = ctx.api;
+    const stuck: SyncContext = {
+      ...ctx,
+      timeoutMs: 50,
+      api: { ...api, pushRecords: () => new Promise<never>(() => undefined) },
+    };
+    await expect(syncCompany(company.id, stuck)).rejects.toMatchObject({ code: 'server' });
+    expect((await db.syncState.get(company.id))?.lastError).toBe('server');
+    // The change goes with the next sync.
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'clients', client.id)?.phone).toBe('+965 9999 0000');
+    expect(await db.outbox.count()).toBe(0);
+  });
 });
 
 describe('a file the cloud refuses', () => {
@@ -178,7 +239,8 @@ describe('a file the cloud refuses', () => {
     const result = await syncCompany(company.id, ctx);
     expect(result.parked).toBe(1);
     expect(await db.products.get('p-later')).toBeDefined();
-    expect(await db.outbox.where('[companyId+parked]').equals([company.id, 1]).toArray()).toEqual([
+    const parked = await db.outbox.where('[companyId+parked]').equals([company.id, 1]).toArray();
+    expect(parked).toEqual([
       expect.objectContaining({
         table: 'attachments',
         id: receipt.id,
@@ -186,6 +248,75 @@ describe('a file the cloud refuses', () => {
         file: 1,
       }),
     ]);
+    // A viewer can never send it: not tried again by itself, for ever.
+    expect(parked[0].retryAt).toBeUndefined();
+    const uploads = server.calls.filter((call) => call.endsWith('uploadFile')).length;
+    await syncCompany(company.id, ctx);
+    expect(server.calls.filter((call) => call.endsWith('uploadFile')).length).toBe(uploads);
+  });
+
+  describe('while the owner deletes the company (uploads refused for an hour)', () => {
+    async function receiptDuringDeletion() {
+      const { company, invoice } = await uploaded();
+      // The owner starts "Delete company" on another device; it stops half
+      // way (connection lost), and the owner decides to keep the company.
+      await server.client(OWNER).beginDeleteCompany(company.id);
+      // Meanwhile a receipt is added here and synced.
+      const receipt = await addAttachment(company.id, invoice.id, {
+        name: 'receipt.png',
+        type: 'image/png',
+        dataUrl: PNG,
+      });
+      await syncCompany(company.id, ctx);
+      return { company, receipt };
+    }
+
+    it('is sent by itself once the cloud takes files again', async () => {
+      const { company, receipt } = await receiptDuringDeletion();
+      expect(await parkedEntries(company.id)).toEqual([
+        expect.objectContaining({ id: receipt.id, file: 1, error: 'permission' }),
+      ]);
+      // An hour later uploads are allowed again; the app keeps syncing.
+      server.companies.get(company.id)!.deletingUntil = 0;
+      await syncCompany(company.id, ctx);
+      await syncCompany(company.id, ctx);
+      expect({
+        record: Boolean(server.record(company.id, 'attachments', receipt.id)),
+        file: server.files.has(`${company.id}/${receipt.id}`),
+        parked: (await parkedEntries(company.id)).length,
+      }).toEqual({ record: true, file: true, parked: 0 });
+    });
+
+    it('is tried again less and less often while it is refused, and shown meanwhile', async () => {
+      const { company } = await receiptDuringDeletion();
+      const uploads = () => server.calls.filter((call) => call.endsWith('uploadFile')).length;
+      expect(uploads()).toBe(1);
+      // Tried again at the next sync, then after a pause.
+      await syncCompany(company.id, ctx);
+      expect(uploads()).toBe(2);
+      await syncCompany(company.id, ctx);
+      expect(uploads()).toBe(2);
+      const [entry] = await parkedEntries(company.id);
+      expect(entry).toMatchObject({ file: 1, error: 'permission', attempts: 2 });
+      expect(entry.retryAt).toBeGreaterThan(Date.now() + 30_000);
+      // "Try again" doesn't wait.
+      await retryParked(company.id);
+      await syncCompany(company.id, ctx);
+      expect(uploads()).toBe(3);
+    });
+
+    it('“Undo my change” deletes the receipt the cloud never had only once agreed', async () => {
+      const { company, receipt } = await receiptDuringDeletion();
+      const [entry] = await parkedEntries(company.id);
+      expect(await discardParked(company.id, entry, ctx)).toBe('not_in_cloud');
+      expect(await db.attachments.get(receipt.id)).toBeDefined();
+      expect(await parkedEntries(company.id)).toHaveLength(1);
+      expect(await discardParked(company.id, entry, ctx, { deleteNew: true })).toBe('undone');
+      expect(await db.attachments.get(receipt.id)).toBeUndefined();
+      expect(await db.outbox.where('[table+id]').equals(['attachments', receipt.id]).count()).toBe(
+        0,
+      );
+    });
   });
 
   it('is not retried as it is when Storage says no (4xx); network trouble is', () => {
@@ -254,7 +385,33 @@ describe('the company record', () => {
       website: 'gulf.example',
     });
     const [note] = await db.activities.filter((a) => a.action === 'sync_conflict').toArray();
-    expect(note).toMatchObject({ entity: 'company', messageVars: { fields: 'phone' } });
+    // Named as Settings names it, in English and in Arabic (not as a field path).
+    expect(note).toMatchObject({
+      entity: 'company',
+      messageVars: { fields: 'Phone' },
+      messageVarsAr: { fields: 'الهاتف' },
+    });
+  });
+
+  it('names changed settings the way Settings does', () => {
+    expect(
+      companySettingLabels([
+        ['phone'],
+        ['address', 'line1'],
+        ['accounting', 'lockDate'],
+        ['numbering', 'invoice', 'pattern'],
+        ['numbering', 'quote', 'pattern'],
+        ['bankAccount', 'iban'],
+        ['somethingNew'],
+      ]),
+    ).toEqual([
+      'Phone',
+      'Address',
+      'Lock date',
+      'Number formats',
+      'Bank account',
+      'Other settings',
+    ]);
   });
 
   it('lays this device’s unsent changes over a newer copy from the cloud', async () => {
@@ -334,6 +491,94 @@ describe('the company record', () => {
       expect((await syncCompany(company.id, staff)).parked).toBe(0);
       expect(await db.outbox.count()).toBe(0);
     });
+
+    it('keeps another device’s setting after a push whose pull did not happen', async () => {
+      const { company } = await uploaded();
+      server.legacy = true;
+      await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+      // This device changes the website; the push goes through, the pull doesn't.
+      await db.companies.update(company.id, { website: 'almail.example' });
+      server.failNext('pullRecords', 'offline');
+      await expect(syncCompany(company.id, ctx)).rejects.toMatchObject({ code: 'offline' });
+      expect(server.record(company.id, 'companies', company.id)).toMatchObject({
+        phone: '+965 2222 0000',
+        website: 'almail.example',
+      });
+      // Before the next sync this device changes another field.
+      await db.companies.update(company.id, { email: 'accounts@almail.example' });
+      await syncCompany(company.id, ctx);
+      expect(server.record(company.id, 'companies', company.id)).toMatchObject({
+        email: 'accounts@almail.example',
+        website: 'almail.example',
+        phone: '+965 2222 0000',
+      });
+      expect((await db.companies.get(company.id))?.phone).toBe('+965 2222 0000');
+    });
+
+    it('keeps another device’s setting when a document is numbered here during the sync', async () => {
+      const { company } = await uploaded();
+      server.legacy = true;
+      await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+      await db.companies.update(company.id, { website: 'almail.example' });
+      // While the sync brings in the cloud's changes, an invoice is numbered
+      // here (the counter on the company record goes up).
+      const api = ctx.api;
+      let once = false;
+      ctx = {
+        ...ctx,
+        api: {
+          ...api,
+          pullRecords: async (id, since, limit) => {
+            if (!once) {
+              once = true;
+              const local = (await db.companies.get(company.id))!;
+              await db.companies.put({
+                ...local,
+                numbering: {
+                  ...local.numbering,
+                  invoice: { ...local.numbering.invoice, next: local.numbering.invoice.next + 1 },
+                },
+              });
+            }
+            return api.pullRecords(id, since, limit);
+          },
+        },
+      };
+      await syncCompany(company.id, ctx);
+      expect(server.record(company.id, 'companies', company.id)).toMatchObject({
+        website: 'almail.example',
+        phone: '+965 2222 0000',
+      });
+    });
+
+    it('keeps sending staff counters after a push whose pull did not happen', async () => {
+      const { company } = await uploaded();
+      server.legacy = true;
+      server.addMember(company.id, STAFF, 'staff');
+      const staff = await newDevice(STAFF);
+      await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+      await syncCompany(company.id, staff);
+      // The owner changes the phone number on their device.
+      await otherDeviceChangesCompany(company.id, { phone: '+965 2222 0000' });
+      // Staff numbers an invoice; the push goes through, the pull doesn't.
+      await issueInvoice(company.id);
+      server.failNext('pullRecords', 'offline');
+      await expect(syncCompany(company.id, staff)).rejects.toMatchObject({ code: 'offline' });
+      // Staff numbers another invoice and syncs (twice, to settle).
+      await issueInvoice(company.id);
+      await syncCompany(company.id, staff);
+      await syncCompany(company.id, staff);
+      const cloud = server.record(company.id, 'companies', company.id)!;
+      expect({
+        stuck: await parkedEntries(company.id),
+        cloudNext: (cloud.numbering as Company['numbering']).invoice.next,
+        phoneHere: (await db.companies.get(company.id))!.phone,
+      }).toEqual({
+        stuck: [],
+        cloudNext: (await db.companies.get(company.id))!.numbering.invoice.next,
+        phoneHere: '+965 2222 0000',
+      });
+    });
   });
 });
 
@@ -346,6 +591,29 @@ describe('document numbers', () => {
     const mine = await issueInvoice(company.id);
     expect(theirs).not.toBeNull();
     expect(mine.number).toContain(String(theirs!.counter + 1).padStart(4, '0'));
+  });
+
+  it('are not used up by a save that is refused', async () => {
+    const { company, invoice } = await uploaded();
+    expect(invoice.number).toBe('INV-2026-0001');
+    setCounterReserver(cloudCounterReserver(ctx.api, OWNER));
+    // The books are locked up to the end of September.
+    const local = (await db.companies.get(company.id))!;
+    await db.companies.put({
+      ...local,
+      accounting: { ...local.accounting!, lockDate: '2026-09-30' },
+    });
+    await syncCompany(company.id, ctx);
+    const client = (await db.clients.where('companyId').equals(company.id).first())!;
+    const draft = await draftDocument((await db.companies.get(company.id))!, 'invoice', client);
+    draft.items[0] = { ...draft.items[0], name: 'Service', quantity: 1, unitPrice: 10 };
+    // An invoice dated in the locked period is refused…
+    await expect(
+      saveDocument({ ...draft, issueDate: '2026-09-15', dueDate: '2026-09-15', status: 'sent' }),
+    ).rejects.toThrow();
+    // …and the next one takes the number that was not used.
+    const next = await saveDocument({ ...draft, id: `${draft.id}-2`, status: 'sent' });
+    expect(next.number).toBe('INV-2026-0002');
   });
 
   it('offline, a duplicate from another device is listed as a problem, and both can be saved', async () => {

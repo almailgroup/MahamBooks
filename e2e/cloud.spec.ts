@@ -99,7 +99,8 @@ test('signing in keeps a company of this device in the cloud and syncs changes',
 test('signing out can remove the cloud companies from a shared computer', async ({ page }) => {
   const { account, companyId } = await companyInTheCloud(page, 'Desert Rose Trading');
   await signOutRemovingCompanies(page, account);
-  expect(cloud.requests.some((r) => r.path === '/auth/v1/logout')).toBe(true);
+  // The sign-out request may still be on its way when the welcome page shows.
+  await expect.poll(() => cloud.requests.some((r) => r.path === '/auth/v1/logout')).toBe(true);
   // Removed here, still in the cloud.
   expect(cloud.rows(companyId, 'companies')).toHaveLength(1);
 });
