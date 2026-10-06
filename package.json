@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:functions": "vite build --config vite.functions.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "lint": "eslint .",
@@ -74,6 +75,7 @@
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.13.0",
     "jsdom": "^29.1.1",
+    "postgres": "^3.4.9",
     "prettier": "^3.9.9",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4.3.3",

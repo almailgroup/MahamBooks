@@ -67,6 +67,9 @@ export class FakeSupabase {
   records = new Map<string, Row>();
   invites: Invite[] = [];
   requests: SeenRequest[] = [];
+  /** Email alerts by "company user", and the emails asked for from the app. */
+  emailAlerts = new Map<string, { enabled: boolean; topics: string[]; appUrl: string }>();
+  alertEmails: { company: string; to: string }[] = [];
   private rev = 0;
   private tokens = new Map<string, string>();
   private counter = 0;
@@ -242,6 +245,21 @@ export class FakeSupabase {
     if (url.pathname === '/rest/v1/records') return json(200, []);
     if (url.pathname.startsWith('/storage/v1/')) return json(200, []);
 
+    // The email-alerts function: "Send it now".
+    if (url.pathname === '/functions/v1/email-alerts') {
+      if (!me) return json(401, { ok: false, error: 'auth', message: 'Sign in again.' });
+      const company = String(b.companyId ?? '');
+      const role = this.companies.get(company)?.members.get(me.id);
+      if (role !== 'owner' && role !== 'admin') {
+        return json(403, { ok: false, error: 'permission', message: '' });
+      }
+      if (!this.emailAlerts.get(`${company} ${me.id}`)?.enabled) {
+        return json(409, { ok: false, error: 'not_enabled', message: '' });
+      }
+      this.alertEmails.push({ company, to: me.email });
+      return json(200, { ok: true, to: me.email, count: 3 });
+    }
+
     // Database functions
     const fn = /^\/rest\/v1\/rpc\/(\w+)$/.exec(url.pathname)?.[1];
     if (fn && me) {
@@ -394,6 +412,28 @@ export class FakeSupabase {
         const entry = this.companies.get(invite.company)!;
         entry.members.set(me.id, invite.role);
         return [{ company_id: entry.id, company_name: entry.name, role: invite.role }];
+      }
+      case 'email_alert_settings':
+      case 'set_email_alerts': {
+        const key = `${company} ${me.id}`;
+        if (fn === 'set_email_alerts') {
+          this.emailAlerts.set(key, {
+            enabled: Boolean(b.p_enabled),
+            topics: (b.p_topics as string[]) ?? [],
+            appUrl: String(b.p_app_url ?? ''),
+          });
+        }
+        const saved = this.emailAlerts.get(key);
+        return [
+          {
+            enabled: saved?.enabled ?? false,
+            topics: saved?.topics ?? ['documents', 'deadlines', 'cheques', 'bills', 'invoices'],
+            last_sent_at: null,
+            last_error: '',
+            last_error_at: null,
+            function_ready: true,
+          },
+        ];
       }
       default:
         return undefined;

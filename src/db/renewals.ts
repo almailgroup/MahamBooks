@@ -26,7 +26,9 @@ import {
   FEE_ACCOUNT_CODES,
   isEmployeeDocumentType,
   normalizeReminderDays,
+  overdueSince,
   registerEntries,
+  statutoryContextOf,
   type ComplianceItem,
   type EmployeeDocumentType,
   type ExpiryInfo,
@@ -35,7 +37,6 @@ import {
   type StatutoryContext,
 } from '@/lib/compliance';
 import { CHART_TEMPLATES } from '@/lib/accounting/charts';
-import { insuredWithPifss, isCurrent } from '@/lib/hr/employees';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
 import { addDaysISO, today } from '@/lib/dates';
 import { currencyPrecision, round } from '@/lib/money';
@@ -240,23 +241,19 @@ export async function expiringDocuments(companyId: ID, days: number): Promise<Ex
 /* Statutory deadlines and the calendar                                       */
 /* -------------------------------------------------------------------------- */
 
-/** How far back unfinished deadlines are reported as overdue. */
-export const OVERDUE_LOOKBACK_DAYS = 365;
+export { OVERDUE_LOOKBACK_DAYS } from '@/lib/compliance';
 
 export async function statutoryContext(company: Company): Promise<StatutoryContext> {
   const [settings, employees] = await Promise.all([
     getPeopleSettings(company.id),
     db.employees.where('companyId').equals(company.id).toArray(),
   ]);
-  const profile = kuwaitProfile(company);
-  return {
+  return statutoryContextOf({
     fiscalYearEnd: accountingSettings(company).fiscalYearEnd,
-    profile,
+    profile: kuwaitProfile(company),
     settings,
-    pifss:
-      Boolean(profile.pifssEmployerNumber.trim()) ||
-      employees.some((e) => isCurrent(e) && insuredWithPifss(e.category)),
-  };
+    employees,
+  });
 }
 
 /**
@@ -274,15 +271,13 @@ export async function upcomingCompliance(
     loadRegister(company.id),
     db.complianceMarks.where('companyId').equals(company.id).toArray(),
   ]);
-  const started = company.createdAt.slice(0, 10);
-  const lookback = addDaysISO(from, -OVERDUE_LOOKBACK_DAYS);
   return complianceCalendar({
     ctx,
     entries: register.entries,
     marks,
     from,
     days,
-    overdueSince: started > lookback ? started : lookback,
+    overdueSince: overdueSince(company.createdAt, from),
   });
 }
 

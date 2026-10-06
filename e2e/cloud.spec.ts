@@ -175,3 +175,36 @@ test('an invitation link says who invites whom, then joins and downloads the com
     'Synced',
   );
 });
+
+test('an owner turns on email alerts and gets the first email at once', async ({ page }) => {
+  const { companyId } = await companyInTheCloud(page, 'Pearl Coast Trading');
+  await page.goto('#/settings/alerts');
+  await expect(page.getByRole('heading', { name: 'Email alerts' })).toBeVisible();
+  const toggle = page.getByRole('switch', { name: 'Email me alerts for Pearl Coast Trading' });
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(
+    page.getByText(`Sent to ${OWNER.email}, the address of your account.`),
+  ).toBeVisible();
+
+  await toggle.click();
+  await page.getByRole('checkbox', { name: /Bills to pay/ }).uncheck();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(
+    page.getByText(`Email alerts are on. The first email is on its way to ${OWNER.email}.`),
+  ).toBeVisible();
+
+  const [saved] = cloud.calls('set_email_alerts');
+  expect(saved.body).toMatchObject({
+    p_company: companyId,
+    p_enabled: true,
+    p_topics: ['documents', 'deadlines', 'cheques', 'invoices'],
+  });
+  // The address the app is open at, for the button in the email.
+  expect((saved.body as { p_app_url: string }).p_app_url).toBe(new URL('./', page.url()).href);
+  expect(cloud.alertEmails).toEqual([{ company: companyId, to: OWNER.email }]);
+
+  // Later, the same email on demand.
+  await page.getByRole('button', { name: 'Send me the email now' }).click();
+  await expect(page.getByText(`Email sent to ${OWNER.email}.`)).toBeVisible();
+  expect(cloud.alertEmails).toHaveLength(2);
+});

@@ -7,8 +7,9 @@ import { newId, shortId } from '@/lib/ids';
 import { isISODate, today } from '@/lib/dates';
 import { currencyPrecision, normalizeDigits, round } from '@/lib/money';
 import { compactIban, normalizeKuwaitPhone } from '@/lib/kuwait';
-import { DEFAULT_REMINDER_DAYS, normalizeReminderDays } from '@/lib/compliance';
+import { normalizeReminderDays } from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
+import { defaultPeopleSettings, withPeopleDefaults } from '@/lib/hr/people-settings';
 import { isOpeningRecord } from '@/lib/hr/leave';
 import { msg, t } from '@/i18n';
 
@@ -511,23 +512,11 @@ export async function logEmployeePhotosAdded(companyId: ID, photos: number): Pro
 /* Settings                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function defaultPeopleSettings(companyId: ID): PeopleSettings {
-  return {
-    id: companyId,
-    companyId,
-    kuwaitizationTarget: null,
-    eosDailyDivisor: EOSI_RULES.defaultDailyDivisor,
-    reminderDays: [...DEFAULT_REMINDER_DAYS],
-    auditFilingMonths: 3,
-    pifssDueDay: 15,
-    updatedAt: nowStamp(),
-  };
-}
+export { defaultPeopleSettings };
 
 /** A company's people and compliance settings, with defaults for anything not set. */
 export async function getPeopleSettings(companyId: ID): Promise<PeopleSettings> {
-  const saved = await db.peopleSettings.get(companyId);
-  return { ...defaultPeopleSettings(companyId), ...saved };
+  return withPeopleDefaults(companyId, await db.peopleSettings.get(companyId));
 }
 
 export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {

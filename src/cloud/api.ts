@@ -1,4 +1,5 @@
 import { msg, t } from '@/i18n';
+import type { AlertTopic } from '@/alerts/topics';
 import type { MemberRole } from './roles';
 
 /**
@@ -114,6 +115,62 @@ export interface ReservedCounter {
   period: string;
 }
 
+/** The signed-in person's morning email for a company (Settings → Email alerts). */
+export interface EmailAlertSettings {
+  enabled: boolean;
+  topics: AlertTopic[];
+  lastSentAt: string | null;
+  /** The last problem sending it; empty when there is none. */
+  lastError: string;
+  lastErrorAt: string | null;
+  /** The email-alerts function has been published and has run at least once. */
+  functionReady: boolean;
+}
+
+export type AlertEmailErrorCode =
+  | 'offline'
+  | 'auth'
+  | 'permission'
+  | 'invalid'
+  | 'not_enabled'
+  | 'too_soon'
+  | 'no_company'
+  | 'not_configured'
+  | 'not_ready'
+  | 'not_deployed'
+  | 'send_failed'
+  | 'failed';
+
+const ALERT_EMAIL_ERROR_CODES: readonly string[] = [
+  'offline',
+  'auth',
+  'permission',
+  'invalid',
+  'not_enabled',
+  'too_soon',
+  'no_company',
+  'not_configured',
+  'not_ready',
+  'not_deployed',
+  'send_failed',
+  'failed',
+];
+
+export function isAlertEmailErrorCode(value: unknown): value is AlertEmailErrorCode {
+  return typeof value === 'string' && ALERT_EMAIL_ERROR_CODES.includes(value);
+}
+
+/** "Send it now" did not work; `detail` is the email service's own words, if any. */
+export class AlertEmailError extends Error {
+  constructor(
+    readonly code: AlertEmailErrorCode,
+    readonly detail = '',
+  ) {
+    super(detail || code);
+    this.name = 'AlertEmailError';
+  }
+}
+
 export interface CloudApi {
   createCompany(id: string, name: string): Promise<void>;
   myCompanies(): Promise<CloudCompany[]>;
@@ -176,6 +233,21 @@ export interface CloudApi {
   deleteCompany(companyId: string): Promise<void>;
   /** Calls `onChange` when the company changes in the cloud; returns a stop function. */
   watch(companyId: string, onChange: () => void): () => void;
+  /**
+   * The signed-in person's email alerts for a company. Null when the server
+   * doesn't have them yet (the owner hasn't run the email alerts script).
+   */
+  emailAlerts(companyId: string): Promise<EmailAlertSettings | null>;
+  /** Saves them (owners and admins only); null when the server doesn't have them yet. */
+  setEmailAlerts(
+    companyId: string,
+    settings: { enabled: boolean; topics: AlertTopic[]; appUrl: string },
+  ): Promise<EmailAlertSettings | null>;
+  /**
+   * Emails the signed-in person what needs attention in the company now.
+   * Throws AlertEmailError.
+   */
+  sendAlertEmail(companyId: string): Promise<{ to: string; count: number }>;
 }
 
 /* -------------------------------------------------------------------------- */

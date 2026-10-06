@@ -14,7 +14,7 @@ import type {
 import { addDaysISO, daysBetween, parseISODate, toISODate } from '@/lib/dates';
 import { isShareholding } from '@/lib/kuwait-rules';
 import { msg } from '@/i18n';
-import { isCurrent, needsResidency, needsWorkPermit } from './hr/employees';
+import { insuredWithPifss, isCurrent, needsResidency, needsWorkPermit } from './hr/employees';
 
 /**
  * The compliance calendar: expiring documents (company licences, employee
@@ -353,6 +353,23 @@ export interface StatutoryContext {
   pifss: boolean;
 }
 
+/** What the deadlines of a company depend on: its year end, legal form, settings and staff. */
+export function statutoryContextOf(input: {
+  fiscalYearEnd: { month: number; day: number };
+  profile: KuwaitProfile;
+  settings: Pick<PeopleSettings, 'auditFilingMonths' | 'pifssDueDay'>;
+  employees: Employee[];
+}): StatutoryContext {
+  return {
+    fiscalYearEnd: input.fiscalYearEnd,
+    profile: input.profile,
+    settings: input.settings,
+    pifss:
+      Boolean(input.profile.pifssEmployerNumber.trim()) ||
+      input.employees.some((e) => isCurrent(e) && insuredWithPifss(e.category)),
+  };
+}
+
 /** Legal forms that file audited financial statements with MOCI. */
 const NO_AUDIT_FORMS: LegalForm[] = ['sole_proprietorship', 'freelance'];
 
@@ -552,6 +569,19 @@ export const ITEM_STATUS_LABELS: Record<ComplianceItemStatus, string> = {
 
 /** Statutory items within this many days are "due soon". */
 export const DUE_SOON_DAYS = 14;
+
+/** How far back unfinished deadlines are reported as overdue. */
+export const OVERDUE_LOOKBACK_DAYS = 365;
+
+/**
+ * The earliest due date to report as overdue on `from`: when the company
+ * started using the app, at most a year back.
+ */
+export function overdueSince(companyCreatedAt: string, from: ISODate): ISODate {
+  const started = companyCreatedAt.slice(0, 10);
+  const lookback = addDaysISO(from, -OVERDUE_LOOKBACK_DAYS);
+  return started > lookback ? started : lookback;
+}
 
 export interface ComplianceItem {
   key: string;

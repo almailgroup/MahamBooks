@@ -7,8 +7,10 @@ comes after it: company settings merged by field, document numbers taken in
 the cloud, deleting a company safely, and the file checks below. Both are safe
 to run again, in this order (run the second again after the first if the first
 is ever run again). Until the second runs, the app notices its functions are
-missing and works as before. The owner's step-by-step guide is
-[`docs/supabase-setup.md`](../docs/supabase-setup.md).
+missing and works as before. `migrations/20261007000000_email_alerts.sql`
+comes last and adds email alerts (see "Email alerts" below). The owner's
+step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
+and [`docs/email-alerts.md`](../docs/email-alerts.md).
 
 The app stays local-first: every screen reads IndexedDB on the device, and the
 cloud keeps a copy of each company that is synced in the background. A company
@@ -26,6 +28,7 @@ that is never put in the cloud never leaves the device.
 | `public.deleted_records` | A marker per deleted record: `(company_id, tbl, id)`, `rev`, `deleted_at`, `private`. No data.  |
 | `public.sync_signals`    | One row per company with the latest rev; the only table published to Realtime.                  |
 | `storage.objects`        | Receipts and scans in the private bucket `company-files`, at `{companyId}/{attachmentId}`.      |
+| `public.email_alerts`    | Who gets the morning email of which company, what it covers, and what was last emailed.         |
 
 `tbl` is one of the app's 32 synced tables (a check constraint lists them).
 Every write gets `rev` from one global sequence, the time and the author from
@@ -244,3 +247,34 @@ signed-in users, with row-level security on. Run it with
   1 MB); Supabase's plan limits apply.
 - A company whose owner deletes their account goes to the longest-standing
   admin (or accountant); without either it has no owner.
+
+## Email alerts
+
+`20261007000000_email_alerts.sql` and the `email-alerts` Edge Function
+(`src/alerts/`, published by the deploy workflow) send owners and admins a
+morning email of what needs attention (see
+[`docs/email-alerts.md`](../docs/email-alerts.md)).
+
+- `public.email_alerts` has row-level security on, no policies and no grants:
+  the app reaches it only through `email_alert_settings(company)` (members;
+  the caller's own row) and `set_email_alerts(company, enabled, topics,
+app_url)` (owners and admins; the caller's own row). Topics are checked
+  against a fixed list; the app address must be `http(s)`.
+- A trigger on `company_members` deletes a person's row when they leave or
+  stop being an owner or admin; deleting the company deletes the rows.
+- `almailbooks.email_alerts_config` keeps the function's address (the
+  function writes it from its own `SUPABASE_URL`) and a random secret.
+  `almailbooks.run_email_alerts()` (not callable by API roles), scheduled
+  hourly with pg_cron, posts `{"action":"run"}` to the function with that
+  secret through pg_net, only when someone has alerts on.
+- The function is deployed without Supabase's JWT check
+  (`supabase/config.toml`) and checks its callers itself: the schedule's
+  secret, compared in constant time, or, for "Send it now", the person's
+  session (checked with Auth) and their role in the company. It reads the
+  database with `SUPABASE_DB_URL`, so it bypasses row-level security: it only
+  ever emails an owner or admin of the company, at their account's confirmed
+  address. Employee papers appear by type and name only, without numbers, and
+  no payroll data is read.
+- Its secrets are `RESEND_API_KEY` and `ALERTS_FROM`, set in Supabase under
+  Edge Functions → Secrets; GitHub only holds `SUPABASE_ACCESS_TOKEN` to
+  publish it.

@@ -1,0 +1,482 @@
+// @vitest-environment node
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { loadLanguage } from '@/i18n';
+import { startDatabase, type Harness } from '@/cloud/sql-harness';
+import { handleAlertsRequest, kuwaitClock, type AlertsDeps, type Sql } from './server';
+import { sampleData } from './testing';
+
+/**
+ * The email-alerts function against the real database scripts (in an
+ * in-process Postgres), with Resend and Supabase Auth faked.
+ */
+
+const PROJECT = 'https://project.supabase.co';
+const FUNCTION_URL = `${PROJECT}/functions/v1/email-alerts`;
+const ALL = ['documents', 'deadlines', 'cheques', 'bills', 'invoices'];
+
+let h: Harness;
+let sql: Sql;
+let seq = 0;
+
+interface Sent {
+  headers: Record<string, string>;
+  body: { from: string; to: string[]; subject: string; html: string; text: string };
+}
+let sent: Sent[];
+let resendAnswer: () => Response;
+let sessions: Map<string, string>;
+let clock: Date;
+let env: AlertsDeps['env'];
+let logs: string[];
+
+const fakeFetch: typeof fetch = async (input, init) => {
+  const url = String(input);
+  const headers = Object.fromEntries(new Headers(init?.headers).entries());
+  if (url === 'https://api.resend.com/emails') {
+    sent.push({ headers, body: JSON.parse(String(init?.body)) });
+    return resendAnswer();
+  }
+  if (url === `${PROJECT}/auth/v1/user`) {
+    const id = sessions.get((headers.authorization ?? '').replace(/^Bearer /, ''));
+    return id ? Response.json({ id }) : Response.json({ msg: 'bad jwt' }, { status: 401 });
+  }
+  throw new Error(`Unexpected request to ${url}`);
+};
+
+const deps = (): AlertsDeps => ({
+  sql,
+  env,
+  fetch: fakeFetch,
+  now: () => clock,
+  log: (m) => logs.push(m),
+  sleep: async () => {},
+});
+
+beforeAll(async () => {
+  h = await startDatabase();
+  sql = async (query, params = []) => (await h.db.query(query, params)).rows as never[];
+}, 60_000);
+
+beforeEach(async () => {
+  sent = [];
+  logs = [];
+  sessions = new Map();
+  resendAnswer = () => Response.json({ id: 'email-1' });
+  // Tuesday 6 October 2026, 08:07 in Kuwait.
+  clock = new Date('2026-10-06T05:07:00Z');
+  env = {
+    supabaseUrl: PROJECT,
+    resendKey: 're_test_key',
+    from: 'Maham Books <alerts@example.com>',
+    apiKey: 'sb_publishable_test',
+  };
+  // Each test starts with nobody wanting email.
+  await h.admin('update public.email_alerts set enabled = false');
+});
+
+afterEach(async () => {
+  await loadLanguage('en');
+});
+
+/** The sample company in the cloud, with an owner, an admin and a staff member. */
+async function company() {
+  seq += 1;
+  const data = sampleData();
+  const id = `acme-${String(seq).padStart(4, '0')}`;
+  const tag = `${seq}-${Math.random().toString(36).slice(2, 8)}`;
+  const owner = await h.user(`owner-${tag}@example.com`, { name: 'Owner' });
+  const admin = await h.user(`admin-${tag}@example.com`, { name: 'Admin' });
+  const staff = await h.user(`staff-${tag}@example.com`, { name: 'Staff' });
+  await h.rpc(owner, 'create_company', { p_id: id, p_name: 'Acme Trading' });
+  for (const [user, email, role] of [
+    [admin, `admin-${tag}@example.com`, 'admin'],
+    [staff, `staff-${tag}@example.com`, 'staff'],
+  ]) {
+    const [invite] = await h.rpc<{ token: string }>(owner, 'create_invite', {
+      p_company: id,
+      p_email: email,
+      p_role: role,
+    });
+    await h.rpc(user, 'accept_invite', { p_token: invite.token });
+  }
+  const own = <T extends object>(r: T) => ({ ...r, companyId: id });
+  const changes = [
+    { tbl: 'companies', id, data: { ...data.company, id } },
+    ...data.employees.map((r) => ({ tbl: 'employees', id: r.id, data: own(r) })),
+    ...data.complianceDocuments.map((r) => ({
+      tbl: 'complianceDocuments',
+      id: r.id,
+      data: own(r),
+    })),
+    ...data.documents.map((r) => ({ tbl: 'documents', id: r.id, data: own(r) })),
+    ...data.payments.map((r) => ({ tbl: 'payments', id: r.id, data: own(r) })),
+    ...data.clients.map((r) => ({ tbl: 'clients', id: r.id, data: own(r) })),
+  ];
+  await h.rpc(owner, 'push_records', { p_company: id, p_changes: JSON.stringify(changes) });
+  for (const [user, token] of [
+    [owner, `token-owner-${tag}`],
+    [admin, `token-admin-${tag}`],
+    [staff, `token-staff-${tag}`],
+  ]) {
+    sessions.set(token, user);
+  }
+  return {
+    id,
+    owner,
+    admin,
+    staff,
+    ownerEmail: `owner-${tag}@example.com`,
+    adminEmail: `admin-${tag}@example.com`,
+    tokens: {
+      owner: `token-owner-${tag}`,
+      admin: `token-admin-${tag}`,
+      staff: `token-staff-${tag}`,
+    },
+  };
+}
+
+const turnOn = (user: string, companyId: string, topics = ALL) =>
+  h.rpc(user, 'set_email_alerts', {
+    p_company: companyId,
+    p_enabled: true,
+    p_topics: topics,
+    p_app_url: 'https://books.example.com/',
+  });
+
+async function secret() {
+  const [row] = await h.admin<{ secret: string }>(
+    'select secret from almailbooks.email_alerts_config',
+  );
+  return row.secret;
+}
+
+async function run(secretValue?: string) {
+  const response = await handleAlertsRequest(
+    new Request(FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-alerts-secret': secretValue ?? (await secret()),
+      },
+      body: JSON.stringify({ action: 'run' }),
+    }),
+    deps(),
+  );
+  return { status: response.status, body: await response.json() };
+}
+
+async function sendNow(token: string | null, companyId: string) {
+  const response = await handleAlertsRequest(
+    new Request(FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ action: 'send', companyId }),
+    }),
+    deps(),
+  );
+  return { status: response.status, body: await response.json() };
+}
+
+const row = async (companyId: string, user: string) =>
+  (
+    await h.admin<{
+      checked_on: string | null;
+      sent_keys: string[] | null;
+      last_sent_at: string | null;
+      last_error: string;
+    }>(
+      `select checked_on::text as checked_on, sent_keys, last_sent_at, last_error
+       from public.email_alerts where company_id = $1 and user_id = $2`,
+      [companyId, user],
+    )
+  )[0];
+
+describe('kuwaitClock', () => {
+  it('is three hours ahead of UTC', () => {
+    expect(kuwaitClock(new Date('2026-10-06T04:59:00Z'))).toEqual({
+      date: '2026-10-06',
+      hour: 7,
+      weekday: 2,
+    });
+    expect(kuwaitClock(new Date('2026-10-10T21:30:00Z'))).toEqual({
+      date: '2026-10-11',
+      hour: 0,
+      weekday: 0,
+    });
+  });
+});
+
+describe('the email-alerts function', () => {
+  it('writes its address for the schedule and says whether it is ready', async () => {
+    await h.admin(`update almailbooks.email_alerts_config set function_url = ''`);
+    const response = await handleAlertsRequest(new Request(FUNCTION_URL), deps());
+    expect(await response.json()).toEqual({ ok: true, database: true, sender: true });
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    const [config] = await h.admin<{ function_url: string }>(
+      'select function_url from almailbooks.email_alerts_config',
+    );
+    expect(config.function_url).toBe(FUNCTION_URL);
+
+    env = { ...env, resendKey: '' };
+    const missing = await handleAlertsRequest(new Request(FUNCTION_URL), deps());
+    expect(await missing.json()).toMatchObject({ sender: false });
+  });
+
+  it('answers the browser before a request from the app', async () => {
+    const response = await handleAlertsRequest(
+      new Request(FUNCTION_URL, { method: 'OPTIONS' }),
+      deps(),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-headers')).toContain('authorization');
+  });
+
+  it('runs for the schedule only, with its secret', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    expect((await run('wrong')).status).toBe(401);
+    expect((await run('')).status).toBe(401);
+    expect(sent).toEqual([]);
+    expect((await row(c.id, c.owner)).checked_on).toBeNull();
+  });
+
+  it('waits until 8:00 in Kuwait', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    clock = new Date('2026-10-06T04:59:00Z');
+    expect((await run()).body).toMatchObject({ ok: true, waiting: true, sent: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  it('emails each owner and admin who turned alerts on, once a day, in their language', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    await turnOn(c.admin, c.id, ['invoices']);
+    await h.admin(`update public.profiles set language = 'ar' where id = $1`, [c.admin]);
+
+    expect((await run()).body).toMatchObject({ ok: true, waiting: false, sent: 2, failed: 0 });
+    const toOwner = sent.find((s) => s.body.to[0] === c.ownerEmail)!;
+    const toAdmin = sent.find((s) => s.body.to[0] === c.adminEmail)!;
+    expect(toOwner.body.from).toBe('Maham Books <alerts@example.com>');
+    expect(toOwner.body.subject).toBe('Acme Trading: 12 things need attention');
+    expect(toOwner.body.text).toContain('Email alerts are on for Acme Trading.');
+    expect(toOwner.headers['idempotency-key']).toMatch(/^alerts\/2026-10-06\/[0-9a-f-]{36}$/);
+    expect(toOwner.headers.authorization).toBe('Bearer re_test_key');
+    expect(toOwner.body.html).toContain('href="https://books.example.com/"');
+    // The admin chose overdue invoices only, and reads Arabic.
+    expect(toAdmin.body.subject).toBe('أكمي للتجارة: أمران يحتاجان إلى متابعة');
+    expect(toAdmin.body.text).toContain('INV-LATE');
+    expect(toAdmin.body.text).not.toContain('CHQ-LATE');
+
+    expect(await row(c.id, c.owner)).toMatchObject({
+      checked_on: '2026-10-06',
+      last_error: '',
+    });
+    expect((await row(c.id, c.owner)).sent_keys).toHaveLength(12);
+    expect((await row(c.id, c.owner)).last_sent_at).not.toBeNull();
+
+    // The next hour: already done today.
+    clock = new Date('2026-10-06T06:07:00Z');
+    expect((await run()).body).toMatchObject({ sent: 0, checked: 0 });
+    expect(sent).toHaveLength(2);
+  });
+
+  it('stays quiet when nothing is new, tells what is new, and sums up on Sundays', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id, ['invoices']);
+    await run();
+    expect(sent).toHaveLength(1);
+
+    // Wednesday: the invoice due on Tuesday has become overdue.
+    clock = new Date('2026-10-07T05:07:00Z');
+    expect((await run()).body).toMatchObject({ sent: 1 });
+    expect(sent[1].body.subject).toBe('Acme Trading: 1 new alert');
+    expect(sent[1].body.text).toContain('- [New] Invoice INV-TODAY · Gulf Hotel');
+    expect(sent[1].body.text.match(/\[New\]/g)).toHaveLength(1);
+
+    // Thursday to Saturday: the same three invoices. Nothing new, no email.
+    for (const day of ['2026-10-08', '2026-10-09', '2026-10-10']) {
+      clock = new Date(`${day}T05:07:00Z`);
+      expect((await run()).body).toMatchObject({ checked: 1, sent: 0 });
+    }
+    expect(sent).toHaveLength(2);
+    expect((await row(c.id, c.owner)).checked_on).toBe('2026-10-10');
+
+    // Sunday: everything still open.
+    clock = new Date('2026-10-11T05:07:00Z');
+    expect((await run()).body).toMatchObject({ sent: 1 });
+    expect(sent[2].body.subject).toBe('Acme Trading: 3 things need attention');
+    expect(sent[2].body.text).toContain('weekly summary');
+  });
+
+  it('never emails staff, people who left, or people whose alerts are off', async () => {
+    const c = await company();
+    await turnOn(c.admin, c.id);
+    await h.rpc(c.owner, 'set_member_role', { p_company: c.id, p_user: c.admin, p_role: 'staff' });
+    await turnOn(c.owner, c.id);
+    await h.rpc(c.owner, 'set_email_alerts', {
+      p_company: c.id,
+      p_enabled: false,
+      p_topics: ALL,
+      p_app_url: '',
+    });
+    expect((await run()).body).toMatchObject({ sent: 0, checked: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  it('keeps a refused email as a problem and tries again the next hour', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    resendAnswer = () =>
+      Response.json(
+        {
+          statusCode: 403,
+          name: 'validation_error',
+          message: 'The example.com domain is not verified.',
+        },
+        { status: 403 },
+      );
+    expect((await run()).body).toMatchObject({ sent: 0, failed: 1 });
+    expect(await row(c.id, c.owner)).toMatchObject({
+      checked_on: null,
+      last_error: 'The example.com domain is not verified.',
+    });
+    expect(
+      (await h.rpc<{ last_error: string }>(c.owner, 'email_alert_settings', { p_company: c.id }))[0]
+        .last_error,
+    ).toBe('The example.com domain is not verified.');
+
+    resendAnswer = () => Response.json({ id: 'email-2' });
+    clock = new Date('2026-10-06T06:07:00Z');
+    expect((await run()).body).toMatchObject({ sent: 1 });
+    expect(await row(c.id, c.owner)).toMatchObject({ checked_on: '2026-10-06', last_error: '' });
+  });
+
+  it('sends again under the same key when the answer was lost, and a new one after a refusal', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    // No answer: Resend may have sent it, so the next try uses the same key.
+    resendAnswer = () => {
+      throw new TypeError('fetch failed');
+    };
+    expect((await run()).body).toMatchObject({ sent: 0, failed: 1 });
+    clock = new Date('2026-10-06T06:07:00Z');
+    resendAnswer = () =>
+      Response.json({ name: 'validation_error', message: 'Domain not verified.' }, { status: 403 });
+    expect((await run()).body).toMatchObject({ sent: 0, failed: 1 });
+    expect(sent[1].headers['idempotency-key']).toBe(sent[0].headers['idempotency-key']);
+    // Refused: not sent. The next try takes a new key.
+    clock = new Date('2026-10-06T07:07:00Z');
+    resendAnswer = () => Response.json({ id: 'email-3' });
+    expect((await run()).body).toMatchObject({ sent: 1, failed: 0 });
+    expect(sent[2].headers['idempotency-key']).not.toBe(sent[1].headers['idempotency-key']);
+    const [after] = await h.admin<{ send_key: string | null }>(
+      'select send_key from public.email_alerts where company_id = $1 and user_id = $2',
+      [c.id, c.owner],
+    );
+    expect(after.send_key).toBeNull();
+  });
+
+  it('keeps trying while the sender is not set up', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    env = { ...env, from: '' };
+    expect((await run()).body).toMatchObject({ sent: 0, failed: 1 });
+    expect((await row(c.id, c.owner)).last_error).toContain('ALERTS_FROM');
+    expect((await row(c.id, c.owner)).checked_on).toBeNull();
+  });
+
+  it('copes with records an older version of the app saved without some fields', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id, ['documents', 'cheques']);
+    const old = {
+      id: 'emp-old',
+      companyId: c.id,
+      name: 'Old Record',
+      category: 'expat',
+      status: 'active',
+      residencyExpiry: '2026-10-02',
+    };
+    await h.rpc(c.owner, 'push_records', {
+      p_company: c.id,
+      p_changes: JSON.stringify([{ tbl: 'employees', id: old.id, data: old }]),
+    });
+    expect((await run()).body).toMatchObject({ sent: 1, failed: 0 });
+    expect(sent[0].body.text).toContain('Residency · Old Record');
+  });
+
+  it('skips accounts without a confirmed address', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    await h.admin('update auth.users set email_confirmed_at = null where id = $1', [c.owner]);
+    expect((await run()).body).toMatchObject({ sent: 0, checked: 1 });
+    expect((await row(c.id, c.owner)).last_error).toContain('no confirmed email');
+  });
+});
+
+describe('"Send it now" from the app', () => {
+  it('needs a session of an owner or admin with alerts on', async () => {
+    const c = await company();
+    expect(await sendNow(null, c.id)).toMatchObject({ status: 401, body: { error: 'auth' } });
+    expect(await sendNow('made-up', c.id)).toMatchObject({ status: 401 });
+    expect(await sendNow(c.tokens.staff, c.id)).toMatchObject({
+      status: 403,
+      body: { error: 'permission' },
+    });
+    expect(await sendNow(c.tokens.owner, c.id)).toMatchObject({
+      status: 409,
+      body: { error: 'not_enabled' },
+    });
+    expect(await sendNow(c.tokens.owner, 'not a company')).toMatchObject({ status: 400 });
+    expect(sent).toEqual([]);
+  });
+
+  it('emails the person what needs attention now, at most once a minute', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    expect(await sendNow(c.tokens.owner, c.id)).toEqual({
+      status: 200,
+      body: { ok: true, to: c.ownerEmail, count: 12 },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.to).toEqual([c.ownerEmail]);
+    expect(sent[0].body.text).toContain(
+      'Everything that needs attention in Acme Trading right now.',
+    );
+    // What it listed counts as seen: the morning run has nothing new to say.
+    expect((await row(c.id, c.owner)).sent_keys).toHaveLength(12);
+    expect((await run()).body).toMatchObject({ sent: 0 });
+
+    expect(await sendNow(c.tokens.owner, c.id)).toMatchObject({
+      status: 429,
+      body: { error: 'too_soon' },
+    });
+    await h.admin(
+      `update public.email_alerts set last_test_at = now() - interval '2 minutes'
+       where company_id = $1`,
+      [c.id],
+    );
+    expect((await sendNow(c.tokens.owner, c.id)).status).toBe(200);
+  });
+
+  it('says what is wrong with the sender', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id);
+    env = { ...env, resendKey: '' };
+    expect(await sendNow(c.tokens.owner, c.id)).toMatchObject({
+      status: 503,
+      body: { error: 'not_configured' },
+    });
+    env = { ...env, resendKey: 're_test_key' };
+    resendAnswer = () =>
+      Response.json({ name: 'validation_error', message: 'Domain not verified.' }, { status: 403 });
+    expect(await sendNow(c.tokens.owner, c.id)).toMatchObject({
+      status: 502,
+      body: { error: 'send_failed', message: 'Domain not verified.' },
+    });
+    expect((await row(c.id, c.owner)).last_error).toBe('Domain not verified.');
+  });
+});

@@ -1,8 +1,10 @@
 import {
+  AlertEmailError,
   CloudError,
   type CloudApi,
   type CloudCompany,
   type CompanyOp,
+  type EmailAlertSettings,
   type Invite,
   type PulledRow,
   type PushChange,
@@ -82,6 +84,9 @@ export class FakeCloud {
   private watchers = new Map<string, Set<() => void>>();
   /** File removals fail while true. */
   storageDown = false;
+  /** Email alerts by "company user"; the emails asked for, by the same key. */
+  emailAlerts = new Map<string, EmailAlertSettings & { appUrl: string }>();
+  alertEmails: string[] = [];
 
   private key(company: string, tbl: string, id: string) {
     return `${company}/${tbl}/${id}`;
@@ -487,6 +492,52 @@ export class FakeCloud {
         if (!set) this.watchers.set(company, (set = new Set()));
         set.add(onChange);
         return () => set.delete(onChange);
+      },
+
+      // Mirror public.email_alert_settings and public.set_email_alerts.
+      emailAlerts: async (company) => {
+        guard('emailAlerts');
+        if (this.legacy) return null;
+        member(company);
+        const saved = this.emailAlerts.get(`${company} ${user}`);
+        return {
+          enabled: saved?.enabled ?? false,
+          topics: saved?.topics ?? ['documents', 'deadlines', 'cheques', 'bills', 'invoices'],
+          lastSentAt: saved?.lastSentAt ?? null,
+          lastError: saved?.lastError ?? '',
+          lastErrorAt: saved?.lastErrorAt ?? null,
+          functionReady: true,
+        };
+      },
+      setEmailAlerts: async (company, settings) => {
+        guard('setEmailAlerts');
+        if (this.legacy) return null;
+        const role = member(company);
+        if (role !== 'owner' && role !== 'admin') throw fail('permission');
+        if (settings.enabled && !settings.topics.length) throw fail('invalid');
+        const key = `${company} ${user}`;
+        const before = this.emailAlerts.get(key);
+        this.emailAlerts.set(key, {
+          enabled: settings.enabled,
+          topics: [...settings.topics],
+          appUrl: settings.appUrl || before?.appUrl || '',
+          lastSentAt: before?.lastSentAt ?? null,
+          lastError: settings.enabled ? (before?.lastError ?? '') : '',
+          lastErrorAt: settings.enabled ? (before?.lastErrorAt ?? null) : null,
+          functionReady: true,
+        });
+        const { appUrl: _appUrl, ...saved } = this.emailAlerts.get(key)!;
+        return saved;
+      },
+      sendAlertEmail: async (company) => {
+        guard('sendAlertEmail');
+        const role = member(company);
+        if (role !== 'owner' && role !== 'admin') throw new AlertEmailError('permission');
+        const saved = this.emailAlerts.get(`${company} ${user}`);
+        if (!saved?.enabled) throw new AlertEmailError('not_enabled');
+        this.alertEmails.push(`${company} ${user}`);
+        saved.lastSentAt = new Date().toISOString();
+        return { to: `${user}@example.com`, count: 0 };
       },
     };
   }

@@ -93,3 +93,66 @@ jobs:
           url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed to $url" >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishes the email-alerts function to Supabase once every check has
+  # passed (see docs/email-alerts.md). It needs one repository secret:
+  # SUPABASE_ACCESS_TOKEN, an access token from
+  # https://supabase.com/dashboard/account/tokens. Until it is set, the step
+  # is skipped with a notice. The project is the one the app uses, unless a
+  # repository variable SUPABASE_PROJECT_REF names another.
+  functions:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'gagdyhintrxdkiqhahzh' }}
+    steps:
+      - name: Check the Supabase settings
+        id: supabase
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Email alerts are not published::Add the SUPABASE_ACCESS_TOKEN secret under Settings -> Secrets and variables -> Actions (see docs/email-alerts.md), then re-run this workflow."
+          fi
+
+      - if: steps.supabase.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.supabase.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - if: steps.supabase.outputs.ready == 'true'
+        name: Build the email-alerts function
+        run: |
+          npm ci
+          npm run build:functions
+
+      - if: steps.supabase.outputs.ready == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.120.0
+
+      - if: steps.supabase.outputs.ready == 'true'
+        name: Publish the email-alerts function
+        run: supabase functions deploy email-alerts --use-api --project-ref "$SUPABASE_PROJECT_REF"
+
+      # The function writes its address for the hourly schedule when it is
+      # first called, and says what is still missing.
+      - if: steps.supabase.outputs.ready == 'true'
+        name: Check the email-alerts function
+        run: |
+          answer=$(curl -sS --max-time 60 "https://$SUPABASE_PROJECT_REF.supabase.co/functions/v1/email-alerts" || true)
+          echo "email-alerts answered: $answer"
+          echo "Email alerts function: \`$answer\`" >> "$GITHUB_STEP_SUMMARY"
+          if ! echo "$answer" | jq -e '.database == true' > /dev/null 2>&1; then
+            echo "::notice title=Email alerts: database::Run supabase/migrations/20261007000000_email_alerts.sql in the Supabase SQL editor, then re-run this workflow."
+          fi
+          if ! echo "$answer" | jq -e '.sender == true' > /dev/null 2>&1; then
+            echo "::notice title=Email alerts: sender::Add RESEND_API_KEY and ALERTS_FROM in Supabase under Edge Functions -> Secrets (see docs/email-alerts.md)."
+          fi

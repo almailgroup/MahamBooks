@@ -29,6 +29,9 @@ has to be added to the app or to Vercel.
 6. Do the same with
    [`supabase/migrations/20261006000000_sync_fixes.sql`](../supabase/migrations/20261006000000_sync_fixes.sql)
    (a new query, paste, **Run**). It must come after the first file.
+7. For email alerts, the third script,
+   [`supabase/migrations/20261007000000_email_alerts.sql`](../supabase/migrations/20261007000000_email_alerts.sql),
+   comes last. It is part of [`docs/email-alerts.md`](email-alerts.md).
 
 Running the scripts again later is safe: they create what is missing and
 replace their own rules with the same ones. Run them again, in this order,
@@ -36,8 +39,9 @@ whenever a new version is published.
 
 **Optional, recommended: the daily clean-up.** Deleted records leave a small
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
-daily job does it for every company: open **Database → Extensions**, search
-for **pg_cron**, enable it, then run the script once more (steps 2–4).
+daily job does it for every company. The email alerts script (step 7) turns it
+on; without email alerts, open **Database → Extensions**, search for
+**pg_cron**, enable it, then run the first script once more (steps 2–4).
 
 To check: **Table Editor** now lists `profiles`, `companies`,
 `company_members`, `company_invites`, `records`, `deleted_records` and
@@ -104,11 +108,11 @@ The built-in service is only for testing. To send to anyone, connect an email
 service in **Authentication → Emails → SMTP Settings** (turn on **Enable
 custom SMTP**):
 
-- **Resend** (simple): create an account at resend.com, add and verify the
-  domain (for example `almailgroup.com`, by adding the DNS records Resend
-  shows), create an API key. In Supabase: host `smtp.resend.com`, port `465`,
-  username `resend`, password = the API key, sender email for example
-  `no-reply@almailgroup.com`, sender name `Maham Books`.
+- **Resend** (simple, and the one email alerts use): steps 1 and 2 of
+  [`docs/email-alerts.md`](email-alerts.md) set up the domain, the API key and
+  these settings: host `smtp.resend.com`, port `465`, username `resend`,
+  password = the API key, sender email for example `no-reply@almailgroup.com`,
+  sender name `Maham Books`.
 - **Google Workspace**: create an app password for a mailbox (or use the SMTP
   relay in the Workspace admin console). Host `smtp.gmail.com`, port `465`,
   username = the mailbox address, password = the app password. Google limits

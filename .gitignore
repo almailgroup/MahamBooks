@@ -5,6 +5,8 @@ node_modules/
 dist/
 dist-ssr/
 *.tsbuildinfo
+# the email-alerts function, built by `npm run build:functions`
+supabase/functions/
 
 # tests
 coverage/

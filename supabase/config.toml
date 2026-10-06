@@ -1,0 +1,11 @@
+# Supabase CLI settings, for deploying the email-alerts function (see
+# docs/email-alerts.md). The database itself is set up by running the
+# scripts in migrations/ in the SQL editor; nothing here changes it.
+project_id = "mahambooks"
+
+[functions.email-alerts]
+# Built by `npm run build:functions` from src/alerts/edge.ts.
+entrypoint = "./functions/email-alerts/index.js"
+# The hourly schedule and the app call it without a Supabase key; it checks
+# them itself (the schedule's secret, or the person's session).
+verify_jwt = false

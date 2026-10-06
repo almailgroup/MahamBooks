@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router';
 import {
+  BellRing,
   BookOpen,
   Building2,
   Cloud,
@@ -38,6 +39,7 @@ const AccountSettings = lazy(() => import('./account'));
 const TeamSettings = lazy(() => import('./team'));
 const CloudSettings = lazy(() => import('./cloud'));
 const LinkSettings = lazy(() => import('./links'));
+const AlertSettings = lazy(() => import('./alerts'));
 
 const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
   {
@@ -52,6 +54,7 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
     title: msg('Account and team'),
     items: [
       { path: 'account', label: msg('Your account'), icon: <UserRound /> },
+      { path: 'alerts', label: msg('Email alerts'), icon: <BellRing /> },
       { path: 'team', label: msg('Team'), icon: <UsersRound /> },
       { path: 'cloud', label: msg('Cloud and sync'), icon: <Cloud /> },
     ],
@@ -165,6 +168,7 @@ export default function SettingsPage() {
               <Route path="team" element={<TeamSettings />} />
               <Route path="cloud" element={<CloudSettings />} />
               <Route path="links" element={<LinkSettings />} />
+              <Route path="alerts" element={<AlertSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

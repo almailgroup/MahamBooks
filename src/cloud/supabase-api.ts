@@ -1,10 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ALERT_TOPICS, isAlertTopic } from '@/alerts/topics';
 import { isMemberRole, type MemberRole } from './roles';
 import { FILES_BUCKET } from './config';
 import {
+  AlertEmailError,
   cloudError,
+  isAlertEmailErrorCode,
   storageCloudError,
   type CloudApi,
+  type EmailAlertSettings,
   type CloudCompany,
   type Invite,
   type InviteDetails,
@@ -20,6 +24,48 @@ const MISSING = Symbol('missing');
 
 /** How long a missing function is taken as missing before asking again. */
 const RECHECK_MS = 10 * 60 * 1000;
+
+interface EmailAlertRow {
+  enabled: boolean | null;
+  topics: string[] | null;
+  last_sent_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  function_ready: boolean | null;
+}
+
+function emailAlertSettings(row: EmailAlertRow | undefined): EmailAlertSettings {
+  return {
+    enabled: Boolean(row?.enabled),
+    topics: (row?.topics ?? [...ALERT_TOPICS]).filter(isAlertTopic),
+    lastSentAt: row?.last_sent_at ?? null,
+    lastError: row?.last_error ?? '',
+    lastErrorAt: row?.last_error_at ?? null,
+    functionReady: Boolean(row?.function_ready),
+  };
+}
+
+/** What went wrong calling the email-alerts function, from its answer. */
+async function alertEmailError(error: unknown): Promise<AlertEmailError> {
+  const context = (error as { context?: unknown } | null)?.context;
+  if (context instanceof Response) {
+    // Null when it isn't the function's own answer.
+    const body = (await context
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: unknown; message?: unknown } | null;
+    if (body && isAlertEmailErrorCode(body.error)) {
+      return new AlertEmailError(body.error, typeof body.message === 'string' ? body.message : '');
+    }
+    // Supabase answers for a function that isn't there.
+    if (context.status === 404) return new AlertEmailError('not_deployed');
+    return new AlertEmailError('failed', `HTTP ${context.status}`);
+  }
+  const name = (error as Error | null)?.name;
+  if (name === 'FunctionsFetchError') return new AlertEmailError('offline');
+  if (name === 'FunctionsRelayError') return new AlertEmailError('not_deployed');
+  return new AlertEmailError('failed', (error as Error | null)?.message ?? '');
+}
 
 /** The cloud as Supabase: the database's functions, Storage and Realtime. */
 export function supabaseApi(supabase: SupabaseClient): CloudApi {
@@ -338,6 +384,32 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
       return () => {
         void supabase.removeChannel(channel);
       };
+    },
+
+    async emailAlerts(companyId) {
+      const rows = await optionalRpc<EmailAlertRow[]>('email_alert_settings', {
+        p_company: companyId,
+      });
+      return rows === MISSING ? null : emailAlertSettings(rows[0]);
+    },
+
+    async setEmailAlerts(companyId, settings) {
+      const rows = await optionalRpc<EmailAlertRow[]>('set_email_alerts', {
+        p_company: companyId,
+        p_enabled: settings.enabled,
+        p_topics: settings.topics,
+        p_app_url: settings.appUrl,
+      });
+      return rows === MISSING ? null : emailAlertSettings(rows[0]);
+    },
+
+    async sendAlertEmail(companyId) {
+      const { data, error } = await supabase.functions.invoke<{ to: string; count: number }>(
+        'email-alerts',
+        { body: { action: 'send', companyId } },
+      );
+      if (error || !data) throw await alertEmailError(error);
+      return { to: data.to, count: data.count };
     },
   };
 }

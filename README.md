@@ -109,6 +109,10 @@ offline.
   with a role (owner, admin, accountant, staff, viewer). Staff and viewers never
   see payroll. Changes sync in the background and the app keeps working
   offline.
+- **Email alerts**: owners and admins can get an email at 8:00 in the morning
+  when papers expire, deadlines and cheques come due, bills are to pay or
+  invoices become overdue, and a summary every Sunday (Settings → Email
+  alerts; setup in [`docs/email-alerts.md`](docs/email-alerts.md)).
 - Import contacts, items, opening balances and open invoices from CSV.
 - Works offline and installs like an app on phones and computers.
 - 20 themes, 10 light and 10 dark, chosen per device in **Settings →
@@ -183,8 +187,9 @@ there.
   protect its storage, and installing the app makes this more reliable.
 
 Setting up the cloud is described in
-[`docs/supabase-setup.md`](docs/supabase-setup.md); the server, its rules and
-the security checklist in [`supabase/README.md`](supabase/README.md).
+[`docs/supabase-setup.md`](docs/supabase-setup.md), email alerts in
+[`docs/email-alerts.md`](docs/email-alerts.md); the server, its rules and the
+security checklist in [`supabase/README.md`](supabase/README.md).
 
 ## Offline and installing
 
@@ -224,11 +229,12 @@ src/
   db/           IndexedDB schema (Dexie), the records of every module, demo data
   lib/          money, Kuwait data, ledger and financial statements, payroll, inventory
   cloud/        accounts, sync engine (outbox, push and pull), roles, invitations
+  alerts/       email alerts: what needs attention, the email, the Supabase function
   i18n/         translation functions and the Arabic dictionaries (ar/*.ts)
   pdf/          PDF templates (react-pdf), fonts, document wording, statements, PDF worker
 e2e/            browser tests
-supabase/       the cloud database (one SQL migration) and its security notes
-docs/           Arabic glossary, cloud setup guide, screenshots
+supabase/       the cloud database (SQL migrations), its security notes, the function's settings
+docs/           Arabic glossary, cloud and email alerts setup guides, screenshots
 scripts/        regenerate fonts, template thumbnails and app icons
 ```
 
