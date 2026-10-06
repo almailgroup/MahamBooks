@@ -7,6 +7,9 @@ dist-ssr/
 *.tsbuildinfo
 # the email-alerts function, built by `npm run build:functions`
 supabase/functions/
+# the Supabase CLI's own files
+supabase/.temp/
+supabase/.branches/
 
 # tests
 coverage/
