@@ -309,7 +309,8 @@ const earliestFirst = (a: Opening, b: Opening) => a.date.localeCompare(b.date) |
  * brought forward accrues from its date, or the hire date when later. Before
  * an employee's first opening balance their leave isn't here, so the balance
  * is worked back from it, never from the hire date: its days less 2.5 for
- * each complete month in between, never below 0.
+ * each complete month in between, plus the annual leave taken in between
+ * and less the adjustments made then, never below 0.
  */
 export function annualLeaveBalance(
   records: LeaveRecord[],
@@ -329,7 +330,19 @@ export function annualLeaveBalance(
     const next = openings.filter((o) => o.date > on).sort(earliestFirst)[0];
     if (next) {
       const months = completedMonths(addDaysISO(on, 1), addDaysISO(next.date, -1));
-      const balance = twoPlaces(Math.max(0, next.days - (months * ANNUAL_LEAVE_DAYS) / 12));
+      // Leave taken between the day and the opening was still to come on the
+      // day (it is added back); adjustments made then were not there yet.
+      const between = annual.filter(
+        (r) => r.start > on && r.start < next.date && r.kind !== 'opening',
+      );
+      const sum = (kind: LeaveRecord['kind']) =>
+        between.filter((r) => r.kind === kind).reduce((total, r) => total + r.days, 0);
+      const balance = twoPlaces(
+        Math.max(
+          0,
+          next.days - (months * ANNUAL_LEAVE_DAYS) / 12 + sum('leave') - sum('adjustment'),
+        ),
+      );
       return {
         from: next.date,
         opening: next.days,

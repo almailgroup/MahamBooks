@@ -262,9 +262,12 @@ export default function DataSettings() {
     setBusy(mode);
     try {
       // Changes queued after the count are not lost unseen: the restore is
-      // refused and says so. Not in the middle of a sync of a company it replaces.
-      const result = await withAllSyncLocks(() =>
-        importBackup(chosen.backup, mode, (logo) => normalizeImage(logo), { force: agreed }),
+      // refused and says so. Never in the middle of a sync: a replace stops
+      // it, a merge waits for what it brings in (records already here are
+      // kept as they are, so they must be here first).
+      const result = await withAllSyncLocks(
+        () => importBackup(chosen.backup, mode, (logo) => normalizeImage(logo), { force: agreed }),
+        { stop: mode !== 'merge' },
       );
       if (mode === 'merge') {
         toast.success(t('Backup merged'), {

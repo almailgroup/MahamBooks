@@ -117,4 +117,6 @@ export default {
 
   // Importing employees
   'The date of birth is in the future ({date}).': 'تاريخ الميلاد في المستقبل ({date}).',
+  '{company} is still coming down from the cloud. Merge the backup once it’s ready.':
+    'لا تزال {company} تُنزَّل من السحابة. ادمج النسخة الاحتياطية عندما تكتمل.',
 } satisfies Dictionary;

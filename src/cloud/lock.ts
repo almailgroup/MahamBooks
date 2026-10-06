@@ -114,28 +114,50 @@ function stopReceiving(companyId: string): void {
   for (const controller of running.get(companyId) ?? []) controller.abort();
 }
 
+export interface SyncLockOptions {
+  /**
+   * Whether a sync of the company in this tab stops bringing in changes
+   * (the default, for taking the company off this device or replacing it).
+   * Changes made to the company's records (a merged backup) wait for the
+   * sync to finish instead: what it brings in must be here first.
+   */
+  stop?: boolean;
+}
+
 /**
  * Runs `fn` while no sync of the company runs, here or in another tab, to
  * take the company off this device or change it under the sync's feet. A
- * sync of it in this tab stops bringing in changes; one that still holds the
- * lock after LOCK_WAIT_MS makes this fail with "A sync is still running."
+ * sync of it in this tab stops bringing in changes (unless `stop` is false);
+ * one that still holds the lock after LOCK_WAIT_MS makes this fail with "A
+ * sync is still running."
  */
-export function withSyncLock<T>(companyId: string, fn: () => Promise<T>): Promise<T> {
-  stopReceiving(companyId);
+export function withSyncLock<T>(
+  companyId: string,
+  fn: () => Promise<T>,
+  options: SyncLockOptions = {},
+): Promise<T> {
+  if (options.stop !== false) stopReceiving(companyId);
   return withLock(syncLockName(companyId), fn, LOCK_WAIT_MS);
 }
 
 /** The sync locks of several companies, taken in a fixed order so callers never wait on each other. */
-export function withSyncLocks<T>(companyIds: string[], fn: () => Promise<T>): Promise<T> {
+export function withSyncLocks<T>(
+  companyIds: string[],
+  fn: () => Promise<T>,
+  options: SyncLockOptions = {},
+): Promise<T> {
   const ids = [...new Set(companyIds)].sort();
-  for (const id of ids) stopReceiving(id);
+  if (options.stop !== false) for (const id of ids) stopReceiving(id);
   const take = (i: number): Promise<T> =>
-    i === ids.length ? fn() : withSyncLock(ids[i], () => take(i + 1));
+    i === ids.length ? fn() : withSyncLock(ids[i], () => take(i + 1), options);
   return take(0);
 }
 
 /** Runs `fn` while no company kept in the cloud on this device is syncing. */
-export async function withAllSyncLocks<T>(fn: () => Promise<T>): Promise<T> {
+export async function withAllSyncLocks<T>(
+  fn: () => Promise<T>,
+  options: SyncLockOptions = {},
+): Promise<T> {
   const ids = (await db.syncState.toCollection().primaryKeys()).map(String);
-  return withSyncLocks(ids, fn);
+  return withSyncLocks(ids, fn, options);
 }

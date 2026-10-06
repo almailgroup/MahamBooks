@@ -389,6 +389,22 @@ export async function importBackup(
           result.added += rows.length;
         }
       } else {
+        // A company still coming down from the cloud doesn't have all its
+        // records here yet: the backup's older copies would be taken for this
+        // device's changes and sent over the cloud's newer ones.
+        for (const company of companies) {
+          const link = await db.syncState.get(company.id);
+          if (link && link.status !== 'ready') {
+            throw new BackupError(
+              t(
+                '{company} is still coming down from the cloud. Merge the backup once it’s ready.',
+                {
+                  company: company.name,
+                },
+              ),
+            );
+          }
+        }
         const before = new Set(await db.companies.toCollection().primaryKeys());
         const added = {} as Record<DataTable, Rows>;
         for (const table of DATA_TABLES) {

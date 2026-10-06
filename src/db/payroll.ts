@@ -522,6 +522,11 @@ export function loanBalance(
   return fromMinor(Math.max(0, owed), precision);
 }
 
+/** The loan that recovers the PIFSS share a pay run's pay didn't cover for an employee. */
+export function owedPifssLoanId(payRunId: ID, employeeId: ID): ID {
+  return `pifss-${payRunId}-${employeeId}`;
+}
+
 export function createStaffLoan(
   companyId: ID,
   employeeId: ID,
@@ -1267,7 +1272,9 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
       }
       for (const recovery of line.loans) {
         const loan = ctx.loans.find((l) => l.id === recovery.loanId);
-        const left = loan ? loanBalance(loan, ctx.runs, ctx.settlements, p, run.id) : 0;
+        // A cancelled loan (an owed share whose pay run was reopened) has nothing left.
+        const left =
+          loan?.status === 'active' ? loanBalance(loan, ctx.runs, ctx.settlements, p, run.id) : 0;
         if (toMinor(recovery.amount, p) > toMinor(left, p)) {
           throw new PayrollError(
             t(
@@ -1343,8 +1350,12 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
       const owed = line.pifssOwed ?? 0;
       if (!(owed > 0)) continue;
       const cap = round(monthlyWage(line).times(PAYROLL_RULES.loanCapPercent).dividedBy(100), p);
-      await db.staffLoans.add(
+      // Always the same loan for the run and the employee: approving again
+      // after a reopen replaces it, and an older copy (a backup) is the same
+      // record, never a second one.
+      await db.staffLoans.put(
         createStaffLoan(company.id, line.employeeId, {
+          id: owedPifssLoanId(run.id, line.employeeId),
           date: run.date,
           amount: owed,
           instalment: cap > 0 && cap < owed ? cap : owed,
@@ -1474,7 +1485,12 @@ export async function reopenPayRun(id: ID): Promise<PayRun> {
           ),
         );
       }
-      await db.staffLoans.bulkDelete(owed.map((l) => l.id));
+      // Cancelled rather than deleted: a backup or another device's older
+      // copy of the loan then can't bring it back as owed.
+      const stamp = nowStamp();
+      await db.staffLoans.bulkPut(
+        owed.map((l) => ({ ...l, status: 'cancelled' as const, updatedAt: stamp })),
+      );
     }
     const reversals = [
       await reverseEntry(run.journalId),

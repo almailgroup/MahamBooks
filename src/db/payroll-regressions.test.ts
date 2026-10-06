@@ -137,9 +137,10 @@ describe('a month of unpaid leave', () => {
     await approvePayRun(october.id);
     expect(await db.staffLoans.count()).toBe(2);
 
-    // Reopening October removes its share; approving again records it again.
+    // Reopening October cancels its share; approving again records it again (the same loan).
     await reopenPayRun(october.id);
-    expect((await db.staffLoans.toArray()).map((l) => l.payRunId)).toEqual([september.id]);
+    const active = (await db.staffLoans.toArray()).filter((l) => l.status === 'active');
+    expect(active.map((l) => l.payRunId)).toEqual([september.id]);
     expect(await balance(c, '1320')).toBe(toMinor(94.5, 3));
     await approvePayRun(october.id);
     expect(await db.staffLoans.count()).toBe(2);
