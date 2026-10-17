@@ -105,6 +105,11 @@ test('the Arabic interface puts the navigation on the right', async ({ page }) =
 
 const PHONE_ROUTES = [
   '#/',
+  '#/books',
+  '#/people',
+  '#/people/directory',
+  '#/crm',
+  '#/crm/prospects',
   '#/invoices',
   '#/invoices/new',
   '#/quotes',

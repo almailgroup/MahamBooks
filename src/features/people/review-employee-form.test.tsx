@@ -14,7 +14,7 @@ import { addAttachment } from '@/db/purchases';
 import type { Employee } from '@/db/types';
 import { CompanyProvider } from '@/app/company';
 import { ConfirmProvider } from '@/components/ui/overlay';
-import EmployeeFormRoute from '@/pages/people/form';
+import EmployeeFormRoute from '@/apps/people/pages/people/form';
 import { MarkLeftDialog } from './mark-left-dialog';
 
 const PIXEL =

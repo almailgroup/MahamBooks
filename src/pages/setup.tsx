@@ -19,7 +19,7 @@ import { normalizeImage } from '@/lib/image';
 import { isValidEmail } from '@/lib/email';
 import { normalizeKuwaitPhone } from '@/lib/kuwait';
 import { normalizeDigits } from '@/lib/money';
-import { appName } from '@/lib/brand';
+import { suiteName } from '@/lib/brand';
 import { regionDefaults } from '@/lib/regions';
 import { requestPersistentStorage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
@@ -176,7 +176,8 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
       remember(null);
       void requestPersistentStorage();
       toast.success(t('{name} is ready.', { name: localName(company) }));
-      navigate('/');
+      // A new company starts in Maham Books, with its setup steps.
+      navigate('/books');
       if (user && api && toCloud) {
         void startUpload(company.id, { api, userId: user.id }).catch((error) =>
           toast.error(cloudErrorMessage(error)),
@@ -503,7 +504,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
           <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
             <FileText className="size-4.5" aria-hidden />
           </span>
-          {appName()}
+          {suiteName()}
         </span>
         <LanguageSwitch className="bg-surface shadow-xs ring-1 ring-slate-200" />
       </header>
@@ -511,7 +512,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
       <main className="mx-auto max-w-2xl px-4 pt-6 pb-12 sm:pt-10">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-balance text-slate-900 sm:text-4xl">
-            {t('Welcome to {app}', { app: appName() })}
+            {t('Welcome to {app}', { app: suiteName() })}
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-base text-pretty text-slate-600">
             {configured

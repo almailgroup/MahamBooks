@@ -472,6 +472,5 @@ export default {
   'Your data is safe — it is stored in this browser. Try reloading the page.':
     'بياناتك في أمان، فهي محفوظة في هذا المتصفح. جرّب إعادة تحميل الصفحة.',
   Reload: 'إعادة التحميل',
-  'Go to dashboard': 'الانتقال إلى لوحة التحكم',
   'Unknown error': 'خطأ غير معروف',
 } satisfies Dictionary;

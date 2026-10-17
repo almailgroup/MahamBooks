@@ -22,13 +22,13 @@ import {
   DialogFooter,
   useConfirm,
 } from '@/components/ui/overlay';
-import { TaxSelect } from '@/features/editor/tax-select';
+import { TaxSelect } from '@/apps/books/features/editor/tax-select';
 import { ClientDialog } from '@/features/clients/client-dialog';
 import {
   categoryOptions,
   MoneyAccountSelect,
   useAccounts,
-} from '@/features/accounting/account-pickers';
+} from '@/apps/books/features/accounting/account-pickers';
 import { AttachmentList, useDraftAttachments } from './attachments';
 import { DateField } from '@/components/ui/date-field';
 

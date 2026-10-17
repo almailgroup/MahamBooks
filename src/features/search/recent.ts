@@ -12,7 +12,7 @@ export interface RecentItem {
 const MAX_RECENT = 6;
 
 /** Pages of payroll and people data. */
-const PEOPLE_PATHS = /^\/(employees|payroll)(\/|$)/;
+const PEOPLE_PATHS = /^\/(employees|payroll|people)(\/|$)/;
 
 /**
  * Whether something in the palette is payroll or people data: an employee,

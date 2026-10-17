@@ -1,4 +1,4 @@
-import { crc32 } from '../features/reports/zip';
+import { crc32 } from '../apps/books/features/reports/zip';
 
 /**
  * Builds small Excel workbooks (.xlsx) for tests: the same parts Excel and

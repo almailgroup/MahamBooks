@@ -8,12 +8,12 @@ const STAMP = Buffer.from(
 
 test('a Kuwaiti business sets up in Arabic and brings in its open invoices', async ({ page }) => {
   await page.goto('./');
-  await expect(page.getByRole('heading', { name: 'Welcome to Maham Books' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
 
   // The welcome page switches to Arabic, right to left.
   await page.getByRole('button', { name: 'العربية' }).click();
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-  await expect(page.getByRole('heading', { name: 'أهلاً بك في مهام بوكس' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'أهلاً بك في مهام ون' })).toBeVisible();
   await expect(page.getByText('الدينار الكويتي بالفلس')).toBeVisible();
   await expect(page.getByText('بدون ضريبة قيمة مضافة', { exact: true })).toBeVisible();
 

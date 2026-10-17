@@ -16,7 +16,7 @@ import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Field, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
-import { isolate } from '@/features/reports/report-language';
+import { isolate } from '@/apps/books/features/reports/report-language';
 import { DateField } from '@/components/ui/date-field';
 
 /** Quarter ends for each stagger (the month a quarter starts in). */

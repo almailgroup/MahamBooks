@@ -88,7 +88,7 @@ export default function InvitePage() {
               ),
               role: <strong className="font-medium text-slate-900">{t(ROLE_LABELS[role])}</strong>,
             })
-        : t('You are invited to join a company on Maham Books.')}
+        : t('You are invited to join a company on Maham One.')}
     </p>
   );
 

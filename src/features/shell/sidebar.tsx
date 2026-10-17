@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { Building2, Check, ChevronDown, ChevronsUpDown, ExternalLink, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { appName } from '@/lib/brand';
+import { suiteName } from '@/lib/brand';
 import { sidebarLinks } from '@/lib/links';
 import { useCompanyContext } from '@/app/company';
 import {
@@ -16,15 +16,16 @@ import {
 import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { AccountMenu } from '@/features/cloud/account-menu';
-import { useRoleView } from '@/features/cloud/role-gates';
+import { useCurrentApp } from '@/suite/current-app';
+import { AppTiles, CurrentApp } from '@/suite/switcher';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
 import {
   activeGroupId,
-  isActivePath,
+  activeLink,
   isGroupOpen,
   loadGroupState,
-  NAV_FOOTER,
+  navLinks,
   openActiveGroup,
   saveGroupState,
   visibleNav,
@@ -92,7 +93,7 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
               {localName(company)}
             </span>
             <span className="block truncate text-xs text-slate-500">
-              {company.currency} · {appName()}
+              {company.currency} · {suiteName()}
             </span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-slate-400" aria-hidden />
@@ -178,16 +179,20 @@ function CompanyLinks({ onNavigate }: { onNavigate?: () => void }) {
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const taxesOn = useTaxesEnabled();
   const { pathname } = useLocation();
-  const { peopleHidden } = useRoleView();
-  const nav = visibleNav(taxesOn, { people: !peopleHidden });
+  // The open app's sidebar; apps the person may not open never show.
+  const app = useCurrentApp();
+  const nav = visibleNav(app.nav, taxesOn);
+  const current = activeLink(pathname, [...navLinks(nav), ...app.footer]);
   const { state, toggle } = useGroupState(activeGroupId(pathname, nav));
   const list = useRef<HTMLElement>(null);
   const edges = useScrollEdges(list, 'y');
 
   return (
     <div className="flex h-full flex-col gap-2">
-      <div className="px-3 pt-3">
+      <div className="space-y-1.5 px-3 pt-3">
         <CompanySwitcher onNavigate={onNavigate} />
+        {onNavigate ? <AppTiles onNavigate={onNavigate} /> : null}
+        <CurrentApp onNavigate={onNavigate} />
       </div>
       <nav
         ref={list}
@@ -202,17 +207,15 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           {nav.map((entry) =>
             entry.kind === 'link' ? (
               <li key={entry.to}>
-                <NavLink
+                <Link
                   to={entry.to}
-                  end={entry.end}
                   onClick={onNavigate}
-                  className={({ isActive }) =>
-                    cn(itemBase, itemHeight, isActive ? itemActive : itemIdle)
-                  }
+                  aria-current={entry.to === current ? 'page' : undefined}
+                  className={cn(itemBase, itemHeight, entry.to === current ? itemActive : itemIdle)}
                 >
                   <entry.icon aria-hidden />
                   {t(entry.label)}
-                </NavLink>
+                </Link>
               </li>
             ) : (
               <SidebarGroup
@@ -220,7 +223,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 group={entry}
                 open={isGroupOpen(state, entry.id)}
                 onToggle={() => toggle(entry.id)}
-                pathname={pathname}
+                current={current}
                 onNavigate={onNavigate}
               />
             ),
@@ -230,18 +233,17 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <ul className="space-y-0.5">
-          {NAV_FOOTER.map((link) => (
+          {app.footer.map((link) => (
             <li key={link.to}>
-              <NavLink
+              <Link
                 to={link.to}
                 onClick={onNavigate}
-                className={({ isActive }) =>
-                  cn(itemBase, itemHeight, isActive ? itemActive : itemIdle)
-                }
+                aria-current={link.to === current ? 'page' : undefined}
+                className={cn(itemBase, itemHeight, link.to === current ? itemActive : itemIdle)}
               >
                 <link.icon aria-hidden />
                 {t(link.label)}
-              </NavLink>
+              </Link>
             </li>
           ))}
         </ul>
@@ -255,17 +257,18 @@ function SidebarGroup({
   group,
   open,
   onToggle,
-  pathname,
+  current,
   onNavigate,
 }: {
   group: NavGroup;
   open: boolean;
   onToggle: () => void;
-  pathname: string;
+  /** The link of the current page (see activeLink). */
+  current: string | null;
   onNavigate?: () => void;
 }) {
   const panelId = useId();
-  const containsActive = group.children.some((c) => isActivePath(pathname, c.to));
+  const containsActive = group.children.some((c) => c.to === current);
   if (group.children.length === 0) return null;
   return (
     <li>
@@ -294,20 +297,19 @@ function SidebarGroup({
       <ul id={panelId} hidden={!open} className="mt-px mb-1 space-y-px">
         {group.children.map((child) => (
           <li key={child.to}>
-            <NavLink
+            <Link
               to={child.to}
               onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  'flex h-[1.875rem] items-center rounded-xl ps-[2.625rem] pe-3 text-sm transition-colors pointer-coarse:h-11',
-                  isActive
-                    ? 'text-primary-700 bg-surface font-medium shadow-xs ring-1 ring-slate-900/5'
-                    : 'hover:bg-surface/70 text-slate-600 hover:text-slate-900',
-                )
-              }
+              aria-current={child.to === current ? 'page' : undefined}
+              className={cn(
+                'flex h-[1.875rem] items-center rounded-xl ps-[2.625rem] pe-3 text-sm transition-colors pointer-coarse:h-11',
+                child.to === current
+                  ? 'text-primary-700 bg-surface font-medium shadow-xs ring-1 ring-slate-900/5'
+                  : 'hover:bg-surface/70 text-slate-600 hover:text-slate-900',
+              )}
             >
               {t(child.label)}
-            </NavLink>
+            </Link>
           </li>
         ))}
       </ul>

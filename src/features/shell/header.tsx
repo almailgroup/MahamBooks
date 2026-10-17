@@ -9,7 +9,10 @@ import { useCompany } from '@/app/company';
 import { localName } from '@/i18n/names';
 import { shortcutLabel } from '@/features/search/command-palette';
 import { t } from '@/i18n';
-import { CREATE_GROUPS, type CreateGroup } from './create';
+import { createColumns } from '@/suite/apps';
+import { AppSwitcher } from '@/suite/switcher';
+import type { CreateGroup } from './create';
+import { useCreateGroups } from './bottom-bar';
 import { CompanyLogo } from './sidebar';
 
 export function AppHeader({
@@ -74,6 +77,7 @@ export function AppHeader({
       </Button>
       <ThemeMenu className="hidden sm:inline-flex" />
       <LanguageSwitch />
+      <AppSwitcher />
       <NewMenu />
     </header>
   );
@@ -81,8 +85,8 @@ export function AppHeader({
 
 function NewMenu() {
   const navigate = useNavigate();
-  // Two columns: sales and accounting, purchases and contacts.
-  const [sales, purchases, contacts, accounting] = CREATE_GROUPS;
+  // Two columns: in Books, sales and accounting, purchases and contacts.
+  const [left, right] = createColumns(useCreateGroups());
   const column = (groups: CreateGroup[]) => (
     <div className="min-w-0">
       {groups.map((group, i) => (
@@ -104,6 +108,7 @@ function NewMenu() {
       ))}
     </div>
   );
+  if (!left.length && !right.length) return null;
   return (
     <Menu.Root>
       <Menu.Trigger asChild>
@@ -117,8 +122,8 @@ function NewMenu() {
           sideOffset={6}
           className="data-[state=open]:animate-fade-in bg-surface z-50 grid w-[30rem] max-w-[calc(100vw-1.5rem)] grid-cols-2 gap-x-1 rounded-2xl p-1.5 shadow-xl ring-1 ring-slate-900/5"
         >
-          {column([sales, accounting])}
-          {column([purchases, contacts])}
+          {column(left)}
+          {right.length ? column(right) : null}
         </Menu.Content>
       </Menu.Portal>
     </Menu.Root>

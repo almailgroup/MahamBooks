@@ -57,7 +57,7 @@ export function PeopleGate({ children }: { children: ReactNode }) {
         )}
         action={
           <Link to="/" className={buttonClass('outline')}>
-            {t('Go to dashboard')}
+            {t('Go to the home page')}
           </Link>
         }
       />

@@ -19,6 +19,7 @@ import { normalizeDigits } from '@/lib/money';
 import { useDraftAttachments } from '@/features/purchases/attachments';
 import { FileList } from '@/features/people/file-list';
 import { Button } from '@/components/ui/button';
+import { useReadOnly } from '@/components/ui/read-only';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { Segmented } from '@/components/ui/misc';
@@ -60,6 +61,7 @@ export function DocumentDialog({
 }) {
   const company = useCompany();
   const confirm = useConfirm();
+  const { readOnly } = useReadOnly();
   const [draft, setDraft] = useState(document);
   const [daysText, setDaysText] = useState(document.reminderDays?.join(', ') ?? '');
   const [saving, setSaving] = useState(false);
@@ -311,7 +313,7 @@ export function DocumentDialog({
           </div>
         </DialogBody>
         <DialogFooter>
-          {!isNew ? (
+          {!isNew && !readOnly ? (
             <div className="flex gap-2 sm:me-auto">
               <Button variant="ghost" onClick={() => void archive()}>
                 {document.archived ? <ArchiveRestore /> : <Archive />}

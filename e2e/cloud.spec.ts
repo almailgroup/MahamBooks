@@ -39,7 +39,7 @@ async function signOutRemovingCompanies(page: Page, account: ReturnType<Page['ge
   const dialog = page.getByRole('dialog', { name: 'Sign out?' });
   await dialog.getByText('Remove them from this device').click();
   await dialog.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('heading', { name: 'Welcome to Maham Books' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
 }
 
 test('creating an account asks to confirm the email address', async ({ page }) => {
@@ -207,4 +207,62 @@ test('an owner turns on email alerts and gets the first email at once', async ({
   await page.getByRole('button', { name: 'Send me the email now' }).click();
   await expect(page.getByText(`Email sent to ${OWNER.email}.`)).toBeVisible();
   expect(cloud.alertEmails).toHaveLength(2);
+});
+
+test('staff open only the apps of their role', async ({ page }) => {
+  test.slow();
+  const { account } = await companyInTheCloud(page, 'Sea Breeze Trading');
+  cloud.addUser('noor@example.com', 'safe-password-3', 'Noor Test');
+  await page.goto('#/settings/team');
+  // The owner sees what each role opens.
+  await expect(page.getByRole('table', { name: 'What each role can open' })).toBeVisible();
+  const invite = page
+    .getByRole('region')
+    .or(page.locator('form'))
+    .filter({ has: page.getByRole('button', { name: 'Create invitation link' }) });
+  await invite.getByLabel('Email', { exact: true }).fill('noor@example.com');
+  await invite.getByLabel('Role').selectOption('staff');
+  await page.getByRole('button', { name: 'Create invitation link' }).click();
+  const link = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
+  await signOutRemovingCompanies(page, account);
+
+  await page.goto(link);
+  await page.getByRole('link', { name: 'Sign in' }).click();
+  await page.getByLabel('Password', { exact: true }).fill('safe-password-3');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Accept and download' }).click();
+  await expect(page.getByRole('button', { name: 'Switch company' })).toContainText(
+    'Sea Breeze Trading',
+    { timeout: 30_000 },
+  );
+
+  // No Maham People in the switcher, on the home, or in the New menu.
+  await page.goto('#/');
+  await expect(page.getByRole('region', { name: 'Your apps' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Maham People', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Switch app' }).click();
+  await expect(page.getByRole('menuitem', { name: /Maham Books/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Maham People/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'New', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Invoice', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Employee', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // Payroll and employees stay private, whatever the address.
+  for (const route of ['#/employees', '#/people', '#/people/directory', '#/payroll']) {
+    await page.goto(route);
+    await expect(
+      page.getByRole('heading', { name: 'Payroll and people are private' }),
+    ).toBeVisible();
+  }
+  // Compliance is there to look at.
+  await page.goto('#/compliance');
+  await expect(
+    page.getByRole('status').filter({ hasText: 'You can look at Maham Compliance' }),
+  ).toBeVisible();
+  // CRM and Books are theirs to work in.
+  await page.goto('#/crm');
+  await expect(page.getByRole('heading', { name: 'Pipeline', level: 1 })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'New quote' })).toBeVisible();
 });

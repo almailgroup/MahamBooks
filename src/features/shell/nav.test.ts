@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { BOOKS } from '@/apps/books/manifest';
+import { PEOPLE } from '@/apps/people/manifest';
 import {
   activeGroupId,
+  activeLink,
   isActivePath,
   isGroupOpen,
   loadGroupState,
-  NAV,
+  navLinks,
   openActiveGroup,
   saveGroupState,
   visibleNav,
@@ -18,15 +21,29 @@ describe('navigation', () => {
     expect(isActivePath('/invoices', '/', true)).toBe(false);
     expect(isActivePath('/invoices/abc/edit', '/invoices')).toBe(true);
     expect(isActivePath('/payments-made/1', '/payments')).toBe(false);
-    expect(activeGroupId('/payroll/runs/1')).toBe('people');
-    expect(activeGroupId('/products')).toBe('inventory');
-    expect(activeGroupId('/cheques')).toBeNull();
+    // People's sidebar has no groups.
+    expect(activeGroupId('/payroll/runs/1', PEOPLE.nav)).toBeNull();
+    expect(activeGroupId('/products', BOOKS.nav)).toBe('inventory');
+    expect(activeGroupId('/cheques', BOOKS.nav)).toBeNull();
+    expect(activeGroupId('/payroll/runs/1', BOOKS.nav)).toBeNull();
   });
 
-  it('has about eight top-level destinations and hides VAT returns without taxes', () => {
-    expect(NAV.length).toBeLessThanOrEqual(10);
+  it('marks the closest link as current', () => {
+    const links = navLinks(PEOPLE.nav);
+    expect(activeLink('/payroll/leave', links)).toBe('/payroll/leave');
+    expect(activeLink('/payroll/runs/1', links)).toBe('/payroll');
+    expect(activeLink('/people/directory', links)).toBe('/people/directory');
+    expect(activeLink('/people', links)).toBe('/people');
+    expect(activeLink('/', links)).toBe('/');
+    expect(activeLink('/invoices', links)).toBeNull();
+  });
+
+  it('has about ten top-level destinations and hides VAT returns without taxes', () => {
+    expect(BOOKS.nav.length).toBeLessThanOrEqual(10);
     const links = (taxes: boolean) =>
-      visibleNav(taxes).flatMap((e) => (e.kind === 'group' ? e.children.map((c) => c.to) : [e.to]));
+      visibleNav(BOOKS.nav, taxes).flatMap((e) =>
+        e.kind === 'group' ? e.children.map((c) => c.to) : [e.to],
+      );
     expect(links(false)).not.toContain('/vat');
     expect(links(true)).toContain('/vat');
   });

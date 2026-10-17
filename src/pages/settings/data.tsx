@@ -27,7 +27,7 @@ import { assertNothingUnsent, unsentChanges } from '@/db/records';
 import { useCompany, useFormat } from '@/app/company';
 import { localName } from '@/i18n/names';
 import { normalizeImage } from '@/lib/image';
-import { appName } from '@/lib/brand';
+import { suiteName } from '@/lib/brand';
 import { downloadName } from '@/lib/file-names';
 import { formatBytes, requestPersistentStorage, storageStatus } from '@/lib/storage';
 import { daysBetween, today } from '@/lib/dates';
@@ -385,7 +385,7 @@ export default function DataSettings() {
 
       <SettingsSection
         title={t('Restore')}
-        description={t('Load a backup file made with {app} (.json).', { app: appName() })}
+        description={t('Load a backup file made with {app} (.json).', { app: suiteName() })}
       >
         <Button variant="outline" onClick={() => input.current?.click()}>
           <Upload /> {t('Choose backup file…')}

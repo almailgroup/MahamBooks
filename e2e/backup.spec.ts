@@ -27,7 +27,7 @@ test('a backup restores everything on a fresh device', async ({ page }, testInfo
   // Wipe this browser, as if opening the app on another computer.
   await page.getByRole('button', { name: 'Delete all data' }).click();
   await page.getByRole('button', { name: 'Delete everything' }).click();
-  await expect(page.getByRole('heading', { name: 'Welcome to Maham Books' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
 
   const chooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Restore a backup' }).click();

@@ -26,8 +26,8 @@ export default {
   // Settings → Appearance
   'This device': 'هذا الجهاز',
   Appearance: 'المظهر',
-  'Choose how Maham Books looks on this device. Documents always print on white paper.':
-    'اختر مظهر مهام بوكس على هذا الجهاز. تُطبع المستندات دائماً على ورق أبيض.',
+  'Choose how Maham One looks on this device. Documents always print on white paper.':
+    'اختر مظهر مهام ون على هذا الجهاز. تُطبع المستندات دائماً على ورق أبيض.',
   'Match my device': 'مطابقة إعداد الجهاز',
   'Use a light theme by day and a dark one when this device is set to dark.':
     'سمة فاتحة في العادة، وسمة داكنة عندما يكون هذا الجهاز على الوضع الداكن.',

@@ -6,7 +6,7 @@ import type { ISODate } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { DOCUMENT_TYPES, type RegisterEntry } from '@/lib/compliance';
 import { parseISODate, toISODate, today } from '@/lib/dates';
-import { useAccounts } from '@/features/accounting/account-pickers';
+import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Switch, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';

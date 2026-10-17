@@ -5,9 +5,10 @@ import { displayStatus, STATUS_META } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
-import { NAV_FOOTER, visibleNav } from '@/features/shell/nav';
-import { CREATE_GROUPS } from '@/features/shell/create';
-import { msg, t } from '@/i18n';
+import { visibleNav } from '@/features/shell/nav';
+import { APPS, appTitle, canOpen, createGroups, type AccessMap } from '@/suite/apps';
+import type { AppId } from '@/suite/types';
+import { currentLanguage, msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { makeEntry, type SearchEntry } from './rank';
 
@@ -18,7 +19,7 @@ export interface SearchFormat {
 }
 
 /** Shortcuts that open a page with a filter, found by what people ask for. */
-const SHORTCUTS: { key: string; label: string; to: string; keywords?: string; people?: true }[] = [
+const SHORTCUTS: { key: string; label: string; to: string; keywords?: string; app?: AppId }[] = [
   {
     key: 'cheques-week',
     label: msg('Cheques due this week'),
@@ -32,14 +33,19 @@ const SHORTCUTS: { key: string; label: string; to: string; keywords?: string; pe
   },
   { key: 'overdue-invoices', label: msg('Overdue invoices'), to: '/invoices?status=overdue' },
   { key: 'low-stock', label: msg('Low stock'), to: '/products?filter=low', keywords: 'reorder' },
-  { key: 'expiring', label: msg('Expiring documents'), to: '/compliance/documents' },
-  { key: 'payroll-leave', label: msg('Leave'), to: '/payroll/leave', people: true },
-  { key: 'payroll-loans', label: msg('Staff loans'), to: '/payroll/loans', people: true },
+  {
+    key: 'expiring',
+    label: msg('Expiring documents'),
+    to: '/compliance/documents',
+    app: 'compliance',
+  },
+  { key: 'payroll-leave', label: msg('Leave'), to: '/payroll/leave', app: 'people' },
+  { key: 'payroll-loans', label: msg('Staff loans'), to: '/payroll/loans', app: 'people' },
   { key: 'stock-count', label: msg('Stock count'), to: '/inventory/count' },
 ];
 
 /** Reports and settings pages, so they can be reached in two keystrokes. */
-const SUB_PAGES: { label: string; to: string; keywords?: string; people?: true }[] = [
+const SUB_PAGES: { label: string; to: string; keywords?: string; app?: AppId }[] = [
   { label: msg('Balance sheet'), to: '/reports/balance-sheet' },
   { label: msg('Profit and loss'), to: '/reports/profit-and-loss', keywords: 'income statement' },
   { label: msg('Cash flow'), to: '/reports/cash-flow' },
@@ -56,7 +62,7 @@ const SUB_PAGES: { label: string; to: string; keywords?: string; people?: true }
   { label: msg('Email templates'), to: '/settings/emails' },
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },
-  { label: msg('Payroll settings'), to: '/payroll/settings', people: true },
+  { label: msg('Payroll settings'), to: '/payroll/settings', app: 'people' },
   { label: msg('Your account'), to: '/settings/account', keywords: 'profile password sign out' },
   { label: msg('Team'), to: '/settings/team', keywords: 'members invite users roles' },
   {
@@ -66,40 +72,79 @@ const SUB_PAGES: { label: string; to: string; keywords?: string; people?: true }
   },
 ];
 
+/** Every app open to everyone: for tests and for companies kept on this device. */
+const FULL_ACCESS = Object.fromEntries(APPS.map((app) => [app.id, 'manage'])) as AccessMap;
+
 /**
  * Pages and actions: the same for every company, in the interface language.
- * Without `people`, payroll and people pages are left out (staff and viewers).
+ * Only the apps the person may open (`current` first), and only the things
+ * they may create; nothing at all without `create` (view-only, or no longer
+ * shared), like the New menus.
  */
 export function staticEntries(
   taxesOn: boolean,
-  { people = true }: { people?: boolean } = {},
+  {
+    access = FULL_ACCESS,
+    current = 'books',
+    create = true,
+  }: { access?: AccessMap; current?: AppId; create?: boolean } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
-  const page = (to: string, label: string, boost: number, keywords?: string, group?: string) =>
+  const seen = new Set<string>();
+  const page = (to: string, label: string, boost: number, keywords?: string, group?: string) => {
+    if (seen.has(`page:${to}`)) return;
+    seen.add(`page:${to}`);
     entries.push(
       makeEntry({
         key: `page:${to}`,
         kind: 'page',
         title: t(label),
-        subtitle: group ? t(group) : undefined,
+        subtitle: group,
         to,
         names: [t(label), label],
-        terms: [keywords, group ? t(group) : undefined],
+        terms: [keywords, group],
         boost,
       }),
     );
-  for (const entry of visibleNav(true, { people })) {
-    if (entry.kind === 'link') page(entry.to, entry.label, 30, entry.keywords);
-    else
-      for (const child of entry.children) {
-        if (child.taxesOnly && !taxesOn) continue;
-        page(child.to, child.label, 30, child.keywords, entry.label);
+  };
+  const language = currentLanguage();
+  const apps = APPS.filter((app) => canOpen(access[app.id]));
+  // The open app's pages first, so a shared page shows under it.
+  apps.sort((a, b) => Number(b.id === current) - Number(a.id === current));
+  for (const app of apps) {
+    const name = appTitle(app, language);
+    // The app itself: "people" opens Maham People. Its own entry, so the
+    // page at the same address (Books' Dashboard) is still found by its name.
+    entries.push(
+      makeEntry({
+        key: `app:${app.id}`,
+        kind: 'page',
+        title: name,
+        subtitle: t(app.description),
+        to: app.home,
+        names: [name, app.name, app.nameAr],
+        terms: [t(app.description)],
+        boost: 35,
+      }),
+    );
+    for (const entry of visibleNav(app.nav, taxesOn)) {
+      if (entry.kind === 'link') {
+        page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
+      } else {
+        for (const child of entry.children) {
+          const where = app.id === 'books' ? t(entry.label) : `${name} · ${t(entry.label)}`;
+          page(child.to, child.label, 30, child.keywords, where);
+        }
       }
+    }
+    for (const link of app.footer) page(link.to, link.label, 20);
   }
-  for (const link of NAV_FOOTER) page(link.to, link.label, 20);
-  for (const sub of SUB_PAGES) if (people || !sub.people) page(sub.to, sub.label, 10, sub.keywords);
+  for (const sub of SUB_PAGES) {
+    if (sub.app && !canOpen(access[sub.app])) continue;
+    page(sub.to, sub.label, 10, sub.keywords);
+  }
 
-  for (const group of CREATE_GROUPS) {
+  for (const group of create ? createGroups(current, access) : []) {
     for (const action of group.actions) {
       entries.push(
         makeEntry({
@@ -115,7 +160,7 @@ export function staticEntries(
     }
   }
   for (const shortcut of SHORTCUTS) {
-    if (shortcut.people && !people) continue;
+    if (shortcut.app && !canOpen(access[shortcut.app])) continue;
     entries.push(
       makeEntry({
         key: `action:${shortcut.key}`,

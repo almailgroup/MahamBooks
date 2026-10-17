@@ -1,11 +1,26 @@
-# Maham Books
+# Maham One
 
-Free accounting and invoicing for businesses in Kuwait, in Arabic and English.
+Free office apps for businesses in Kuwait, in Arabic and English: accounting,
+people and payroll, sales follow-up and compliance, over one company's data.
 Built by AL Mail Group.
 
-<p dir="rtl" lang="ar">برنامج مجاني للمحاسبة والفواتير، مصمم للشركات في الكويت، باللغتين العربية والإنجليزية.</p>
+<p dir="rtl" lang="ar">مهام ون: تطبيقات مكتبية مجانية للشركات في الكويت، باللغتين العربية والإنجليزية: المحاسبة وشؤون الموظفين والرواتب ومتابعة المبيعات والامتثال.</p>
 
-Maham Books runs in the browser and is hosted on Vercel. It works on one
+| App                  | For                                                        |
+| -------------------- | ---------------------------------------------------------- |
+| **Maham Books**      | Invoices, purchases, cheques, banking, accounting, reports |
+| **Maham People**     | Employees, staff directory, payroll, leave, staff loans    |
+| **Maham CRM**        | Quotes pipeline, follow-ups, prospects (first version)     |
+| **Maham Compliance** | Licences, staff papers, statutory deadlines                |
+
+The home shows the apps your role opens and what needs attention in them
+today; the grid button in the header switches between them. How the suite is
+put together, who opens which app and what comes next:
+[`docs/maham-one.md`](docs/maham-one.md).
+
+![Maham One home: the apps, what needs attention and money at a glance](docs/images/home.png)
+
+Maham One runs in the browser and is hosted on Vercel. It works on one
 device without an account, or with an account that keeps your companies in the
 cloud (Supabase), on all your devices and with your team, and still works
 offline.
@@ -33,6 +48,9 @@ offline.
   statutory reserve, KFAS, Zakat and NLST.
 
 ## Features
+
+The features below are Maham Books', except People and payroll (Maham People)
+and the compliance calendar (Maham Compliance).
 
 ### Sales
 
@@ -222,9 +240,11 @@ The first time you run the browser tests, install Chromium with
 
 ```
 src/
-  app/          app shell, routing, active company, offline support
-  pages/        screens: dashboard, sales, purchases, cheques, people, payroll, reports, settings
-  features/     editors, dialogs and panels used by the screens
+  suite/        Maham One: the apps' registry, app switcher, home, access per role
+  apps/         one folder per app (books, people, crm, compliance): manifest, routes, pages
+  app/          app shell, all routes, active company, offline support
+  pages/        the suite's own screens: settings, account, setup
+  features/     editors, dialogs and panels several apps use (shell, search, cloud…)
   components/   UI building blocks, PDF preview, charts
   db/           IndexedDB schema (Dexie), the records of every module, demo data
   lib/          money, Kuwait data, ledger and financial statements, payroll, inventory
@@ -234,7 +254,7 @@ src/
   pdf/          PDF templates (react-pdf), fonts, document wording, statements, PDF worker
 e2e/            browser tests
 supabase/       the cloud database (SQL migrations), its security notes, the function's settings
-docs/           Arabic glossary, cloud and email alerts setup guides, screenshots
+docs/           the suite's design, Arabic glossary, cloud and email alerts setup guides, screenshots
 scripts/        regenerate fonts, template thumbnails and app icons
 ```
 

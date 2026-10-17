@@ -1,6 +1,6 @@
 # Email alerts
 
-Maham Books can email the owner and admins of a company every morning with
+Maham One can email the owner and admins of a company every morning with
 what needs attention:
 
 - **Papers and licences**: Civil IDs, residencies, passports, work permits,
@@ -97,7 +97,7 @@ an hour. Send them through Resend instead:
    **Enable custom SMTP**.
 2. Fill in:
    - **Sender email**: `no-reply@almailgroup.com`
-   - **Sender name**: `Maham Books`
+   - **Sender name**: `Maham One`
    - **Host**: `smtp.resend.com`
    - **Port**: `465`
    - **Username**: `resend`
@@ -106,7 +106,7 @@ an hour. Send them through Resend instead:
    sending emails** to 30 an hour, and save.
 
 To check: in the app, sign out, choose **Forgot your password?** and enter
-your address. The email comes from Maham Books within a minute.
+your address. The email comes from Maham One within a minute.
 
 ### 3. The database script
 
@@ -130,10 +130,10 @@ Run it after the two earlier scripts if those are ever run again.
 In Supabase, open **Edge Functions → Secrets** and add two secrets (**Add
 new secret**, then **Save**):
 
-| Name             | Value                                                                |
-| ---------------- | -------------------------------------------------------------------- |
-| `RESEND_API_KEY` | the Resend API key from step 1.5 (`re_…`)                            |
-| `ALERTS_FROM`    | `Maham Books <no-reply@almailgroup.com>` (any address on the domain) |
+| Name             | Value                                                              |
+| ---------------- | ------------------------------------------------------------------ |
+| `RESEND_API_KEY` | the Resend API key from step 1.5 (`re_…`)                          |
+| `ALERTS_FROM`    | `Maham One <no-reply@almailgroup.com>` (any address on the domain) |
 
 ### 5. Publish the function from GitHub
 

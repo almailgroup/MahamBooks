@@ -1,12 +1,30 @@
 import { currentLanguage } from '@/i18n';
 
-/** The product name, in English: on English screens, in PDF metadata and in backups. */
+/**
+ * Maham One is the suite: the name of the installed app, the sign-in and
+ * welcome screens, the home and the email alerts. Its apps have their own
+ * names (src/apps/<app>/manifest.ts).
+ */
+export const SUITE_NAME = 'Maham One';
+
+/** The suite's name on Arabic screens. */
+export const SUITE_NAME_AR = 'مهام ون';
+
+/** The suite's name in the interface language. */
+export function suiteName(): string {
+  return currentLanguage() === 'ar' ? SUITE_NAME_AR : SUITE_NAME;
+}
+
+/**
+ * Maham Books, the accounting app: in PDF metadata and in backups (which
+ * keep this name so earlier versions still open them).
+ */
 export const APP_NAME = 'Maham Books';
 
-/** The product name on Arabic screens. */
+/** Maham Books on Arabic screens. */
 export const APP_NAME_AR = 'مهام بوكس';
 
-/** The product name in the interface language. */
+/** Maham Books in the interface language. */
 export function appName(): string {
   return currentLanguage() === 'ar' ? APP_NAME_AR : APP_NAME;
 }

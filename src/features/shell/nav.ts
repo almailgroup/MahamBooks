@@ -1,23 +1,9 @@
 import type { LucideIcon } from 'lucide-react';
-import {
-  Banknote,
-  BookOpen,
-  Boxes,
-  CalendarClock,
-  ChartColumn,
-  House,
-  Palette,
-  Settings,
-  ShoppingBag,
-  ShoppingCart,
-  UsersRound,
-  WalletCards,
-} from 'lucide-react';
-import { msg } from '@/i18n';
 
 /**
- * The app's navigation: a few top-level destinations, some of them groups
- * that open to show their pages. Labels are English keys (`t()` them).
+ * An app's sidebar: a few top-level destinations, some of them groups that
+ * open to show their pages. Labels are English keys (`t()` them). Each app
+ * of the suite has its own (see its manifest, src/apps/<app>/manifest.ts).
  */
 
 export interface NavLink {
@@ -46,103 +32,16 @@ export interface NavGroup {
 
 export type NavEntry = NavTopLink | NavGroup;
 
-export const NAV: NavEntry[] = [
-  { kind: 'link', to: '/', label: msg('Home'), icon: House, end: true, keywords: 'dashboard' },
-  {
-    kind: 'group',
-    id: 'sales',
-    label: msg('Sales'),
-    icon: ShoppingBag,
-    children: [
-      { to: '/clients', label: msg('Clients'), keywords: 'customers' },
-      { to: '/quotes', label: msg('Quotes'), keywords: 'estimates' },
-      { to: '/proformas', label: msg('Proforma invoices') },
-      { to: '/sales-orders', label: msg('Sales orders') },
-      { to: '/invoices', label: msg('Invoices') },
-      { to: '/delivery-notes', label: msg('Delivery notes') },
-      { to: '/payments', label: msg('Payments received'), keywords: 'receipts' },
-      { to: '/credits', label: msg('Credit notes') },
-      { to: '/recurring', label: msg('Recurring invoices') },
-    ],
-  },
-  {
-    kind: 'group',
-    id: 'purchases',
-    label: msg('Purchases'),
-    icon: ShoppingCart,
-    children: [
-      { to: '/vendors', label: msg('Vendors'), keywords: 'suppliers' },
-      { to: '/purchase-orders', label: msg('Purchase orders'), keywords: 'lpo' },
-      { to: '/bills', label: msg('Bills') },
-      { to: '/expenses', label: msg('Expenses') },
-      { to: '/payments-made', label: msg('Payments made') },
-      { to: '/vendor-credits', label: msg('Vendor credits') },
-    ],
-  },
-  { kind: 'link', to: '/cheques', label: msg('Cheques'), icon: WalletCards, keywords: 'pdc' },
-  {
-    kind: 'group',
-    id: 'inventory',
-    label: msg('Inventory'),
-    icon: Boxes,
-    children: [
-      { to: '/products', label: msg('Products & services'), keywords: 'items' },
-      { to: '/inventory', label: msg('Stock and warehouses'), keywords: 'stock' },
-    ],
-  },
-  {
-    kind: 'group',
-    id: 'people',
-    label: msg('People'),
-    icon: UsersRound,
-    children: [
-      { to: '/employees', label: msg('Employees'), keywords: 'staff' },
-      { to: '/payroll', label: msg('Payroll'), keywords: 'salaries pifss' },
-    ],
-  },
-  { kind: 'link', to: '/banking', label: msg('Banking'), icon: Banknote },
-  {
-    kind: 'group',
-    id: 'accounting',
-    label: msg('Accounting'),
-    icon: BookOpen,
-    children: [
-      { to: '/accounts', label: msg('Chart of accounts') },
-      { to: '/journals', label: msg('Manual journals') },
-      { to: '/assets', label: msg('Fixed assets'), keywords: 'depreciation' },
-      { to: '/year-end', label: msg('Year-end close') },
-      { to: '/vat', label: msg('VAT returns'), taxesOnly: true },
-    ],
-  },
-  { kind: 'link', to: '/reports', label: msg('Reports'), icon: ChartColumn },
-  {
-    kind: 'link',
-    to: '/compliance',
-    label: msg('Compliance'),
-    icon: CalendarClock,
-    keywords: 'licence residency deadlines',
-  },
-];
-
-/** Pinned to the bottom of the sidebar. */
-export const NAV_FOOTER: (NavLink & { icon: LucideIcon })[] = [
-  { to: '/templates', label: msg('Templates'), icon: Palette },
-  { to: '/settings', label: msg('Settings'), icon: Settings },
-];
-
 /**
- * The entries shown for this company: VAT returns only when taxes are on,
- * and People only for roles that see payroll (see src/cloud/roles.ts).
+ * The entries shown for this company: VAT returns only when taxes are on.
+ * Which app's entries, and whether the person may open that app, is the
+ * suite's business (src/suite/apps.ts).
  */
-export function visibleNav(
-  taxesOn: boolean,
-  { people = true }: { people?: boolean } = {},
-): NavEntry[] {
-  return NAV.filter((entry) => people || entry.kind !== 'group' || entry.id !== 'people').map(
-    (entry) =>
-      entry.kind === 'group'
-        ? { ...entry, children: entry.children.filter((c) => taxesOn || !c.taxesOnly) }
-        : entry,
+export function visibleNav(nav: NavEntry[], taxesOn: boolean): NavEntry[] {
+  return nav.map((entry) =>
+    entry.kind === 'group'
+      ? { ...entry, children: entry.children.filter((c) => taxesOn || !c.taxesOnly) }
+      : entry,
   );
 }
 
@@ -152,10 +51,34 @@ export function isActivePath(pathname: string, to: string, end = false): boolean
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
+/**
+ * The link of the current page: the one that matches it most closely, so on
+ * /payroll/leave "Leave" is current and "Pay runs" (/payroll) is not.
+ */
+export function activeLink(
+  pathname: string,
+  links: readonly { to: string; end?: boolean }[],
+): string | null {
+  let best: string | null = null;
+  for (const link of links) {
+    const to = link.to.split(/[?#]/)[0];
+    if (!isActivePath(pathname, to, link.end)) continue;
+    if (best === null || to.length > best.length) best = to;
+  }
+  return best;
+}
+
+/** Every link of a sidebar, groups opened. */
+export function navLinks(nav: NavEntry[]): NavLink[] {
+  return nav.flatMap((entry): NavLink[] => (entry.kind === 'group' ? entry.children : [entry]));
+}
+
 /** The group holding the current page, if any. */
-export function activeGroupId(pathname: string, nav: NavEntry[] = NAV): string | null {
+export function activeGroupId(pathname: string, nav: NavEntry[]): string | null {
+  const current = activeLink(pathname, navLinks(nav));
+  if (current === null) return null;
   for (const entry of nav) {
-    if (entry.kind === 'group' && entry.children.some((c) => isActivePath(pathname, c.to))) {
+    if (entry.kind === 'group' && entry.children.some((c) => c.to.split(/[?#]/)[0] === current)) {
       return entry.id;
     }
   }

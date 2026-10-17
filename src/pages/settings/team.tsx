@@ -47,6 +47,7 @@ import { Avatar } from '@/features/cloud/account-menu';
 import { FormError } from '@/features/cloud/auth-shell';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
+import { AccessGrid } from '@/suite/access-grid';
 import { SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -109,6 +110,15 @@ export default function TeamSettings() {
             )
           }
         />
+        <div className="border-t border-slate-100 pt-5">
+          <h3 className="mb-1 text-sm font-semibold text-slate-900">
+            {t('What each role can open')}
+          </h3>
+          <p className="mb-3 text-sm text-slate-500">
+            {t('Which apps each role opens, and what it can do there.')}
+          </p>
+          <AccessGrid />
+        </div>
       </SettingsSection>
     );
   }
@@ -286,6 +296,13 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
             ))}
           </ul>
         )}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('What each role can open')}
+        description={t('Which apps each role opens, and what it can do there.')}
+      >
+        <AccessGrid mine={role} />
       </SettingsSection>
 
       {manage ? (
@@ -599,7 +616,7 @@ function InviteLink({
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const text = t('Join {company} on Maham Books as {role}:', {
+  const text = t('Join {company} on Maham One as {role}:', {
     company,
     role: t(ROLE_LABELS[invite.role]),
   });

@@ -38,7 +38,7 @@ describe('the alerts email', () => {
     expect(email.subject).toBe('Acme Trading: 12 things need attention');
     const text = visible(email.html);
     for (const part of [
-      'Maham Books',
+      'Maham One',
       'Email alerts are on for Acme Trading.',
       'Papers and licences (4)',
       'Civil ID · Noura Salem',
@@ -66,7 +66,7 @@ describe('the alerts email', () => {
     }
     expect(email.html).toContain('href="https://books.example.com/"');
     expect(email.html).toContain('<html lang="en" dir="ltr">');
-    expect(email.text).toContain('Open Maham Books: https://books.example.com/');
+    expect(email.text).toContain('Open Maham One: https://books.example.com/');
     expect(plain(email.text)).toContain(
       '- Invoice INV-LATE · Gulf Hotel · 6 days overdue · KD 250.000',
     );
@@ -91,7 +91,7 @@ describe('the alerts email', () => {
     expect(email.html).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; Co');
     expect(email.html).toContain('Acme &quot;Trading&quot; &lt;b&gt;');
     expect(email.html).not.toContain('javascript:');
-    expect(email.html).not.toContain('Open Maham Books');
+    expect(email.html).not.toContain('Open Maham One');
   });
 
   it('marks what is new since the last email, first', () => {
@@ -123,7 +123,7 @@ describe('the alerts email', () => {
     }));
     const email = renderAlertEmail(input({ alerts: many }));
     expect(email.text.match(/^- Invoice/gm)).toHaveLength(MAX_PER_TOPIC);
-    expect(email.text).toContain('And 3 more in Maham Books.');
+    expect(email.text).toContain('And 3 more in Maham One.');
     expect(email.subject).toBe('Acme Trading: 13 things need attention');
   });
 
@@ -140,12 +140,12 @@ describe('the alerts email', () => {
     expect(email.html).toContain('<html lang="ar" dir="rtl">');
     const text = visible(email.html);
     for (const part of [
-      'مهام بوكس',
+      'مهام ون',
       'صباح الخير. هذا ملخصك الأسبوعي لما لا يزال يحتاج إلى متابعة في أكمي للتجارة.',
       'الوثائق والتراخيص (4)',
       'نورة سالم',
       'فندق الخليج',
-      'فتح مهام بوكس',
+      'فتح مهام ون',
     ]) {
       expect(text).toContain(part);
     }

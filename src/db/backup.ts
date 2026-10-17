@@ -5,7 +5,7 @@ import { seedMissingCharts } from './chart-setup';
 import { recalculateDocuments, refreshOrdersFor } from './documents';
 import { rebuildStock } from './inventory';
 import type { Attachment, Company, ID, Payment } from './types';
-import { APP_NAME, appName, FILE_PREFIX } from '@/lib/brand';
+import { APP_NAME, FILE_PREFIX, suiteName } from '@/lib/brand';
 import { t } from '@/i18n';
 import { contentHash, dataUrlToBlob } from '@/cloud/files';
 import { markRemote } from '@/cloud/outbox';
@@ -274,7 +274,7 @@ export function parseBackup(text: string): Backup {
   const result = backupSchema.safeParse(json);
   if (!result.success) {
     throw new BackupError(
-      t('This file is not a {app} backup, or it is damaged.', { app: appName() }),
+      t('This file is not a {app} backup, or it is damaged.', { app: suiteName() }),
     );
   }
   if (result.data.format > BACKUP_FORMAT) {

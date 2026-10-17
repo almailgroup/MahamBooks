@@ -22,10 +22,10 @@ export default defineConfig({
       includeManifestIcons: false,
       manifest: {
         id: './',
-        name: 'Maham Books',
-        short_name: 'Maham Books',
+        name: 'Maham One',
+        short_name: 'Maham One',
         description:
-          'Free accounting and invoicing for Kuwaiti businesses, in Arabic and English. محاسبة وفوترة مجانية للأعمال في الكويت.',
+          'Office apps for Kuwaiti businesses: accounting, HR and payroll, sales pipeline and compliance, in Arabic and English. تطبيقات المكتب للأعمال في الكويت: المحاسبة والموظفون والمبيعات والامتثال.',
         lang: 'ar',
         start_url: './',
         scope: './',

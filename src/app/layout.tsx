@@ -19,8 +19,9 @@ import { ReadOnlyContext } from '@/components/ui/read-only';
 import { useRoleView, ViewOnlyBanner } from '@/features/cloud/role-gates';
 import { useCloudLink } from '@/cloud/hooks';
 import { useRuntimeStatus } from '@/cloud/status';
+import { useRememberApp } from '@/suite/current-app';
 
-const ItemOpener = lazy(() => import('@/features/search/item-opener'));
+const ItemOpener = lazy(() => import('@/apps/books/pages/products/item-opener'));
 
 // Recurring invoices are generated client-side, once per company per visit.
 const recurringChecked = new Set<string>();
@@ -91,7 +92,9 @@ export function AppLayout() {
   const [itemId, setItemId] = useState<string | null>(null);
   const [palette] = useState(() => openPalette(setPaletteOpen));
   const roles = useRoleView();
+  // Recurring invoices (Books) are made whichever app is open.
   useRecurringGeneration();
+  useRememberApp();
   usePaletteShortcut(palette.open, palette.toggle);
   const location = useLocation();
   const panel = useRef<HTMLDivElement>(null);
@@ -179,7 +182,11 @@ export function AppLayout() {
         </div>
       </div>
 
-      <BottomBar onMore={() => setDrawerOpen(true)} onNew={() => setNewOpen(true)} />
+      <BottomBar
+        onMore={() => setDrawerOpen(true)}
+        onNew={() => setNewOpen(true)}
+        onSearch={palette.open}
+      />
       <NewSheet open={newOpen} onOpenChange={setNewOpen} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} onOpenItem={setItemId} />
       {itemId ? (

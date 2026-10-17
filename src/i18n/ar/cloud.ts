@@ -225,7 +225,7 @@ export default {
   'Link copied': 'تم نسخ الرابط',
   'Could not copy. Select the link and copy it.': 'تعذّر النسخ. حدّد الرابط وانسخه.',
   'Send by WhatsApp': 'إرسال عبر واتساب',
-  'Join {company} on Maham Books as {role}:': 'انضم إلى {company} على مهام بوكس بدور {role}:',
+  'Join {company} on Maham One as {role}:': 'انضم إلى {company} على مهام ون بدور {role}:',
   'Invitation to {company}': 'دعوة إلى {company}',
   'Pending invitations': 'الدعوات المعلّقة',
   'Links work once, for 7 days, and only for the address they were made for.':
@@ -371,7 +371,7 @@ export default {
   '{person} invited you to join {company} as {role}.':
     'دعاك {person} للانضمام إلى {company} بدور {role}.',
   'You are invited to join {company} as {role}.': 'أنت مدعو للانضمام إلى {company} بدور {role}.',
-  'You are invited to join a company on Maham Books.': 'أنت مدعو للانضمام إلى شركة على مهام بوكس.',
+  'You are invited to join a company on Maham One.': 'أنت مدعو للانضمام إلى شركة على مهام ون.',
   'Sign in or create an account with {email} to accept.':
     'سجّل الدخول أو أنشئ حساباً بالعنوان {email} لقبول الدعوة.',
   'Sign in or create an account with the address the invitation was sent to.':

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { currentLanguage, t, type Language } from '@/i18n';
 import { tr, useLanguage } from '@/i18n/provider';
 import { isValidEmail } from '@/lib/email';
-import { appName } from '@/lib/brand';
+import { suiteName } from '@/lib/brand';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/form';
 import { Spinner } from '@/components/ui/misc';
@@ -96,7 +96,7 @@ function SignIn({ next, preset }: { next: string | null; preset: string }) {
         <div className="space-y-2">
           <p>
             {tr('New to {app}? {link}', {
-              app: appName(),
+              app: suiteName(),
               link: (
                 <Link
                   to={withNext('/signup', next, email)}

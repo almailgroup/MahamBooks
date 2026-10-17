@@ -1,5 +1,5 @@
 import type { Client, Company, Employee, ID, ISODate } from '@/db/types';
-import { appName } from '@/lib/brand';
+import { suiteName } from '@/lib/brand';
 import { bankName } from '@/lib/cheques';
 import { formatDate, formatMoney } from '@/lib/format';
 import { parseISODate } from '@/lib/dates';
@@ -44,13 +44,23 @@ export interface AlertEmail {
   text: string;
 }
 
-interface Line {
+/** An alert in words: the email's lines, and the list on the app's home. */
+export interface AlertLine {
   title: string;
   detail: string;
   status: string;
   tone: AlertTone;
   amount: string;
   isNew: boolean;
+}
+type Line = AlertLine;
+
+/** Names of the company's people and clients, for the lines. */
+export interface AlertLookups {
+  company: Company;
+  employees: Map<ID, Employee>;
+  clients: Map<ID, Pick<Client, 'name' | 'nameAr'>>;
+  newKeys?: ReadonlySet<string> | null;
 }
 
 const COLORS = {
@@ -101,7 +111,12 @@ function formatter(company: Company) {
   };
 }
 
-function describe(alert: Alert, input: AlertEmailInput, fmt: ReturnType<typeof formatter>): Line {
+/** An alert's line, in the interface language. */
+export function describeAlert(alert: Alert, lookups: AlertLookups): AlertLine {
+  return describe(alert, lookups, formatter(lookups.company));
+}
+
+function describe(alert: Alert, input: AlertLookups, fmt: ReturnType<typeof formatter>): Line {
   const isNew = Boolean(input.newKeys?.has(alert.key));
   const base = { tone: alert.tone, isNew, amount: '' };
   const party = (id: ID) => localName(input.clients.get(id) ?? null);
@@ -274,7 +289,7 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
   const end = ar ? 'left' : 'right';
   const font = ar ? FONTS.ar : FONTS.en;
   const fmt = formatter(input.company);
-  const app = appName();
+  const app = suiteName();
   const company = localName(input.company);
   const { subject, intro } = wording(input);
   const list = sections(input, fmt);

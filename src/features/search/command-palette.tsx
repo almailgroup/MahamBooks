@@ -22,8 +22,9 @@ import {
 import { cn } from '@/lib/cn';
 import { useCompany, useFormat } from '@/app/company';
 import { useTaxesEnabled } from '@/features/company/taxes';
-import { NAV, NAV_FOOTER } from '@/features/shell/nav';
-import { CREATE_GROUPS } from '@/features/shell/create';
+import { CREATE_ACTIONS } from '@/features/shell/create';
+import { APPS } from '@/suite/apps';
+import { useAppAccess, useCurrentApp } from '@/suite/current-app';
 import { useLanguage } from '@/i18n/provider';
 import { useSwitchLanguage } from '@/hooks/use-switch-language';
 import { msg, t, tp } from '@/i18n';
@@ -62,15 +63,19 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
 
 /** Each page's and action's own icon. */
 const ICONS = new Map<string, LucideIcon>([
-  ...NAV.flatMap((entry): [string, LucideIcon][] =>
-    entry.kind === 'link'
-      ? [[`page:${entry.to}`, entry.icon]]
-      : entry.children.map((c): [string, LucideIcon] => [`page:${c.to}`, entry.icon]),
-  ),
-  ...NAV_FOOTER.map((l): [string, LucideIcon] => [`page:${l.to}`, l.icon]),
-  ...CREATE_GROUPS.flatMap((g) =>
-    g.actions.map((a): [string, LucideIcon] => [`action:${a.id}`, a.icon]),
-  ),
+  // Later apps first, so a page two apps list keeps the icon of the app that owns it.
+  ...[...APPS]
+    .reverse()
+    .flatMap((app): [string, LucideIcon][] => [
+      [`app:${app.id}`, app.icon],
+      ...app.nav.flatMap((entry): [string, LucideIcon][] =>
+        entry.kind === 'link'
+          ? [[`page:${entry.to}`, entry.icon]]
+          : entry.children.map((c): [string, LucideIcon] => [`page:${c.to}`, entry.icon]),
+      ),
+      ...app.footer.map((l): [string, LucideIcon] => [`page:${l.to}`, l.icon]),
+    ]),
+  ...Object.values(CREATE_ACTIONS).map((a): [string, LucideIcon] => [`action:${a.id}`, a.icon]),
 ]);
 
 /** Shown before anything is typed. */
@@ -153,9 +158,12 @@ function PaletteBody({
   const listId = useId();
 
   const dark = theme.scheme === 'dark';
-  const { peopleHidden, known } = useRoleView();
+  const access = useAppAccess();
+  const app = useCurrentApp();
+  // Nothing to create for those who only look (the same rule as the New menus).
+  const { readOnly } = useRoleView().readOnly;
   // Until the role is known, nothing of payroll and people is offered.
-  const hidePeople = peopleHidden || !known;
+  const hidePeople = access.people === 'none';
   // Items opened before a role change (or by someone else here) stay out too.
   const recent = useMemo(
     () => (hidePeople ? saved.filter((item) => !isPeopleItem(item)) : saved),
@@ -168,7 +176,7 @@ function PaletteBody({
   const fixed = useMemo(() => {
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
-      ...staticEntries(taxesOn, { people: !hidePeople }),
+      ...staticEntries(taxesOn, { access, current: app.id, create: !readOnly }),
       makeEntry({
         key: 'action:sync-status',
         kind: 'action',
@@ -225,7 +233,7 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, language, dark, hidePeople, syncText, syncing]);
+  }, [taxesOn, language, dark, access, app.id, readOnly, syncText, syncing]);
   const found = useLiveQuery(
     () => recordEntries(company, fmt),
     // `language` changes the names and words shown.

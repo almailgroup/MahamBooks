@@ -1,9 +1,11 @@
 import { NavLink, useNavigate } from 'react-router';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { FileText, House, Menu, Plus, Wallet, X, type LucideIcon } from 'lucide-react';
+import { Menu, Plus, Search, X, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
-import { CREATE_GROUPS } from './create';
+import { useRoleView } from '@/features/cloud/role-gates';
+import { createGroups } from '@/suite/apps';
+import { useAppAccess, useCurrentApp } from '@/suite/current-app';
 import { useHasStickyActions, useTyping } from './store';
 
 /**
@@ -11,10 +13,21 @@ import { useHasStickyActions, useTyping } from './store';
  * and More for the full menu. It makes way for the keyboard and for an
  * editor's own action bar.
  */
-export function BottomBar({ onMore, onNew }: { onMore: () => void; onNew: () => void }) {
+export function BottomBar({
+  onMore,
+  onNew,
+  onSearch,
+}: {
+  onMore: () => void;
+  onNew: () => void;
+  onSearch: () => void;
+}) {
   const typing = useTyping();
   const editor = useHasStickyActions();
+  const app = useCurrentApp();
+  const canCreate = useCreateGroups().length > 0;
   if (editor) return null;
+  const [first, second, third] = app.tabs;
   return (
     <nav
       aria-label={t('Shortcuts')}
@@ -25,19 +38,31 @@ export function BottomBar({ onMore, onNew }: { onMore: () => void; onNew: () => 
       )}
     >
       <ul className="mx-auto grid h-16 max-w-lg grid-cols-5 items-stretch px-1.5">
-        <Tab to="/" end icon={House} label={t('Home')} />
-        <Tab to="/invoices" icon={FileText} label={t('Invoices')} />
+        <Tab to={first.to} end={first.end} icon={first.icon} label={t(first.label)} />
+        <Tab to={second.to} end={second.end} icon={second.icon} label={t(second.label)} />
         <li className="flex items-center justify-center">
-          <button
-            type="button"
-            onClick={onNew}
-            aria-label={t('Create new')}
-            className="bg-primary-solid hover:bg-primary-solid-hover active:bg-primary-solid-active text-on-primary shadow-primary-solid/30 flex size-12 items-center justify-center rounded-2xl shadow-lg"
-          >
-            <Plus className="size-6" aria-hidden />
-          </button>
+          {canCreate ? (
+            <button
+              type="button"
+              onClick={onNew}
+              aria-label={t('Create new')}
+              className="bg-primary-solid hover:bg-primary-solid-hover active:bg-primary-solid-active text-on-primary shadow-primary-solid/30 flex size-12 items-center justify-center rounded-2xl shadow-lg"
+            >
+              <Plus className="size-6" aria-hidden />
+            </button>
+          ) : (
+            // Nothing to create (view only): search takes its place.
+            <button
+              type="button"
+              onClick={onSearch}
+              aria-label={t('Search')}
+              className="flex size-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-600"
+            >
+              <Search className="size-5" aria-hidden />
+            </button>
+          )}
         </li>
-        <Tab to="/expenses" icon={Wallet} label={t('Expenses')} />
+        <Tab to={third.to} end={third.end} icon={third.icon} label={t(third.label)} />
         <li>
           <button
             type="button"
@@ -83,6 +108,18 @@ function Tab({
   );
 }
 
+/**
+ * What the person may create from here: the open app's things first, then
+ * the other apps' they work in. Nothing for viewers.
+ */
+export function useCreateGroups() {
+  const app = useCurrentApp();
+  const access = useAppAccess();
+  // The header and tab bar sit outside the page's read-only context.
+  const { readOnly } = useRoleView().readOnly;
+  return readOnly ? [] : createGroups(app.id, access);
+}
+
 /** Everything that can be created, as a sheet from the bottom of the screen. */
 export function NewSheet({
   open,
@@ -92,6 +129,7 @@ export function NewSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const navigate = useNavigate();
+  const groups = useCreateGroups();
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -110,7 +148,7 @@ export function NewSheet({
             </DialogPrimitive.Close>
           </div>
           <div className="scroll-thin overflow-y-auto overscroll-contain px-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-            {CREATE_GROUPS.map((group) => (
+            {groups.map((group) => (
               <section key={group.label} className="py-2">
                 <h3 className="px-2 pb-1.5 text-xs font-semibold text-slate-500">
                   {t(group.label)}
