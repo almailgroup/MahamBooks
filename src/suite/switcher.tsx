@@ -11,8 +11,8 @@ import { appTitle, visibleApps } from './apps';
 import { useAppAccess, useCurrentApp } from './current-app';
 import type { AppTone, SuiteApp } from './types';
 
-/** Literal class names, so Tailwind and the theme check see every one. */
-const TONES: Record<AppTone, string> = {
+/** An app's colours. Literal class names, so Tailwind and the theme check see every one. */
+export const APP_TONES: Record<AppTone, string> = {
   indigo: 'bg-indigo-100 text-indigo-700',
   emerald: 'bg-emerald-100 text-emerald-700',
   sky: 'bg-sky-100 text-sky-700',
@@ -40,7 +40,7 @@ export function AppMark({
       aria-hidden
       className={cn(
         'flex shrink-0 items-center justify-center',
-        TONES[app.tone],
+        APP_TONES[app.tone],
         SIZES[size],
         className,
       )}

@@ -1,4 +1,4 @@
-import { useId, useMemo, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { LucideIcon } from 'lucide-react';
@@ -6,7 +6,6 @@ import {
   ArrowRight,
   CalendarClock,
   CircleCheck,
-  ExternalLink,
   FileBadge,
   FileText,
   HandCoins,
@@ -27,20 +26,17 @@ import { describeAlert } from '@/alerts/email';
 import { followUps, pipelineQuotes } from '@/apps/crm/lib/pipeline';
 import { isCurrent } from '@/lib/hr/employees';
 import { displayStatus } from '@/lib/status';
-import { sidebarLinks } from '@/lib/links';
 import { currencyPrecision, round, sum } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
-import { Badge, Card, CardHeader, Spinner } from '@/components/ui/misc';
+import { Card, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
 import { useRoleView } from '@/features/cloud/role-gates';
-import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
-import { appTitle, visibleApps } from '../apps';
 import { useAppAccess } from '../current-app';
-import { AppMark, PreviewBadge } from '../switcher';
-import type { AppId, SuiteApp } from '../types';
+import type { AppId } from '../types';
+import { Launcher } from './launcher';
 import {
   alertPage,
   homeAlerts,
@@ -51,9 +47,9 @@ import {
 } from './attention';
 
 /**
- * Maham One's home: the apps the person may open, what needs attention in
- * them today, and the company's other tools. Each app keeps its own
- * dashboard (Maham Books' is at /books).
+ * Maham One's home: every app and tool the person may open as a round tile
+ * (with the company's own links), then what needs attention today and money
+ * at a glance. Each app keeps its own dashboard (Maham Books' is at /books).
  */
 
 /** Lines shown before "and N more". */
@@ -76,10 +72,8 @@ function greeting(hour: number): string {
 export default function SuiteHome() {
   const company = useCompany();
   const fmt = useFormat();
-  const { language } = useLanguage();
   const { known } = useRoleView();
   const access = useAppAccess();
-  const apps = visibleApps(access);
   const people = access.people !== 'none';
   const now = today();
 
@@ -130,8 +124,6 @@ export default function SuiteHome() {
     return result;
   }, [data, alerts, quotes, now]);
 
-  const appsId = useId();
-
   return (
     <div className="flex flex-col gap-5 lg:gap-6">
       <header className="min-w-0">
@@ -143,22 +135,7 @@ export default function SuiteHome() {
         </p>
       </header>
 
-      <section aria-labelledby={appsId}>
-        <h2 id={appsId} className="mb-3 text-sm font-semibold text-slate-500">
-          {t('Your apps')}
-        </h2>
-        <ul className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          {apps.map((app) => (
-            <AppCard
-              key={app.id}
-              app={app}
-              title={appTitle(app, language)}
-              viewOnly={access[app.id] === 'view'}
-              stat={stats[app.id]}
-            />
-          ))}
-        </ul>
-      </section>
+      <Launcher access={access} stats={stats} />
 
       <div className="grid grid-cols-1 gap-5 lg:gap-6 xl:grid-cols-3">
         <Card className="min-w-0 xl:col-span-2">
@@ -171,57 +148,9 @@ export default function SuiteHome() {
         </Card>
         <div className="flex min-w-0 flex-col gap-5 lg:gap-6">
           {access.books !== 'none' && data ? <Glance data={data} /> : null}
-          <CompanyTools />
         </div>
       </div>
     </div>
-  );
-}
-
-function AppCard({
-  app,
-  title,
-  viewOnly,
-  stat,
-}: {
-  app: SuiteApp;
-  title: string;
-  viewOnly: boolean;
-  stat: string | undefined;
-}) {
-  const badgesId = useId();
-  const badges = app.preview || viewOnly;
-  return (
-    <li className="group bg-surface relative flex min-w-0 flex-col gap-2 rounded-xl border border-slate-200 p-3 shadow-xs transition-colors hover:border-slate-300 sm:gap-3 sm:p-4">
-      <div className="flex items-start justify-between gap-2">
-        <AppMark app={app} className="sm:size-12 sm:rounded-2xl sm:[&_svg]:size-6" />
-        <span id={badgesId} className="flex flex-wrap justify-end gap-1">
-          {app.preview ? <PreviewBadge /> : null}
-          {viewOnly ? <Badge>{t('View only')}</Badge> : null}
-        </span>
-      </div>
-      <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-slate-900 sm:text-base">
-          {/* The whole card opens the app; its name is the link's name. */}
-          <Link
-            to={app.home}
-            aria-describedby={badges ? badgesId : undefined}
-            className="after:absolute after:inset-0 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-[var(--color-primary-500)]"
-          >
-            {title}
-          </Link>
-        </h3>
-        {/* Phones show two apps a row: names and figures only. */}
-        <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">{t(app.description)}</p>
-      </div>
-      <p className="mt-auto flex min-h-5 items-center gap-1 text-xs font-medium text-slate-600">
-        {stat ?? ''}
-        <ArrowRight
-          className="ms-auto size-4 text-slate-300 transition-colors group-hover:text-slate-500 rtl:rotate-180"
-          aria-hidden
-        />
-      </p>
-    </li>
   );
 }
 
@@ -376,42 +305,5 @@ function GlanceRow({
         <span className="text-sm font-semibold text-slate-900">{children}</span>
       </Link>
     </li>
-  );
-}
-
-/** The company's other tools (Settings → Links), a click away. */
-function CompanyTools() {
-  const company = useCompany();
-  const links = sidebarLinks(company.links);
-  const id = useId();
-  if (!links.length) return null;
-  return (
-    <Card>
-      <div className="border-b border-slate-100 px-5 py-4">
-        <h2 id={id} className="text-base font-semibold text-slate-900">
-          {t('Company tools')}
-        </h2>
-      </div>
-      <ul aria-labelledby={id} className="grid grid-cols-1 gap-1 p-3">
-        {links.map((link) => (
-          <li key={link.id}>
-            <a
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex min-h-11 items-center gap-3 rounded-lg px-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-                <ExternalLink className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {localName({ name: link.label, nameAr: link.labelAr })}
-              </span>
-              <span className="sr-only">{t('(opens in a new tab)')}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }

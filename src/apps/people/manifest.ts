@@ -1,10 +1,12 @@
 import {
   CalendarDays,
+  Coins,
   Contact,
   HandCoins,
   House,
   IdCard,
   LayoutDashboard,
+  PiggyBank,
   Settings,
   SlidersHorizontal,
   UsersRound,
@@ -77,6 +79,13 @@ export const PEOPLE: SuiteApp = {
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],
   create: [{ label: msg('People'), actions: [A.employee] }],
+  tools: [
+    { to: '/people/directory', label: msg('Directory'), icon: Contact, keywords: 'phone email' },
+    { to: '/employees', label: msg('Employees'), icon: IdCard, keywords: 'staff' },
+    { to: '/payroll', label: msg('Payroll'), icon: Coins, keywords: 'salaries pifss' },
+    { to: '/payroll/leave', label: msg('Leave'), icon: CalendarDays, keywords: 'vacation' },
+    { to: '/payroll/loans', label: msg('Staff loans'), icon: PiggyBank, keywords: 'advance' },
+  ],
   tabs: [
     { to: '/', label: msg('Home'), icon: House, end: true },
     { to: '/employees', label: msg('Employees'), icon: IdCard },

@@ -26,6 +26,44 @@ test('the home shows the apps and what needs attention in them', async ({ page }
   await expect(main.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
 });
 
+test('every tool is a round tile on the home, found by typing its name', async ({ page }) => {
+  await page.goto('#/');
+  const main = page.getByRole('main');
+  // Each app's tools, and the things most often created.
+  const tools = main.getByRole('region', { name: 'Tools' });
+  for (const name of ['Invoices', 'Cheques', 'Directory', 'Payroll', 'Pipeline', 'Calendar']) {
+    await expect(tools.getByRole('link', { name, exact: true }).first()).toBeVisible();
+  }
+  const create = main.getByRole('region', { name: 'Create' });
+  // One for each app the owner works in, People included.
+  await expect(create.getByRole('link', { name: 'New employee' })).toBeVisible();
+  await create.getByRole('link', { name: 'Record expense' }).click();
+  await expect(page).toHaveURL(/#\/expenses/);
+
+  await page.goto('#/');
+  await tools.getByRole('link', { name: 'Cheques', exact: true }).click();
+  await expect(page).toHaveURL(/#\/cheques$/);
+
+  // Typing narrows the tiles down; Enter opens the first one.
+  await page.goto('#/');
+  const find = main.getByRole('searchbox', { name: 'Find an app or tool' });
+  await find.fill('salaries');
+  const results = main.getByRole('region', { name: 'Search results' });
+  await expect(results.getByRole('link')).toHaveCount(1);
+  // Screen readers hear how many tiles are left.
+  await expect(main.getByRole('status').filter({ hasText: /^1 result$/ })).toHaveCount(1);
+  await expect(results.getByRole('link', { name: 'Payroll' })).toBeVisible();
+  await expect(main.getByRole('region', { name: 'Your apps' })).toHaveCount(0);
+  await find.press('Enter');
+  await expect(page).toHaveURL(/#\/payroll$/);
+
+  await page.goto('#/');
+  await find.fill('zzzz');
+  await expect(main.getByText('No app or tool matches your search.')).toBeVisible();
+  await find.press('Escape');
+  await expect(main.getByRole('region', { name: 'Your apps' })).toBeVisible();
+});
+
 test('the app switcher moves between apps, each with its own sidebar', async ({ page }) => {
   const nav = page.getByRole('navigation', { name: 'Main' });
   await expect(nav.getByRole('button', { name: 'Sales' })).toBeVisible();

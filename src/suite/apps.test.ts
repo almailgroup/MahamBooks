@@ -65,11 +65,18 @@ describe('the apps of Maham One', () => {
     expect(appForPath('/invoices', 'crm')).toBe('books');
   });
 
-  it('have three phone tabs, sidebar links and New groups that open real pages', () => {
+  it('have three phone tabs, sidebar links, tools and New groups that open real pages', () => {
     for (const app of APPS) {
       expect(app.tabs).toHaveLength(3);
+      // A few tools for the home, each once, never the home itself.
+      const tools = app.tools.map((tool) => tool.to);
+      expect(tools.length, app.id).toBeGreaterThan(0);
+      expect(tools.length, app.id).toBeLessThanOrEqual(12);
+      expect(new Set(tools).size, app.id).toBe(tools.length);
+      expect(tools, app.id).not.toContain('/');
       const targets = [
         app.home,
+        ...tools,
         ...app.tabs.map((tab) => tab.to),
         ...navLinks(app.nav).map((l) => l.to),
         ...app.footer.map((l) => l.to),

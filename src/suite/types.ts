@@ -31,6 +31,16 @@ export interface AppTab {
   end?: boolean;
 }
 
+/** One of an app's main pages, as a round tile on the home. */
+export interface AppTool {
+  to: string;
+  /** An English key (`t()` it). */
+  label: string;
+  icon: LucideIcon;
+  /** Words that find the tool in the home's filter. */
+  keywords?: string;
+}
+
 /** Who opens the app: a role in a cloud company, or 'device' for a company kept on this device only. */
 export type AccessKey = MemberRole | 'device';
 
@@ -59,6 +69,8 @@ export interface SuiteApp {
   footer: (NavLink & { icon: LucideIcon })[];
   /** What the app's people create (New menu, + sheet, palette). Needs 'edit'. */
   create: (CreateGroup & { column?: 0 | 1 })[];
+  /** The pages most used, a tap away on the home: a few, not the whole sidebar. */
+  tools: AppTool[];
   /** The phone's three tabs around the + button. */
   tabs: readonly [AppTab, AppTab, AppTab];
   access: Record<AccessKey, AppAccess>;

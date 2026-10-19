@@ -37,6 +37,15 @@ export const COMPLIANCE: SuiteApp = {
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],
   create: [],
+  tools: [
+    { to: '/compliance', label: msg('Calendar'), icon: CalendarClock, keywords: 'deadlines pifss' },
+    {
+      to: '/compliance/documents',
+      label: msg('Documents'),
+      icon: FolderCheck,
+      keywords: 'licences residency passport',
+    },
+  ],
   tabs: [
     { to: '/', label: msg('Home'), icon: House, end: true },
     { to: '/compliance', label: msg('Calendar'), icon: CalendarClock, end: true },

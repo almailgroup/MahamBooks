@@ -13,12 +13,13 @@ Built by AL Mail Group.
 | **Maham CRM**        | Quotes pipeline, follow-ups, prospects (first version)     |
 | **Maham Compliance** | Licences, staff papers, statutory deadlines                |
 
-The home shows the apps your role opens and what needs attention in them
-today; the grid button in the header switches between them. How the suite is
+The home is a launcher: your apps and their tools as round tiles, one click
+away, with a box to find any of them by name, and below them what needs
+attention today. The grid button in the header switches between apps. How the suite is
 put together, who opens which app and what comes next:
 [`docs/maham-one.md`](docs/maham-one.md).
 
-![Maham One home: the apps, what needs attention and money at a glance](docs/images/home.png)
+![Maham One home: apps and tools as round tiles](docs/images/home.png)
 
 Maham One runs in the browser and is hosted on Vercel. It works on one
 device without an account, or with an account that keeps your companies in the

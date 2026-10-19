@@ -240,6 +240,13 @@ test('staff open only the apps of their role', async ({ page }) => {
   await page.goto('#/');
   await expect(page.getByRole('region', { name: 'Your apps' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Maham People', exact: true })).toHaveCount(0);
+  // No People tools on the home either, and nothing of theirs to create.
+  const main = page.getByRole('main');
+  await expect(main.getByRole('link', { name: 'Invoices', exact: true })).toBeVisible();
+  await expect(main.getByRole('link', { name: 'Payroll', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('link', { name: 'Directory', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('link', { name: 'New invoice' })).toBeVisible();
+  await expect(main.getByRole('link', { name: 'New employee' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Switch app' }).click();
   await expect(page.getByRole('menuitem', { name: /Maham Books/ })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /Maham People/ })).toHaveCount(0);

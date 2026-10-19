@@ -13,10 +13,13 @@ cloud sync.
 | Maham CRM        | مهام CRM      | Quotes pipeline, follow-ups, prospects (first version)     | `/crm`        |
 | Maham Compliance | مهام الامتثال | Licences, staff papers, statutory deadlines                | `/compliance` |
 
-The suite's home (`/`) shows the apps someone may open, what needs attention
-in them today (the same items as the morning email), money at a glance and
-the company's other tools (Settings → Links). The grid button in the header
-switches apps; on phones the apps are at the top of the menu.
+The suite's home (`/`) is a launcher: every app someone may open, the things
+most often created ("New invoice", "Record expense"…), each app's main tools
+and the company's own links (Settings → Links), each a round tile one click
+away, with a box to find one by typing its name (Enter opens the first).
+Below them: what needs attention today (the same items as the morning email)
+and money at a glance. The grid button in the header switches apps; on phones
+the apps are at the top of the menu.
 
 ## What changed, and what deliberately didn't
 
@@ -26,7 +29,8 @@ switches apps; on phones the apps are at the top of the menu.
   and Compliance's pages to `src/apps/people/` and `src/apps/compliance/`.
 - Each app describes itself in a manifest (`src/apps/<app>/manifest.ts`): its
   sidebar, the pinned links at the bottom, what its New menu creates, its
-  three phone tabs and who may open it. The sidebar, header, phone tab bar,
+  three phone tabs, its main tools for the home and who may open it. The
+  sidebar, header, phone tab bar,
   New menus, command palette and the suite's home are built from the
   manifests (`src/suite/`).
 - Each app brings its routes (`src/apps/<app>/routes.tsx`);
@@ -113,8 +117,8 @@ Rules, checked by `src/suite/boundaries.test.ts`:
 ### Adding an app
 
 1. `src/apps/<app>/manifest.ts`: name in English and Arabic, icon, colour, home,
-   the first path segments it owns, sidebar, footer, New groups, three phone
-   tabs, access per role. Add the id to `AppId` in `src/suite/types.ts` and the
+   the first path segments it owns, sidebar, footer, New groups, the tools the
+   home shows, three phone tabs, access per role. Add the id to `AppId` in `src/suite/types.ts` and the
    manifest to `APPS` in `src/suite/apps.ts`.
 2. `src/apps/<app>/routes.tsx`, wrapping its pages in `<AppGate app="<app>">`,
    and add them to `src/app/routes.tsx`.

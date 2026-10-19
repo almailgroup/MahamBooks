@@ -58,6 +58,13 @@ export const CRM: SuiteApp = {
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],
   create: [{ label: msg('Sales'), actions: [A.quote, A.client, A.sales_order] }],
+  tools: [
+    { to: '/crm', label: msg('Pipeline'), icon: KanbanSquare, keywords: 'deals follow up' },
+    { to: '/crm/prospects', label: msg('Prospects'), icon: UserSearch, keywords: 'leads' },
+    { to: '/clients', label: msg('Customers'), icon: Users, keywords: 'clients' },
+    { to: '/quotes', label: msg('Quotes'), icon: ScrollText, keywords: 'estimates' },
+    { to: '/sales-orders', label: msg('Sales orders'), icon: ClipboardList },
+  ],
   tabs: [
     { to: '/', label: msg('Home'), icon: House, end: true },
     { to: '/crm', label: msg('Pipeline'), icon: KanbanSquare, end: true },
