@@ -3,7 +3,7 @@ import { logActivity } from './activity';
 import { accountingSettings } from './chart-setup';
 import { createAccount, saveAccount } from './accounting';
 import { nowStamp } from './defaults';
-import { createExpense, saveExpense } from './purchases';
+import { addAttachment, createExpense, saveExpense } from './purchases';
 import { getPeopleSettings } from './people';
 import type {
   Account,
@@ -18,13 +18,16 @@ import type {
   ISODate,
 } from './types';
 import {
+  checksDrivingLicences,
   complianceCalendar,
+  currentDrivingLicence,
   documentTypeInfo,
   EMPLOYEE_EXPIRY_FIELDS,
   EMPLOYEE_NUMBER_FIELDS,
   expiryStatus,
   FEE_ACCOUNT_CODES,
   isEmployeeDocumentType,
+  missingDocuments,
   normalizeReminderDays,
   overdueSince,
   registerEntries,
@@ -33,6 +36,7 @@ import {
   type EmployeeDocumentType,
   type ExpiryInfo,
   type FeeAccountKey,
+  type MissingDocument,
   type RegisterEntry,
   type StatutoryContext,
 } from '@/lib/compliance';
@@ -111,6 +115,10 @@ export async function saveComplianceDocument(
         title: input.title.trim(),
         number: input.number.trim(),
         issuer: input.issuer.trim(),
+        // Only a driving licence has a class.
+        ...(input.licenceClass !== undefined
+          ? { licenceClass: input.type === 'driving_licence' ? input.licenceClass.trim() : '' }
+          : {}),
         ownerName: input.ownerType === 'employee' ? '' : input.ownerName.trim(),
         employeeId: input.ownerType === 'employee' ? input.employeeId : null,
         renewalCost: round(Math.max(0, input.renewalCost), currencyPrecision(company.currency)),
@@ -132,6 +140,39 @@ export async function saveComplianceDocument(
         { employeeId: doc.employeeId, confidential: doc.confidential },
       );
       return doc;
+    },
+  );
+}
+
+/**
+ * Files a scan as the employee's driving licence: on their licence in the
+ * register (the one that expires last), or on a new one without dates when
+ * they have none, whose expiry is then filled in by hand. Nothing is logged:
+ * "Add documents" logs the files it filed at once.
+ */
+export async function fileDrivingLicence(
+  employeeId: ID,
+  file: { name: string; type: string; dataUrl: string },
+): Promise<ComplianceDocument> {
+  return db.transaction(
+    'rw',
+    [db.complianceDocuments, db.companies, db.employees, db.activities, db.attachments],
+    async () => {
+      const employee = await db.employees.get(employeeId);
+      if (!employee) throw new ComplianceError(t('Choose the employee the document belongs to.'));
+      const held = await db.complianceDocuments.where('employeeId').equals(employeeId).toArray();
+      const licence =
+        currentDrivingLicence(held, employeeId) ??
+        (await saveComplianceDocument(
+          createComplianceDocument(employee.companyId, {
+            type: 'driving_licence',
+            ownerType: 'employee',
+            employeeId,
+          }),
+          { log: false },
+        ));
+      await addAttachment(employee.companyId, licence.id, file);
+      return licence;
     },
   );
 }
@@ -204,6 +245,10 @@ export interface Register {
   employees: Employee[];
   documents: ComplianceDocument[];
   reminderDays: number[];
+  /** The company checks drivers' licences (PeopleSettings.drivingLicences). */
+  drivingLicences: boolean;
+  /** What current employees need and don't hold valid; empty while nothing is checked. */
+  missing: MissingDocument[];
 }
 
 /** Every tracked document of a company: register records and employees' papers. */
@@ -214,11 +259,15 @@ export async function loadRegister(companyId: ID): Promise<Register> {
     getPeopleSettings(companyId),
   ]);
   const reminderDays = normalizeReminderDays(settings.reminderDays);
+  const drivingLicences = checksDrivingLicences(settings);
   return {
     entries: registerEntries({ employees, documents, reminderDays }),
     employees,
     documents,
     reminderDays,
+    drivingLicences,
+    // Vehicles with a driver count too once #17 assigns them: pass them here.
+    missing: drivingLicences ? missingDocuments({ employees, documents, on: today() }) : [],
   };
 }
 

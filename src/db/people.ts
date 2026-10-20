@@ -471,6 +471,22 @@ export async function logPersonnelFilesAdded(
   });
 }
 
+/** One activity entry for the scans "Add documents" filed as driving licences. */
+export async function logDrivingLicencesFiled(
+  companyId: ID,
+  files: number,
+  employees: number,
+): Promise<void> {
+  if (files === 0) return;
+  await logActivity(companyId, 'employee', newId(), 'files', {
+    text:
+      files === 1
+        ? msg('{count} scan filed as a driving licence')
+        : msg('{count} scans filed as the driving licences of {employees} employees'),
+    vars: { count: files, employees },
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Photos                                                                     */
 /* -------------------------------------------------------------------------- */

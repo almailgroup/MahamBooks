@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Archive, FilePlus2, FileText, Pencil, RefreshCw, Search } from 'lucide-react';
+import { Archive, FilePlus2, FileText, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import { createComplianceDocument } from '@/db/renewals';
 import type { ComplianceDocument, DocumentOwnerType } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
@@ -9,10 +9,12 @@ import {
   expiryStatus,
   OWNER_LABELS,
   ownerLabel,
+  recordEntry,
   type ExpiryStatus,
   type RegisterEntry,
 } from '@/lib/compliance';
 import { today } from '@/lib/dates';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { useEmployees } from '@/features/people/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { ComplianceHeader } from '@/features/renewals/compliance-header';
@@ -21,11 +23,13 @@ import { DocumentDialog } from '@/features/renewals/document-dialog';
 import { RenewDialog } from '@/features/renewals/renew-dialog';
 import { Button } from '@/components/ui/button';
 import { useReadOnly } from '@/components/ui/read-only';
-import { Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
+import { Badge, Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
+import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
 
-type StatusFilter = 'all' | ExpiryStatus | 'archived';
+/** "drivers": drivers without a valid licence, when the company checks them. */
+type StatusFilter = 'all' | ExpiryStatus | 'archived' | 'drivers';
 const OWNERS: DocumentOwnerType[] = ['company', 'employee', 'vehicle', 'other'];
 
 export default function DocumentsRegisterPage() {
@@ -34,7 +38,8 @@ export default function DocumentsRegisterPage() {
   const fmt = useFormat();
   const register = useRegister();
   const employees = useEmployees();
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const { peopleHidden } = useRoleView();
+  const [chosen, setStatus] = useState<StatusFilter>('all');
   const [owner, setOwner] = useState<DocumentOwnerType | ''>('');
   const [query, setQuery] = useState('');
   const [renewing, setRenewing] = useState<RegisterEntry | null>(null);
@@ -63,6 +68,11 @@ export default function DocumentsRegisterPage() {
   if (!register || !employees) return <Spinner className="py-24" label={t('Loading…')} />;
 
   const count = (s: ExpiryStatus) => rows.filter((r) => r.info.status === s).length;
+  // Drivers without a valid licence: employees' data, never for staff or viewers.
+  const checksDrivers = register.drivingLicences && !peopleHidden;
+  const drivers = checksDrivers ? register.missing : [];
+  // Back to every document once drivers are no longer checked.
+  const status = chosen === 'drivers' && !checksDrivers ? 'all' : chosen;
   const q = query.trim().toLowerCase();
   const filtered = rows.filter(
     (r) =>
@@ -78,6 +88,15 @@ export default function DocumentsRegisterPage() {
   const add = () =>
     setEditing({
       doc: createComplianceDocument(company.id, owner ? { ownerType: owner } : {}),
+      isNew: true,
+    });
+  const addLicence = (employeeId: string) =>
+    setEditing({
+      doc: createComplianceDocument(company.id, {
+        ownerType: 'employee',
+        employeeId,
+        type: 'driving_licence',
+      }),
       isNew: true,
     });
   const edit = (entry: RegisterEntry) => {
@@ -97,7 +116,7 @@ export default function DocumentsRegisterPage() {
         }
       />
 
-      {rows.length === 0 && archived.length === 0 ? (
+      {rows.length === 0 && archived.length === 0 && drivers.length === 0 ? (
         <Card>
           <EmptyState
             icon={<FileText />}
@@ -134,6 +153,15 @@ export default function DocumentsRegisterPage() {
                       },
                     ]
                   : []),
+                ...(checksDrivers
+                  ? [
+                      {
+                        value: 'drivers' as const,
+                        label: t('Drivers without a valid licence'),
+                        count: drivers.length,
+                      },
+                    ]
+                  : []),
               ]}
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -163,7 +191,74 @@ export default function DocumentsRegisterPage() {
             </div>
           </div>
 
-          {status === 'archived' ? (
+          {status === 'drivers' ? (
+            drivers.length === 0 ? (
+              <p className="px-6 py-12 text-center text-sm text-slate-500">
+                {t('Every driver holds a valid driving licence.')}
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {drivers.map((missing) => {
+                  const employee = byEmployee.get(missing.employeeId);
+                  const entry = missing.document
+                    ? recordEntry(missing.document, register.reminderDays)
+                    : null;
+                  const name = employee ? localName(employee) : '';
+                  const job = employee
+                    ? localName({ name: employee.jobTitle, nameAr: employee.jobTitleAr })
+                    : '';
+                  return (
+                    <li
+                      key={missing.employeeId}
+                      className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          to={`/employees/${missing.employeeId}`}
+                          className="hover:text-primary-700 font-medium text-slate-900"
+                        >
+                          {name}
+                        </Link>
+                        <p className="text-xs text-slate-500">
+                          {[employee?.number, job].filter(Boolean).join(' · ')}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {entry ? (
+                          <span className="text-xs text-slate-500">
+                            {t('Driving licence expired {date}', {
+                              date: fmt.date(entry.expiryDate),
+                            })}
+                          </span>
+                        ) : (
+                          <Badge tone="red">{t('Driving licence missing')}</Badge>
+                        )}
+                        {readOnly ? null : entry ? (
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setRenewing(entry)}
+                            aria-label={t('Renew {document}', { document: entryTitle(entry) })}
+                          >
+                            <RefreshCw /> {t('Renew')}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => addLicence(missing.employeeId)}
+                            aria-label={t('Add a driving licence for {name}', { name })}
+                          >
+                            <Plus /> {t('Add licence')}
+                          </Button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          ) : status === 'archived' ? (
             <ul className="divide-y divide-slate-100">
               {archived.map((doc) => (
                 <li key={doc.id} className="flex items-center gap-3 px-5 py-3">

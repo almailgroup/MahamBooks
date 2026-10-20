@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
   Building2,
+  Car,
   Download,
   FilePlus2,
   FileUp,
@@ -76,6 +77,7 @@ export default function EmployeeListPage() {
   const [category, setCategory] = useState<CategoryFilter | ''>('');
   const [department, setDepartment] = useState('');
   const [expiringOnly, setExpiringOnly] = useState(false);
+  const [driversOnly, setDriversOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulk, setBulk] = useState<'documents' | 'photos' | null>(null);
@@ -87,6 +89,12 @@ export default function EmployeeListPage() {
 
   const on = today();
   const worst = useMemo(() => worstDocuments(register?.entries ?? [], on), [register, on]);
+  // Drivers without a valid licence, when the company checks them.
+  const licences = useMemo(
+    () => new Map((register?.missing ?? []).map((m) => [m.employeeId, m])),
+    [register],
+  );
+  const drivers = driversOnly && (register?.drivingLicences ?? false);
   const inUse = useMemo(
     () =>
       [...new Set((employees ?? []).map((e) => e.department.trim()).filter(Boolean))].sort((a, b) =>
@@ -110,6 +118,7 @@ export default function EmployeeListPage() {
       .filter((e) => !category || inCategory(e, category))
       .filter((e) => !department || e.department.trim() === department)
       .filter((e) => !expiringOnly || worst.has(e.id))
+      .filter((e) => !drivers || licences.has(e.id))
       .filter(
         (e) =>
           !q ||
@@ -131,7 +140,7 @@ export default function EmployeeListPage() {
             .includes(q),
       )
       .sort((a, b) => localName(a).localeCompare(localName(b)));
-  }, [employees, view, category, department, expiringOnly, worst, query, list]);
+  }, [employees, view, category, department, expiringOnly, worst, drivers, licences, query, list]);
 
   if (!employees || !settings || !register) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -401,6 +410,15 @@ export default function EmployeeListPage() {
                 >
                   <FileWarning /> {t('Documents expiring')}
                 </Button>
+                {register.drivingLicences ? (
+                  <Button
+                    variant={drivers ? 'subtle' : 'outline'}
+                    aria-pressed={drivers}
+                    onClick={() => setDriversOnly((v) => !v)}
+                  >
+                    <Car /> {t('Drivers without a valid licence')}
+                  </Button>
+                ) : null}
                 <div className="relative sm:w-64">
                   <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
                   <Input
@@ -467,6 +485,9 @@ export default function EmployeeListPage() {
                   <tbody className="divide-y divide-slate-100">
                     {filtered.map((e) => {
                       const doc = worst.get(e.id);
+                      // No licence at all; an expired one is among the documents.
+                      const noLicence =
+                        licences.get(e.id)?.reason === 'missing' && doc?.info.status !== 'expired';
                       const job = localName({ name: e.jobTitle, nameAr: e.jobTitleAr });
                       return (
                         <tr
@@ -528,7 +549,14 @@ export default function EmployeeListPage() {
                             {fmt.money(monthlyPay(e))}
                           </td>
                           <td className="px-5 py-3 text-end">
-                            {doc && isCurrent(e) ? (
+                            {noLicence ? (
+                              <span className="inline-flex flex-col items-end gap-0.5">
+                                <Badge tone="red">{t('Missing')}</Badge>
+                                <span className="text-xs text-slate-500">
+                                  {t('Driving licence')}
+                                </span>
+                              </span>
+                            ) : doc && isCurrent(e) ? (
                               <span className="inline-flex flex-col items-end gap-0.5">
                                 <ExpiryBadge info={doc.info} />
                                 <span className="text-xs text-slate-500">

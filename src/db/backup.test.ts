@@ -11,7 +11,14 @@ import {
 } from './backup';
 import { saveClient, setupCompany, getCurrentCompanyId } from './records';
 import { seedDemoCompany } from './demo';
-import { addDepartment, createEmployee, saveEmployee } from './people';
+import {
+  addDepartment,
+  createEmployee,
+  getPeopleSettings,
+  saveEmployee,
+  savePeopleSettings,
+} from './people';
+import { createComplianceDocument, saveComplianceDocument } from './renewals';
 
 beforeEach(async () => {
   await db.delete();
@@ -120,6 +127,29 @@ describe('backup', () => {
       centralCardNumber: 'RC-1',
       centralCardExpiry: '2027-01-31',
     });
+  });
+
+  it('keeps who drives for work, the licence class and the check of drivers’ licences', async () => {
+    const a = await setupCompany({ name: 'Made-up Transport' });
+    await savePeopleSettings({ ...(await getPeopleSettings(a.id)), drivingLicences: true });
+    const driver = await saveEmployee(
+      createEmployee(a.id, { name: 'Made-up Driver', drivingLicenceRequired: true }),
+    );
+    const licence = await saveComplianceDocument(
+      createComplianceDocument(a.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: driver.id,
+        licenceClass: 'Heavy',
+      }),
+    );
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.peopleSettings.get(a.id))?.drivingLicences).toBe(true);
+    expect((await db.employees.get(driver.id))?.drivingLicenceRequired).toBe(true);
+    expect((await db.complianceDocuments.get(licence.id))?.licenceClass).toBe('Heavy');
   });
 
   it('merges without deleting existing data', async () => {

@@ -30,6 +30,7 @@ import {
   type CategoryFilter,
 } from '@/lib/hr/employees';
 import { hasDepartmentList } from '@/lib/hr/departments';
+import { isDriverTitle } from '@/lib/hr/job-titles';
 import { eosWage } from '@/lib/hr/eosi';
 import {
   bankFromIban,
@@ -106,6 +107,20 @@ const CATEGORY_HINTS: Record<CategoryFilter, string> = {
 /** The choices of category: stateless staff are expatriates with the flag (see isStateless). */
 const CATEGORIES: CategoryFilter[] = ['kuwaiti', 'gcc', 'expat', 'stateless', 'domestic'];
 
+/** "Drives for work": from the job title, or set for the employee (drivingLicenceRequired). */
+type Drives = 'auto' | 'yes' | 'no';
+const DRIVES_LABELS: Record<Drives, string> = {
+  auto: msg('Automatic (from the job title)'),
+  yes: msg('Yes'),
+  no: msg('No'),
+};
+const drivesOf = (employee: Employee): Drives =>
+  employee.drivingLicenceRequired === true
+    ? 'yes'
+    : employee.drivingLicenceRequired === false
+      ? 'no'
+      : 'auto';
+
 const GENDERS: Gender[] = ['male', 'female'];
 const STATUSES: EmployeeStatus[] = ['active', 'on_leave', 'left'];
 const PAY_BASES: PayBasis[] = ['monthly', 'daily', 'hourly', 'piece'];
@@ -141,6 +156,7 @@ export function EmployeeForm({
   currency,
   departments,
   departmentList,
+  drivingLicences = false,
   files,
 }: {
   value: Employee;
@@ -151,6 +167,8 @@ export function EmployeeForm({
   departments: string[];
   /** The company's list of departments (people settings); without one, a name is typed. */
   departmentList?: Department[];
+  /** The company checks drivers' licences: "Drives for work" is asked. */
+  drivingLicences?: boolean;
   files: {
     files: AttachedFile[];
     add: (file: AttachedFile) => void;
@@ -562,6 +580,37 @@ export function EmployeeForm({
             )
           }
         </Field>
+        {drivingLicences ? (
+          <Field
+            label={t('Drives for work')}
+            hint={
+              drivesOf(value) === 'auto'
+                ? isDriverTitle(value)
+                  ? t('A driver by the job title: a valid driving licence is needed.')
+                  : t('Not a driver by the job title.')
+                : drivesOf(value) === 'yes'
+                  ? t('A valid driving licence is needed.')
+                  : t('No driving licence is needed, whatever the job title.')
+            }
+          >
+            {(id) => (
+              <Select
+                id={id}
+                value={drivesOf(value)}
+                onChange={(e) => {
+                  const drives = e.target.value as Drives;
+                  set({ drivingLicenceRequired: drives === 'auto' ? null : drives === 'yes' });
+                }}
+              >
+                {(Object.keys(DRIVES_LABELS) as Drives[]).map((d) => (
+                  <option key={d} value={d}>
+                    {t(DRIVES_LABELS[d])}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : null}
         <Field label={t('Hire date')}>
           {(id) => (
             <DateField

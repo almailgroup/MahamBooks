@@ -5,15 +5,22 @@ import { toast } from 'sonner';
 import { useCompany } from '@/app/company';
 import { db } from '@/db/db';
 import { addAttachment } from '@/db/purchases';
-import { logEmployeePhotosAdded, logPersonnelFilesAdded, setEmployeePhoto } from '@/db/people';
+import {
+  logDrivingLicencesFiled,
+  logEmployeePhotosAdded,
+  logPersonnelFilesAdded,
+  setEmployeePhoto,
+} from '@/db/people';
+import { fileDrivingLicence } from '@/db/renewals';
 import type { Employee } from '@/db/types';
+import { currentDrivingLicence } from '@/lib/compliance';
 import { documentKind, matchDocuments, type DocumentMatch } from '@/lib/hr/document-match';
 import { photoFromFile, receiptFromFile } from '@/lib/image';
 import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { Button } from '@/components/ui/button';
-import { Select } from '@/components/ui/form';
+import { Checkbox, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 
 /** Scans for the personnel files, or the employees' photos. */
@@ -27,7 +34,8 @@ interface Entry {
   employeeId: string | null;
   /**
    * Why it isn't added although it has an employee: the same file is already
-   * in their personnel file, or another photo is chosen for them.
+   * in their personnel file (or on their licence), or another photo is
+   * chosen for them.
    */
   skip: 'attached' | 'another_photo' | null;
 }
@@ -49,8 +57,9 @@ function FileIcon({ file }: { file: File }) {
  * ("… 424.pdf" goes to employee 000424) or by their whole name ("Ali
  * Hassan.jpg"). Files that don't match can be given an employee by hand;
  * files over 10 MB are refused, and so is anything but photos and PDF files
- * (photos only, for photos). Documents go to the personnel files; photos
- * become the employees' photos.
+ * (photos only, for photos). Documents go to the personnel files, or
+ * to the employees' driving licences in the register ("File as driving
+ * licence"); photos become the employees' photos.
  */
 export function BulkDocumentsDialog({
   kind = 'documents',
@@ -68,6 +77,9 @@ export function BulkDocumentsDialog({
   /** Employee chosen by hand for a file, or '' to leave it out. */
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [dragging, setDragging] = useState(false);
+  /** Scans go to the employees' driving licences instead of their personnel files. */
+  const [asLicence, setAsLicence] = useState(false);
+  const licences = !photos && asLicence;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const byId = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const sorted = useMemo(
@@ -95,8 +107,9 @@ export function BulkDocumentsDialog({
     [files, employees, chosen, photos],
   );
 
-  // Files already in a personnel file under the same name: found through an
-  // index, without reading any file's content.
+  // Files already in a personnel file (or on the licence they would be filed
+  // on) under the same name: found through an index, without reading any
+  // file's content.
   const pairs = useMemo(
     () =>
       photos
@@ -108,10 +121,29 @@ export function BulkDocumentsDialog({
   const attached = useLiveQuery(
     async () => {
       if (!pairs.length) return new Set<string>();
-      const keys = await db.attachments.where('[ownerId+name]').anyOf(pairs).keys();
-      return new Set(keys.map((k) => pairKey(...(k as unknown as [string, string]))));
+      // Filed as licences, a scan goes on the employee's current licence
+      // (none yet: a new one, where nothing is attached).
+      let ownerOf = (employeeId: string): string | undefined => employeeId;
+      if (licences) {
+        const ids = [...new Set(pairs.map(([id]) => id))];
+        const docs = await db.complianceDocuments.where('employeeId').anyOf(ids).toArray();
+        const licenceOf = new Map(ids.map((id) => [id, currentDrivingLicence(docs, id)?.id]));
+        ownerOf = (employeeId) => licenceOf.get(employeeId);
+      }
+      const lookups = pairs.flatMap(([id, name]) => {
+        const owner = ownerOf(id);
+        return owner ? [[owner, name]] : [];
+      });
+      if (!lookups.length) return new Set<string>();
+      const keys = await db.attachments.where('[ownerId+name]').anyOf(lookups).keys();
+      const found = new Set(keys.map((k) => pairKey(...(k as unknown as [string, string]))));
+      return new Set(
+        pairs
+          .filter(([id, name]) => found.has(pairKey(ownerOf(id) ?? '', name)))
+          .map(([id, name]) => pairKey(id, name)),
+      );
     },
-    [pairsKey],
+    [pairsKey, licences],
     null,
   );
 
@@ -170,7 +202,8 @@ export function BulkDocumentsDialog({
         } else {
           // Photos are made smaller (JPEG, 1600 px at most); PDF files are kept as they are.
           const { dataUrl, type } = await receiptFromFile(file);
-          await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
+          if (licences) await fileDrivingLicence(employeeId, { name: file.name, type, dataUrl });
+          else await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
         }
         added += 1;
         people.add(employeeId);
@@ -180,17 +213,24 @@ export function BulkDocumentsDialog({
       setProgress({ done: added + failed.length, total: work.length });
     }
     if (photos) await logEmployeePhotosAdded(company.id, added);
+    else if (licences) await logDrivingLicencesFiled(company.id, added, people.size);
     else await logPersonnelFilesAdded(company.id, added, people.size);
     setProgress(null);
     if (added) {
       toast.success(
         photos
           ? tp(added, '{count} photo added', '{count} photos added')
-          : tp(
-              added,
-              '{count} file added to the personnel files',
-              '{count} files added to the personnel files',
-            ),
+          : licences
+            ? tp(
+                added,
+                '{count} scan filed as a driving licence',
+                '{count} scans filed as driving licences',
+              )
+            : tp(
+                added,
+                '{count} file added to the personnel files',
+                '{count} files added to the personnel files',
+              ),
       );
     }
     if (failed.length) {
@@ -228,7 +268,11 @@ export function BulkDocumentsDialog({
   };
 
   const note = (entry: Entry): string => {
-    if (entry.skip === 'attached') return t('Already in their personnel file');
+    if (entry.skip === 'attached') {
+      return licences
+        ? t('Already on their driving licence')
+        : t('Already in their personnel file');
+    }
     if (entry.skip === 'another_photo') return t('Another photo is chosen for this employee');
     const employee = entry.employeeId ? byId.get(entry.employeeId) : undefined;
     return photos && employee?.photoId ? t('Replaces their current photo') : '';
@@ -291,6 +335,17 @@ export function BulkDocumentsDialog({
                 : t('Or drop them here. Photos and PDF files up to 10 MB each.')}
             </span>
           </button>
+          {photos ? null : (
+            <Checkbox
+              checked={asLicence}
+              disabled={busy}
+              onChange={(e) => setAsLicence(e.target.checked)}
+              label={t('File as driving licence')}
+              description={t(
+                'Each scan goes to the employee’s driving licence in the register instead of their personnel file. Enter the expiry date on the licence afterwards.',
+              )}
+            />
+          )}
           <input
             ref={input}
             type="file"

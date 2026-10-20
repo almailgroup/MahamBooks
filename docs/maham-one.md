@@ -132,6 +132,32 @@ is asked of the server.
   as stateless. The bank's salary file uses the card number when there is no
   Civil ID.
 
+## Drivers' licences
+
+- **Off until switched on.** Compliance → Settings (also the settings button
+  on Employees) has _Check drivers’ licences_, kept in the company's
+  employee settings (`peopleSettings.drivingLicences`). Until it is on,
+  nothing is flagged or asked, as before.
+- **Who drives.** An employee needs a licence when their page says so
+  (_Drives for work_: Automatic, Yes or No, kept as
+  `drivingLicenceRequired`, null for Automatic), else when a company vehicle
+  has them as its driver (the hook is in `requiresDrivingLicence`; vehicles
+  are passed once #17 assigns drivers), else by the job title in English,
+  Arabic or on the work permit: the word "driver" (Valet Driver too) or
+  سائق, never a valet who only parks cars (`isDriverTitle`).
+- **What is flagged.** A current driver whose licence in the register is
+  missing (archived ones don't count) or expired (`missingDocuments`): a
+  _Driving licence missing_ row on their page, whose _Add document_ then
+  starts with the licence, and a _Drivers without a valid licence_ filter on
+  Employees and in the documents register. A licence without an expiry date
+  counts as valid, as everywhere in the register. The morning email follows
+  with #18.
+- **The licence** has an optional class (`licenceClass`, فئة الرخصة).
+  Employees → Add documents can file the scans as the employees' driving
+  licences: each goes on the licence that expires last, or a new one without
+  dates, instead of the personnel file. Licences, their scans and the
+  setting are people data, private as before.
+
 ## Code layout
 
 ```

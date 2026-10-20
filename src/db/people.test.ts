@@ -212,6 +212,27 @@ describe('people settings', () => {
     });
   });
 
+  it('check drivers’ licences only once switched on, and keep the switch', async () => {
+    const company = await kuwaitCompany();
+    expect((await getPeopleSettings(company.id)).drivingLicences).toBeUndefined();
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), drivingLicences: true });
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), pifssDueDay: 10 });
+    expect(await getPeopleSettings(company.id)).toMatchObject({
+      drivingLicences: true,
+      pifssDueDay: 10,
+    });
+    // Whether an employee drives for work is kept as set, and set back to the title.
+    const saved = await saveEmployee(
+      createEmployee(company.id, { name: 'Made-up Guard', drivingLicenceRequired: true }),
+    );
+    expect(saved.drivingLicenceRequired).toBe(true);
+    const automatic = await saveEmployee({ ...saved, drivingLicenceRequired: null });
+    expect((await db.employees.get(automatic.id))?.drivingLicenceRequired).toBeNull();
+    expect(
+      await saveEmployee(createEmployee(company.id, { name: 'Made-up Clerk' })),
+    ).not.toHaveProperty('drivingLicenceRequired');
+  });
+
   it('leave a company out of the search across companies until it is switched on', async () => {
     const company = await kuwaitCompany();
     expect((await getPeopleSettings(company.id)).groupSearch).toBeUndefined();

@@ -1,3 +1,4 @@
+import type { Employee } from '@/db/types';
 import { nationalityKey as titleKey } from './nationalities';
 
 /**
@@ -117,4 +118,24 @@ export function arabicJobTitle(title: string): string {
 /** The English of a common job title written in Arabic, or '' when it isn't known. */
 export function englishJobTitle(title: string): string {
   return tables().arabic.get(titleKey(title)) ?? '';
+}
+
+/** سائق, also written without the hamza. */
+const ARABIC_DRIVER = /سائق|سايق/;
+
+/**
+ * Whether the employee's job title is a driver's, in English, in Arabic or
+ * on the work permit: the word "driver" (Driver, HEAVY DRIVER, Bus Driver,
+ * Valet Driver…) or سائق (سائق, سائق حافلة, السائق). Valets who only park
+ * cars (Valet, عامل صف سيارات) are not drivers. Free text is sometimes
+ * misread: the employee's own setting corrects it (requiresDrivingLicence).
+ */
+export function isDriverTitle(
+  employee: Pick<Employee, 'jobTitle' | 'jobTitleAr' | 'pamJobTitle'>,
+): boolean {
+  return [employee.jobTitle, employee.jobTitleAr, employee.pamJobTitle].some((title) => {
+    const key = titleKey(title ?? '');
+    if (!key) return false;
+    return ARABIC_DRIVER.test(key) || key.split(' ').some((word) => /^drivers?$/.test(word));
+  });
 }

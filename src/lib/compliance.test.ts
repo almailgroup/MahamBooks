@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checksDrivingLicences,
   complianceCalendar,
+  currentDrivingLicence,
   dayOfMonthAfter,
   employeeDocuments,
   expiryStatus,
   fiscalYearEndIn,
+  missingDocuments,
   monthsAfter,
   normalizeReminderDays,
   registerEntries,
   registerTypesFor,
+  requiresDrivingLicence,
   statutoryDeadlines,
   type StatutoryContext,
 } from './compliance';
@@ -199,6 +203,101 @@ describe('the register', () => {
     ]);
     expect(registerTypesFor('company')).toContain('commercial_licence');
     expect(registerTypesFor('company')).not.toContain('residency');
+  });
+});
+
+describe('driving licences of drivers', () => {
+  const on = '2026-10-03';
+  const driver = (overrides = {}) =>
+    createEmployee('co', { name: 'Made-up Driver', jobTitle: 'Driver', ...overrides });
+  const licence = (employeeId: string, overrides = {}) =>
+    createComplianceDocument('co', {
+      type: 'driving_licence',
+      ownerType: 'employee',
+      employeeId,
+      ...overrides,
+    });
+  const missing = (input: Parameters<typeof missingDocuments>[0]) =>
+    missingDocuments(input).map((m) => `${m.employeeId} ${m.reason} ${m.document?.id ?? '-'}`);
+
+  it('is off until the company switches it on', () => {
+    expect(checksDrivingLicences(undefined)).toBe(false);
+    expect(checksDrivingLicences({})).toBe(false);
+    expect(checksDrivingLicences({ drivingLicences: false })).toBe(false);
+    expect(checksDrivingLicences({ drivingLicences: true })).toBe(true);
+  });
+
+  it('is needed by the job title unless the employee’s own setting says otherwise', () => {
+    const guard = createEmployee('co', { jobTitle: 'Security Guard', jobTitleAr: 'حارس أمن' });
+    expect(requiresDrivingLicence(driver())).toBe(true);
+    expect(requiresDrivingLicence(guard)).toBe(false);
+    // The override wins, both ways; null goes back to the title.
+    expect(requiresDrivingLicence({ ...driver(), drivingLicenceRequired: false })).toBe(false);
+    expect(requiresDrivingLicence({ ...guard, drivingLicenceRequired: true })).toBe(true);
+    expect(requiresDrivingLicence({ ...guard, drivingLicenceRequired: null })).toBe(false);
+  });
+
+  it('is needed by the driver of a vehicle, unless the employee’s setting says no', () => {
+    const guard = createEmployee('co', { jobTitle: 'Security Guard' });
+    const car = { driverEmployeeId: guard.id, archived: false };
+    expect(requiresDrivingLicence(guard, [car])).toBe(true);
+    expect(requiresDrivingLicence(guard, [{ ...car, archived: true }])).toBe(false);
+    expect(requiresDrivingLicence(guard, [{ ...car, driverEmployeeId: 'someone' }])).toBe(false);
+    expect(requiresDrivingLicence({ ...guard, drivingLicenceRequired: false }, [car])).toBe(false);
+  });
+
+  it('finds drivers whose licence is missing, expired or archived, but not those who left', () => {
+    const none = driver();
+    const expired = driver();
+    const archived = driver();
+    const left = driver({
+      status: 'left',
+      leavingDate: '2026-09-30',
+      leavingReason: 'resignation',
+    });
+    const lapsed = licence(expired.id, { expiryDate: '2026-10-02' });
+    const documents = [
+      lapsed,
+      licence(expired.id, { expiryDate: '2025-10-02' }),
+      licence(archived.id, { expiryDate: '2030-01-01', archived: true }),
+      // Another employee's, and an insurance: not a licence of theirs.
+      licence('someone', { expiryDate: '2030-01-01' }),
+      createComplianceDocument('co', {
+        type: 'health_insurance',
+        ownerType: 'employee',
+        employeeId: none.id,
+        expiryDate: '2030-01-01',
+      }),
+    ];
+    expect(missing({ employees: [none, expired, archived, left], documents, on })).toEqual([
+      `${none.id} missing -`,
+      `${expired.id} expired ${lapsed.id}`,
+      `${archived.id} missing -`,
+    ]);
+  });
+
+  it('counts a licence valid on its expiry date and without one, and follows the override', () => {
+    const today = driver();
+    const undated = driver();
+    const guard = createEmployee('co', { jobTitle: 'Guard', drivingLicenceRequired: true });
+    const notDriving = driver({ drivingLicenceRequired: false });
+    expect(
+      missing({
+        employees: [today, undated, guard, notDriving],
+        documents: [licence(today.id, { expiryDate: on }), licence(undated.id)],
+        on,
+      }),
+    ).toEqual([`${guard.id} missing -`]);
+  });
+
+  it('files on the licence that expires last', () => {
+    const someone = driver();
+    const old = licence(someone.id, { expiryDate: '2025-01-01' });
+    const renewed = licence(someone.id, { expiryDate: '2028-01-01' });
+    const archived = licence(someone.id, { expiryDate: '2030-01-01', archived: true });
+    expect(currentDrivingLicence([old, renewed, archived], someone.id)?.id).toBe(renewed.id);
+    expect(currentDrivingLicence([old, licence(someone.id)], someone.id)?.expiryDate).toBeNull();
+    expect(currentDrivingLicence([archived], someone.id)).toBeNull();
   });
 });
 

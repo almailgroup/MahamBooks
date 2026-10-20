@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import { LockedPeriodError, loadLedger } from './accounting';
-import { createEmployee, saveEmployee } from './people';
+import {
+  createEmployee,
+  getPeopleSettings,
+  logDrivingLicencesFiled,
+  saveEmployee,
+  savePeopleSettings,
+} from './people';
+import { isPrivateRecord } from '@/cloud/roles';
 import {
   clearComplianceMark,
   ComplianceError,
@@ -9,6 +16,7 @@ import {
   deleteComplianceDocument,
   documentRenewals,
   expiringDocuments,
+  fileDrivingLicence,
   loadRegister,
   markComplianceDone,
   renewDocument,
@@ -126,6 +134,128 @@ describe('the documents register', () => {
       renewalCost: 12.346,
       reminderDays: [90, 7],
     });
+  });
+});
+
+describe('drivers’ licences', () => {
+  const scan = (name: string) => ({ name, type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,' });
+
+  async function driver(companyId: ID, overrides = {}) {
+    return saveEmployee(
+      createEmployee(companyId, {
+        name: 'Made-up Driver',
+        jobTitle: 'Bus Driver',
+        jobTitleAr: 'سائق حافلة',
+        ...overrides,
+      }),
+    );
+  }
+
+  it('flags drivers without a valid licence only once the company checks them', async () => {
+    const { company } = await kuwaitCompany();
+    const someone = await driver(company.id);
+    // Off, as before: nothing is flagged.
+    expect(await loadRegister(company.id)).toMatchObject({ drivingLicences: false, missing: [] });
+
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), drivingLicences: true });
+    const register = await loadRegister(company.id);
+    expect(register.drivingLicences).toBe(true);
+    expect(register.missing).toEqual([
+      { employeeId: someone.id, type: 'driving_licence', reason: 'missing', document: null },
+    ]);
+
+    const licence = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: someone.id,
+        expiryDate: inDays(20),
+      }),
+    );
+    expect((await loadRegister(company.id)).missing).toEqual([]);
+    await saveComplianceDocument({ ...licence, expiryDate: inDays(-1) });
+    expect((await loadRegister(company.id)).missing).toMatchObject([
+      { employeeId: someone.id, reason: 'expired', document: { id: licence.id } },
+    ]);
+    // Set as not driving for work: nothing missing.
+    await saveEmployee({ ...someone, drivingLicenceRequired: false });
+    expect((await loadRegister(company.id)).missing).toEqual([]);
+  });
+
+  it('keeps the class of a driving licence only', async () => {
+    const { company } = await kuwaitCompany();
+    const someone = await driver(company.id);
+    const saved = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: someone.id,
+        licenceClass: ' Heavy ',
+      }),
+    );
+    expect(saved.licenceClass).toBe('Heavy');
+    const insurance = await saveComplianceDocument({ ...saved, type: 'health_insurance' });
+    expect(insurance.licenceClass).toBe('');
+    // Documents saved without one get none.
+    const other = await saveComplianceDocument(
+      createComplianceDocument(company.id, { type: 'commercial_licence' }),
+    );
+    expect(other).not.toHaveProperty('licenceClass');
+  });
+
+  it('files scans on the employee’s licence, adding one without dates when there is none', async () => {
+    const { company } = await kuwaitCompany();
+    const someone = await driver(company.id);
+    const logged = await db.activities.count();
+
+    const first = await fileDrivingLicence(someone.id, scan('licence front.jpg'));
+    expect(first).toMatchObject({
+      type: 'driving_licence',
+      ownerType: 'employee',
+      employeeId: someone.id,
+      expiryDate: null,
+    });
+    const second = await fileDrivingLicence(someone.id, scan('licence back.jpg'));
+    expect(second.id).toBe(first.id);
+    expect(
+      (await db.attachments.where('ownerId').equals(first.id).toArray()).map((a) => a.name).sort(),
+    ).toEqual(['licence back.jpg', 'licence front.jpg']);
+    // Nothing in the personnel file, and nothing logged here (the dialog logs once).
+    expect(await db.attachments.where('ownerId').equals(someone.id).count()).toBe(0);
+    expect(await db.activities.count()).toBe(logged);
+
+    // A renewed licence that expires later gets the next scans.
+    const renewed = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: someone.id,
+        expiryDate: inDays(900),
+      }),
+    );
+    await saveComplianceDocument({ ...first, expiryDate: inDays(-30) });
+    expect((await fileDrivingLicence(someone.id, scan('new.jpg'))).id).toBe(renewed.id);
+    await expect(fileDrivingLicence('nobody', scan('x.jpg'))).rejects.toThrow(ComplianceError);
+  });
+
+  it('logs the scans filed at once, as people data', async () => {
+    const { company } = await kuwaitCompany();
+    const filed = () =>
+      db.activities
+        .where('companyId')
+        .equals(company.id)
+        .filter((a) => a.action === 'files')
+        .toArray();
+    await logDrivingLicencesFiled(company.id, 0, 0);
+    expect(await filed()).toHaveLength(0);
+    await logDrivingLicencesFiled(company.id, 3, 2);
+    const [entry] = await filed();
+    expect(entry).toMatchObject({
+      entity: 'employee',
+      messageKey: '{count} scans filed as the driving licences of {employees} employees',
+      messageVars: { count: 3, employees: 2 },
+    });
+    expect(isPrivateRecord('activities', entry as unknown as Record<string, unknown>)).toBe(true);
   });
 });
 

@@ -232,6 +232,18 @@ export function DocumentDialog({
                 />
               )}
             </Field>
+            {draft.type === 'driving_licence' ? (
+              <Field label={t('Licence class')} optional hint={t('As written on the licence.')}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    value={draft.licenceClass ?? ''}
+                    onChange={(e) => set({ licenceClass: e.target.value })}
+                    dir="auto"
+                  />
+                )}
+              </Field>
+            ) : null}
             <Field label={t('Issued by')} optional>
               {(id) => (
                 <Input

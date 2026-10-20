@@ -5,6 +5,7 @@ import { db } from '@/db/db';
 import { createEmployee, saveEmployee } from '@/db/people';
 import type { Employee } from '@/db/types';
 import { useCompany } from '@/app/company';
+import { checksDrivingLicences } from '@/lib/compliance';
 import { useDraftAttachments } from '@/features/purchases/attachments';
 import {
   EmployeeForm,
@@ -156,6 +157,7 @@ function EmployeeFormPage() {
         currency={company.currency}
         departments={departments}
         departmentList={settings.departments}
+        drivingLicences={checksDrivingLicences(settings)}
         files={{
           ...files,
           // The photo is kept with the personnel file but changed on the employee's page.

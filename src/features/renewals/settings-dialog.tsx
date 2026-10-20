@@ -2,14 +2,18 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { savePeopleSettings } from '@/db/people';
 import type { PeopleSettings } from '@/db/types';
-import { normalizeReminderDays } from '@/lib/compliance';
+import { checksDrivingLicences, normalizeReminderDays } from '@/lib/compliance';
 import { normalizeDigits } from '@/lib/money';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { Button } from '@/components/ui/button';
-import { Field, Input, NumberInput } from '@/components/ui/form';
+import { Field, Input, NumberInput, Switch } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { t } from '@/i18n';
 
-/** Reminders, statutory deadlines and end-of-service settings of the company. */
+/**
+ * Reminders, statutory deadlines and end-of-service settings of the company,
+ * and whether drivers' licences are checked.
+ */
 export function ComplianceSettingsDialog({
   settings,
   onClose,
@@ -20,6 +24,7 @@ export function ComplianceSettingsDialog({
   const [draft, setDraft] = useState(settings);
   const [days, setDays] = useState(settings.reminderDays.join(', '));
   const [saving, setSaving] = useState(false);
+  const { peopleHidden } = useRoleView();
   const set = (patch: Partial<PeopleSettings>) => setDraft((d) => ({ ...d, ...patch }));
 
   const save = async () => {
@@ -117,6 +122,16 @@ export function ComplianceSettingsDialog({
               )}
             </Field>
           </div>
+          {peopleHidden ? null : (
+            <Switch
+              checked={checksDrivingLicences(draft)}
+              onChange={(drivingLicences) => set({ drivingLicences })}
+              label={t('Check drivers’ licences')}
+              description={t(
+                'Employees who drive for work, by their job title or as set on their page, are flagged when they hold no valid driving licence.',
+              )}
+            />
+          )}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

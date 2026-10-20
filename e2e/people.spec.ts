@@ -393,3 +393,110 @@ test('departments are a list with Arabic names, renamed with their employees and
   await expect(page.getByText('نورة التجريبية')).toBeVisible();
   await expect(page.getByText('هدى التجريبية')).toHaveCount(0);
 });
+
+test('drivers without a valid driving licence are flagged once the company checks them', async ({
+  page,
+}) => {
+  await createCompany(page, 'Made-up Transport');
+  const newEmployee = async (name: string, number: string, jobTitle: string) => {
+    await page.goto('#/employees/new');
+    await page.getByLabel('Name (English)').fill(name);
+    await page.getByLabel('Employee number').fill(number);
+    await page.getByLabel('Job title (English)').fill(jobTitle);
+    await page.getByLabel('Basic salary').fill('300');
+  };
+  const save = async (name: string) => {
+    await page.getByRole('button', { name: 'Save employee' }).first().click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+  };
+
+  // A driver by the job title: nothing is asked or flagged while licences aren't checked.
+  await newEmployee('Driver Testing', '501', 'Heavy Driver');
+  await expect(page.getByLabel('Drives for work')).toHaveCount(0);
+  await save('Driver Testing');
+  await expect(page.getByText('Driving licence missing')).toHaveCount(0);
+
+  // The owner switches the check on in the compliance settings.
+  await page.goto('#/compliance');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Compliance settings' });
+  await settings.getByRole('switch', { name: 'Check drivers’ licences' }).click();
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await expect(settings).toBeHidden();
+
+  // The warning shows on their page, and the licence is added from it with its class.
+  await page.goto('#/employees');
+  await page.getByRole('link', { name: 'Driver Testing' }).click();
+  const missing = page.getByRole('listitem').filter({ hasText: 'Driving licence missing' });
+  await expect(missing).toContainText('Missing');
+  await missing.getByRole('button', { name: 'Add licence' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add document' });
+  await expect(dialog.getByLabel('Document type')).toHaveValue('driving_licence');
+  await dialog.getByLabel('Licence class').fill('Heavy');
+  await dialog.getByLabel('Expiry date').fill(inDays(20));
+  await dialog.getByRole('button', { name: 'Add document' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('Driving licence missing')).toHaveCount(0);
+  const licence = page.getByRole('listitem').filter({ hasText: /^Driving licenceClass Heavy/ });
+  await expect(licence).toContainText('Expires in 20 days');
+
+  // A licence expiring in 20 days is Expiring in the register.
+  await page.goto('#/compliance/documents');
+  await page.getByRole('tab', { name: /^Expiring/ }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Driving licence' })).toContainText(
+    'Driver Testing',
+  );
+
+  // A guard who drives for work, as set on their page.
+  await newEmployee('Guard Testing', '502', 'Security Guard');
+  const drives = page.getByLabel('Drives for work');
+  await expect(drives).toHaveValue('auto');
+  await expect(page.getByText('Not a driver by the job title.')).toBeVisible();
+  await drives.selectOption({ label: 'Yes' });
+  await expect(page.getByText('A valid driving licence is needed.')).toBeVisible();
+  await save('Guard Testing');
+  await expect(page.getByText('Driving licence missing')).toBeVisible();
+
+  // Both lists filter the drivers without a valid licence.
+  await page.goto('#/compliance/documents');
+  await page.getByRole('tab', { name: /^Drivers without a valid licence/ }).click();
+  await expect(page.getByRole('link', { name: 'Guard Testing' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Driver Testing' })).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Add a driving licence for Guard Testing' }),
+  ).toBeVisible();
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'Drivers without a valid licence' }).click();
+  await expect(page.getByRole('row', { name: /Guard Testing/ })).toContainText('Missing');
+  await expect(page.getByRole('row', { name: /Driver Testing/ })).toHaveCount(0);
+
+  // A scan added from the list is filed as their driving licence.
+  await page.getByRole('button', { name: 'Add documents' }).click();
+  const bulk = page.getByRole('dialog', { name: 'Add documents' });
+  await bulk.getByLabel('File as driving licence').check();
+  await bulk.locator('input[type=file]').setInputFiles([
+    {
+      name: 'Licence 502.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n'),
+    },
+  ]);
+  await expect(bulk.getByText('1 file matched')).toBeVisible();
+  await bulk.getByRole('button', { name: 'Add 1 file' }).click();
+  await expect(bulk).toBeHidden();
+  await expect(page.getByText('1 scan filed as a driving licence')).toBeVisible();
+  await expect(page.getByText('No employees match.')).toBeVisible();
+  await page.getByRole('button', { name: 'Drivers without a valid licence' }).click();
+  await page.getByRole('link', { name: 'Guard Testing' }).click();
+  await expect(page.getByText('Licence 502.pdf')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit Driving licence' }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit document' })).toContainText(
+    'Licence 502.pdf',
+  );
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  // In Arabic.
+  await page.goto('#/compliance/documents');
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(page.getByRole('tab', { name: /^السائقون بدون رخصة سارية/ })).toBeVisible();
+});

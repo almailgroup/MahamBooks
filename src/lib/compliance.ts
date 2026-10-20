@@ -10,6 +10,7 @@ import type {
   KuwaitProfile,
   LegalForm,
   PeopleSettings,
+  Vehicle,
 } from '@/db/types';
 import { addDaysISO, daysBetween, parseISODate, toISODate } from '@/lib/dates';
 import { isShareholding } from '@/lib/kuwait-rules';
@@ -22,6 +23,7 @@ import {
   needsResidency,
   needsWorkPermit,
 } from './hr/employees';
+import { isDriverTitle } from './hr/job-titles';
 
 /**
  * The compliance calendar: expiring documents (company licences, employee
@@ -343,6 +345,101 @@ export function registerEntries(input: {
       .map((d) => recordEntry(d, days)),
     ...[...current.values()].flatMap((e) => employeeDocuments(e, days)),
   ];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Documents an employee needs                                                */
+/* -------------------------------------------------------------------------- */
+
+/** The company checks that drivers hold a valid driving licence (off until switched on). */
+export function checksDrivingLicences(
+  settings: Pick<PeopleSettings, 'drivingLicences'> | null | undefined,
+): boolean {
+  return settings?.drivingLicences === true;
+}
+
+/**
+ * Whether the employee drives for work and so needs a driving licence:
+ * what is set on their page first, then a vehicle they are the driver of,
+ * then their job title (isDriverTitle). Vehicles are passed once the
+ * company's vehicles have drivers (#17); without them only the setting and
+ * the title count.
+ */
+export function requiresDrivingLicence(
+  employee: Pick<
+    Employee,
+    'id' | 'jobTitle' | 'jobTitleAr' | 'pamJobTitle' | 'drivingLicenceRequired'
+  >,
+  vehicles?: readonly Pick<Vehicle, 'driverEmployeeId' | 'archived'>[],
+): boolean {
+  if (typeof employee.drivingLicenceRequired === 'boolean') return employee.drivingLicenceRequired;
+  if (vehicles?.some((v) => !v.archived && v.driverEmployeeId === employee.id)) return true;
+  return isDriverTitle(employee);
+}
+
+/** Latest expiry first; a licence without an expiry date counts as the latest. */
+const byExpiryDesc = (a: ComplianceDocument, b: ComplianceDocument) =>
+  (b.expiryDate ?? '9999').localeCompare(a.expiryDate ?? '9999');
+
+/**
+ * The employee's driving licence in the register, the one that expires
+ * last; archived ones don't count. Null when they have none.
+ */
+export function currentDrivingLicence(
+  documents: readonly ComplianceDocument[],
+  employeeId: ID,
+): ComplianceDocument | null {
+  const held = documents.filter(
+    (d) =>
+      d.type === 'driving_licence' &&
+      !d.archived &&
+      d.ownerType === 'employee' &&
+      d.employeeId === employeeId,
+  );
+  return held.sort(byExpiryDesc)[0] ?? null;
+}
+
+/** A document a current employee needs and doesn't hold valid. */
+export interface MissingDocument {
+  employeeId: ID;
+  type: ComplianceDocumentType;
+  /** None on file (archived ones don't count), or only expired ones. */
+  reason: 'missing' | 'expired';
+  /** The one that expired last, to renew it; null when there is none. */
+  document: ComplianceDocument | null;
+}
+
+/**
+ * What current employees need and don't hold valid, by employee: for now a
+ * driving licence for those who drive for work. A licence is valid until
+ * the day after its expiry date, and without an expiry date (as in the
+ * register). Employees who have left need nothing.
+ */
+export function missingDocuments(input: {
+  employees: Employee[];
+  documents: ComplianceDocument[];
+  on: ISODate;
+  vehicles?: readonly Pick<Vehicle, 'driverEmployeeId' | 'archived'>[];
+}): MissingDocument[] {
+  const licences = new Map<ID, ComplianceDocument[]>();
+  for (const doc of input.documents) {
+    if (doc.type !== 'driving_licence' || doc.ownerType !== 'employee' || !doc.employeeId) continue;
+    licences.set(doc.employeeId, [...(licences.get(doc.employeeId) ?? []), doc]);
+  }
+  const out: MissingDocument[] = [];
+  for (const employee of input.employees) {
+    if (!isCurrent(employee) || !requiresDrivingLicence(employee, input.vehicles)) continue;
+    const licence = currentDrivingLicence(licences.get(employee.id) ?? [], employee.id);
+    // The one expiring last is valid (or has no expiry date): nothing is missing.
+    if (licence && (!licence.expiryDate || licence.expiryDate >= input.on)) continue;
+    out.push({
+      employeeId: employee.id,
+      type: 'driving_licence',
+      reason: licence ? 'expired' : 'missing',
+      document: licence,
+    });
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */

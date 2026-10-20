@@ -1286,6 +1286,12 @@ export interface Employee {
   centralCardExpiry?: ISODate | null;
   jobTitle: string;
   jobTitleAr?: string;
+  /**
+   * Drives for work, so needs a valid driving licence: true or false as set
+   * on the employee's page. Missing or null: decided by the job title (see
+   * requiresDrivingLicence).
+   */
+  drivingLicenceRequired?: boolean | null;
   department: string;
   hireDate: ISODate | null;
   probationEnd: ISODate | null;
@@ -1397,6 +1403,8 @@ export interface ComplianceDocument {
    * and activity (a cost sheet with guards' salaries).
    */
   confidential?: boolean;
+  /** The class of a driving licence, as written on it (فئة الرخصة); free text. */
+  licenceClass?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1482,6 +1490,12 @@ export interface PeopleSettings {
    * are typed freely, as before.
    */
   departments?: Department[];
+  /**
+   * Employees who drive for work (by their job title, or as set on their
+   * page) are flagged when they hold no valid driving licence. Missing or
+   * false: nothing is flagged, as before.
+   */
+  drivingLicences?: boolean;
   updatedAt: Timestamp;
 }
 

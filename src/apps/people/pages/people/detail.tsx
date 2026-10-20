@@ -17,7 +17,7 @@ import {
   employeeStatusLabel,
   needsResidency,
 } from '@/lib/hr/employees';
-import { documentTypeInfo, normalizeReminderDays } from '@/lib/compliance';
+import { checksDrivingLicences, documentTypeInfo, normalizeReminderDays } from '@/lib/compliance';
 import { departmentLabel } from '@/lib/hr/departments';
 import { bankFromIban, formatIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { countryName } from '@/lib/geo';
@@ -311,6 +311,7 @@ export default function EmployeeDetailPage() {
               records={records}
               employees={employees}
               reminderDays={normalizeReminderDays(settings.reminderDays)}
+              drivingLicences={checksDrivingLicences(settings)}
             />
             <EosiCard employee={employee} divisor={settings.eosDailyDivisor} />
             <Card>
