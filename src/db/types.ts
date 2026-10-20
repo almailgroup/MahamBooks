@@ -139,7 +139,19 @@ export interface DocumentDefaults {
   showAmountInWords?: boolean;
   /** Print the Hijri (Umm al-Qura) date next to the issue date. */
   showHijriDate?: boolean;
+  /**
+   * What the QR code on unpaid invoices opens: the payment link, or the
+   * invoice's own pay page once online payments are set up. Missing is the
+   * payment link. Whether it prints at all is `PaymentSettings.showQrCode`.
+   */
+  qrContent?: QrContent;
 }
+
+/** What a printed QR code opens. */
+export type QrContent = 'payment_link' | 'pay_page';
+
+/** Ink of the printed signature: as uploaded, or recoloured to blue pen ink. */
+export type SignatureInk = 'original' | 'blue';
 
 export interface Branding {
   /** Hex color used as the accent in templates, e.g. "#4f46e5". */
@@ -156,6 +168,14 @@ export interface Branding {
   stamp?: string | null;
   /** Authorised signature image as a data URL. */
   signature?: string | null;
+  /**
+   * The signature's ink. With 'blue', `signature` holds the blue version,
+   * made once when it was uploaded (so every version prints it as it is),
+   * and `signatureOriginal` the upload. Missing is 'original'.
+   */
+  signatureInk?: SignatureInk;
+  /** The signature as uploaded (at most 600 px), kept while it prints in blue. */
+  signatureOriginal?: string | null;
 }
 
 export interface PaymentSettings {

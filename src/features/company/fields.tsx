@@ -167,7 +167,8 @@ const CHECKERBOARD = {
 
 /**
  * Upload for a stamp or signature image. The image is re-encoded as PNG, so
- * a transparent background stays transparent on the documents.
+ * a transparent background stays transparent on the documents. `onChange`
+ * may take its time (the signature is recoloured): the field shows it is busy.
  */
 export function ImageField({
   label,
@@ -175,28 +176,35 @@ export function ImageField({
   onChange,
   description,
   uploadLabel,
+  actions,
+  processing = false,
   className,
 }: {
   label: string;
   value: string | null | undefined;
-  onChange: (value: string | null) => void;
+  onChange: (value: string | null) => void | Promise<void>;
   description: ReactNode;
   uploadLabel: string;
+  /** More buttons next to Replace and Remove. */
+  actions?: ReactNode;
+  /** Busy elsewhere (an ink being applied). */
+  processing?: boolean;
   className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const busy = uploading || processing;
 
   const handle = async (file: File | undefined) => {
     if (!file) return;
-    setBusy(true);
+    setUploading(true);
     try {
-      onChange(await logoFromFile(file));
+      await onChange(await logoFromFile(file));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not use this image.'));
     } finally {
-      setBusy(false);
+      setUploading(false);
     }
   };
 
@@ -235,12 +243,13 @@ export function ImageField({
           </span>
         )}
       </button>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => input.current?.click()} loading={busy}>
           {value ? t('Replace') : t('Choose file')}
         </Button>
+        {actions}
         {value ? (
-          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
+          <Button variant="ghost" size="sm" onClick={() => void onChange(null)} disabled={busy}>
             <Trash2 /> {t('Remove')}
           </Button>
         ) : null}

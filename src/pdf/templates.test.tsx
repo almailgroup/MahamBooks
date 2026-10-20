@@ -165,6 +165,15 @@ const variants: Variant[] = [
     },
   },
   {
+    name: 'draft with signature and stamp',
+    languages: ['en', 'ar-en'],
+    company: () => ({
+      ...company,
+      branding: { ...company.branding, signature: IMAGE, stamp: IMAGE },
+    }),
+    doc: (l) => sampleDocument(company, client, 'invoice', { status: 'draft' }, l),
+  },
+  {
     name: 'goods with delivery',
     languages: ['ar-en'],
     doc: (l) =>
@@ -248,6 +257,45 @@ describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, tem
     30000,
   );
 });
+
+/** The words of a PDF, without spaces (letter-spaced words come out spaced). */
+async function pdfText(pdf: Buffer): Promise<string> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task = pdfjs.getDocument({ data: new Uint8Array(pdf), verbosity: 0 });
+  const doc = await task.promise;
+  const words: string[] = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const content = await (await doc.getPage(n)).getTextContent();
+    for (const item of content.items) if ('str' in item) words.push(item.str);
+  }
+  await task.destroy();
+  return words.join('').replace(/\s+/g, '');
+}
+
+describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, template) => {
+  const render = async (status: 'draft' | 'sent') => {
+    const doc = sampleDocument(company, client, 'invoice', { status }, 'ar-en');
+    const model = buildRenderModel(doc, company, client, { language: 'ar-en' });
+    return pdfText(await renderToBuffer(createPdfElement(model, template.id).element));
+  };
+
+  it('draws the Draft watermark on drafts only', async () => {
+    const draft = await render('draft');
+    expect(draft).toContain('مسودة');
+    expect(draft).toContain('DRAFT');
+    const sent = await render('sent');
+    expect(sent).not.toContain('مسودة');
+    expect(sent).not.toContain('DRAFT');
+  }, 30000);
+});
+
+it('keeps a company’s longer wording for drafts on the page', async () => {
+  const own: Company = { ...company, labels: { draftStamp: 'Draft copy, not for payment' } };
+  const doc = sampleDocument(own, client, 'invoice', { status: 'draft' }, 'en');
+  const model = buildRenderModel(doc, own, client, { language: 'en' });
+  const text = await pdfText(await renderToBuffer(createPdfElement(model, 'modern').element));
+  expect(text).toContain('DRAFTCOPY,NOTFORPAYMENT');
+}, 30000);
 
 describe('template registry', () => {
   it('has unique ids and complete metadata', () => {

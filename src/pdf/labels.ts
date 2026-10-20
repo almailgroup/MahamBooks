@@ -80,6 +80,7 @@ export const LABEL_KEYS = [
   'deliveredStamp',
   'cancelledStamp',
   'receiverSignature',
+  'draftStamp',
 ] as const;
 
 export type LabelKey = (typeof LABEL_KEYS)[number];
@@ -173,6 +174,7 @@ const en: Labels = {
   deliveredStamp: 'Delivered',
   cancelledStamp: 'Cancelled',
   receiverSignature: 'Signature',
+  draftStamp: 'Draft',
 };
 
 /** Arabic as printed on Kuwaiti invoices (see docs/arabic-glossary.md). */
@@ -256,6 +258,7 @@ const ar: Labels = {
   deliveredStamp: 'تم التسليم',
   cancelledStamp: 'ملغى',
   receiverSignature: 'التوقيع',
+  draftStamp: 'مسودة',
 };
 
 const translations: Record<LabelLanguage, Labels> = {
@@ -341,6 +344,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Livré',
     cancelledStamp: 'Annulé',
     receiverSignature: 'Signature',
+    draftStamp: 'Brouillon',
   },
   es: {
     invoice: 'Factura',
@@ -422,6 +426,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Entregado',
     cancelledStamp: 'Cancelado',
     receiverSignature: 'Firma',
+    draftStamp: 'Borrador',
   },
   de: {
     invoice: 'Rechnung',
@@ -503,6 +508,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Geliefert',
     cancelledStamp: 'Storniert',
     receiverSignature: 'Unterschrift',
+    draftStamp: 'Entwurf',
   },
   pt: {
     invoice: 'Fatura',
@@ -584,6 +590,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Entregue',
     cancelledStamp: 'Cancelado',
     receiverSignature: 'Assinatura',
+    draftStamp: 'Rascunho',
   },
   it: {
     invoice: 'Fattura',
@@ -665,6 +672,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Consegnato',
     cancelledStamp: 'Annullato',
     receiverSignature: 'Firma',
+    draftStamp: 'Bozza',
   },
   nl: {
     invoice: 'Factuur',
@@ -746,6 +754,7 @@ const translations: Record<LabelLanguage, Labels> = {
     deliveredStamp: 'Geleverd',
     cancelledStamp: 'Geannuleerd',
     receiverSignature: 'Handtekening',
+    draftStamp: 'Concept',
   },
 };
 

@@ -118,8 +118,13 @@ function usePurchaseOrderPdf(
         : 'document.pdf',
     [doc, vendor],
   );
+  // The preview's PDF, unless it is still being redrawn after a change.
   const getPdf = async () =>
-    pdf.blob ?? (doc ? (await generatePdf(doc, company, vendor ?? null)).blob : null);
+    pdf.blob && !pdf.loading
+      ? pdf.blob
+      : doc
+        ? (await generatePdf(doc, company, vendor ?? null)).blob
+        : null;
   return { pdf, fileName, getPdf };
 }
 

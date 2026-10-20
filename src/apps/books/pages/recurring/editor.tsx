@@ -112,8 +112,11 @@ export default function RecurringEditorPage() {
     () => (profile ? invoiceFromProfile(profile, nextDate, locale, client) : null),
     [profile, nextDate, locale, client],
   );
+  // Printed as it is issued: sent (signed and stamped) when the profile marks it so.
   const pdf = useLivePdf(
-    preview ? { ...preview, number: t('Next') } : null,
+    preview && profile
+      ? { ...preview, number: t('Next'), status: profile.markSent ? 'sent' : preview.status }
+      : null,
     company,
     client,
     profile?.template.templateId ?? company.branding.templateId,

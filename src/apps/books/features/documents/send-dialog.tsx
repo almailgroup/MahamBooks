@@ -77,7 +77,8 @@ export function SendDialog({
   company: Company;
   client: Client | null;
   kind?: EmailKind;
-  getPdf: () => Promise<Blob>;
+  /** The PDF; `issued` asks for a draft's copy as sent, when it is marked as sent too. */
+  getPdf: (issued?: boolean) => Promise<Blob>;
   fileName: string;
 }) {
   const template =
@@ -124,7 +125,7 @@ export function SendDialog({
     setBusy('mail');
     try {
       // Email links cannot carry attachments, so download the PDF to attach.
-      downloadBlob(await getPdf(), fileName);
+      downloadBlob(await getPdf(markAsSent), fileName);
       window.location.assign(mailtoLink({ to: recipients, subject, body }));
       await afterSend(t('email app'));
       toast.success(t('PDF downloaded. Attach it to the email that just opened.'));
@@ -139,7 +140,9 @@ export function SendDialog({
   const share = async () => {
     setBusy('share');
     try {
-      const file = new File([await getPdf()], downloadName(fileName), { type: 'application/pdf' });
+      const file = new File([await getPdf(markAsSent)], downloadName(fileName), {
+        type: 'application/pdf',
+      });
       await navigator.share({ files: [file], title: subject, text: body });
       await afterSend(t('share'));
       onOpenChange(false);
@@ -219,7 +222,11 @@ export function SendDialog({
               checked={markAsSent}
               onChange={(e) => setMarkAsSent(e.target.checked)}
               label={t('Mark as sent')}
-              description={t('Moves the document out of drafts.')}
+              description={
+                markAsSent
+                  ? t('Moves the document out of drafts.')
+                  : t('The PDF stays a draft: a DRAFT watermark, without the signature and stamp.')
+              }
             />
           ) : null}
         </DialogBody>
@@ -276,7 +283,8 @@ export function WhatsAppDialog({
   doc: InvoiceDocument;
   company: Company;
   client: Client | null;
-  getPdf: () => Promise<Blob>;
+  /** The PDF; `issued` asks for a draft's copy as sent, when it is marked as sent too. */
+  getPdf: (issued?: boolean) => Promise<Blob>;
   fileName: string;
 }) {
   const fmt = useFormat();
@@ -332,7 +340,9 @@ export function WhatsAppDialog({
   const sharePdf = async () => {
     setBusy(true);
     try {
-      const file = new File([await getPdf()], downloadName(fileName), { type: 'application/pdf' });
+      const file = new File([await getPdf(markAsSent)], downloadName(fileName), {
+        type: 'application/pdf',
+      });
       await navigator.share({ files: [file], text });
       await afterShare(t('share'));
       onOpenChange(false);
@@ -425,7 +435,11 @@ export function WhatsAppDialog({
               checked={markAsSent}
               onChange={(e) => setMarkAsSent(e.target.checked)}
               label={t('Mark as sent')}
-              description={t('Moves the document out of drafts.')}
+              description={
+                markAsSent
+                  ? t('Moves the document out of drafts.')
+                  : t('The PDF stays a draft: a DRAFT watermark, without the signature and stamp.')
+              }
             />
           ) : null}
         </DialogBody>

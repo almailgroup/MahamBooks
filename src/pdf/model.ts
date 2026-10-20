@@ -19,6 +19,7 @@ import { normalizeHex } from '@/lib/color';
 import { bankFromIban, formatHijri, formatIban, isValidIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { amountInWords } from '@/lib/words';
 import { isISODate, today } from '@/lib/dates';
+import { issuedStatus } from '@/lib/status';
 import type { FontId } from './fonts';
 import { documentLabels, isRtlLanguage, type LabelKey, type Labels } from './labels';
 import { ltr } from './bidi';
@@ -150,6 +151,8 @@ export interface RenderModel {
   stamp: { text: string; secondary?: string; tone: 'green' | 'red' | 'gray' } | null;
   /** Signature, company stamp and "received by" boxes; null when not printed. */
   signatures: { signature: string | null; stamp: string | null; receivedBy: boolean } | null;
+  /** "Draft" across every page of a draft, which prints without the signature and stamp. */
+  watermark: 'draft' | null;
   /**
    * Delivery notes: both sides sign and stamp, with who received the goods
    * (blank lines to fill in by hand until it is marked as delivered).
@@ -243,7 +246,7 @@ const RECIPIENT_KEYS: Record<PrintableDocumentType, LabelKey> = {
 };
 
 export interface BuildModelOptions {
-  /** Data URL of the payment-link QR code, if any. */
+  /** Data URL of the QR code of `qrLinkOf`, if any. */
   qrCode?: string | null;
   /** Accent override (template gallery previews). */
   accent?: string;
@@ -279,6 +282,16 @@ export function showsAmountInWords(company: Company): boolean {
   );
 }
 
+/**
+ * A draft prints as one: without the signature and stamp images, under a
+ * "Draft" watermark, so it can't pass for the issued document. A delivery
+ * note has no draft of that kind: it is printed to go with the goods, and
+ * marked as delivered once signed for.
+ */
+export function printsAsDraft(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean {
+  return doc.status === 'draft' && issuedStatus(doc.type) !== null;
+}
+
 /** The payment link printed on a document: its own (unless expired), else the company's. */
 export function paymentLinkOf(
   doc: Pick<InvoiceDocument, 'paymentLink'>,
@@ -288,6 +301,19 @@ export function paymentLinkOf(
   const own = doc.paymentLink;
   if (own && clean(own.url) && !(own.expiresAt && own.expiresAt < on)) return clean(own.url);
   return clean(company.payment.paymentLink);
+}
+
+/**
+ * What the QR code on a document opens. The pay page (`qrContent:
+ * 'pay_page'`) belongs to online payments; until a document has one, the QR
+ * opens the payment link, as it does by default.
+ */
+export function qrLinkOf(
+  doc: Pick<InvoiceDocument, 'paymentLink'>,
+  company: Company,
+  on: ISODate = today(),
+): string {
+  return paymentLinkOf(doc, company, on);
 }
 
 const IBAN_PATTERN = /\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){10,30}\b/g;
@@ -644,13 +670,15 @@ export function buildRenderModel(
     else if (doc.status === 'cancelled') stamp = of('cancelledStamp', 'gray');
   }
 
-  const signatureImage = company.branding.signature ?? null;
-  const stampImage = company.branding.stamp ?? null;
+  const draft = printsAsDraft(doc);
+  const signatureImage = draft ? null : (company.branding.signature ?? null);
+  const stampImage = draft ? null : (company.branding.stamp ?? null);
   // Kuwaiti invoices carry the supplier's signature and stamp, so Arabic and
-  // bilingual documents always leave room for them.
+  // bilingual documents always leave room for them (a draft too, empty).
   // Delivery notes are always signed and stamped by both sides.
+  const signed = Boolean(company.branding.signature || company.branding.stamp);
   const signatures =
-    rtl || signatureImage || stampImage || note
+    rtl || signed || note
       ? {
           signature: signatureImage,
           stamp: stampImage,
@@ -668,6 +696,7 @@ export function buildRenderModel(
 
   const pay = company.payment;
   const link = paymentLinkOf(doc, company);
+  const qrLink = qrLinkOf(doc, company);
   // Payment instructions only make sense while something is still owed (or, on
   // a proforma, asked for in advance).
   const showPayment = (type === 'invoice' || type === 'proforma') && !isVoid && result.balance > 0;
@@ -684,7 +713,7 @@ export function buildRenderModel(
           details,
           instructions: clean(pay.instructions),
           link,
-          qr: pay.showQrCode && link ? (options.qrCode ?? null) : null,
+          qr: pay.showQrCode && qrLink ? (options.qrCode ?? null) : null,
         }
       : null;
 
@@ -783,6 +812,7 @@ export function buildRenderModel(
     amountInWords: [...new Set(words)],
     stamp,
     signatures,
+    watermark: draft ? 'draft' : null,
     receipt,
     notes: clean(doc.notes),
     terms: clean(doc.terms),

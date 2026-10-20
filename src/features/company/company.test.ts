@@ -5,6 +5,7 @@ import { createCompany } from '@/db/defaults';
 import { createTaxRate } from '@/db/defaults';
 import type { CompanyHoliday } from '@/db/types';
 import { bankAccountOf, composeBankDetails, emptyBankAccount, withBankAccount } from './bank';
+import { brandingTooLarge, MAX_COMPANY_BYTES } from './branding';
 import { ibanProblem } from './bank-fields';
 import {
   companyHolidays,
@@ -203,5 +204,38 @@ describe('reading CSV files', () => {
     const utf16 = new Uint8Array([0xff, 0xfe, 0x27, 0x06, 0x44, 0x06, 0x09, 0x00, 0x41, 0x00]);
     expect(decodeCsv(utf16)).toBe('ال\tA');
     expect(guessColumns('products', decodeCsv(cp1256).split(','))).toMatchObject({ name: 0 });
+  });
+});
+
+describe('pictures on the company record', () => {
+  const picture = (bytes: number) => `data:image/png;base64,${'A'.repeat(bytes)}`;
+  const saved = createCompany({ name: 'Sample Trading' });
+  const withPictures = (patch: Partial<typeof saved.branding>) => ({
+    ...saved,
+    branding: { ...saved.branding, ...patch },
+  });
+
+  it('refuses new pictures that take the record past 2.5 MB', () => {
+    const third = Math.ceil(MAX_COMPANY_BYTES / 3);
+    expect(brandingTooLarge(withPictures({ logo: picture(200_000) }), saved)).toBe(false);
+    const heavy = withPictures({
+      logo: picture(third),
+      stamp: picture(third),
+      signature: picture(third / 2),
+      signatureOriginal: picture(third / 2),
+    });
+    expect(brandingTooLarge(heavy, saved)).toBe(true);
+  });
+
+  it('lets a heavy record save other settings, and lighter pictures', () => {
+    const heavy = withPictures({ logo: picture(MAX_COMPANY_BYTES) });
+    expect(brandingTooLarge({ ...heavy, name: 'Sample Trading Co.' }, heavy)).toBe(false);
+    const lighter = {
+      ...heavy,
+      branding: { ...heavy.branding, logo: picture(MAX_COMPANY_BYTES - 10) },
+    };
+    expect(brandingTooLarge(lighter, heavy)).toBe(false);
+    // A missing original and an empty one are the same.
+    expect(brandingTooLarge(withPictures({ signatureOriginal: null }), saved)).toBe(false);
   });
 });

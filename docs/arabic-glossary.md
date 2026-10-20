@@ -192,6 +192,8 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | W.L.L.                              | ذ.م.م               |
 | Signature                           | التوقيع             |
 | Stamp                               | الختم               |
+| Blue ink (of the signature)         | حبر أزرق            |
+| Draft watermark                     | علامة مائية «مسودة» |
 
 ## People and payroll
 

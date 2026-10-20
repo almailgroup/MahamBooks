@@ -98,6 +98,7 @@ export function DocShell({
       <Page size={model.pageSize} style={style}>
         <DirectionProvider dir={model.dir} font={style.fontFamily}>
           {children}
+          <DraftWatermark model={model} theme={theme} />
         </DirectionProvider>
       </Page>
     </Document>
@@ -830,6 +831,53 @@ export function Stamp({
         <Text style={sx(text, { fontSize: size * 0.45, letterSpacing: 1.5, marginTop: -1 })}>
           {model.stamp.secondary}
         </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * "Draft" across the middle of every page of a draft (with the English under
+ * it in bilingual documents). Drawn last and faint, so no template's colours
+ * hide it and the document stays readable.
+ */
+export function DraftWatermark({ model, theme }: { model: RenderModel; theme: TemplateTheme }) {
+  if (model.watermark !== 'draft') return null;
+  const words = model.labels.draftStamp;
+  const english = model.secondary?.draftStamp;
+  // Smaller for longer words (a company's own wording), to stay on the page.
+  const sized = (value: string, size: number): Style => ({
+    fontSize: Math.max(size / 4, Math.min(size, (size * 8) / Math.max(1, value.length))),
+  });
+  const text: Style = {
+    color: '#475569',
+    fontFamily: theme.fonts.heading,
+    fontWeight: 700,
+    lineHeight: 1.3,
+    letterSpacing: 6,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  };
+  // A band across the middle of the page, high enough for the words (text
+  // that doesn't fit its box is left out), turned about its centre.
+  const height = 300;
+  return (
+    <View
+      fixed
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: (theme.pageHeight - height) / 2,
+        width: theme.pageWidth,
+        height,
+        justifyContent: 'center',
+        transform: 'rotate(-30deg)',
+        opacity: 0.1,
+      }}
+    >
+      <Text style={sx(text, sized(words, 96))}>{words}</Text>
+      {english ? (
+        <Text style={sx(text, sized(english, 40), { letterSpacing: 4 })}>{english}</Text>
       ) : null}
     </View>
   );

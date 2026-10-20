@@ -1,12 +1,7 @@
 import { t } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { Client, Company, DocumentLanguage } from '@/db/types';
-import {
-  buildRenderModel,
-  paymentLinkOf,
-  type RenderableDocument,
-  type RenderModel,
-} from '@/pdf/model';
+import { buildRenderModel, qrLinkOf, type RenderableDocument, type RenderModel } from '@/pdf/model';
 import { renderPdf } from '@/pdf/client';
 
 const qrCache = new Map<string, string>();
@@ -26,7 +21,7 @@ export async function qrDataUrl(link: string): Promise<string | null> {
 }
 
 /**
- * Builds the render model, including the QR code of the payment link (the
+ * Builds the render model, including the QR code (of the payment link: the
  * document's own link, else the company's) when enabled.
  */
 export async function prepareModel(
@@ -36,7 +31,7 @@ export async function prepareModel(
   accent?: string,
   language?: DocumentLanguage,
 ): Promise<RenderModel> {
-  const link = company.payment.showQrCode ? paymentLinkOf(doc, company) : '';
+  const link = company.payment.showQrCode ? qrLinkOf(doc, company) : '';
   const qrCode = link ? await qrDataUrl(link) : null;
   return buildRenderModel(doc, company, client, { qrCode, accent, language });
 }

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Company, CompanyBankAccount, KuwaitProfile } from '@/db/types';
-import { useFormat } from '@/app/company';
+import { useCompany, useFormat } from '@/app/company';
 import { accountingSettings } from '@/db/chart-setup';
 import { cashLimit, kuwaitProfile } from '@/lib/kuwait-rules';
 import { formatMoney } from '@/lib/format';
@@ -28,6 +28,8 @@ import {
   PhoneField,
 } from '@/features/company/fields';
 import { BankAccountFields, ibanProblem } from '@/features/company/bank-fields';
+import { SignatureField } from '@/features/company/signature-field';
+import { brandingTooLarge } from '@/features/company/branding';
 import { bankAccountOf, withBankAccount } from '@/features/company/bank';
 import { HolidaysEditor } from '@/features/company/holidays-editor';
 import { useTaxesEnabled } from '@/features/company/taxes';
@@ -73,6 +75,7 @@ function IdField({
 
 export default function CompanySettings() {
   const { draft, setDraft, update, dirty, saving, save, reset } = useCompanyDraft();
+  const company = useCompany();
   const fmt = useFormat();
   const taxesOn = useTaxesEnabled();
   const [params] = useSearchParams();
@@ -106,6 +109,12 @@ export default function CompanySettings() {
     }
     if (ibanProblem(account.iban)) {
       toast.error(t('Check the IBAN before saving.'));
+      return;
+    }
+    if (brandingTooLarge(draft, company)) {
+      toast.error(
+        t('The logo, stamp and signature are too large to keep together. Use smaller pictures.'),
+      );
       return;
     }
     void save();
@@ -423,14 +432,13 @@ export default function CompanySettings() {
             value={draft.branding.stamp}
             onChange={(stamp) => setBranding({ stamp })}
           />
-          <ImageField
-            label={t('Authorised signature')}
-            uploadLabel={t('Upload signature')}
-            description={t('Sign on white paper, take a photo, or use a transparent PNG.')}
-            value={draft.branding.signature}
-            onChange={(signature) => setBranding({ signature })}
-          />
+          <SignatureField branding={draft.branding} onChange={setBranding} />
         </div>
+        <p className="text-sm text-slate-500">
+          {t(
+            'Drafts print without the stamp and signature, under a DRAFT watermark, so they can’t pass for the documents you send.',
+          )}
+        </p>
       </SettingsSection>
 
       <SettingsSection

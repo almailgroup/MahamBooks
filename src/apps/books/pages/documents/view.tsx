@@ -44,7 +44,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { deliveryStatusMeta, displayStatus } from '@/lib/status';
+import { deliveryStatusMeta, displayStatus, issuedStatus } from '@/lib/status';
 import { hasPrices, postsToLedger } from '@/lib/document-types';
 import { daysBetween, today } from '@/lib/dates';
 import { t, tp } from '@/i18n';
@@ -63,6 +63,7 @@ import {
 import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { generatePdf, useLivePdf } from '@/components/pdf/use-pdf';
 import { downloadBlob, pdfFileName, printBlob } from '@/pdf/client';
+import { printsAsDraft } from '@/pdf/model';
 import {
   SendDialog,
   WhatsAppDialog,
@@ -201,7 +202,18 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     left('toDeliver');
   const settled = doc.status === 'invoiced' || doc.status === 'converted';
 
-  const getPdf = async () => pdf.blob ?? (await generatePdf(doc, company, client ?? null)).blob;
+  /**
+   * The PDF as the document is now (the preview's, unless it is still being
+   * redrawn after a change). `issued` gives a draft's copy as it is sent
+   * (signed and stamped, with no watermark), for sending it and marking it as
+   * sent at once.
+   */
+  const getPdf = async (issued = false) => {
+    const status = issued && printsAsDraft(doc) ? issuedStatus(doc.type) : null;
+    if (status) return (await generatePdf({ ...doc, status }, company, client ?? null)).blob;
+    if (pdf.blob && !pdf.loading) return pdf.blob;
+    return (await generatePdf(doc, company, client ?? null)).blob;
+  };
 
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -217,8 +229,14 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const download = () =>
     run('download', async () => {
       downloadBlob(await getPdf(), fileName);
-      if (doc.status === 'draft' && (emailed || type === 'proforma')) {
-        toast(t('Tip: mark the document as sent once you have shared it.'));
+      if (printsAsDraft(doc)) {
+        toast(
+          emailed || type === 'proforma'
+            ? t(
+                'Drafts print with a DRAFT watermark, without the signature and stamp. Mark it as sent for the copy to share.',
+              )
+            : t('Drafts print with a DRAFT watermark, without the signature and stamp.'),
+        );
       }
     });
 

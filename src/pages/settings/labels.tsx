@@ -93,6 +93,7 @@ const HUMAN: Record<LabelKey, string> = {
   deliveredStamp: msg('Delivered stamp'),
   cancelledStamp: msg('Cancelled stamp'),
   receiverSignature: msg('Signature of the person receiving'),
+  draftStamp: msg('Draft watermark'),
 };
 
 const HINTS: Partial<Record<LabelKey, string>> = {

@@ -1,3 +1,4 @@
+import type { SignatureInk } from '@/db/types';
 import { t } from '@/i18n';
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -38,6 +39,147 @@ export async function normalizeImage(src: string, maxSize = 800): Promise<string
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/png');
+}
+
+/** A picture's pixels (RGBA), drawn on a canvas, with its canvas. */
+async function pixelsOf(src: string) {
+  const img = await loadImage(src);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, img.naturalWidth || img.width);
+  canvas.height = Math.max(1, img.naturalHeight || img.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error(t('Your browser cannot process images.'));
+  ctx.drawImage(img, 0, 0);
+  return { canvas, ctx, image: ctx.getImageData(0, 0, canvas.width, canvas.height) };
+}
+
+/** Ballpoint blue, the colour of a signature signed in blue. */
+export const BLUE_INK: readonly [number, number, number] = [24, 58, 168];
+
+/** Paper is lighter than this (0 is black, 1 white) when a picture has no paper to read. */
+const PAPER = 0.8;
+/** How much darker than the paper a stroke is when it prints in full ink. */
+const INK_RAMP = 0.4;
+
+/** Brightness of a pixel, from 0 (black) to 255 (white). */
+const brightness = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
+
+/**
+ * Where paper ends and ink starts (0 black, 1 white), read from the picture:
+ * a little darker than its typical pixel, which is the paper of a photo or a
+ * scan, so the grey of a photographed sheet goes too. A picture that is mostly
+ * transparent already has no paper.
+ */
+export function paperThreshold(data: Uint8ClampedArray): number {
+  const counts = new Array<number>(256).fill(0);
+  let opaque = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    counts[Math.round(brightness(data[i], data[i + 1], data[i + 2]))]++;
+    opaque++;
+  }
+  if (opaque * 2 < data.length / 4) return PAPER;
+  let seen = 0;
+  let median = 255;
+  for (let level = 0; level < 256; level++) {
+    seen += counts[level];
+    if (seen * 2 >= opaque) {
+      median = level;
+      break;
+    }
+  }
+  return Math.min(0.9, Math.max(INK_RAMP + 0.1, median / 255 - 0.1));
+}
+
+/**
+ * Recolours pixels (RGBA) to an ink: strokes darker than the paper take the
+ * ink's colour, fully at `threshold - INK_RAMP` and fading out towards the
+ * threshold, so soft edges stay soft; the paper becomes transparent.
+ * 'original' leaves them as they are. Returns a new array.
+ */
+export function inkPixels(
+  data: Uint8ClampedArray,
+  ink: SignatureInk,
+  threshold = paperThreshold(data),
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(data);
+  if (ink !== 'blue') return out;
+  const [r, g, b] = BLUE_INK;
+  const paper = threshold * 255;
+  const ramp = INK_RAMP * 255;
+  for (let i = 0; i < out.length; i += 4) {
+    const level = brightness(data[i], data[i + 1], data[i + 2]);
+    const strength = Math.min(1, Math.max(0, (paper - level) / ramp));
+    out[i] = r;
+    out[i + 1] = g;
+    out[i + 2] = b;
+    out[i + 3] = Math.round(data[i + 3] * strength);
+  }
+  return out;
+}
+
+/**
+ * Whether the visible pixels are all in blue ink, as `inkPixels` leaves them.
+ * A signature replaced by an older version of the app is not.
+ */
+export function isBlueInk(data: Uint8ClampedArray): boolean {
+  let visible = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    // Faint pixels lose their exact colour in the PNG.
+    if (data[i + 3] < 64) continue;
+    visible++;
+    if (BLUE_INK.some((c, k) => Math.abs(data[i + k] - c) > 12)) return false;
+  }
+  return visible > 0;
+}
+
+/**
+ * The image in an ink, as a PNG: for blue, dark strokes become blue and the
+ * paper transparent. Done once, when a signature is added or its ink changed.
+ */
+export async function inkImage(src: string, ink: SignatureInk): Promise<string> {
+  if (ink !== 'blue') return src;
+  const { canvas, ctx, image } = await pixelsOf(src);
+  image.data.set(inkPixels(image.data, ink));
+  ctx.putImageData(image, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+/** The ink an image is in: blue when `inkImage` made it, else the original. */
+export async function imageInk(src: string): Promise<SignatureInk> {
+  const { image } = await pixelsOf(src);
+  return isBlueInk(image.data) ? 'blue' : 'original';
+}
+
+/**
+ * The box around what is drawn on a transparent canvas (pixels as RGBA, row
+ * by row), with `margin` pixels around it; null when nothing is.
+ */
+export function inkBounds(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  margin = 0,
+): { x: number; y: number; width: number; height: number } | null {
+  let [left, top, right, bottom] = [width, height, -1, -1];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] === 0) continue;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < 0) return null;
+  const x = Math.max(0, left - margin);
+  const y = Math.max(0, top - margin);
+  return {
+    x,
+    y,
+    width: Math.min(width, right + 1 + margin) - x,
+    height: Math.min(height, bottom + 1 + margin) - y,
+  };
 }
 
 export async function logoFromFile(file: File): Promise<string> {

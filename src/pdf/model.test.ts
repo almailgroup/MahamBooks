@@ -8,6 +8,8 @@ import {
   documentLanguage,
   paymentLinkOf,
   printedBankDetails,
+  printsAsDraft,
+  qrLinkOf,
   showsAmountInWords,
 } from './model';
 import { sampleClient, sampleCompany, sampleDocument, sampleGoods } from './sample';
@@ -351,6 +353,87 @@ describe('buildRenderModel: Kuwaiti invoice details', () => {
     });
     expect(m.stamp).toEqual({ text: 'مدفوعة', secondary: 'Paid', tone: 'green' });
     expect(m.amountDue).toMatchObject({ label: 'الرصيد المستحق', value: kd('0.000') });
+  });
+});
+
+describe('buildRenderModel: drafts, signature and QR code', () => {
+  const SIGNATURE = 'data:image/png;base64,U0lH';
+  const STAMP = 'data:image/png;base64,U1RN';
+  const QR = 'data:image/png;base64,UVI=';
+  const signed: Company = {
+    ...company,
+    branding: { ...company.branding, signature: SIGNATURE, stamp: STAMP },
+  };
+
+  it('prints a draft without the signature and stamp, under a Draft watermark', () => {
+    const m = model('ar-en', { status: 'draft' }, { company: signed });
+    expect(m.signatures).toEqual({ signature: null, stamp: null, receivedBy: true });
+    expect(m.watermark).toBe('draft');
+    expect([m.labels.draftStamp, m.secondary?.draftStamp]).toEqual(['مسودة', 'Draft']);
+    // An English draft keeps the empty boxes, where the copy sent is signed.
+    expect(model('en', { status: 'draft' }, { company: signed }).signatures).toEqual({
+      signature: null,
+      stamp: null,
+      receivedBy: true,
+    });
+    for (const type of ['quote', 'credit', 'proforma', 'sales_order', 'purchase_order'] as const) {
+      expect(model('en', { type, status: 'draft' }, { company: signed }).watermark).toBe('draft');
+    }
+  });
+
+  it('keeps the signature and stamp on what is sent, and on delivery notes', () => {
+    for (const status of ['sent', 'partial', 'paid', 'void'] as const) {
+      const m = model('en', { status }, { company: signed });
+      expect(m.watermark).toBeNull();
+      expect(m.signatures).toMatchObject({ signature: SIGNATURE, stamp: STAMP });
+    }
+    // A delivery note goes out with the goods before it is marked as delivered.
+    const note = model('en', { type: 'delivery_note', status: 'draft' }, { company: signed });
+    expect(note.watermark).toBeNull();
+    expect(note.signatures).toMatchObject({ signature: SIGNATURE, stamp: STAMP });
+    expect(printsAsDraft({ type: 'delivery_note', status: 'draft' })).toBe(false);
+    expect(printsAsDraft({ type: 'invoice', status: 'draft' })).toBe(true);
+  });
+
+  it('prints no QR code when it is off, whatever it is set to open', () => {
+    for (const qrContent of [undefined, 'payment_link', 'pay_page'] as const) {
+      const c: Company = {
+        ...company,
+        payment: { ...company.payment, showQrCode: false },
+        defaults: { ...company.defaults, qrContent },
+      };
+      const m = buildRenderModel(sampleDocument(c, client), c, client, { qrCode: QR });
+      expect(m.payment?.link).toBe('https://pay.example.com/alwaha');
+      expect(m.payment?.qr).toBeNull();
+    }
+  });
+
+  it('opens the payment link from the QR code until there is a pay page', () => {
+    for (const qrContent of [undefined, 'payment_link', 'pay_page'] as const) {
+      const c: Company = { ...company, defaults: { ...company.defaults, qrContent } };
+      expect(qrLinkOf({ paymentLink: null }, c)).toBe('https://pay.example.com/alwaha');
+      const m = buildRenderModel(sampleDocument(c, client), c, client, { qrCode: QR });
+      expect(m.payment?.qr).toBe(QR);
+    }
+  });
+
+  it('prints as before when the new settings are missing', () => {
+    // As an older version saves the company: no ink, no original, no QR choice.
+    const before = model('ar-en', {}, { company: signed });
+    expect(before.signatures).toEqual({ signature: SIGNATURE, stamp: STAMP, receivedBy: true });
+    expect(before.watermark).toBeNull();
+    const chosen: Company = {
+      ...signed,
+      branding: { ...signed.branding, signatureInk: 'original', signatureOriginal: null },
+      defaults: { ...signed.defaults, qrContent: 'payment_link' },
+    };
+    expect(model('ar-en', {}, { company: chosen })).toEqual(before);
+    // The blue signature is the one printed, so older versions print it too.
+    const blue: Company = {
+      ...signed,
+      branding: { ...signed.branding, signatureInk: 'blue', signatureOriginal: STAMP },
+    };
+    expect(model('en', {}, { company: blue }).signatures?.signature).toBe(SIGNATURE);
   });
 });
 

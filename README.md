@@ -128,7 +128,9 @@ and the compliance calendar (Maham Compliance).
 ### Everything else
 
 - 10 PDF templates with your logo, brand colour, stamp and signature, and a
-  live preview while you type.
+  live preview while you type. The signature can be drawn on the screen and
+  printed in blue ink (Settings → Company profile → Branding). Drafts print
+  with a DRAFT watermark instead of the stamp and signature.
 - Several companies in one app.
 - **Accounts and teams**: keep a company in the cloud, use it on every device
   and invite your accountant and staff by a link on WhatsApp or email, each

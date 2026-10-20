@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import { CheckCircle2, Eye } from 'lucide-react';
-import type { Company, DocumentLanguage } from '@/db/types';
+import type { Company, DocumentLanguage, QrContent } from '@/db/types';
 import { TEMPLATE_META, type TemplateMeta } from '@/pdf/template-meta';
 import { sampleClient, sampleCompany, sampleDocument } from '@/pdf/sample';
 import { showsAmountInWords } from '@/pdf/model';
@@ -169,6 +170,35 @@ export default function TemplatesPage() {
             description={t('Print the Hijri date next to the issue date.')}
           />
         </div>
+      </Card>
+
+      <Card className="mb-6 grid gap-x-6 gap-y-3 p-4 sm:p-6 lg:grid-cols-3">
+        <Field
+          label={t('The QR code opens')}
+          hint={t('Printed on unpaid invoices and proformas, for paying by phone.')}
+        >
+          {(id) => (
+            <Select
+              id={id}
+              value={draft.defaults.qrContent ?? 'payment_link'}
+              onChange={(e) => setDefaults({ qrContent: e.target.value as QrContent })}
+              disabled={!draft.payment.showQrCode}
+            >
+              <option value="payment_link">{t('The payment link')}</option>
+              <option value="pay_page" disabled>
+                {t('The invoice’s pay page (with online payments)')}
+              </option>
+            </Select>
+          )}
+        </Field>
+        <p className="text-sm text-slate-500 lg:col-span-2 lg:self-center">
+          {draft.payment.showQrCode
+            ? t('The QR code is on.')
+            : t('The QR code is off, so documents print none.')}{' '}
+          <Link to="/settings/payments" className="text-primary-700 font-medium underline">
+            {t('Turn it on or off in Payment details')}
+          </Link>
+        </p>
       </Card>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
