@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/overlay';
 import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
 import { useCurrentApp } from '@/suite/current-app';
 import { AppTiles, CurrentApp } from '@/suite/switcher';
@@ -75,6 +76,7 @@ export function CompanyLogo({
 function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
   const { company, companies, switchCompany } = useCompanyContext();
   const navigate = useNavigate();
+  const type = companyTypeName(company.companyType);
   const go = (to: string) => {
     onNavigate?.();
     navigate(to);
@@ -92,7 +94,14 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
             <span dir="auto" className="block truncate text-sm font-semibold text-slate-900">
               {localName(company)}
             </span>
-            <span className="block truncate text-xs text-slate-500">{company.currency}</span>
+            <span className="block truncate text-xs text-slate-500">
+              {type ? (
+                <>
+                  <bdi>{type}</bdi> ·{' '}
+                </>
+              ) : null}
+              {company.currency}
+            </span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-slate-400" aria-hidden />
         </button>
@@ -108,8 +117,15 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
             }}
             icon={c.id === company.id ? <Check /> : <span className="inline-block size-4" />}
           >
-            <span dir="auto" className="truncate">
-              {localName(c)}
+            <span className="min-w-0">
+              <span dir="auto" className="block truncate">
+                {localName(c)}
+              </span>
+              {companyTypeName(c.companyType) ? (
+                <span dir="auto" className="block truncate text-xs text-slate-500">
+                  {companyTypeName(c.companyType)}
+                </span>
+              ) : null}
             </span>
           </DropdownItem>
         ))}

@@ -66,6 +66,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['registrationLabel', msg('Registration number')],
   ['registrationNumber', msg('Registration number')],
   ['kuwait', msg('Registration')],
+  ['companyType', msg('Company type')],
   ['address', msg('Address')],
   ['currency', msg('Currency')],
   ['currencyDisplay', msg('Currency')],

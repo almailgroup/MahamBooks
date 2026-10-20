@@ -17,6 +17,7 @@ import type {
 import { allocateNumber } from '@/lib/numbering';
 import { taxKind } from '@/lib/calc';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
+import { withTidyProfile } from '@/features/company/company-types';
 import { msg, t, tp } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
@@ -79,12 +80,14 @@ export async function setupCompany(
     [db.companies, db.taxRates, db.accounts, db.meta, db.activities],
     async () => {
       const { branding, defaults, kuwait, ...rest } = partial;
-      const company = createCompany(rest);
+      const created = createCompany(rest);
+      const given = Object.entries(kuwait ?? {}).filter(([, v]) => v !== undefined);
+      created.kuwait = { ...kuwaitProfile(created), ...Object.fromEntries(given) };
+      // The company type and the description of the legal form, tidied as Settings saves them.
+      const company = withTidyProfile(created, []);
       company.name = company.name.trim();
       if (company.nameAr !== undefined) company.nameAr = company.nameAr.trim();
       company.branding = { ...company.branding, ...branding };
-      const given = Object.entries(kuwait ?? {}).filter(([, v]) => v !== undefined);
-      company.kuwait = { ...kuwaitProfile(company), ...Object.fromEntries(given) };
       company.accounting = defaultAccountingSettings(company.address.country);
       const rates = taxRates
         .filter((t) => t.name.trim())

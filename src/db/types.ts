@@ -402,6 +402,8 @@ export type BusinessActivity =
 /** Kuwaiti registration details. Missing on companies created before; see kuwaitProfile(). */
 export interface KuwaitProfile {
   legalForm: LegalForm;
+  /** What the legal form is, when it is "other". Kept for the records; nothing is computed from it. */
+  legalFormOther?: string;
   /** Commercial licence number (رقم الرخصة التجارية). The CR number is registrationNumber. */
   licenceNumber: string;
   activity: BusinessActivity;
@@ -439,6 +441,18 @@ export interface CompanyBankAccount {
   swift: string;
   /** Free text printed after the account details. */
   extra: string;
+}
+
+/**
+ * The company's line of business (security services, manpower supply,
+ * trading…). Built-in types have fixed ids and others an id that follows
+ * from the name, so the same type groups companies on every device (see
+ * features/company/company-types.ts). Taxes and deadlines don't depend on it.
+ */
+export interface CompanyType {
+  id: ID;
+  name: string;
+  nameAr?: string;
 }
 
 /** A public holiday as the company observes it (overrides the official estimates). */
@@ -483,6 +497,8 @@ export interface Company {
   /** Missing on companies created before accounting existed (see ensureAccounting). */
   accounting?: AccountingSettings;
   kuwait?: KuwaitProfile;
+  /** Line of business, shown with the company's name. Missing until chosen. */
+  companyType?: CompanyType;
   /**
    * The business charges tax (VAT or sales tax). Missing on companies created
    * before: they charge tax when they have tax rates (see taxesEnabled()).

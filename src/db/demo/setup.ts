@@ -80,6 +80,8 @@ export async function setUpCompany(books: DemoBooks, opening: ISODate): Promise<
     dateFormat: 'dd/MM/yyyy',
     language: 'ar-en',
     taxesEnabled: false,
+    // A built-in type: its Arabic name comes with it.
+    companyType: { id: 'trading', name: 'General trading' },
     kuwait: {
       legalForm: 'wll',
       licenceNumber: COMPANY.licenceNumber,

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Company, CompanyBankAccount, KuwaitProfile } from '@/db/types';
-import { useFormat } from '@/app/company';
+import { useCompanyContext, useFormat } from '@/app/company';
 import { accountingSettings } from '@/db/chart-setup';
 import { cashLimit, kuwaitProfile } from '@/lib/kuwait-rules';
 import { formatMoney } from '@/lib/format';
@@ -22,11 +22,14 @@ import {
 } from '@/components/fields';
 import {
   ActivitySelect,
+  CompanyTypeField,
   EmailField,
   ImageField,
+  LegalFormOtherField,
   LegalFormSelect,
   PhoneField,
 } from '@/features/company/fields';
+import { companyTypeOptions, withTidyProfile } from '@/features/company/company-types';
 import { BankAccountFields, ibanProblem } from '@/features/company/bank-fields';
 import { bankAccountOf, withBankAccount } from '@/features/company/bank';
 import { HolidaysEditor } from '@/features/company/holidays-editor';
@@ -72,7 +75,8 @@ function IdField({
 }
 
 export default function CompanySettings() {
-  const { draft, setDraft, update, dirty, saving, save, reset } = useCompanyDraft();
+  const { draft, setDraft, update, dirty, saving, saveWith, reset } = useCompanyDraft();
+  const { companies } = useCompanyContext();
   const fmt = useFormat();
   const taxesOn = useTaxesEnabled();
   const [params] = useSearchParams();
@@ -108,7 +112,8 @@ export default function CompanySettings() {
       toast.error(t('Check the IBAN before saving.'));
       return;
     }
-    void save();
+    // A new type named like a known one becomes that one; an empty one, no type.
+    void saveWith((d) => withTidyProfile(d, companyTypeOptions(companies)));
   };
 
   // "KD 1,234.500" or "KWD 1,234.500", as it will look in the current language.
@@ -173,6 +178,7 @@ export default function CompanySettings() {
           <Field
             label={t('Legal name')}
             optional
+            className="sm:col-span-2"
             hint={t('Printed on documents when set, e.g. “Al Mail Trading Co. W.L.L.”.')}
           >
             {(id) => (
@@ -193,6 +199,18 @@ export default function CompanySettings() {
               />
             )}
           </Field>
+          <CompanyTypeField
+            value={draft.companyType}
+            onChange={(companyType) => update({ companyType })}
+            companies={companies}
+          />
+          {profile.legalForm === 'other' ? (
+            <LegalFormOtherField
+              className="sm:col-span-2"
+              value={profile.legalFormOther ?? ''}
+              onChange={(legalFormOther) => setProfile({ legalFormOther })}
+            />
+          ) : null}
           <Field
             label={t('Business activity')}
             className="sm:col-span-2"

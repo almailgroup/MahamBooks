@@ -48,6 +48,7 @@ describe('the demo company', () => {
       taxesEnabled: false,
       address: { country: 'KW', city: 'Shuwaikh Industrial' },
       kuwait: { legalForm: 'wll', capital: 50_000 },
+      companyType: { id: 'trading', name: 'General trading', nameAr: 'التجارة العامة' },
     });
     expect(company.nameAr).toMatch(/روضة الخليج/);
     expect(company.accounting?.template).toBe('kw');

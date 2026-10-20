@@ -14,7 +14,8 @@ import { startUpload, syncCompany } from '@/cloud/sync';
 
 /**
  * Removing a company kept in the cloud from this device (Settings →
- * Companies, Settings → Cloud and sync). Made-up data only.
+ * Companies, Settings → Cloud and sync), and the company type set up with
+ * it. Made-up data only.
  */
 
 beforeEach(async () => {
@@ -77,5 +78,48 @@ describe('removing a company from this device', () => {
     ]);
     expect(await unsentChanges(company.id)).toBe(1);
     expect(await unsentChanges()).toBe(1);
+  });
+});
+
+describe('the company type', () => {
+  it('is kept by setting up a company, next to an unchanged legal form', async () => {
+    const company = await setupCompany({
+      name: 'Made-up Guarding',
+      companyType: { id: 'type-guarding', name: ' Guarding ', nameAr: 'الحراسة' },
+      kuwait: { legalForm: 'kscc', legalFormOther: 'not used' },
+    });
+    const stored = (await db.companies.get(company.id))!;
+    expect(stored.companyType).toEqual({
+      id: 'type-guarding',
+      name: 'Guarding',
+      nameAr: 'الحراسة',
+    });
+    // The legal form decides taxes as before; a description is kept only for Other.
+    expect(stored.kuwait?.legalForm).toBe('kscc');
+    expect(stored.kuwait && 'legalFormOther' in stored.kuwait).toBe(false);
+  });
+
+  it('is left out when none is chosen, as for companies set up before', async () => {
+    const company = await setupCompany({
+      name: 'Made-up Trading',
+      companyType: { id: 'type-blank', name: '  ' },
+      kuwait: { legalForm: 'other', legalFormOther: ' Professional company ' },
+    });
+    const stored = (await db.companies.get(company.id))!;
+    expect('companyType' in stored).toBe(false);
+    expect(stored.kuwait).toMatchObject({
+      legalForm: 'other',
+      legalFormOther: 'Professional company',
+    });
+    // A built-in type is saved with its own names.
+    const security = await setupCompany({
+      name: 'Made-up Security',
+      companyType: { id: 'security', name: 'security' },
+    });
+    expect(security.companyType).toEqual({
+      id: 'security',
+      name: 'Security services',
+      nameAr: 'الخدمات الأمنية',
+    });
   });
 });

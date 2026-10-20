@@ -49,6 +49,28 @@ describe('backup', () => {
     expect(backup.data.clients).toHaveLength(1);
   });
 
+  it('keeps the company type and the description of the legal form', async () => {
+    const a = await setupCompany({
+      name: 'Made-up Guarding',
+      companyType: { id: 'type-guarding', name: 'Guarding', nameAr: 'الحراسة' },
+      kuwait: { legalForm: 'other', legalFormOther: 'Professional company' },
+    });
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    const restored = await db.companies.get(a.id);
+    expect(restored?.companyType).toEqual({
+      id: 'type-guarding',
+      name: 'Guarding',
+      nameAr: 'الحراسة',
+    });
+    expect(restored?.kuwait).toMatchObject({
+      legalForm: 'other',
+      legalFormOther: 'Professional company',
+    });
+  });
+
   it('merges without deleting existing data', async () => {
     const a = await setupCompany({ name: 'A' });
     const backup = await exportBackup(a.id);

@@ -9,6 +9,7 @@ import { unsentWarning } from '@/features/cloud/unsent';
 import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
 import { countryName, currencyName } from '@/lib/geo';
+import { companyTypeName } from '@/features/company/company-types';
 import { currentLanguage, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
@@ -83,6 +84,7 @@ export default function CompaniesSettings() {
       <ul className="divide-y divide-slate-100">
         {companies.map((c) => {
           const name = localName(c);
+          const type = companyTypeName(c.companyType, language);
           return (
             <li key={c.id} className="flex items-center gap-3 py-3">
               <CompanyLogo name={c.name} logo={c.branding.logo} />
@@ -92,6 +94,11 @@ export default function CompaniesSettings() {
                   {c.id === company.id ? <Badge tone="blue">{t('Current company')}</Badge> : null}
                 </p>
                 <p className="truncate text-xs text-slate-500">
+                  {type ? (
+                    <>
+                      <bdi>{type}</bdi> ·{' '}
+                    </>
+                  ) : null}
                   {currencyName(c.currency, language)} ·{' '}
                   {c.address.country
                     ? countryName(c.address.country, language)

@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Building2, Check, ChevronDown, Globe2, MapPin, Sparkles, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { setMeta } from '@/db/db';
+import { db, setMeta } from '@/db/db';
 import { setupCompany } from '@/db/records';
 import { BackupError, importBackup, LAST_BACKUP_KEY, parseBackup } from '@/db/backup';
 import { countryName, currencyName, emptyAddress } from '@/lib/geo';
@@ -14,7 +15,7 @@ import { suiteName } from '@/lib/brand';
 import { regionDefaults } from '@/lib/regions';
 import { requestPersistentStorage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
-import type { Address, BusinessActivity, LegalForm } from '@/db/types';
+import type { Address, BusinessActivity, Company, CompanyType, LegalForm } from '@/db/types';
 import { currentLanguage, msg, t } from '@/i18n';
 import { LanguageSwitch } from '@/i18n/language-switch';
 import { SuiteLogo } from '@/suite/logo';
@@ -29,7 +30,15 @@ import {
   CurrencySelect,
   LogoUpload,
 } from '@/components/fields';
-import { ActivitySelect, EmailField, LegalFormSelect, PhoneField } from '@/features/company/fields';
+import {
+  ActivitySelect,
+  CompanyTypeField,
+  EmailField,
+  LegalFormOtherField,
+  LegalFormSelect,
+  PhoneField,
+} from '@/features/company/fields';
+import { companyTypeOptions, resolveCompanyType } from '@/features/company/company-types';
 import { CloudWelcomeCard } from '@/features/cloud/welcome-card';
 import { useCloud } from '@/cloud/store';
 import { startUpload } from '@/cloud/sync';
@@ -39,6 +48,9 @@ interface SetupDraft {
   name: string;
   nameAr: string;
   legalForm: LegalForm;
+  /** Shown when the legal form is Other. */
+  legalFormOther: string;
+  companyType?: CompanyType;
   activity: BusinessActivity;
   registrationNumber: string;
   licenceNumber: string;
@@ -61,6 +73,7 @@ function initialDraft(): SetupDraft {
     name: '',
     nameAr: '',
     legalForm: 'wll',
+    legalFormOther: '',
     activity: 'general',
     registrationNumber: '',
     licenceNumber: '',
@@ -77,6 +90,8 @@ function initialDraft(): SetupDraft {
     showRegion: false,
   };
 }
+
+const NO_COMPANIES: Company[] = [];
 
 // Switching the interface language remounts the page; what was typed survives.
 let remembered: SetupDraft | null = null;
@@ -100,6 +115,8 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
   // Signed in: a new company goes to the cloud unless the person says no.
   const [toCloud, setToCloud] = useState(true);
   const backupInput = useRef<HTMLInputElement>(null);
+  // Types other companies on this device use are offered too.
+  const companies = useLiveQuery(() => db.companies.toArray(), []) ?? NO_COMPANIES;
   const moreId = useId();
   const regionId = useId();
   const language = currentLanguage();
@@ -156,9 +173,11 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
           registrationNumber: draft.registrationNumber.trim(),
           kuwait: {
             legalForm: draft.legalForm,
+            legalFormOther: draft.legalForm === 'other' ? draft.legalFormOther : undefined,
             activity: draft.activity,
             licenceNumber: draft.licenceNumber.trim(),
           },
+          companyType: resolveCompanyType(draft.companyType, companyTypeOptions(companies)),
           branding: { logo: draft.logo, accentColor: draft.accent },
           defaults: { pageSize: region.pageSize },
           taxesEnabled: draft.chargesTax,
@@ -270,6 +289,17 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
               />
             )}
           </Field>
+          <CompanyTypeField
+            value={draft.companyType}
+            onChange={(companyType) => set({ companyType })}
+            companies={companies}
+          />
+          {draft.legalForm === 'other' ? (
+            <LegalFormOtherField
+              value={draft.legalFormOther}
+              onChange={(legalFormOther) => set({ legalFormOther })}
+            />
+          ) : null}
           <Field
             label={t('Business activity')}
             hint={t('Some activities have limits on cash payments.')}

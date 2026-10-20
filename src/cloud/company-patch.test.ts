@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { companyOps, onlyCounters, rebaseCompany } from './company-patch';
+import { staffCompanyChangeOk } from './roles';
 
 const rule = (next: number, period = '2026', pattern = 'INV-{counter}') => ({
   pattern,
@@ -81,6 +82,30 @@ describe('company changes by field', () => {
       ),
     );
     expect(merged.data.numbering).toMatchObject({ invoice: { next: 2, period: '2026' } });
+  });
+
+  it('carry a new company type alone, beside documents numbered elsewhere', () => {
+    const security = { id: 'security', name: 'Security services', nameAr: 'الخدمات الأمنية' };
+    const typed = { ...base, companyType: security };
+    const ops = companyOps(base, typed);
+    expect(ops).toEqual([{ path: ['companyType'], value: security }]);
+    expect(onlyCounters(ops)).toBe(false);
+    // Another device numbered an invoice meanwhile: both stay, and nothing clashes.
+    const numbered = { ...base, numbering: { ...base.numbering, invoice: rule(9) } };
+    const { data, conflicts } = rebaseCompany(numbered, ops);
+    expect(data).toMatchObject({ companyType: security, numbering: { invoice: { next: 9 } } });
+    expect(conflicts).toEqual([]);
+    // Another type replaces it as a whole; none removes it.
+    const guarding = { id: 'type-guarding', name: 'Guarding' };
+    const changed = rebaseCompany(typed, companyOps(typed, { ...base, companyType: guarding }));
+    expect(changed.data.companyType).toEqual(guarding);
+    expect(companyOps(typed, base)).toEqual([
+      { path: ['companyType'], remove: true, base: security },
+    ]);
+    // Staff only number documents: a type change is not theirs to make.
+    expect(staffCompanyChangeOk(base, typed)).toBe(false);
+    expect(staffCompanyChangeOk(typed, numbered)).toBe(false);
+    expect(staffCompanyChangeOk(typed, { ...typed, numbering: numbered.numbering })).toBe(true);
   });
 
   it('make the objects on the way and remove fields', () => {

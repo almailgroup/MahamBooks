@@ -95,6 +95,61 @@ test('a Kuwaiti business sets up in Arabic and brings in its open invoices', asy
   );
 });
 
+test('a company type is chosen at set-up, changed in Settings and shown with the company', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByLabel('Company name').fill('Made-up Guarding');
+  await page.getByLabel('Company type').selectOption({ label: 'Security services' });
+  // A legal form of Other can be described; taxes still follow the form.
+  await page.getByLabel('Legal form').selectOption({ label: 'Other' });
+  await page.getByLabel('Describe the legal form').fill('Professional company');
+  await page.getByRole('button', { name: 'Create company' }).click();
+  await expect(page.getByText('Made-up Guarding is ready.')).toBeVisible();
+  const switcher = page.getByRole('button', { name: 'Switch company' });
+  await expect(switcher).toContainText('Security services');
+
+  // Settings: a type of its own, with an Arabic name.
+  await page.goto('./#/settings/company');
+  const type = page.getByLabel('Company type');
+  await expect(type).toHaveValue('security');
+  await expect(page.getByLabel('Describe the legal form')).toHaveValue('Professional company');
+  await type.selectOption({ label: 'New type…' });
+  await page.getByLabel('Type name in English').fill('Facility management');
+  await page.getByLabel('Type name in Arabic').fill('إدارة المرافق');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
+  await expect(page.getByLabel('Type name in English')).toHaveCount(0);
+  await expect(type.locator('option:checked')).toHaveText('Facility management');
+  await page.reload();
+  await expect(page.getByLabel('Company type').locator('option:checked')).toHaveText(
+    'Facility management',
+  );
+  await expect(switcher).toContainText('Facility management');
+
+  // Another company picks it from the types the companies on this device use.
+  await page.goto('./#/setup');
+  await page.getByLabel('Company name').fill('Made-up Cleaning');
+  await page.getByLabel('Company type').selectOption({ label: 'Facility management' });
+  await page.getByRole('button', { name: 'Create company' }).click();
+  await expect(page.getByText('Made-up Cleaning is ready.')).toBeVisible();
+
+  await page.goto('./#/settings/companies');
+  const rows = page.getByRole('main').getByRole('listitem');
+  await expect(rows.filter({ hasText: 'Made-up Guarding' })).toContainText('Facility management');
+  await expect(rows.filter({ hasText: 'Made-up Cleaning' })).toContainText('Facility management');
+
+  // In Arabic, the Arabic names, the built-in types included.
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(rows.filter({ hasText: 'Made-up Cleaning' })).toContainText('إدارة المرافق');
+  await expect(page.getByRole('button', { name: 'تبديل الشركة' })).toContainText('إدارة المرافق');
+  await page.goto('./#/settings/company');
+  const arabicType = page.getByLabel('نوع الشركة');
+  await expect(arabicType.locator('option:checked')).toHaveText('إدارة المرافق');
+  await expect(arabicType.locator('option', { hasText: 'الخدمات الأمنية' })).toHaveCount(1);
+  await expect(page.getByText('مجال عمل شركتك. لا تتغير الضرائب والمواعيد بتغييره.')).toBeVisible();
+});
+
 test.describe('at phone width', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 

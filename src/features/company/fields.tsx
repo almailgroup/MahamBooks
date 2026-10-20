@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { ImagePlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { BusinessActivity, LegalForm } from '@/db/types';
+import type { BusinessActivity, Company, CompanyType, LegalForm } from '@/db/types';
 import { CASH_RULES, LEGAL_FORMS } from '@/lib/kuwait-rules';
 import { normalizeKuwaitPhone } from '@/lib/kuwait';
 import { logoFromFile } from '@/lib/image';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/cn';
 import { currentLanguage, t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/form';
+import { companyTypeName, companyTypeOptions, newCompanyType } from './company-types';
 
 const ACTIVITIES = Object.keys(CASH_RULES) as BusinessActivity[];
 
@@ -52,6 +53,140 @@ export function ActivitySelect({
         </option>
       ))}
     </Select>
+  );
+}
+
+const NEW_TYPE = '__new__';
+
+/**
+ * Company type (the line of business): a built-in type, one another company
+ * on this device uses, or a new one with its English and Arabic names. A new
+ * type is passed on as typed; the form tidies it when it saves
+ * (withTidyProfile), so an empty one is saved as no type.
+ */
+export function CompanyTypeField({
+  value,
+  onChange,
+  companies,
+  className,
+}: {
+  value: CompanyType | undefined;
+  onChange: (value: CompanyType | undefined) => void;
+  /** The companies whose types are offered (the saved ones). */
+  companies: readonly Pick<Company, 'companyType'>[];
+  className?: string;
+}) {
+  const language = currentLanguage();
+  const [adding, setAdding] = useState(false);
+  const [typed, setTyped] = useState({ name: '', nameAr: '' });
+  const [emitted, setEmitted] = useState<CompanyType | undefined>(undefined);
+  // Changes discarded, or the form saved: another type is in place of the new one.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    if (adding && value !== emitted) setAdding(false);
+  }
+  const options = useMemo(
+    () => companyTypeOptions(adding ? companies : [...companies, { companyType: value }], language),
+    [adding, companies, value, language],
+  );
+
+  const emit = (next: CompanyType | undefined) => {
+    setEmitted(next);
+    onChange(next);
+  };
+  const type = (patch: Partial<typeof typed>) => {
+    const next = { ...typed, ...patch };
+    setTyped(next);
+    emit(newCompanyType(next.name, next.nameAr));
+  };
+  const choose = (id: string) => {
+    if (id === NEW_TYPE) {
+      setAdding(true);
+      emit(newCompanyType(typed.name, typed.nameAr));
+      return;
+    }
+    setAdding(false);
+    emit(options.find((o) => o.id === id));
+  };
+
+  return (
+    <>
+      <Field
+        label={t('Company type')}
+        optional
+        className={className}
+        hint={t('Your line of business. Taxes and deadlines don’t change with it.')}
+      >
+        {(id) => (
+          <Select
+            id={id}
+            value={adding ? NEW_TYPE : (value?.id ?? '')}
+            onChange={(e) => choose(e.target.value)}
+          >
+            <option value="">{t('Not set')}</option>
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {companyTypeName(o, language)}
+              </option>
+            ))}
+            <option value={NEW_TYPE}>{t('New type…')}</option>
+          </Select>
+        )}
+      </Field>
+      {adding ? (
+        <div className="grid gap-4 rounded-lg bg-slate-50 p-4 ring-1 ring-slate-200/70 sm:col-span-2 sm:grid-cols-2">
+          <Field label={t('Type name in English')}>
+            {(id) => (
+              <Input
+                id={id}
+                value={typed.name}
+                onChange={(e) => type({ name: e.target.value })}
+                placeholder={t('e.g. Facility management')}
+                dir="auto"
+                autoFocus
+              />
+            )}
+          </Field>
+          <Field label={t('Type name in Arabic')} optional>
+            {(id) => (
+              <Input
+                id={id}
+                value={typed.nameAr}
+                onChange={(e) => type({ nameAr: e.target.value })}
+                placeholder="إدارة المرافق"
+                dir="rtl"
+                lang="ar"
+              />
+            )}
+          </Field>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** "Describe the legal form", for a legal form of Other. */
+export function LegalFormOtherField({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  return (
+    <Field
+      label={t('Describe the legal form')}
+      optional
+      className={className}
+      hint={t('Kept for your records. Taxes follow the legal form chosen above.')}
+    >
+      {(id) => (
+        <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} dir="auto" />
+      )}
+    </Field>
   );
 }
 
