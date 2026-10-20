@@ -1,16 +1,22 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import {
+  addDepartment,
+  addDepartmentsInUse,
+  assignDepartment,
   createEmployee,
   defaultPeopleSettings,
   deleteEmployee,
   employeeDeletion,
   EmployeeError,
   getPeopleSettings,
+  mergeDepartment,
   newAllowance,
   saveEmployee,
   savePeopleSettings,
+  setDepartmentArchived,
   setGroupSearch,
+  updateDepartment,
 } from './people';
 import { isPrivateRecord } from '@/cloud/roles';
 import { addAttachment } from './purchases';
@@ -236,6 +242,197 @@ describe('people settings', () => {
         true,
       );
     }
+  });
+});
+
+describe('stateless employees', () => {
+  it('keep the flag only as expatriates, and renew their review card', async () => {
+    const company = await kuwaitCompany();
+    const saad = await saveEmployee(
+      createEmployee(company.id, {
+        name: 'Saad Testing',
+        nationality: '',
+        category: 'expat',
+        stateless: true,
+        centralCardNumber: ' RC-1 ',
+        centralCardExpiry: '2026-11-30',
+      }),
+    );
+    expect(saad).toMatchObject({ stateless: true, centralCardNumber: 'RC-1' });
+
+    const { renewal } = await renewDocument({
+      companyId: company.id,
+      key: `emp:${saad.id}:central_agency_card`,
+      newExpiry: '2027-11-30',
+      renewedOn: '2026-11-01',
+      number: 'RC-2',
+    });
+    expect(renewal).toMatchObject({
+      type: 'central_agency_card',
+      previousExpiry: '2026-11-30',
+      number: 'RC-2',
+    });
+    expect(await db.employees.get(saad.id)).toMatchObject({
+      centralCardNumber: 'RC-2',
+      centralCardExpiry: '2027-11-30',
+    });
+
+    // Made Kuwaiti (or by an older version): the flag is dropped, the card kept.
+    const kuwaiti = await saveEmployee({
+      ...(await db.employees.get(saad.id))!,
+      category: 'kuwaiti',
+      nationality: 'KW',
+    });
+    expect(kuwaiti.stateless).toBeUndefined();
+    expect(kuwaiti.centralCardNumber).toBe('RC-2');
+    const plain = await saveEmployee(createEmployee(company.id, { name: 'Huda Testing' }));
+    expect('stateless' in plain).toBe(false);
+  });
+});
+
+describe('departments', () => {
+  /** Employees of the company in these departments, by name. */
+  async function staffIn(companyId: string, departments: Record<string, string>) {
+    const out: Record<string, string> = {};
+    for (const [name, department] of Object.entries(departments)) {
+      out[name] = (await saveEmployee(createEmployee(companyId, { name, department }))).id;
+    }
+    return out;
+  }
+  const departmentOf = async (id: string) => (await db.employees.get(id))!.department;
+  const listOf = async (companyId: string) =>
+    ((await getPeopleSettings(companyId)).departments ?? []).map((d) =>
+      [d.name, d.nameAr, d.archived ? 'archived' : ''].join('|'),
+    );
+
+  it('are a list with Arabic names, started from the names in use', async () => {
+    const company = await kuwaitCompany();
+    expect((await getPeopleSettings(company.id)).departments).toBeUndefined();
+    await staffIn(company.id, { A: 'Security', B: 'security', C: 'Head Office', D: '' });
+
+    expect(await addDepartmentsInUse(company.id)).toBe(2);
+    expect(await listOf(company.id)).toEqual(['Head Office||', 'Security||']);
+    expect(await addDepartmentsInUse(company.id)).toBe(0);
+
+    const drivers = await addDepartment(company.id, { name: ' Drivers ', nameAr: 'السائقون' });
+    expect(drivers).toMatchObject({ name: 'Drivers', nameAr: 'السائقون' });
+    await expect(addDepartment(company.id, { name: 'drivers' })).rejects.toThrow(
+      'There is already a department called Drivers.',
+    );
+    await expect(
+      addDepartment(company.id, { name: 'Transport', nameAr: 'السائقون' }),
+    ).rejects.toThrow(EmployeeError);
+    await expect(addDepartment(company.id, { name: ' ' })).rejects.toThrow(EmployeeError);
+
+    // Saving the compliance settings from a form opened before keeps the list.
+    await savePeopleSettings({ ...defaultPeopleSettings(company.id), pifssDueDay: 10 });
+    expect(await listOf(company.id)).toEqual(['Head Office||', 'Security||', 'Drivers|السائقون|']);
+
+    // People data: logged so that staff and viewers don't see it.
+    const logged = (await db.activities.where('companyId').equals(company.id).toArray()).filter(
+      (a) => a.action === 'departments',
+    );
+    expect(logged).toHaveLength(2);
+    for (const activity of logged) {
+      expect(isPrivateRecord('activities', activity as unknown as Record<string, unknown>)).toBe(
+        true,
+      );
+    }
+  });
+
+  it('rename their employees with them, in one transaction', async () => {
+    const company = await kuwaitCompany();
+    const ids = await staffIn(company.id, { A: 'Securty', B: 'securty ', C: 'Head Office' });
+    const typo = await addDepartment(company.id, { name: 'Securty' });
+
+    // When the last write fails, nothing is changed.
+    const failing = () => {
+      throw new Error('Disk full');
+    };
+    db.activities.hook('creating', failing);
+    try {
+      await expect(updateDepartment(company.id, typo.id, { name: 'Security' })).rejects.toThrow(
+        'Disk full',
+      );
+    } finally {
+      db.activities.hook('creating').unsubscribe(failing);
+    }
+    expect(await departmentOf(ids.A)).toBe('Securty');
+    expect(await listOf(company.id)).toEqual(['Securty||']);
+
+    const { department, moved } = await updateDepartment(company.id, typo.id, {
+      name: 'Security',
+      nameAr: 'الأمن',
+    });
+    expect(department).toMatchObject({ id: typo.id, name: 'Security', nameAr: 'الأمن' });
+    expect(moved).toBe(2);
+    expect(await departmentOf(ids.A)).toBe('Security');
+    expect(await departmentOf(ids.B)).toBe('Security');
+    expect(await departmentOf(ids.C)).toBe('Head Office');
+    // Only the Arabic name: no employee changes.
+    const before = (await db.employees.get(ids.A))!.updatedAt;
+    expect(
+      (await updateDepartment(company.id, typo.id, { name: 'Security', nameAr: 'أمن' })).moved,
+    ).toBe(0);
+    expect((await db.employees.get(ids.A))!.updatedAt).toBe(before);
+  });
+
+  it('merge another spelling or department into one, and archive', async () => {
+    const company = await kuwaitCompany();
+    const ids = await staffIn(company.id, { A: 'Security', B: 'Guards', C: 'Securty' });
+    const security = await addDepartment(company.id, { name: 'Security', nameAr: 'الأمن' });
+    await addDepartment(company.id, { name: 'Guards' });
+
+    // A name not in the list.
+    expect(await mergeDepartment(company.id, 'securty', security.id)).toBe(1);
+    expect(await departmentOf(ids.C)).toBe('Security');
+    // A department of the list leaves it.
+    expect(await mergeDepartment(company.id, 'Guards', security.id)).toBe(1);
+    expect(await departmentOf(ids.B)).toBe('Security');
+    expect(await listOf(company.id)).toEqual(['Security|الأمن|']);
+    await expect(mergeDepartment(company.id, 'SECURITY', security.id)).rejects.toThrow(
+      EmployeeError,
+    );
+
+    await setDepartmentArchived(company.id, security.id, true);
+    expect(await listOf(company.id)).toEqual(['Security|الأمن|archived']);
+    expect(await departmentOf(ids.A)).toBe('Security');
+    await setDepartmentArchived(company.id, security.id, false);
+    expect((await getPeopleSettings(company.id)).departments?.[0]).not.toHaveProperty('archived');
+  });
+
+  it('are given to several employees at once, in one transaction', async () => {
+    const company = await kuwaitCompany();
+    const other = await setupCompany({ name: 'Made-up Guarding' });
+    const ids = await staffIn(company.id, { A: '', B: 'Head Office', C: 'Security' });
+    const theirs = await saveEmployee(createEmployee(other.id, { name: 'X', department: 'Y' }));
+    await addDepartment(company.id, { name: 'Security', nameAr: 'الأمن' });
+
+    const failing = () => {
+      throw new Error('Disk full');
+    };
+    db.activities.hook('creating', failing);
+    try {
+      await expect(assignDepartment(company.id, [ids.A, ids.B], 'Security')).rejects.toThrow(
+        'Disk full',
+      );
+    } finally {
+      db.activities.hook('creating').unsubscribe(failing);
+    }
+    expect(await departmentOf(ids.A)).toBe('');
+    expect(await departmentOf(ids.B)).toBe('Head Office');
+
+    // Typed in Arabic, it is the department of the list; another company's employee is left out.
+    expect(await assignDepartment(company.id, [ids.A, ids.B, ids.C, theirs.id], 'الأمن')).toBe(2);
+    expect(await departmentOf(ids.A)).toBe('Security');
+    expect(await departmentOf(ids.B)).toBe('Security');
+    expect(await departmentOf(theirs.id)).toBe('Y');
+    expect(await assignDepartment(company.id, [ids.A], '')).toBe(1);
+    expect(await departmentOf(ids.A)).toBe('');
+    const logged = (await db.activities.where('companyId').equals(company.id).toArray()).filter(
+      (a) => a.action === 'departments',
+    );
+    expect(logged.map((a) => a.message)).toContain('2 employees moved to Security');
   });
 });
 

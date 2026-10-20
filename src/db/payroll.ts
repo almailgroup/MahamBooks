@@ -41,7 +41,12 @@ import { daysBetween, isISODate, today } from '@/lib/dates';
 import { formatDate } from '@/lib/format';
 import { currencyPrecision, dec, fromMinor, round, toMinor } from '@/lib/money';
 import { freeAccountCode, type SystemAccountSpec } from '@/lib/payment-methods';
-import { GCC_COUNTRIES, insuredWithPifss, LEAVING_REASON_LABELS } from '@/lib/hr/employees';
+import {
+  GCC_COUNTRIES,
+  insuredWithPifss,
+  isStateless,
+  LEAVING_REASON_LABELS,
+} from '@/lib/hr/employees';
 import {
   addPeriods,
   balanced,
@@ -941,9 +946,11 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     nameAr: employee.nameAr ?? '',
     jobTitle: employee.jobTitle,
     jobTitleAr: employee.jobTitleAr ?? '',
+    department: employee.department.trim(),
     category: employee.category,
     nationality: employee.nationality,
-    civilId: employee.civilId,
+    // The bank's salary file names stateless staff without a Civil ID by their review card.
+    civilId: employee.civilId || (isStateless(employee) ? (employee.centralCardNumber ?? '') : ''),
     iban: employee.iban,
     accountNumber: employee.accountNumber ?? '',
     hireDate: employee.hireDate,

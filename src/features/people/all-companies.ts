@@ -1,14 +1,14 @@
-import type {
-  Company,
-  CompanyType,
-  Employee,
-  EmployeeCategory,
-  ID,
-  PeopleSettings,
-} from '@/db/types';
+import type { Company, CompanyType, Employee, ID, PeopleSettings } from '@/db/types';
 import type { CloudLink } from '@/cloud/types';
 import { canSeePeople } from '@/cloud/roles';
-import { categoryLabel, employeeStatusLabel, isCurrent } from '@/lib/hr/employees';
+import {
+  CATEGORY_FILTERS,
+  categoryLabel,
+  employeeStatusLabel,
+  inCategory,
+  isCurrent,
+  type CategoryFilter,
+} from '@/lib/hr/employees';
 import { countryName } from '@/lib/geo';
 import {
   companyTypeName,
@@ -73,7 +73,6 @@ export function peopleCompanies(
 export type EmployeeView = 'current' | 'left' | 'all';
 
 const VIEWS: EmployeeView[] = ['current', 'left', 'all'];
-const CATEGORIES: EmployeeCategory[] = ['kuwaiti', 'gcc', 'expat', 'domestic'];
 
 export interface EmployeeFilters {
   query?: string;
@@ -81,7 +80,8 @@ export interface EmployeeFilters {
   /** A company type's id. */
   typeId?: string;
   department?: string;
-  category?: EmployeeCategory;
+  /** A category, or the stateless among the expatriates. */
+  category?: CategoryFilter;
   /** Current employees unless asked otherwise. */
   view?: EmployeeView;
 }
@@ -111,7 +111,7 @@ export function findEmployees(
         return false;
       }
       if (filters.department && e.department.trim() !== filters.department) return false;
-      if (filters.category && e.category !== filters.category) return false;
+      if (filters.category && !inCategory(e, filters.category)) return false;
       if (view === 'current' && !isCurrent(e)) return false;
       if (view === 'left' && isCurrent(e)) return false;
       if (!words.length) return true;
@@ -186,7 +186,7 @@ export function employeesCsv(
         e.name,
         e.nameAr ?? '',
         countryName(e.nationality, locale),
-        t(categoryLabel(e.category)),
+        t(categoryLabel(e)),
         localName({ name: e.jobTitle, nameAr: e.jobTitleAr }, language),
         e.department,
         e.hireDate ?? '',
@@ -216,7 +216,7 @@ export function loadFilters(): EmployeeFilters {
       companyId: text(s.companyId),
       typeId: text(s.typeId),
       department: text(s.department),
-      category: CATEGORIES.find((c) => c === s.category),
+      category: CATEGORY_FILTERS.find((c) => c === s.category),
       view: VIEWS.find((v) => v === s.view),
     };
   } catch {

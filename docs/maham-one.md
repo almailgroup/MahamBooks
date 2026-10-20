@@ -111,6 +111,27 @@ is asked of the server.
   Opening someone switches to their company first (asking before unsaved
   changes are lost), then opens their page there.
 
+## Departments and stateless staff
+
+- **Departments** are the company's own list, with English and Arabic names,
+  kept in its employee settings (`peopleSettings.departments`). Employees
+  keep the English name in `department` as before, so links, imports and
+  older versions keep working; the Arabic name shows in the Arabic
+  interface. Without a list, a department is typed freely, as before.
+  Employees → Departments adds, renames (the employees in it get the new
+  name in the same transaction, after a warning), merges another spelling
+  into one, and archives; it can start the list from the names in use.
+  Employees chosen on the list are given a department together. Pay runs
+  keep each line's department (`PayLine.department`).
+- **Stateless (Bedoon)** staff are expatriates with `stateless: true`, never
+  a new category, so older versions show "Expatriate" and pay the same (no
+  PIFSS). They need no residency, a work permit is optional, and their
+  Central Agency review card (`centralCardNumber`, `centralCardExpiry`) is
+  tracked and renewed in Compliance like the other papers on file
+  (`central_agency_card`). An import reads Bedoon, بدون and غير محدد الجنسية
+  as stateless. The bank's salary file uses the card number when there is no
+  Civil ID.
+
 ## Code layout
 
 ```

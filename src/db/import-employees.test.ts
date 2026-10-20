@@ -15,7 +15,7 @@ import {
 } from '@/features/company/import-columns';
 import { detectDateFormats } from '@/lib/banking/statement';
 import { readXlsx } from '@/lib/xlsx';
-import { nationalityCode } from '@/lib/hr/nationalities';
+import { isStatelessText, nationalityCode } from '@/lib/hr/nationalities';
 import { arabicJobTitle, englishJobTitle } from '@/lib/hr/job-titles';
 import { employeeLeaveBalance } from '@/lib/hr/leave';
 import { findBank, isValidCardNumber } from '@/lib/kuwait';
@@ -516,6 +516,77 @@ describe('planning an employee file', () => {
     ]);
     expect(on(result, 2)).toMatchObject({ phone: '', passportNumber: '', nationality: 'IN' });
     expect(notesOn(result, 2)).toEqual([]);
+  });
+
+  it('marks Bedoon, بدون and غير محدد الجنسية as stateless, with their review card', async () => {
+    expect(
+      ['Bedoon', 'Bidoon', 'Stateless', 'بدون', 'غير محدد الجنسية', 'غير محددي الجنسية'].map(
+        isStatelessText,
+      ),
+    ).toEqual([true, true, true, true, true, true]);
+    expect(['Non-Kuwaiti', 'غير كويتي', 'Indian', ''].map(isStatelessText)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+
+    const c = await company();
+    const rows = [
+      [
+        'Employee Number',
+        'Name',
+        'Nationality',
+        'Residency Number',
+        'Residency Expiry',
+        'Review Card Number',
+        'Review Card Expiry',
+      ],
+      ['1', 'Saad Test', 'Bedoon', '18/1', '01/01/2027', 'RC-100', '30/11/2026'],
+      ['2', 'Nasser Test', 'بدون', '', '', '', ''],
+      ['3', 'Fahad Test', 'غير محدد الجنسية', '', '', 'RC-300', ''],
+      ['4', 'Omar Test', 'Indian', '18/4', '01/01/2027', 'RC-400', '30/11/2026'],
+    ];
+    const result = await plan(c, rows);
+    expect(result.employees?.nationalities).toMatchObject({ stateless: 3, unknown: 0 });
+    expect(on(result, 2)).toMatchObject({
+      category: 'expat',
+      stateless: true,
+      nationality: '',
+      centralCardNumber: 'RC-100',
+      centralCardExpiry: '2026-11-30',
+      // No residency for stateless staff.
+      residencyNumber: '',
+      residencyExpiry: null,
+    });
+    expect(notesOn(result, 2)).toEqual(['Central Agency review card expires on 2026-11-30.']);
+    expect(on(result, 3)).toMatchObject({ stateless: true, nationality: '' });
+    expect(notesOn(result, 3)).toEqual([]);
+    expect(on(result, 4)).toMatchObject({ stateless: true, centralCardNumber: 'RC-300' });
+    // A country: an expatriate with a residency, and no card.
+    const expat = on(result, 5);
+    expect(expat).toMatchObject({ category: 'expat', residencyNumber: '18/4' });
+    expect(expat.stateless).toBeUndefined();
+    expect(expat.centralCardNumber).toBeUndefined();
+
+    // Saved: the flag stays; given a country later, they are no longer stateless.
+    await importEmployees(c.id, rows, guessColumns('employees', rows[0], rows), OPTIONS);
+    const saved = async (number: string) =>
+      (await db.employees.where('companyId').equals(c.id).toArray()).find(
+        (e) => e.number === number,
+      )!;
+    expect(await saved('1')).toMatchObject({ stateless: true, centralCardNumber: 'RC-100' });
+    const update = [
+      ['Employee Number', 'Name', 'Nationality'],
+      ['1', 'Saad Test', 'Kuwaiti'],
+    ];
+    await importEmployees(c.id, update, guessColumns('employees', update[0], update), {
+      ...OPTIONS,
+      updateExisting: true,
+    });
+    const kuwaiti = await saved('1');
+    expect(kuwaiti).toMatchObject({ category: 'kuwaiti', nationality: 'KW' });
+    expect(kuwaiti.stateless).toBeUndefined();
   });
 
   it('notes duplicate Civil IDs in the file and rows without a name', async () => {

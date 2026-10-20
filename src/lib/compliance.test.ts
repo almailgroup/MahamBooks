@@ -124,6 +124,41 @@ describe('the register', () => {
     expect(employeeDocuments(domestic, DAYS).map((d) => d.type)).toEqual(['residency']);
   });
 
+  it('tracks the review card of stateless staff, and asks no residency of them', () => {
+    const stateless = createEmployee('co', {
+      nationality: '',
+      category: 'expat',
+      stateless: true,
+      civilIdExpiry: '2027-03-01',
+      // Kept from before they were marked stateless: no longer tracked.
+      residencyNumber: '18/9',
+      residencyExpiry: '2026-12-01',
+      centralCardNumber: 'RC-1',
+      centralCardExpiry: '2026-11-15',
+      workPermitExpiry: '2027-02-01',
+    });
+    const docs = employeeDocuments(stateless, DAYS);
+    expect(docs.map((d) => d.type)).toEqual(['civil_id', 'work_permit', 'central_agency_card']);
+    expect(docs[2]).toMatchObject({
+      key: `emp:${stateless.id}:central_agency_card`,
+      number: 'RC-1',
+      expiryDate: '2026-11-15',
+    });
+    // Without the card's number or expiry, nothing to track; an expatriate has no card.
+    expect(
+      employeeDocuments({ ...stateless, centralCardNumber: '', centralCardExpiry: null }, DAYS).map(
+        (d) => d.type,
+      ),
+    ).toEqual(['civil_id', 'work_permit']);
+    expect(employeeDocuments({ ...stateless, stateless: false }, DAYS).map((d) => d.type)).toEqual([
+      'civil_id',
+      'residency',
+      'work_permit',
+    ]);
+    // Only on the employee record: never added to the register by hand.
+    expect(registerTypesFor('employee')).not.toContain('central_agency_card');
+  });
+
   it('leaves out archived records and the papers of employees who left', () => {
     const current = createEmployee('co', { civilIdExpiry: '2027-01-01' });
     const left = createEmployee('co', { civilIdExpiry: '2027-01-01', status: 'left' });

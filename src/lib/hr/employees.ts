@@ -25,14 +25,37 @@ export function categoryForNationality(nationality: string): Exclude<EmployeeCat
   return 'expat';
 }
 
-/** Expatriates and domestic workers hold a residency (Article 18 or 20). */
-export function needsResidency(category: EmployeeCategory): boolean {
+/** A category, or an employee, whose stateless flag counts too. */
+export type CategoryOf = EmployeeCategory | Pick<Employee, 'category' | 'stateless'>;
+
+const categoryOf = (who: CategoryOf): EmployeeCategory =>
+  typeof who === 'string' ? who : who.category;
+
+/**
+ * Stateless (Bedoon): the flag on an expatriate. An older version that
+ * changed the category leaves the flag behind; the category wins.
+ */
+export function isStateless(employee: Partial<Pick<Employee, 'category' | 'stateless'>>): boolean {
+  return employee.stateless === true && employee.category === 'expat';
+}
+
+/**
+ * Expatriates and domestic workers hold a residency (Article 18 or 20);
+ * stateless staff never need one (they hold a Central Agency review card).
+ */
+export function needsResidency(who: CategoryOf): boolean {
+  if (typeof who !== 'string' && isStateless(who)) return false;
+  const category = categoryOf(who);
   return category === 'expat' || category === 'domestic';
 }
 
-/** Expatriates in the private sector work under a PAM work permit. */
-export function needsWorkPermit(category: EmployeeCategory): boolean {
-  return category === 'expat';
+/**
+ * Expatriates in the private sector work under a PAM work permit. Stateless
+ * staff may have one too: like everyone's, its fields are optional, and it
+ * is tracked only once entered.
+ */
+export function needsWorkPermit(who: CategoryOf): boolean {
+  return categoryOf(who) === 'expat';
 }
 
 /** Kuwaiti and GCC staff are insured with PIFSS. */
@@ -57,9 +80,42 @@ export const CATEGORY_LABELS: Record<EmployeeCategory, string> = {
   domestic: msg('Domestic worker'),
 };
 
-/** An employee's category in words (English key), also for one a newer version saved. */
-export function categoryLabel(category: string): string {
-  return lookup(CATEGORY_LABELS, category, msg('Other'));
+/** Stateless (Bedoon) staff, in words: shown instead of "Expatriate". */
+export const STATELESS_LABEL = msg('Stateless (Bedoon)');
+
+/**
+ * An employee's category in words (English key), also for one a newer
+ * version saved. Given the employee, stateless staff are named so.
+ */
+export function categoryLabel(who: string | Pick<Employee, 'category' | 'stateless'>): string {
+  if (typeof who !== 'string' && isStateless(who)) return STATELESS_LABEL;
+  return lookup(CATEGORY_LABELS, typeof who === 'string' ? who : who.category, msg('Other'));
+}
+
+/** What lists filter staff by: a category, or the stateless among the expatriates. */
+export type CategoryFilter = EmployeeCategory | 'stateless';
+
+export const CATEGORY_FILTERS: CategoryFilter[] = [
+  'kuwaiti',
+  'gcc',
+  'expat',
+  'stateless',
+  'domestic',
+];
+
+export const CATEGORY_FILTER_LABELS: Record<CategoryFilter, string> = {
+  ...CATEGORY_LABELS,
+  stateless: STATELESS_LABEL,
+};
+
+/** Whether an employee is in a filter's group ("Expatriate" leaves the stateless out). */
+export function inCategory(
+  employee: Pick<Employee, 'category' | 'stateless'>,
+  filter: CategoryFilter,
+): boolean {
+  if (filter === 'stateless') return isStateless(employee);
+  if (filter === 'expat') return employee.category === 'expat' && !isStateless(employee);
+  return employee.category === filter;
 }
 
 export const GENDER_LABELS: Record<Gender, string> = {
@@ -158,8 +214,13 @@ export function probationLimit(
 export interface WorkforceSummary {
   /** Active and on-leave staff. */
   headcount: number;
-  /** Staff in each known category (one a newer version saved counts in none). */
+  /**
+   * Staff in each known category (one a newer version saved counts in none);
+   * expatriates without the stateless, who are counted on their own.
+   */
   byCategory: Record<EmployeeCategory, number>;
+  /** Stateless (Bedoon) staff. */
+  stateless: number;
   /** Staff covered by the Labour Law (everyone except domestic workers). */
   labourLawHeadcount: number;
   /** Kuwaitis as a share of the Labour Law headcount, 0–100, or null with no staff. */
@@ -168,7 +229,7 @@ export interface WorkforceSummary {
 
 /** Headcount and the Kuwaiti share ("Kuwaitization") of the current staff. */
 export function workforceSummary(
-  employees: Pick<Employee, 'status' | 'category'>[],
+  employees: (Pick<Employee, 'status' | 'category'> & Partial<Pick<Employee, 'stateless'>>)[],
 ): WorkforceSummary {
   const byCategory: Record<EmployeeCategory, number> = {
     kuwaiti: 0,
@@ -176,12 +237,17 @@ export function workforceSummary(
     expat: 0,
     domestic: 0,
   };
+  let stateless = 0;
   const current = employees.filter(isCurrent);
-  for (const e of current) if (isKnown(byCategory, e.category)) byCategory[e.category] += 1;
+  for (const e of current) {
+    if (isStateless(e)) stateless += 1;
+    else if (isKnown(byCategory, e.category)) byCategory[e.category] += 1;
+  }
   const labourLawHeadcount = current.length - byCategory.domestic;
   return {
     headcount: current.length,
     byCategory,
+    stateless,
     labourLawHeadcount,
     kuwaitiShare:
       labourLawHeadcount > 0

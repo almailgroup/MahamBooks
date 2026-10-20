@@ -11,6 +11,7 @@ import {
 } from './backup';
 import { saveClient, setupCompany, getCurrentCompanyId } from './records';
 import { seedDemoCompany } from './demo';
+import { addDepartment, createEmployee, saveEmployee } from './people';
 
 beforeEach(async () => {
   await db.delete();
@@ -90,6 +91,35 @@ describe('backup', () => {
     await db.open();
     await importBackup(parseBackup(text), 'replace');
     expect((await db.companies.get(a.id))?.links).toEqual(links);
+  });
+
+  it('keeps the departments and stateless employees with their review card', async () => {
+    const a = await setupCompany({ name: 'Made-up Guarding' });
+    await addDepartment(a.id, { name: 'Security', nameAr: 'الأمن' });
+    const saad = await saveEmployee(
+      createEmployee(a.id, {
+        name: 'Saad Testing',
+        category: 'expat',
+        stateless: true,
+        nationality: '',
+        department: 'Security',
+        centralCardNumber: 'RC-1',
+        centralCardExpiry: '2027-01-31',
+      }),
+    );
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.peopleSettings.get(a.id))?.departments).toEqual([
+      expect.objectContaining({ name: 'Security', nameAr: 'الأمن' }),
+    ]);
+    expect(await db.employees.get(saad.id)).toMatchObject({
+      stateless: true,
+      department: 'Security',
+      centralCardNumber: 'RC-1',
+      centralCardExpiry: '2027-01-31',
+    });
   });
 
   it('merges without deleting existing data', async () => {

@@ -165,6 +165,17 @@ describe('finding employees across companies', () => {
     expect(ids(findEmployees(people, companies, { typeId: 'cleaning' }))).toEqual([]);
     expect(ids(findEmployees(people, companies, { department: 'Sales' }))).toEqual(['e1']);
     expect(ids(findEmployees(people, companies, { category: 'expat' }))).toEqual(['e2']);
+    // Stateless staff are expatriates with the flag: a filter of their own.
+    const stateless = createEmployee('b', {
+      id: 'e5',
+      name: 'Test Person Six',
+      category: 'expat',
+      stateless: true,
+    });
+    const all = [...people, stateless];
+    expect(ids(findEmployees(all, companies, { category: 'stateless' }))).toEqual(['e5']);
+    expect(ids(findEmployees(all, companies, { category: 'expat' }))).toEqual(['e2']);
+    expect(employeesCsv([stateless], companies).rows[0]).toContain('Stateless (Bedoon)');
   });
 
   it('offer the types and departments in use, once each', () => {
@@ -206,6 +217,8 @@ describe('the filters remembered', () => {
       category: undefined,
       view: 'left',
     });
+    saveFilters({ category: 'stateless' });
+    expect(loadFilters().category).toBe('stateless');
   });
 
   it('ignore anything they don’t know', () => {

@@ -6,21 +6,26 @@ import {
   FilePlus2,
   FileUp,
   FileWarning,
+  FolderTree,
   IdCard,
   ImagePlus,
   Plus,
   Search,
   Settings2,
+  X,
 } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
-import type { EmployeeCategory } from '@/db/types';
 import {
-  CATEGORY_LABELS,
+  CATEGORY_FILTER_LABELS,
+  CATEGORY_FILTERS,
   categoryLabel,
   employeeStatusLabel,
+  inCategory,
   isCurrent,
   workforceSummary,
+  type CategoryFilter,
 } from '@/lib/hr/employees';
+import { departmentChoices, departmentLabel } from '@/lib/hr/departments';
 import { expiryStatus, type ExpiryInfo, type RegisterEntry } from '@/lib/compliance';
 import { downloadCsv } from '@/lib/csv';
 import { countryName } from '@/lib/geo';
@@ -32,15 +37,17 @@ import { useRegister } from '@/features/renewals/hooks';
 import { entryTitle, ExpiryBadge } from '@/features/renewals/display';
 import { ComplianceSettingsDialog } from '@/features/renewals/settings-dialog';
 import { BulkDocumentsDialog } from '@/features/people/bulk-documents-dialog';
+import { DepartmentsDialog } from '@/features/people/departments-dialog';
+import { AssignDepartmentDialog } from '@/features/people/assign-department-dialog';
 import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
+import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
-import { t } from '@/i18n';
+import { t, tp } from '@/i18n';
 
 type View = 'current' | 'left' | 'all';
-const CATEGORIES: EmployeeCategory[] = ['kuwaiti', 'gcc', 'expat', 'domestic'];
 
 /** The most urgent document of each employee: expired first, then the soonest to expire. */
 function worstDocuments(entries: RegisterEntry[], on: string) {
@@ -61,35 +68,46 @@ export default function EmployeeListPage() {
   const company = useCompany();
   const fmt = useFormat();
   const navigate = useNavigate();
+  const { language } = useLanguage();
   const employees = useEmployees();
   const settings = usePeopleSettings();
   const register = useRegister();
   const [view, setView] = useState<View>('current');
-  const [category, setCategory] = useState<EmployeeCategory | ''>('');
+  const [category, setCategory] = useState<CategoryFilter | ''>('');
   const [department, setDepartment] = useState('');
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulk, setBulk] = useState<'documents' | 'photos' | null>(null);
+  const [dialog, setDialog] = useState<'departments' | 'assign' | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const photos = useEmployeePhotos(employees);
   // Two companies or more switched on for the search across companies.
   const everywhere = (usePeopleCompanies()?.included.length ?? 0) > 1;
 
   const on = today();
   const worst = useMemo(() => worstDocuments(register?.entries ?? [], on), [register, on]);
-  const departments = useMemo(
+  const inUse = useMemo(
     () =>
       [...new Set((employees ?? []).map((e) => e.department.trim()).filter(Boolean))].sort((a, b) =>
         a.localeCompare(b),
       ),
     [employees],
   );
+  const list = settings?.departments;
+  // The list's departments and those employees have, by name in the language.
+  const departments = useMemo(() => {
+    const names = new Set([...departmentChoices(list).map((d) => d.name), ...inUse]);
+    return [...names]
+      .map((name) => ({ name, label: departmentLabel(list, name, language) }))
+      .sort((a, b) => a.label.localeCompare(b.label, language));
+  }, [list, inUse, language]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (employees ?? [])
       .filter((e) => (view === 'all' ? true : view === 'left' ? !isCurrent(e) : isCurrent(e)))
-      .filter((e) => !category || e.category === category)
+      .filter((e) => !category || inCategory(e, category))
       .filter((e) => !department || e.department.trim() === department)
       .filter((e) => !expiringOnly || worst.has(e.id))
       .filter(
@@ -103,6 +121,8 @@ export default function EmployeeListPage() {
             e.jobTitle,
             e.jobTitleAr,
             e.department,
+            // Its Arabic name too, from the company's list.
+            departmentLabel(list, e.department, 'ar'),
             e.phone,
             e.email,
           ]
@@ -111,7 +131,7 @@ export default function EmployeeListPage() {
             .includes(q),
       )
       .sort((a, b) => localName(a).localeCompare(localName(b)));
-  }, [employees, view, category, department, expiringOnly, worst, query]);
+  }, [employees, view, category, department, expiringOnly, worst, query, list]);
 
   if (!employees || !settings || !register) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -129,6 +149,19 @@ export default function EmployeeListPage() {
   const share = summary.kuwaitiShare;
   const belowTarget = target !== null && share !== null && share < target;
   const withExpiring = current.filter((e) => worst.has(e.id)).length;
+  const counted = (c: CategoryFilter) =>
+    c === 'stateless' ? summary.stateless : summary.byCategory[c];
+  // Only rows shown can stay selected.
+  const shownIds = new Set(filtered.map((e) => e.id));
+  const picked = [...selected].filter((id) => shownIds.has(id));
+  const allPicked = filtered.length > 0 && picked.length === filtered.length;
+  const toggle = (id: string, on: boolean) =>
+    setSelected((before) => {
+      const next = new Set(before);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
 
   const exportCsv = () =>
     downloadCsv(
@@ -153,7 +186,7 @@ export default function EmployeeListPage() {
         e.name,
         e.nameAr ?? '',
         countryName(e.nationality, fmt.locale),
-        t(categoryLabel(e.category)),
+        t(categoryLabel(e)),
         e.civilId,
         e.jobTitle,
         e.department,
@@ -177,6 +210,9 @@ export default function EmployeeListPage() {
                 <Building2 /> {t('Search all companies')}
               </ButtonLink>
             ) : null}
+            <Button variant="outline" onClick={() => setDialog('departments')}>
+              <FolderTree /> {t('Departments')}
+            </Button>
             {employees.length > 0 ? (
               <>
                 <Button variant="outline" onClick={exportCsv}>
@@ -229,11 +265,11 @@ export default function EmployeeListPage() {
                 {fmt.quantity(summary.headcount)}
               </p>
               <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                {CATEGORIES.filter((c) => summary.byCategory[c] > 0).map((c) => (
+                {CATEGORY_FILTERS.filter((c) => counted(c) > 0).map((c) => (
                   <li key={c}>
-                    {t(CATEGORY_LABELS[c])}:{' '}
+                    {t(CATEGORY_FILTER_LABELS[c])}:{' '}
                     <span className="tabular font-medium text-slate-700">
-                      {fmt.quantity(summary.byCategory[c])}
+                      {fmt.quantity(counted(c))}
                     </span>
                   </li>
                 ))}
@@ -332,14 +368,14 @@ export default function EmployeeListPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <Select
                   value={category}
-                  onChange={(e) => setCategory(e.target.value as EmployeeCategory | '')}
+                  onChange={(e) => setCategory(e.target.value as CategoryFilter | '')}
                   aria-label={t('Category')}
                   className="sm:w-44"
                 >
                   <option value="">{t('All categories')}</option>
-                  {CATEGORIES.map((c) => (
+                  {CATEGORY_FILTERS.map((c) => (
                     <option key={c} value={c}>
-                      {t(CATEGORY_LABELS[c])}
+                      {t(CATEGORY_FILTER_LABELS[c])}
                     </option>
                   ))}
                 </Select>
@@ -352,8 +388,8 @@ export default function EmployeeListPage() {
                   >
                     <option value="">{t('All departments')}</option>
                     {departments.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
+                      <option key={d.name} value={d.name}>
+                        {d.label}
                       </option>
                     ))}
                   </Select>
@@ -377,6 +413,23 @@ export default function EmployeeListPage() {
                 </div>
               </div>
             </div>
+            {picked.length > 0 ? (
+              <div
+                role="region"
+                aria-label={t('Selected employees')}
+                className="bg-primary-50/60 flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2 text-sm"
+              >
+                <span className="font-medium text-slate-700">
+                  {tp(picked.length, '{count} selected', '{count} selected')}
+                </span>
+                <Button size="sm" variant="outline" onClick={() => setDialog('assign')}>
+                  <FolderTree /> {t('Department')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                  <X /> {t('Clear selection')}
+                </Button>
+              </div>
+            ) : null}
             {filtered.length === 0 ? (
               <p className="px-6 py-12 text-center text-sm text-slate-500">
                 {t('No employees match.')}
@@ -386,6 +439,17 @@ export default function EmployeeListPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-start text-xs font-medium tracking-wide text-slate-500 uppercase">
+                      <th className="w-10 py-3 ps-5 pe-0 text-start">
+                        <input
+                          type="checkbox"
+                          className="accent-primary-600 size-4 align-middle pointer-coarse:size-5"
+                          checked={allPicked}
+                          onChange={(ev) =>
+                            setSelected(ev.target.checked ? new Set(shownIds) : new Set())
+                          }
+                          aria-label={t('Select all shown')}
+                        />
+                      </th>
                       <th className="px-5 py-3 text-start">{t('Employee')}</th>
                       <th className="hidden px-3 py-3 text-start md:table-cell">{t('Category')}</th>
                       <th className="hidden px-3 py-3 text-start lg:table-cell">
@@ -410,6 +474,15 @@ export default function EmployeeListPage() {
                           onClick={() => navigate(`/employees/${e.id}`)}
                           className="cursor-pointer hover:bg-slate-50"
                         >
+                          <td className="py-3 ps-5 pe-0" onClick={(ev) => ev.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              className="accent-primary-600 size-4 align-middle pointer-coarse:size-5"
+                              checked={selected.has(e.id)}
+                              onChange={(ev) => toggle(e.id, ev.target.checked)}
+                              aria-label={t('Select {name}', { name: localName(e) })}
+                            />
+                          </td>
                           <td className="px-5 py-3">
                             <div className="flex items-center gap-3">
                               <EmployeeAvatar
@@ -440,13 +513,13 @@ export default function EmployeeListPage() {
                             </div>
                           </td>
                           <td className="hidden px-3 py-3 text-slate-600 md:table-cell">
-                            <span className="block">{t(categoryLabel(e.category))}</span>
+                            <span className="block">{t(categoryLabel(e))}</span>
                             <span className="block text-xs text-slate-500">
                               {countryName(e.nationality, fmt.locale)}
                             </span>
                           </td>
-                          <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
-                            {e.department || '—'}
+                          <td className="hidden px-3 py-3 text-slate-600 lg:table-cell" dir="auto">
+                            {departmentLabel(list, e.department, language) || '—'}
                           </td>
                           <td className="hidden px-3 py-3 text-slate-600 lg:table-cell">
                             {fmt.date(e.hireDate) || '—'}
@@ -481,6 +554,25 @@ export default function EmployeeListPage() {
       ) : null}
       {bulk ? (
         <BulkDocumentsDialog kind={bulk} employees={employees} onClose={() => setBulk(null)} />
+      ) : null}
+      {dialog === 'departments' ? (
+        <DepartmentsDialog
+          list={list ?? []}
+          employees={employees}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === 'assign' ? (
+        <AssignDepartmentDialog
+          employeeIds={picked}
+          list={list}
+          inUse={inUse}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            setDialog(null);
+            setSelected(new Set());
+          }}
+        />
       ) : null}
     </div>
   );

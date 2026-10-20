@@ -27,9 +27,14 @@ import {
   isValidIban,
   normalizeKuwaitPhone,
 } from '@/lib/kuwait';
-import { nationalityCode } from '@/lib/hr/nationalities';
+import { isStatelessText, nationalityCode } from '@/lib/hr/nationalities';
 import { arabicJobTitle, englishJobTitle } from '@/lib/hr/job-titles';
-import { categoryForNationality, needsResidency, needsWorkPermit } from '@/lib/hr/employees';
+import {
+  categoryForNationality,
+  isStateless,
+  needsResidency,
+  needsWorkPermit,
+} from '@/lib/hr/employees';
 import { documentTypeInfo } from '@/lib/compliance';
 import { isValidEmail } from '@/lib/email';
 import { addDaysISO, isISODate, today } from '@/lib/dates';
@@ -63,7 +68,8 @@ export interface EmployeeImportSummary {
   rowsWithNotes: number;
   arabicNamesFromFiles: number;
   arabicJobTitles: number;
-  nationalities: { mapped: number; unknown: number; missing: number };
+  /** `stateless`: Bedoon, stateless, بدون or غير محدد الجنسية (no country). */
+  nationalities: { mapped: number; unknown: number; missing: number; stateless: number };
   phones: { kuwaiti: number; international: number; kept: number };
   /** Account or salary card numbers. */
   accountNumbers: number;
@@ -192,6 +198,7 @@ const EXPIRY_DOCUMENTS: { key: keyof Employee | 'drivingLicence'; type: Complian
     { key: 'residencyExpiry', type: 'residency' },
     { key: 'passportExpiry', type: 'passport' },
     { key: 'workPermitExpiry', type: 'work_permit' },
+    { key: 'centralCardExpiry', type: 'central_agency_card' },
     { key: 'drivingLicence', type: 'driving_licence' },
   ];
 
@@ -215,7 +222,7 @@ function emptySummary(): EmployeeImportSummary {
     rowsWithNotes: 0,
     arabicNamesFromFiles: 0,
     arabicJobTitles: 0,
-    nationalities: { mapped: 0, unknown: 0, missing: 0 },
+    nationalities: { mapped: 0, unknown: 0, missing: 0, stateless: 0 },
     phones: { kuwaiti: 0, international: 0, kept: 0 },
     accountNumbers: 0,
     ibans: 0,
@@ -432,14 +439,22 @@ export function planEmployeeRows(
       note(t('No name in the file.'));
     }
 
-    // Nationality and category.
+    // Nationality and category. Stateless staff (Bedoon) are expatriates
+    // with the flag, and no country.
     let category: EmployeeCategory = existing?.category ?? 'expat';
+    let stateless = existing ? isStateless(existing) : false;
     if (cells.nationality) {
       const code = nationalityCode(cells.nationality);
       if (code) {
         patch.nationality = code;
         summary.nationalities.mapped += 1;
         if (category !== 'domestic') category = categoryForNationality(code);
+        stateless = false;
+      } else if (isStatelessText(cells.nationality) && category !== 'domestic') {
+        patch.nationality = '';
+        summary.nationalities.stateless += 1;
+        category = 'expat';
+        stateless = true;
       } else {
         summary.nationalities.unknown += 1;
         note(t('Nationality “{value}” not recognised.', { value: isolate(cells.nationality) }));
@@ -450,6 +465,9 @@ export function planEmployeeRows(
     }
     if (!existing && !patch.nationality) patch.nationality = '';
     patch.category = category;
+    if (stateless) patch.stateless = true;
+    else if (existing?.stateless) patch.stateless = false;
+    const who = { category, stateless };
 
     // Personal details.
     if (cells.gender) {
@@ -476,7 +494,7 @@ export function planEmployeeRows(
     const passportExpiry = readDate('passportExpiry', cells.passportExpiry, issues);
     if (passportExpiry) patch.passportExpiry = passportExpiry;
     const residencyExpiry = readDate('residencyExpiry', cells.residencyExpiry, issues);
-    if (needsResidency(category)) {
+    if (needsResidency(who)) {
       if (cells.residencyNumber) patch.residencyNumber = collapse(cells.residencyNumber);
       if (residencyExpiry) patch.residencyExpiry = residencyExpiry;
     }
@@ -485,10 +503,15 @@ export function planEmployeeRows(
       const civil = civilIdExpiry ?? existing?.civilIdExpiry;
       if (civil === residencyExpiry) summary.documentExpiry.sameAsCivilId += 1;
     }
-    if (needsWorkPermit(category)) {
+    if (needsWorkPermit(who)) {
       if (cells.workPermitNumber) patch.workPermitNumber = collapse(cells.workPermitNumber);
       const permit = readDate('workPermitExpiry', cells.workPermitExpiry, issues);
       if (permit) patch.workPermitExpiry = permit;
+    }
+    if (stateless) {
+      if (cells.centralCardNumber) patch.centralCardNumber = collapse(cells.centralCardNumber);
+      const card = readDate('centralCardExpiry', cells.centralCardExpiry, issues);
+      if (card) patch.centralCardExpiry = card;
     }
     const licenceExpiry = readDate('drivingLicenceExpiry', cells.drivingLicenceExpiry, issues);
     const licenceNumber = collapse(cells.drivingLicenceNumber);
@@ -600,7 +623,8 @@ export function planEmployeeRows(
           ? (drivingLicence?.expiryDate ?? null)
           : ((merged[doc.key] as ISODate | null | undefined) ?? null);
       if (!date || date > soon) continue;
-      if (doc.type === 'residency' && !needsResidency(category)) continue;
+      if (doc.type === 'residency' && !needsResidency(who)) continue;
+      if (doc.type === 'central_agency_card' && !stateless) continue;
       if (date < on) summary.expired += 1;
       else summary.expiring += 1;
       expiries.set(date, [...(expiries.get(date) ?? []), t(documentTypeInfo(doc.type).label)]);

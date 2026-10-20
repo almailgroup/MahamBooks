@@ -3,6 +3,7 @@ import type { ImportPlan, PlannedRow, RowIssue } from '@/db/import';
 import type { EmployeeImportProgress } from '@/db/import-employees';
 import { useFormat } from '@/app/company';
 import { countryName } from '@/lib/geo';
+import { isStateless, STATELESS_LABEL } from '@/lib/hr/employees';
 import { maskNumber } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
@@ -48,7 +49,11 @@ function viewOf(row: PlannedRow, locale: string): RowView {
     number: e?.number || cells.number,
     name: e?.name ?? fallbackName,
     nameAr: e?.nameAr ?? cells.nameAr,
-    nationality: e ? countryName(e.nationality, locale) : cells.nationality,
+    nationality: e
+      ? isStateless(e)
+        ? t(STATELESS_LABEL)
+        : countryName(e.nationality, locale)
+      : cells.nationality,
     job: e ? localName({ name: e.jobTitle, nameAr: e.jobTitleAr }) : cells.jobTitle,
     civilId: e?.civilId ?? cells.civilId,
     state: !record ? 'skipped' : record.existing ? 'update' : 'new',
@@ -218,6 +223,15 @@ export function EmployeeImportPreview({
                 summary.nationalities.mapped,
                 'Nationality recognised for {count} employee.',
                 'Nationalities recognised for {count} employees.',
+              )}
+            </Point>
+          ) : null}
+          {summary.nationalities.stateless ? (
+            <Point>
+              {tp(
+                summary.nationalities.stateless,
+                '{count} stateless (Bedoon) employee: a review card instead of a residency.',
+                '{count} stateless (Bedoon) employees: a review card instead of a residency.',
               )}
             </Point>
           ) : null}

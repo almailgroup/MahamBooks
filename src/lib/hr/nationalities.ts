@@ -150,6 +150,14 @@ const CODES = new Set(countryOptions('en').map((o) => o.value));
  */
 const NO_COUNTRY = /\b(bedoon|bidoon|bidun|stateless|non kuwaiti|non)\b|بدون|غير/;
 
+/** Stateless residents written as a nationality: Bedoon, stateless, بدون, غير محدد الجنسية. */
+const STATELESS = /\b(bedoon|bidoon|bidun|stateless)\b|بدون|غير محدد/;
+
+/** Whether a nationality as written means stateless (Bedoon): not a country, nor "non-Kuwaiti". */
+export function isStatelessText(text: string): boolean {
+  return STATELESS.test(nationalityKey(text));
+}
+
 /**
  * The ISO code of a nationality or country written in English or Arabic,
  * or null when it isn't recognised. Empty text gives null too.

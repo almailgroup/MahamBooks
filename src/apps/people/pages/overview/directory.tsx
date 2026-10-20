@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Mail, Phone, Search, UsersRound } from 'lucide-react';
-import { useEmployees } from '@/features/people/hooks';
+import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { useLeaveRecords } from '@/features/payroll/hooks';
 import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '@/components/ui/misc';
@@ -20,14 +20,16 @@ import { awayOn, departments, directory, findContacts, type Contact } from '../.
 export default function DirectoryPage() {
   const employees = useEmployees();
   const leave = useLeaveRecords();
+  const settings = usePeopleSettings();
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState('');
   const department = params.get('department');
 
   const now = today();
+  const list = settings?.departments;
   const contacts = useMemo(
-    () => (employees && leave ? directory(employees, awayOn(leave, now)) : undefined),
-    [employees, leave, now],
+    () => (employees && leave ? directory(employees, awayOn(leave, now), list) : undefined),
+    [employees, leave, now, list],
   );
   const groups = useMemo(() => (contacts ? departments(contacts) : []), [contacts]);
   const shown = useMemo(
@@ -84,7 +86,7 @@ export default function DirectoryPage() {
                   <option value="*">{t('All departments')}</option>
                   {groups.map((g) => (
                     <option key={g.name} value={g.name}>
-                      {g.name || t('No department')} ({g.count})
+                      {localName(g) || t('No department')} ({g.count})
                     </option>
                   ))}
                 </Select>
@@ -115,6 +117,7 @@ export default function DirectoryPage() {
 function ContactCard({ contact, photo }: { contact: Contact; photo?: string }) {
   const { language } = useLanguage();
   const job = (language === 'ar' && contact.jobTitleAr?.trim()) || contact.jobTitle;
+  const department = localName({ name: contact.department, nameAr: contact.departmentAr });
   return (
     <li className="bg-surface relative flex min-w-0 gap-3 rounded-xl border border-slate-200 p-4 shadow-xs">
       <EmployeeAvatar employee={contact} photo={photo} size="md" />
@@ -130,7 +133,7 @@ function ContactCard({ contact, photo }: { contact: Contact; photo?: string }) {
           {contact.onLeave ? <Badge tone="amber">{t('On leave')}</Badge> : null}
         </p>
         <p dir="auto" className="truncate text-sm text-slate-600">
-          {[job, contact.department].filter(Boolean).join(' · ') || '—'}
+          {[job, department].filter(Boolean).join(' · ') || '—'}
         </p>
         <div className="mt-2 flex flex-col gap-1 text-sm">
           {contact.phone ? (

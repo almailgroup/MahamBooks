@@ -94,12 +94,13 @@ async function addEmployee(
   page: Page,
   name: string,
   nameAr: string,
-  extra: { phone?: string } = {},
+  extra: { phone?: string; department?: string } = {},
 ) {
   await page.goto('#/employees/new');
   await page.getByLabel('Name (English)').fill(name);
   await page.getByLabel('Name (Arabic)').fill(nameAr);
   if (extra.phone) await page.getByLabel('Mobile').fill(extra.phone);
+  if (extra.department) await page.getByLabel('Department').fill(extra.department);
   await page.getByLabel('Basic salary').fill('500');
   await page.getByRole('button', { name: 'Save employee' }).first().click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
@@ -267,4 +268,128 @@ test('a company where the person is staff adds nobody to the search across compa
   // The staff company's own People pages stay private.
   await page.goto('#/employees');
   await expect(page.getByRole('heading', { name: 'Payroll and people are private' })).toBeVisible();
+});
+
+test('a stateless employee holds a review card instead of a residency, in both languages', async ({
+  page,
+}) => {
+  await createCompany(page, 'Made-up Guarding');
+  await page.goto('#/employees/new');
+  await page.getByLabel('Name (English)').fill('Saad Testing');
+  await page.getByLabel('Name (Arabic)').fill('سعد التجريبي');
+  await page.getByLabel('Category').selectOption({ label: 'Stateless (Bedoon)' });
+  await expect(page.getByText(/^Not insured with PIFSS\. No residency needed/)).toBeVisible();
+  // No residency is asked for; the work permit is optional.
+  await expect(page.getByLabel('Residency expiry')).toHaveCount(0);
+  await expect(page.getByLabel('PIFSS number')).toHaveCount(0);
+  await expect(page.getByLabel('Work permit number')).toBeVisible();
+  await page.getByLabel('Review card number').fill('RC-2041');
+  await page.getByLabel('Review card expiry').fill(inDays(20));
+  await page.getByLabel('Basic salary').fill('300');
+  await page.getByRole('button', { name: 'Save employee' }).first().click();
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Saad Testing');
+  await expect(page.getByText('Stateless (Bedoon)', { exact: true })).toBeVisible();
+  const card = page.getByRole('listitem').filter({ hasText: 'Central Agency review card' });
+  await expect(card).toContainText('Expires in 20 days');
+  // Reminded in Compliance like any other paper.
+  await page.goto('#/compliance');
+  const item = page.getByRole('listitem').filter({ hasText: 'Central Agency review card' });
+  await expect(item).toContainText('Saad Testing');
+  await expect(item).toContainText('Due soon');
+
+  // On the list, counted and filtered on their own.
+  await page.goto('#/employees');
+  await expect(page.getByText('Stateless (Bedoon): 1')).toBeVisible();
+  await page.getByLabel('Category').selectOption({ label: 'Expatriate' });
+  await expect(page.getByText('No employees match.')).toBeVisible();
+  await page.getByLabel('Category').selectOption({ label: 'Stateless (Bedoon)' });
+  await expect(page.getByRole('row', { name: /Saad Testing/ })).toBeVisible();
+
+  // In Arabic.
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(page.getByRole('row', { name: /سعد التجريبي/ })).toContainText(
+    'غير محدد الجنسية (بدون)',
+  );
+  await page
+    .getByRole('row', { name: /سعد التجريبي/ })
+    .getByRole('link')
+    .click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('سعد التجريبي');
+  await expect(page.getByText('بطاقة المراجعة (الجهاز المركزي)')).toBeVisible();
+  await page.getByRole('link', { name: 'تعديل', exact: true }).click();
+  await expect(page.getByLabel('الفئة')).toHaveValue('stateless');
+  await expect(page.getByLabel('رقم بطاقة المراجعة')).toHaveValue('RC-2041');
+});
+
+test('departments are a list with Arabic names, renamed with their employees and given to several at once', async ({
+  page,
+}) => {
+  await createCompany(page, 'Made-up Trading');
+  await addEmployee(page, 'Huda Testing', 'هدى التجريبية', { department: 'Securty' });
+  await addEmployee(page, 'Fahad Testing', 'فهد التجريبي');
+  await addEmployee(page, 'Noura Testing', 'نورة التجريبية');
+
+  // The list starts from the departments in use.
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'Departments', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Departments', exact: true });
+  await dialog.getByRole('button', { name: 'Add the departments in use' }).click();
+  const list = dialog.getByRole('list', { name: 'Departments' });
+  await expect(list.getByRole('listitem', { name: 'Securty' })).toContainText('1 employee');
+
+  // A rename moves its employees, after a warning; the Arabic name comes with it.
+  await list.getByRole('button', { name: 'Actions for Securty' }).click();
+  await page.getByRole('menuitem', { name: 'Rename' }).click();
+  await list.getByLabel('Name (English)').fill('Security');
+  await list.getByLabel('Name (Arabic)').fill('الأمن');
+  await list.getByRole('button', { name: 'Save' }).click();
+  await page
+    .getByRole('dialog', { name: 'Rename Securty to Security?' })
+    .getByRole('button', { name: 'Rename' })
+    .click();
+  await expect(list.getByRole('listitem', { name: 'Security' })).toContainText('الأمن');
+
+  // Another one, added by hand.
+  const add = dialog.locator('form');
+  await add.getByLabel('Name (English)').fill('Head Office');
+  await add.getByLabel('Name (Arabic)').fill('الإدارة');
+  await add.getByRole('button', { name: 'Add department' }).click();
+  await expect(list.getByRole('listitem', { name: 'Head Office' })).toContainText('0 employees');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('row', { name: /Huda Testing/ })).toContainText('Security');
+
+  // Two employees chosen on the list go to Head Office together.
+  await page.getByRole('checkbox', { name: 'Select Fahad Testing' }).check();
+  await page.getByRole('checkbox', { name: 'Select Noura Testing' }).check();
+  const selection = page.getByRole('region', { name: 'Selected employees' });
+  await expect(selection).toContainText('2 selected');
+  await selection.getByRole('button', { name: 'Department' }).click();
+  const assign = page.getByRole('dialog', { name: 'Department', exact: true });
+  await assign.getByLabel('Department').selectOption({ label: 'Head Office' });
+  await assign.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('2 employees moved')).toBeVisible();
+  await expect(selection).toBeHidden();
+  await expect(page.getByRole('row', { name: /Fahad Testing/ })).toContainText('Head Office');
+  await expect(page.getByRole('row', { name: /Noura Testing/ })).toContainText('Head Office');
+
+  // The form chooses from the list, or "Other…" to type one.
+  await page.goto('#/employees/new');
+  const department = page.getByLabel(/^Department/);
+  await expect(department.locator('option')).toHaveText([
+    'No department',
+    'Head Office',
+    'Security',
+    'Other…',
+  ]);
+
+  // In Arabic the departments show their Arabic names; links keep the English one.
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(page.getByRole('row', { name: /هدى التجريبية/ })).toContainText('الأمن');
+  await page.goto('#/people');
+  await page.getByRole('link', { name: /الإدارة/ }).click();
+  await expect(page).toHaveURL(/department=Head%20Office/);
+  await expect(page.getByText('نورة التجريبية')).toBeVisible();
+  await expect(page.getByText('هدى التجريبية')).toHaveCount(0);
 });

@@ -18,6 +18,7 @@ import {
   needsResidency,
 } from '@/lib/hr/employees';
 import { documentTypeInfo, normalizeReminderDays } from '@/lib/compliance';
+import { departmentLabel } from '@/lib/hr/departments';
 import { bankFromIban, formatIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { countryName } from '@/lib/geo';
 import { currencyPrecision, dec, round } from '@/lib/money';
@@ -234,10 +235,16 @@ export default function EmployeeDetailPage() {
               >
                 {t(employeeStatusLabel(employee.status))}
               </Badge>
-              <Badge tone="gray">{t(categoryLabel(employee.category))}</Badge>
+              <Badge tone="gray">{t(categoryLabel(employee))}</Badge>
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              {[employee.number, job, employee.department].filter(Boolean).join(' · ')}
+              {[
+                employee.number,
+                job,
+                departmentLabel(settings.departments, employee.department, language),
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
             {employee.nameAr?.trim() ? (
               <p className="text-sm text-slate-500">
@@ -388,7 +395,7 @@ export default function EmployeeDetailPage() {
                   <Row label={t('Civil ID number')}>
                     {employee.civilId ? <span dir="ltr">{employee.civilId}</span> : null}
                   </Row>
-                  {needsResidency(employee.category) ? (
+                  {needsResidency(employee) ? (
                     <Row label={t('Residency article')}>{article ? t(article.label) : ''}</Row>
                   ) : null}
                   {employee.pifssNumber ? (

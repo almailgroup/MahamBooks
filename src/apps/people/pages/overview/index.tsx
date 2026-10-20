@@ -13,7 +13,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
-import { useEmployees } from '@/features/people/hooks';
+import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { useLeaveRecords } from '@/features/payroll/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
@@ -54,13 +54,15 @@ export default function PeopleOverview() {
   const employees = useEmployees();
   const leave = useLeaveRecords();
   const register = useRegister();
+  const settings = usePeopleSettings();
+  const list = settings?.departments;
   const photos = useEmployeePhotos(employees);
   const now = today();
 
   const data = useMemo(() => {
     if (!employees || !leave) return null;
     const away = awayOn(leave, now);
-    const contacts = directory(employees, away);
+    const contacts = directory(employees, away, list);
     const byId = new Map(employees.map((e) => [e.id, e]));
     return {
       contacts,
@@ -72,7 +74,7 @@ export default function PeopleOverview() {
       upcoming: comingUp(employees, now),
       joiners: newJoiners(employees, now).length,
     };
-  }, [employees, leave, now]);
+  }, [employees, leave, now, list]);
 
   const papers = useMemo(
     () =>
@@ -214,7 +216,7 @@ export default function PeopleOverview() {
                   >
                     <span className="flex items-baseline justify-between gap-3 text-sm">
                       <span dir="auto" className="truncate text-slate-700">
-                        {g.name || t('No department')}
+                        {localName(g) || t('No department')}
                       </span>
                       <span className="tabular text-slate-500">{fmt.quantity(g.count)}</span>
                     </span>

@@ -102,6 +102,21 @@ describe('the staff directory', () => {
     ]);
   });
 
+  it('gives departments their Arabic names from the company’s list, keeping the English one', () => {
+    const list = [{ id: 'd1', name: 'Finance', nameAr: 'المالية' }];
+    const contacts = directory([sara, omar, fixed], new Map(), list);
+    expect(contacts.find((c) => c.id === 'e1')).toMatchObject({
+      department: 'Finance',
+      departmentAr: 'المالية',
+    });
+    expect(contacts.find((c) => c.id === 'e2')).not.toHaveProperty('departmentAr');
+    expect(departments(contacts)).toEqual([
+      { name: 'Finance', nameAr: 'المالية', count: 2 },
+      { name: 'Logistics', count: 1 },
+    ]);
+    expect(findContacts(contacts, 'المالية').map((c) => c.id)).toEqual(['e4', 'e1']);
+  });
+
   it('finds people by name in either language, job, department or phone', () => {
     const list = directory([sara, omar, fixed]);
     const names = (q: string, d: string | null = null) => findContacts(list, q, d).map((c) => c.id);

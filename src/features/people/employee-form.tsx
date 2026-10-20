@@ -3,9 +3,9 @@ import { Plus, Trash2 } from 'lucide-react';
 import { addYears } from 'date-fns';
 import type {
   ContractType,
+  Department,
   Employee,
   EmployeeAllowance,
-  EmployeeCategory,
   EmployeeStatus,
   Gender,
   LeavingReason,
@@ -14,11 +14,12 @@ import type {
 import { newAllowance } from '@/db/people';
 import { useFormat } from '@/app/company';
 import {
-  CATEGORY_LABELS,
+  CATEGORY_FILTER_LABELS,
   categoryForNationality,
   CONTRACT_LABELS,
   GENDER_LABELS,
   insuredWithPifss,
+  isStateless,
   LEAVING_REASON_LABELS,
   needsResidency,
   needsWorkPermit,
@@ -26,7 +27,9 @@ import {
   probationLimit,
   RESIDENCY_ARTICLES,
   STATUS_LABELS,
+  type CategoryFilter,
 } from '@/lib/hr/employees';
+import { hasDepartmentList } from '@/lib/hr/departments';
 import { eosWage } from '@/lib/hr/eosi';
 import {
   bankFromIban,
@@ -45,6 +48,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox, Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Card, CardBody, CardHeader, Segmented } from '@/components/ui/misc';
 import type { AttachedFile } from '@/features/purchases/attachments';
+import { DepartmentSelect } from './department-select';
 import { FileList } from './file-list';
 import { DateField } from '@/components/ui/date-field';
 
@@ -89,14 +93,19 @@ const ALLOWANCE_SUGGESTIONS: { en: string; ar: string }[] = [
   { en: msg('Social allowance'), ar: 'علاوة اجتماعية' },
 ];
 
-const CATEGORY_HINTS: Record<EmployeeCategory, string> = {
+const CATEGORY_HINTS: Record<CategoryFilter, string> = {
   kuwaiti: msg('Insured with PIFSS. No residency needed.'),
   gcc: msg('Insured with PIFSS under the GCC scheme. No residency needed.'),
   expat: msg('Needs an Article 18 residency and a work permit.'),
+  stateless: msg(
+    'Not insured with PIFSS. No residency needed: they hold a Central Agency review card. A work permit is optional.',
+  ),
   domestic: msg('Covered by the domestic workers law (68/2015), not the Labour Law.'),
 };
 
-const CATEGORIES: EmployeeCategory[] = ['kuwaiti', 'gcc', 'expat', 'domestic'];
+/** The choices of category: stateless staff are expatriates with the flag (see isStateless). */
+const CATEGORIES: CategoryFilter[] = ['kuwaiti', 'gcc', 'expat', 'stateless', 'domestic'];
+
 const GENDERS: Gender[] = ['male', 'female'];
 const STATUSES: EmployeeStatus[] = ['active', 'on_leave', 'left'];
 const PAY_BASES: PayBasis[] = ['monthly', 'daily', 'hourly', 'piece'];
@@ -131,13 +140,17 @@ export function EmployeeForm({
   errors,
   currency,
   departments,
+  departmentList,
   files,
 }: {
   value: Employee;
   onChange: (employee: Employee) => void;
   errors: EmployeeErrors;
   currency: string;
+  /** Departments the company's employees have, suggested when there is no list. */
   departments: string[];
+  /** The company's list of departments (people settings); without one, a name is typed. */
+  departmentList?: Department[];
   files: {
     files: AttachedFile[];
     add: (file: AttachedFile) => void;
@@ -146,7 +159,7 @@ export function EmployeeForm({
 }) {
   const fmt = useFormat();
   const { language } = useLanguage();
-  const departmentList = useId();
+  const suggestions = useId();
   const allowanceList = useId();
   const statusLabel = useId();
   const set = (patch: Partial<Employee>) => onChange({ ...value, ...patch });
@@ -170,11 +183,73 @@ export function EmployeeForm({
     value.contractEnd &&
     value.contractEnd > toISODate(addYears(parseISODate(value.hireDate), 5));
 
+  const stateless = isStateless(value);
+  const category: CategoryFilter = stateless ? 'stateless' : value.category;
+  // Stateless staff are expatriates with the flag, and no country.
+  const setCategory = (next: CategoryFilter) =>
+    next === 'stateless'
+      ? set({ category: 'expat', stateless: true, nationality: '' })
+      : set({ category: next, ...(value.stateless ? { stateless: false } : {}) });
   const setNationality = (nationality: string) =>
     set({
       nationality,
       category: value.category === 'domestic' ? 'domestic' : categoryForNationality(nationality),
+      // A country chosen: no longer stateless.
+      ...(nationality && value.stateless ? { stateless: false } : {}),
     });
+
+  const workPermitFields = (
+    <>
+      <Field label={t('Work permit number')} optional>
+        {(id) => (
+          <Input
+            id={id}
+            value={value.workPermitNumber}
+            onChange={(e) => set({ workPermitNumber: e.target.value })}
+            dir="ltr"
+          />
+        )}
+      </Field>
+      <Field label={t('Work permit expiry')} optional>
+        {(id) => (
+          <DateField
+            id={id}
+            value={value.workPermitExpiry ?? ''}
+            onChange={(iso) => set({ workPermitExpiry: iso || null })}
+          />
+        )}
+      </Field>
+      <Field label={t('Job title on the work permit')} optional hint={t('As registered with PAM.')}>
+        {(id) => (
+          <Input
+            id={id}
+            value={value.pamJobTitle}
+            onChange={(e) => set({ pamJobTitle: e.target.value })}
+            dir="auto"
+          />
+        )}
+      </Field>
+      <Field
+        label={t('Salary on the work permit')}
+        optional
+        hint={
+          value.permitSalary > 0 && totalPay < value.permitSalary ? (
+            <Warning>{t('The monthly pay is lower than the salary on the work permit.')}</Warning>
+          ) : undefined
+        }
+      >
+        {(id) => (
+          <NumberInput
+            id={id}
+            value={value.permitSalary}
+            onValueChange={(permitSalary) => set({ permitSalary })}
+            allowNegative={false}
+            blankZero
+          />
+        )}
+      </Field>
+    </>
+  );
 
   return (
     <div className="space-y-6">
@@ -221,16 +296,16 @@ export function EmployeeForm({
         <Field label={t('Nationality')}>
           {(id) => <CountrySelect id={id} value={value.nationality} onChange={setNationality} />}
         </Field>
-        <Field label={t('Category')} hint={t(CATEGORY_HINTS[value.category])}>
+        <Field label={t('Category')} hint={t(CATEGORY_HINTS[category] ?? '')}>
           {(id) => (
             <Select
               id={id}
-              value={value.category}
-              onChange={(e) => set({ category: e.target.value as EmployeeCategory })}
+              value={category}
+              onChange={(e) => setCategory(e.target.value as CategoryFilter)}
             >
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
-                  {t(CATEGORY_LABELS[c])}
+                  {t(CATEGORY_FILTER_LABELS[c])}
                 </option>
               ))}
             </Select>
@@ -371,10 +446,36 @@ export function EmployeeForm({
         ) : null}
       </Section>
 
-      {needsResidency(value.category) ? (
+      {stateless ? (
         <Section
-          title={needsWorkPermit(value.category) ? t('Residency and work permit') : t('Residency')}
+          title={t('Central Agency review card')}
+          description={t(
+            'Stateless staff hold a review card instead of a residency. The work permit is optional.',
+          )}
         >
+          <Field label={t('Review card number')} optional>
+            {(id) => (
+              <Input
+                id={id}
+                value={value.centralCardNumber ?? ''}
+                onChange={(e) => set({ centralCardNumber: e.target.value })}
+                dir="ltr"
+              />
+            )}
+          </Field>
+          <Field label={t('Review card expiry')} optional>
+            {(id) => (
+              <DateField
+                id={id}
+                value={value.centralCardExpiry ?? ''}
+                onChange={(iso) => set({ centralCardExpiry: iso || null })}
+              />
+            )}
+          </Field>
+          {workPermitFields}
+        </Section>
+      ) : needsResidency(value) ? (
+        <Section title={needsWorkPermit(value) ? t('Residency and work permit') : t('Residency')}>
           <Field label={t('Residency article')}>
             {(id) => (
               <Select
@@ -409,64 +510,7 @@ export function EmployeeForm({
               />
             )}
           </Field>
-          {needsWorkPermit(value.category) ? (
-            <>
-              <Field label={t('Work permit number')} optional>
-                {(id) => (
-                  <Input
-                    id={id}
-                    value={value.workPermitNumber}
-                    onChange={(e) => set({ workPermitNumber: e.target.value })}
-                    dir="ltr"
-                  />
-                )}
-              </Field>
-              <Field label={t('Work permit expiry')} optional>
-                {(id) => (
-                  <DateField
-                    id={id}
-                    value={value.workPermitExpiry ?? ''}
-                    onChange={(iso) => set({ workPermitExpiry: iso || null })}
-                  />
-                )}
-              </Field>
-              <Field
-                label={t('Job title on the work permit')}
-                optional
-                hint={t('As registered with PAM.')}
-              >
-                {(id) => (
-                  <Input
-                    id={id}
-                    value={value.pamJobTitle}
-                    onChange={(e) => set({ pamJobTitle: e.target.value })}
-                    dir="auto"
-                  />
-                )}
-              </Field>
-              <Field
-                label={t('Salary on the work permit')}
-                optional
-                hint={
-                  value.permitSalary > 0 && totalPay < value.permitSalary ? (
-                    <Warning>
-                      {t('The monthly pay is lower than the salary on the work permit.')}
-                    </Warning>
-                  ) : undefined
-                }
-              >
-                {(id) => (
-                  <NumberInput
-                    id={id}
-                    value={value.permitSalary}
-                    onValueChange={(permitSalary) => set({ permitSalary })}
-                    allowNegative={false}
-                    blankZero
-                  />
-                )}
-              </Field>
-            </>
-          ) : null}
+          {needsWorkPermit(value) ? workPermitFields : null}
         </Section>
       ) : null}
 
@@ -492,22 +536,31 @@ export function EmployeeForm({
           )}
         </Field>
         <Field label={t('Department')} optional>
-          {(id) => (
-            <>
-              <Input
+          {(id) =>
+            departmentList && hasDepartmentList(departmentList) ? (
+              <DepartmentSelect
                 id={id}
                 value={value.department}
-                onChange={(e) => set({ department: e.target.value })}
                 list={departmentList}
-                dir="auto"
+                onChange={(department) => set({ department })}
               />
-              <datalist id={departmentList}>
-                {departments.map((d) => (
-                  <option key={d} value={d} />
-                ))}
-              </datalist>
-            </>
-          )}
+            ) : (
+              <>
+                <Input
+                  id={id}
+                  value={value.department}
+                  onChange={(e) => set({ department: e.target.value })}
+                  list={suggestions}
+                  dir="auto"
+                />
+                <datalist id={suggestions}>
+                  {departments.map((d) => (
+                    <option key={d} value={d} />
+                  ))}
+                </datalist>
+              </>
+            )
+          }
         </Field>
         <Field label={t('Hire date')}>
           {(id) => (

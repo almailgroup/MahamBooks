@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { addDaysISO } from '@/lib/dates';
 import {
   categoryForNationality,
+  categoryLabel,
   eosiReasonFor,
+  inCategory,
   insuredWithPifss,
+  isStateless,
   isWorkingDay,
   needsResidency,
   needsWorkPermit,
@@ -34,6 +37,27 @@ describe('employee categories', () => {
     expect(insuredWithPifss('expat')).toBe(false);
     expect(underLabourLaw('domestic')).toBe(false);
     expect(underLabourLaw('expat')).toBe(true);
+  });
+
+  it('treat stateless staff as expatriates without a residency, not insured with PIFSS', () => {
+    const stateless = { category: 'expat' as const, stateless: true };
+    expect(isStateless(stateless)).toBe(true);
+    expect(needsResidency(stateless)).toBe(false);
+    // The work permit stays optional: its fields are there, tracked once entered.
+    expect(needsWorkPermit(stateless)).toBe(true);
+    expect(insuredWithPifss(stateless.category)).toBe(false);
+    expect(categoryLabel(stateless)).toBe('Stateless (Bedoon)');
+    expect(categoryLabel(stateless.category)).toBe('Expatriate');
+    // The flag left on another category (changed by an older version) doesn't count.
+    const kuwaiti = { category: 'kuwaiti' as const, stateless: true };
+    expect(isStateless(kuwaiti)).toBe(false);
+    expect(categoryLabel(kuwaiti)).toBe('Kuwaiti');
+    expect(needsResidency({ category: 'expat', stateless: false })).toBe(true);
+    // "Expatriate" lists leave the stateless out; they have their own filter.
+    expect(inCategory(stateless, 'expat')).toBe(false);
+    expect(inCategory(stateless, 'stateless')).toBe(true);
+    expect(inCategory({ category: 'expat' }, 'expat')).toBe(true);
+    expect(inCategory(kuwaiti, 'kuwaiti')).toBe(true);
   });
 
   it('map leaving reasons to the end-of-service rule', () => {
@@ -84,8 +108,24 @@ describe('workforce summary', () => {
     ]);
     expect(summary.headcount).toBe(11);
     expect(summary.byCategory).toEqual({ kuwaiti: 3, gcc: 1, expat: 5, domestic: 2 });
+    expect(summary.stateless).toBe(0);
     expect(summary.labourLawHeadcount).toBe(9);
     expect(summary.kuwaitiShare).toBe(33.3);
+  });
+
+  it('counts stateless staff on their own, under the Labour Law', () => {
+    const summary = workforceSummary([
+      { category: 'kuwaiti', status: 'active' },
+      { category: 'expat', status: 'active' },
+      { category: 'expat', status: 'active', stateless: true },
+      { category: 'expat', status: 'on_leave', stateless: true },
+      { category: 'expat', status: 'left', stateless: true },
+    ]);
+    expect(summary.headcount).toBe(4);
+    expect(summary.byCategory).toEqual({ kuwaiti: 1, gcc: 0, expat: 1, domestic: 0 });
+    expect(summary.stateless).toBe(2);
+    expect(summary.labourLawHeadcount).toBe(4);
+    expect(summary.kuwaitiShare).toBe(25);
   });
 
   it('has no share without staff', () => {

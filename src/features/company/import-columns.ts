@@ -498,6 +498,22 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
       'انتهاء اذن العمل',
       'تاريخ انتهاء اذن العمل',
     ]),
+    col('centralCardNumber', msg('Review card number'), [
+      'review card',
+      'review card number',
+      'review card no',
+      'central agency card',
+      'central agency card number',
+      'بطاقه المراجعه',
+      'رقم بطاقه المراجعه',
+    ]),
+    col('centralCardExpiry', msg('Review card expiry'), [
+      'review card expiry',
+      'review card expiry date',
+      'central agency card expiry',
+      'انتهاء بطاقه المراجعه',
+      'تاريخ انتهاء بطاقه المراجعه',
+    ]),
     col('drivingLicenceNumber', msg('Driving licence number'), [
       'driving license',
       'driving licence',
@@ -644,6 +660,7 @@ export const DATE_COLUMNS: Record<ImportKind, string[]> = {
     'passportExpiry',
     'residencyExpiry',
     'workPermitExpiry',
+    'centralCardExpiry',
     'drivingLicenceExpiry',
   ],
 };

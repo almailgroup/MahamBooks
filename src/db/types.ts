@@ -1274,6 +1274,16 @@ export interface Employee {
   /** Salary on the work permit (company currency). */
   permitSalary: number;
   workPermitExpiry: ISODate | null;
+  /**
+   * Stateless (Bedoon, غير محدد الجنسية), on top of the category 'expat' so
+   * that older versions still show a label and pay the same (no PIFSS): no
+   * residency is needed, a work permit is optional, and the Central Agency
+   * review card is tracked instead. Missing or false: not stateless.
+   */
+  stateless?: boolean;
+  /** Central Agency review card (بطاقة المراجعة) of stateless staff. */
+  centralCardNumber?: string;
+  centralCardExpiry?: ISODate | null;
   jobTitle: string;
   jobTitleAr?: string;
   department: string;
@@ -1338,12 +1348,13 @@ export type ComplianceDocumentType =
   | 'municipality_licence'
   | 'fire_licence'
   | 'lease_contract'
-  // Employees (the first five are read from the employee record)
+  // Employees (the first six are read from the employee record)
   | 'civil_id'
   | 'passport'
   | 'residency'
   | 'work_permit'
   | 'employment_contract'
+  | 'central_agency_card'
   | 'health_insurance'
   | 'driving_licence'
   // Vehicles
@@ -1464,7 +1475,24 @@ export interface PeopleSettings {
    * from this company, as before.
    */
   groupSearch?: boolean;
+  /**
+   * The company's departments, with their Arabic names (Employees →
+   * Departments). Employees keep the English name in `department`, so links,
+   * imports and older versions keep working. Missing or empty: departments
+   * are typed freely, as before.
+   */
+  departments?: Department[];
   updatedAt: Timestamp;
+}
+
+/** A department of the company's list (D11: a list of names, never a new enum value). */
+export interface Department {
+  id: ID;
+  /** English name: what employees keep in `department`. */
+  name: string;
+  nameAr: string;
+  /** No longer offered for new choices; the employees in it keep it. */
+  archived?: boolean;
 }
 /* Fixed assets                                                              */
 /* -------------------------------------------------------------------------- */
@@ -1929,8 +1957,11 @@ export interface PayLine {
   nameAr: string;
   jobTitle: string;
   jobTitleAr: string;
+  /** The employee's department (English name) when the run was prepared; older runs don't have it. */
+  department?: string;
   category: EmployeeCategory;
   nationality: string;
+  /** For the bank's salary file: the Civil ID, or a stateless employee's review card number without one. */
   civilId: string;
   iban: string;
   /** Account or salary card number, for staff paid without an IBAN (older runs don't have it). */

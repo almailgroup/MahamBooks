@@ -463,7 +463,7 @@ export async function renewDocument(
           throw new ComplianceError(t('Employee not found'));
         }
         type = field as EmployeeDocumentType;
-        previousExpiry = employee[EMPLOYEE_EXPIRY_FIELDS[type]];
+        previousExpiry = employee[EMPLOYEE_EXPIRY_FIELDS[type]] ?? null;
         numberField =
           type in EMPLOYEE_NUMBER_FIELDS
             ? EMPLOYEE_NUMBER_FIELDS[type as keyof typeof EMPLOYEE_NUMBER_FIELDS]

@@ -11,7 +11,7 @@ import {
   validateEmployee,
   type EmployeeErrors,
 } from '@/features/people/employee-form';
-import { useEmployees } from '@/features/people/hooks';
+import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { Button } from '@/components/ui/button';
 import { Card, PageHeader, Spinner } from '@/components/ui/misc';
@@ -39,6 +39,7 @@ function EmployeeFormPage() {
   const [newId] = useState(() => createEmployee(company.id).id);
   const files = useDraftAttachments(id ?? newId);
   const employees = useEmployees();
+  const settings = usePeopleSettings();
 
   // The page shown after saving: loaded now, so saving moves straight to it.
   useEffect(() => {
@@ -89,7 +90,8 @@ function EmployeeFormPage() {
       </Card>
     );
   }
-  if (!employee) return <Spinner className="py-24" label={t('Loading…')} />;
+  // With the settings: the department list decides how the department is chosen.
+  if (!employee || !settings) return <Spinner className="py-24" label={t('Loading…')} />;
 
   const save = async () => {
     const found = validateEmployee(employee);
@@ -153,6 +155,7 @@ function EmployeeFormPage() {
         errors={errors}
         currency={company.currency}
         departments={departments}
+        departmentList={settings.departments}
         files={{
           ...files,
           // The photo is kept with the personnel file but changed on the employee's page.

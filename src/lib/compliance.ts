@@ -15,7 +15,13 @@ import { addDaysISO, daysBetween, parseISODate, toISODate } from '@/lib/dates';
 import { isShareholding } from '@/lib/kuwait-rules';
 import { lookup } from '@/lib/known';
 import { msg } from '@/i18n';
-import { insuredWithPifss, isCurrent, needsResidency, needsWorkPermit } from './hr/employees';
+import {
+  insuredWithPifss,
+  isCurrent,
+  isStateless,
+  needsResidency,
+  needsWorkPermit,
+} from './hr/employees';
 
 /**
  * The compliance calendar: expiring documents (company licences, employee
@@ -92,6 +98,12 @@ export const DOCUMENT_TYPES: Record<ComplianceDocumentType, DocumentTypeInfo> = 
   },
   employment_contract: {
     label: msg('Employment contract'),
+    owner: 'employee',
+    fee: 'government',
+    fromEmployee: true,
+  },
+  central_agency_card: {
+    label: msg('Central Agency review card'),
     owner: 'employee',
     fee: 'government',
     fromEmployee: true,
@@ -218,6 +230,7 @@ export const EMPLOYEE_EXPIRY_FIELDS = {
   residency: 'residencyExpiry',
   work_permit: 'workPermitExpiry',
   employment_contract: 'contractEnd',
+  central_agency_card: 'centralCardExpiry',
 } as const satisfies Partial<Record<ComplianceDocumentType, keyof Employee>>;
 
 export type EmployeeDocumentType = keyof typeof EMPLOYEE_EXPIRY_FIELDS;
@@ -228,6 +241,7 @@ export const EMPLOYEE_NUMBER_FIELDS = {
   passport: 'passportNumber',
   residency: 'residencyNumber',
   work_permit: 'workPermitNumber',
+  central_agency_card: 'centralCardNumber',
 } as const satisfies Partial<Record<EmployeeDocumentType, keyof Employee>>;
 
 export function isEmployeeDocumentType(type: ComplianceDocumentType): type is EmployeeDocumentType {
@@ -237,8 +251,9 @@ export function isEmployeeDocumentType(type: ComplianceDocumentType): type is Em
 /**
  * The documents on an employee's own record, as register entries: Civil ID
  * and passport for everyone, residency for expatriates and domestic workers,
- * the work permit for expatriates, and the end of a fixed-term contract.
- * Only documents with a number or an expiry date are listed.
+ * the work permit for expatriates, the Central Agency review card for
+ * stateless staff (who need no residency), and the end of a fixed-term
+ * contract. Only documents with a number or an expiry date are listed.
  */
 export function employeeDocuments(employee: Employee, reminderDays: number[]): RegisterEntry[] {
   const entry = (
@@ -262,24 +277,28 @@ export function employeeDocuments(employee: Employee, reminderDays: number[]): R
     ownerName: '',
   });
   const out: RegisterEntry[] = [];
-  const has = (number: string, expiry: ISODate | null) => Boolean(number.trim() || expiry);
+  const has = (number: string | undefined, expiry: ISODate | null | undefined) =>
+    Boolean(number?.trim() || expiry);
   if (has(employee.civilId, employee.civilIdExpiry)) {
     out.push(entry('civil_id', employee.civilId, employee.civilIdExpiry));
   }
   if (has(employee.passportNumber, employee.passportExpiry)) {
     out.push(entry('passport', employee.passportNumber, employee.passportExpiry));
   }
-  if (
-    needsResidency(employee.category) &&
-    has(employee.residencyNumber, employee.residencyExpiry)
-  ) {
+  if (needsResidency(employee) && has(employee.residencyNumber, employee.residencyExpiry)) {
     out.push(entry('residency', employee.residencyNumber, employee.residencyExpiry));
   }
-  if (
-    needsWorkPermit(employee.category) &&
-    has(employee.workPermitNumber, employee.workPermitExpiry)
-  ) {
+  if (needsWorkPermit(employee) && has(employee.workPermitNumber, employee.workPermitExpiry)) {
     out.push(entry('work_permit', employee.workPermitNumber, employee.workPermitExpiry));
+  }
+  if (isStateless(employee) && has(employee.centralCardNumber, employee.centralCardExpiry)) {
+    out.push(
+      entry(
+        'central_agency_card',
+        employee.centralCardNumber ?? '',
+        employee.centralCardExpiry ?? null,
+      ),
+    );
   }
   if (employee.contractType === 'fixed' && employee.contractEnd) {
     out.push(entry('employment_contract', '', employee.contractEnd));

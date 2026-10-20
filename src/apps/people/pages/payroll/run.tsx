@@ -38,6 +38,7 @@ import {
   payRunTotals,
 } from '@/lib/hr/payroll';
 import { employeesNeedingLeaveOpening } from '@/lib/hr/leave';
+import { departmentLabel } from '@/lib/hr/departments';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
@@ -61,6 +62,7 @@ import {
   DropdownTrigger,
   useConfirm,
 } from '@/components/ui/overlay';
+import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { DateField } from '@/components/ui/date-field';
@@ -87,6 +89,7 @@ export default function PayRunPage() {
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
+  const { language } = useLanguage();
   const warningText = useWarningText();
   const run = useLiveQuery(() => db.payRuns.get(id), [id]);
   const settings = usePayrollSettings();
@@ -443,6 +446,7 @@ export default function PayRunPage() {
               <thead>
                 <tr className="border-b border-slate-100 text-xs font-medium tracking-wide text-slate-500 uppercase">
                   <th className="px-5 py-3 text-start">{t('Employee')}</th>
+                  <th className="hidden px-3 py-3 text-start lg:table-cell">{t('Department')}</th>
                   <th className="hidden px-3 py-3 text-end md:table-cell">{t('Earnings')}</th>
                   <th className="hidden px-3 py-3 text-end sm:table-cell">{t('Gross pay')}</th>
                   <th className="hidden px-3 py-3 text-end md:table-cell">{t('Deductions')}</th>
@@ -494,6 +498,9 @@ export default function PayRunPage() {
                           ) : null}
                         </span>
                       </td>
+                      <td className="hidden px-3 py-3 text-slate-600 lg:table-cell" dir="auto">
+                        {departmentLabel(people?.departments, l.department, language) || '—'}
+                      </td>
                       <td className="tabular hidden px-3 py-3 text-end text-slate-700 md:table-cell">
                         {fmt.money(l.basic + l.allowanceTotal)}
                         {l.overtimePay + l.additions > 0 ? (
@@ -523,6 +530,7 @@ export default function PayRunPage() {
               <tfoot>
                 <tr className="border-t border-slate-200 bg-slate-50/60 font-semibold text-slate-900">
                   <td className="px-5 py-3">{t('Total')}</td>
+                  <td className="hidden lg:table-cell" />
                   <td className="tabular hidden px-3 py-3 text-end md:table-cell">
                     {fmt.money(earned)}
                   </td>

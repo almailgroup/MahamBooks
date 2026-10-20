@@ -1,7 +1,15 @@
 import { db } from './db';
 import { logActivity } from './activity';
 import { defaultNumbering, nowStamp } from './defaults';
-import type { Attachment, Employee, EmployeeAllowance, ID, ISODate, PeopleSettings } from './types';
+import type {
+  Attachment,
+  Department,
+  Employee,
+  EmployeeAllowance,
+  ID,
+  ISODate,
+  PeopleSettings,
+} from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId, shortId } from '@/lib/ids';
 import { isISODate, today } from '@/lib/dates';
@@ -11,6 +19,8 @@ import { normalizeReminderDays } from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
 import { defaultPeopleSettings, withPeopleDefaults } from '@/lib/hr/people-settings';
 import { isOpeningRecord } from '@/lib/hr/leave';
+import { isStateless } from '@/lib/hr/employees';
+import { departmentKey, findDepartment, normalizeDepartments } from '@/lib/hr/departments';
 import { msg, t } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
@@ -138,6 +148,9 @@ export async function saveEmployee(
         jobTitleAr: input.jobTitleAr?.trim() ?? '',
         department: input.department.trim(),
         civilId: input.civilId.replace(/\s/g, ''),
+        ...(input.centralCardNumber !== undefined
+          ? { centralCardNumber: input.centralCardNumber.trim() }
+          : {}),
         iban: compactIban(input.iban),
         accountNumber: compactAccountNumber(input.accountNumber),
         birthDate: input.birthDate || null,
@@ -166,6 +179,8 @@ export async function saveEmployee(
         leavingReason: input.status === 'left' ? (input.leavingReason ?? null) : null,
         updatedAt: nowStamp(),
       };
+      // The flag counts only on an expatriate; when it doesn't, it is left out.
+      if (!isStateless(employee)) delete employee.stateless;
 
       const others = (await db.employees.where('companyId').equals(company.id).toArray()).filter(
         (e) => e.id !== employee.id,
@@ -388,6 +403,7 @@ export async function deleteEmployee(id: ID): Promise<void> {
           employee.passportNumber,
           employee.residencyNumber,
           employee.workPermitNumber,
+          employee.centralCardNumber ?? '',
           ...documents.map((d) => d.number),
           ...renewals.map((r) => r.number ?? ''),
         ]
@@ -525,6 +541,7 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
   const target = input.kuwaitizationTarget;
   return {
     ...input,
+    ...(input.departments ? { departments: normalizeDepartments(input.departments) } : {}),
     id: input.companyId,
     kuwaitizationTarget:
       target === null || !Number.isFinite(target) || target <= 0
@@ -537,15 +554,29 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
   };
 }
 
+/**
+ * Saves the reminders, deadlines and end-of-service settings. The search
+ * across companies and the departments keep what is saved: they are changed
+ * by their own functions, so a form opened before a change doesn't put the
+ * old value back.
+ */
 export async function savePeopleSettings(input: PeopleSettings): Promise<PeopleSettings> {
-  const settings = { ...normalizePeopleSettings(input), updatedAt: nowStamp() };
-  await db.transaction('rw', [db.peopleSettings, db.activities], async () => {
+  return db.transaction('rw', [db.peopleSettings, db.activities], async () => {
+    const stored = await db.peopleSettings.get(input.companyId);
+    const next: PeopleSettings = { ...input };
+    if (stored) {
+      delete next.groupSearch;
+      delete next.departments;
+      if (stored.groupSearch !== undefined) next.groupSearch = stored.groupSearch;
+      if (stored.departments !== undefined) next.departments = stored.departments;
+    }
+    const settings = { ...normalizePeopleSettings(next), updatedAt: nowStamp() };
     await db.peopleSettings.put(settings);
     await logActivity(settings.companyId, 'compliance', settings.id, 'settings', {
       text: msg('Employee and compliance settings updated'),
     });
+    return settings;
   });
-  return settings;
 }
 
 /**
@@ -568,5 +599,271 @@ export async function setGroupSearch(companyId: ID, on: boolean): Promise<People
         : msg('Employees left out of the search across companies'),
     });
     return settings;
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Departments                                                                */
+/* -------------------------------------------------------------------------- */
+
+const tidyName = (text: string | undefined) => (text ?? '').trim().replace(/\s+/g, ' ');
+
+/** The company's settings and its list of departments, read in the running transaction. */
+async function departmentList(companyId: ID) {
+  const settings = await getPeopleSettings(companyId);
+  return { settings, list: normalizeDepartments(settings.departments) };
+}
+
+async function putDepartments(settings: PeopleSettings, list: Department[]) {
+  const next = {
+    ...normalizePeopleSettings({ ...settings, departments: list }),
+    updatedAt: nowStamp(),
+  };
+  await db.peopleSettings.put(next);
+  return next;
+}
+
+/** Names checked before saving: an English name, and neither name already another department's. */
+function checkDepartmentNames(
+  list: readonly Department[],
+  input: { name: string; nameAr?: string },
+  exceptId?: ID,
+): { name: string; nameAr: string } {
+  const nameAr = tidyName(input.nameAr);
+  const name = tidyName(input.name) || nameAr;
+  if (!name) throw new EmployeeError(t('Enter the department’s name.'));
+  const others = list.filter((d) => d.id !== exceptId);
+  for (const text of [name, nameAr]) {
+    const taken = text ? findDepartment(others, text) : undefined;
+    if (taken) {
+      throw new EmployeeError(
+        t('There is already a department called {name}.', { name: taken.name }),
+      );
+    }
+  }
+  return { name, nameAr };
+}
+
+/** Logged as people data: only owners, admins and accountants see it. */
+function logDepartment(
+  companyId: ID,
+  text: string,
+  vars: Record<string, string | number>,
+  arabic: Record<string, string | undefined> = {},
+) {
+  return logActivity(companyId, 'employee', newId(), 'departments', { text, vars, arabic });
+}
+
+/** Adds a department to the company's list, which starts the list when there is none. */
+export async function addDepartment(
+  companyId: ID,
+  input: { name: string; nameAr?: string },
+): Promise<Department> {
+  return db.transaction('rw', [db.peopleSettings, db.activities], async () => {
+    const { settings, list } = await departmentList(companyId);
+    const department: Department = { id: newId(), ...checkDepartmentNames(list, input) };
+    await putDepartments(settings, [...list, department]);
+    await logDepartment(
+      companyId,
+      msg('Department {name} added'),
+      { name: department.name },
+      { name: department.nameAr },
+    );
+    return department;
+  });
+}
+
+/**
+ * Adds the departments the company's employees have that aren't in the
+ * list yet (a name that is another one's Arabic name is left out: it is the
+ * same department). Returns how many were added.
+ */
+export async function addDepartmentsInUse(companyId: ID): Promise<number> {
+  return db.transaction('rw', [db.peopleSettings, db.employees, db.activities], async () => {
+    const { settings, list } = await departmentList(companyId);
+    const employees = await db.employees.where('companyId').equals(companyId).toArray();
+    // Each department once, spelt as most of its employees have it (capitals first).
+    const spellings = new Map<string, Map<string, number>>();
+    for (const e of employees) {
+      const name = tidyName(e.department);
+      if (!name) continue;
+      const forms = spellings.get(departmentKey(name)) ?? new Map<string, number>();
+      forms.set(name, (forms.get(name) ?? 0) + 1);
+      spellings.set(departmentKey(name), forms);
+    }
+    const byUse = (a: [string, number], b: [string, number]) =>
+      b[1] - a[1] || a[0].localeCompare(b[0], undefined, { caseFirst: 'upper' });
+    const names = [...spellings.values()]
+      .map((forms) => [...forms].sort(byUse)[0][0])
+      .sort((a, b) => a.localeCompare(b));
+    const added: Department[] = [];
+    for (const name of names) {
+      if (findDepartment([...list, ...added], name)) continue;
+      added.push({ id: newId(), name, nameAr: '' });
+    }
+    if (!added.length) return 0;
+    await putDepartments(settings, [...list, ...added]);
+    await logDepartment(companyId, msg('Departments added from the employees: {names}'), {
+      names: added.map((d) => d.name).join(', '),
+    });
+    return added.length;
+  });
+}
+
+/**
+ * Renames a department or changes its Arabic name. A new English name is
+ * given to every employee in the department in the same transaction (they
+ * keep the English name), so the list and the employees never disagree on
+ * this device. Returns the department and how many employees moved.
+ */
+export async function updateDepartment(
+  companyId: ID,
+  id: ID,
+  input: { name: string; nameAr?: string },
+): Promise<{ department: Department; moved: number }> {
+  return db.transaction('rw', [db.peopleSettings, db.employees, db.activities], async () => {
+    const { settings, list } = await departmentList(companyId);
+    const before = list.find((d) => d.id === id);
+    if (!before) throw new EmployeeError(t('This department could not be found.'));
+    const department: Department = { ...before, ...checkDepartmentNames(list, input, id) };
+    let moved = 0;
+    if (department.name !== before.name) {
+      const key = departmentKey(before.name);
+      const stamp = nowStamp();
+      const employees = (await db.employees.where('companyId').equals(companyId).toArray())
+        .filter((e) => departmentKey(e.department) === key)
+        .map((e) => ({ ...e, department: department.name, updatedAt: stamp }));
+      await db.employees.bulkPut(employees);
+      moved = employees.length;
+    }
+    await putDepartments(
+      settings,
+      list.map((d) => (d.id === id ? department : d)),
+    );
+    if (department.name !== before.name) {
+      await logDepartment(
+        companyId,
+        msg('Department {from} renamed {to}'),
+        { from: before.name, to: department.name },
+        { from: before.nameAr, to: department.nameAr },
+      );
+    } else if (department.nameAr !== before.nameAr) {
+      await logDepartment(
+        companyId,
+        msg('Arabic name of the department {name} changed'),
+        { name: department.name },
+        { name: department.nameAr },
+      );
+    }
+    return { department, moved };
+  });
+}
+
+/** Archives a department (no longer offered; its employees keep it), or restores it. */
+export async function setDepartmentArchived(
+  companyId: ID,
+  id: ID,
+  archived: boolean,
+): Promise<void> {
+  await db.transaction('rw', [db.peopleSettings, db.activities], async () => {
+    const { settings, list } = await departmentList(companyId);
+    const before = list.find((d) => d.id === id);
+    if (!before) throw new EmployeeError(t('This department could not be found.'));
+    if ((before.archived === true) === archived) return;
+    const department: Department = { ...before };
+    if (archived) department.archived = true;
+    else delete department.archived;
+    await putDepartments(
+      settings,
+      list.map((d) => (d.id === id ? department : d)),
+    );
+    await logDepartment(
+      companyId,
+      archived ? msg('Department {name} archived') : msg('Department {name} restored'),
+      { name: department.name },
+      { name: department.nameAr },
+    );
+  });
+}
+
+/**
+ * Moves the employees of a department, or of a name that isn't in the list
+ * (another spelling, a typo), into a department of the list, in one
+ * transaction; a department of the list merged this way leaves it. Returns
+ * how many employees moved.
+ */
+export async function mergeDepartment(companyId: ID, from: string, intoId: ID): Promise<number> {
+  return db.transaction('rw', [db.peopleSettings, db.employees, db.activities], async () => {
+    const { settings, list } = await departmentList(companyId);
+    const into = list.find((d) => d.id === intoId);
+    if (!into) throw new EmployeeError(t('This department could not be found.'));
+    const key = departmentKey(from);
+    if (!key || key === departmentKey(into.name)) {
+      throw new EmployeeError(t('Choose another department to merge into.'));
+    }
+    const stamp = nowStamp();
+    const employees = (await db.employees.where('companyId').equals(companyId).toArray())
+      .filter((e) => departmentKey(e.department) === key)
+      .map((e) => ({ ...e, department: into.name, updatedAt: stamp }));
+    await db.employees.bulkPut(employees);
+    const merged = list.find((d) => departmentKey(d.name) === key);
+    if (merged) {
+      await putDepartments(
+        settings,
+        list.filter((d) => d.id !== merged.id),
+      );
+    }
+    await logDepartment(
+      companyId,
+      msg('Department {from} merged into {to}'),
+      { from: merged?.name ?? tidyName(from), to: into.name },
+      { from: merged?.nameAr, to: into.nameAr },
+    );
+    return employees.length;
+  });
+}
+
+/**
+ * Puts employees of the company in a department (or in none, with an empty
+ * name), in one transaction with one activity entry. Returns how many
+ * changed.
+ */
+export async function assignDepartment(
+  companyId: ID,
+  employeeIds: readonly ID[],
+  name: string,
+): Promise<number> {
+  return db.transaction('rw', [db.peopleSettings, db.employees, db.activities], async () => {
+    const { list } = await departmentList(companyId);
+    // A department of the list is given its English name, however it was typed.
+    const department = findDepartment(list, name)?.name ?? tidyName(name);
+    const stamp = nowStamp();
+    const employees = (await db.employees.bulkGet([...employeeIds]))
+      .filter((e): e is Employee => Boolean(e && e.companyId === companyId))
+      .filter((e) => e.department !== department)
+      .map((e) => ({ ...e, department, updatedAt: stamp }));
+    if (!employees.length) return 0;
+    await db.employees.bulkPut(employees);
+    const count = employees.length;
+    const found = findDepartment(list, department);
+    if (department) {
+      await logDepartment(
+        companyId,
+        count === 1
+          ? msg('{count} employee moved to {department}')
+          : msg('{count} employees moved to {department}'),
+        { count, department },
+        { department: found?.nameAr },
+      );
+    } else {
+      await logDepartment(
+        companyId,
+        count === 1
+          ? msg('{count} employee taken out of their department')
+          : msg('{count} employees taken out of their department'),
+        { count },
+      );
+    }
+    return count;
   });
 }

@@ -151,6 +151,47 @@ describe('pay runs', () => {
     expect(file.problems).toEqual([]);
   });
 
+  it('keep each employee’s department, and a stateless employee’s review card for the bank', async () => {
+    const c = await company();
+    await saveEmployee(
+      createEmployee(c.id, {
+        name: 'Saad Testing',
+        category: 'expat',
+        stateless: true,
+        nationality: '',
+        civilId: '',
+        centralCardNumber: 'RC-2041',
+        department: 'Security',
+        hireDate: '2020-01-01',
+        basicSalary: 300,
+        iban: IBAN,
+      }),
+    );
+    await saveEmployee(
+      createEmployee(c.id, {
+        name: 'Huda Testing',
+        category: 'kuwaiti',
+        civilId: '290010112345',
+        department: ' Head Office ',
+        hireDate: '2020-01-01',
+        basicSalary: 1000,
+        iban: IBAN,
+      }),
+    );
+    const run = await createPayRun(c.id, '2026-09');
+    const line = (name: string) => run.lines.find((l) => l.name === name)!;
+    const [huda, saad] = [line('Huda Testing'), line('Saad Testing')];
+    expect(huda).toMatchObject({ department: 'Head Office', civilId: '290010112345' });
+    // Not insured with PIFSS, as an expatriate; the card stands in for the Civil ID.
+    expect(saad).toMatchObject({
+      department: 'Security',
+      civilId: 'RC-2041',
+      pifssEmployee: 0,
+      pifssEmployer: 0,
+      net: 300,
+    });
+  });
+
   it('are paid from the bank, and reopened by reversing their entries', async () => {
     const c = await company();
     await staff(c);

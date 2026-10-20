@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Download, Search } from 'lucide-react';
 import { useFormat, useOpenInCompany } from '@/app/company';
-import type { EmployeeCategory } from '@/db/types';
-import { CATEGORY_LABELS, categoryLabel, employeeStatusLabel, isCurrent } from '@/lib/hr/employees';
+import {
+  CATEGORY_FILTER_LABELS,
+  CATEGORY_FILTERS,
+  categoryLabel,
+  employeeStatusLabel,
+  isCurrent,
+  type CategoryFilter,
+} from '@/lib/hr/employees';
 import { downloadCsv } from '@/lib/csv';
 import { today } from '@/lib/dates';
 import {
@@ -34,8 +40,6 @@ import { Input, Select } from '@/components/ui/form';
 import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
-
-const CATEGORIES: EmployeeCategory[] = ['kuwaiti', 'gcc', 'expat', 'domestic'];
 
 /**
  * The employees of every company switched on for the search across
@@ -195,15 +199,15 @@ export default function AllCompaniesPage() {
               <Select
                 value={active.category ?? ''}
                 onChange={(e) =>
-                  set({ category: (e.target.value || undefined) as EmployeeCategory | undefined })
+                  set({ category: (e.target.value || undefined) as CategoryFilter | undefined })
                 }
                 aria-label={t('Category')}
                 className="sm:w-44"
               >
                 <option value="">{t('All categories')}</option>
-                {CATEGORIES.map((c) => (
+                {CATEGORY_FILTERS.map((c) => (
                   <option key={c} value={c}>
-                    {t(CATEGORY_LABELS[c])}
+                    {t(CATEGORY_FILTER_LABELS[c])}
                   </option>
                 ))}
               </Select>
@@ -274,7 +278,7 @@ export default function AllCompaniesPage() {
                           {e.department || '—'}
                         </td>
                         <td className="hidden px-5 py-3 text-slate-600 lg:table-cell">
-                          {t(categoryLabel(e.category))}
+                          {t(categoryLabel(e))}
                         </td>
                       </tr>
                     );
