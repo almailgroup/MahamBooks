@@ -160,3 +160,21 @@ test('no page is wider than a phone', async ({ page }) => {
   }
   expect(wide).toEqual([]);
 });
+
+test.describe('on the narrowest touch phones', () => {
+  test.use({ hasTouch: true, viewport: { width: 320, height: 640 } });
+
+  test('the top bar fits, in Arabic too', async ({ page }) => {
+    await page.getByRole('button', { name: 'العربية' }).click();
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await page.goto('#/');
+    await expect(page.locator('main h1')).toBeVisible();
+    const { scroll, inner } = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollWidth,
+      inner: window.innerWidth,
+    }));
+    expect(scroll).toBeLessThanOrEqual(inner + 1);
+    // The logo makes way for the company's name; the menu still has it.
+    await expect(page.getByRole('banner').getByRole('img', { name: 'مهام ون' })).toBeHidden();
+  });
+});

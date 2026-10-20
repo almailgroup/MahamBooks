@@ -69,11 +69,19 @@ const COLORS = {
   text: '#0f172a',
   muted: '#64748b',
   line: '#e2e8f0',
-  brand: '#4f46e5',
+  // The blue of "One" in the logo.
+  brand: '#106ef7',
   red: { bg: '#fee2e2', fg: '#b91c1c' },
   amber: { bg: '#fef3c7', fg: '#92400e' },
   new: { bg: '#e0e7ff', fg: '#3730a3' },
 };
+
+/**
+ * The logo in the email: on its own white plate, so mail apps that darken
+ * emails leave it readable (public/brand/maham-one-logo-email.png is 605×160).
+ */
+const LOGO_HEIGHT = 40;
+const LOGO_WIDTH = Math.round((605 / 160) * LOGO_HEIGHT);
 
 const FONTS = {
   en: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
@@ -369,6 +377,11 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
         <tr>
           <td style="height:24px;line-height:24px;font-size:0;">&nbsp;</td>
         </tr>`;
+  // The logo from the app's own address; its name where there is none (or images are off).
+  const logoUrl = url ? new URL('brand/maham-one-logo-email.png', url).toString() : '';
+  const logo = logoUrl
+    ? `<img src="${e(logoUrl)}" alt="${e(app)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" style="display:block;border:0;outline:none;width:${LOGO_WIDTH}px;height:${LOGO_HEIGHT}px;color:${COLORS.brand};font-size:15px;font-weight:700;">`
+    : `<div style="font-size:13px;font-weight:700;color:${COLORS.brand};">${e(app)}</div>`;
   const html = `<!doctype html>
 <html lang="${ar ? 'ar' : 'en'}" dir="${dir}">
 <head>
@@ -385,7 +398,7 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:${COLORS.card};border-radius:12px;border:1px solid ${COLORS.line};" dir="${dir}">
         <tr>
           <td style="${cell(`padding:24px 24px 0;text-align:${start};`)}">
-            <div style="font-size:13px;font-weight:700;color:${COLORS.brand};">${e(app)}</div>
+            ${logo}
             <div style="font-size:20px;font-weight:700;margin-top:4px;">${e(company)}</div>
             <p style="margin:12px 0 0;font-size:15px;line-height:22px;color:${COLORS.text};">${e(intro)}</p>
           </td>

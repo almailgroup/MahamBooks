@@ -5,6 +5,7 @@ import { CompanyProvider } from './company';
 import { Spinner } from '@/components/ui/misc';
 import { buttonClass } from '@/components/ui/button';
 import SetupPage from '@/pages/setup';
+import { SuiteLogo } from '@/suite/logo';
 import { t } from '@/i18n';
 
 /**
@@ -15,18 +16,28 @@ import { t } from '@/i18n';
 
 export function Root() {
   return (
-    <CompanyProvider
-      fallback={<Spinner className="min-h-dvh" label={t('Loading…')} />}
-      onboarding={<SetupPage firstRun />}
-    >
+    <CompanyProvider fallback={<LoadingScreen />} onboarding={<SetupPage firstRun />}>
       <Outlet />
     </CompanyProvider>
   );
 }
 
+/**
+ * The logo while the app gets ready, where index.html shows it before the
+ * app loads (same layout there), so it never jumps.
+ */
+export function LoadingScreen() {
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-6">
+      <SuiteLogo className="h-10" />
+      <Spinner label={t('Loading…')} />
+    </div>
+  );
+}
+
 /** Pages without the app's navigation, such as print views. */
 export function Bare({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<Spinner className="min-h-dvh" />}>{children}</Suspense>;
+  return <Suspense fallback={<LoadingScreen />}>{children}</Suspense>;
 }
 
 export function RouteError() {
@@ -37,7 +48,8 @@ export function RouteError() {
       ? error.message
       : t('Unknown error');
   return (
-    <div className="bg-page flex min-h-dvh items-center justify-center p-6">
+    <div className="bg-page flex min-h-dvh flex-col items-center justify-center gap-6 p-6">
+      <SuiteLogo className="h-9" />
       <div className="bg-surface max-w-md rounded-xl border border-slate-200 p-8 text-center shadow-sm">
         <AlertTriangle className="mx-auto size-10 text-amber-500" />
         <h1 className="mt-4 text-lg font-semibold text-slate-900">{t('Something went wrong')}</h1>

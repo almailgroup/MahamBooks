@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import { Menu as MenuIcon, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,9 +11,9 @@ import { shortcutLabel } from '@/features/search/command-palette';
 import { t } from '@/i18n';
 import { createColumns } from '@/suite/apps';
 import { AppSwitcher } from '@/suite/switcher';
+import { SuiteMark } from '@/suite/logo';
 import type { CreateGroup } from './create';
 import { useCreateGroups } from './bottom-bar';
-import { CompanyLogo } from './sidebar';
 
 export function AppHeader({
   onMenu,
@@ -42,8 +42,16 @@ export function AppHeader({
       >
         <MenuIcon />
       </Button>
+      {/* Under 360px the name needs the room. */}
+      <Link
+        to="/"
+        className="flex shrink-0 items-center justify-center rounded-md max-[359px]:hidden lg:hidden pointer-coarse:size-11"
+      >
+        <SuiteMark className="size-8" />
+      </Link>
+      <span className="h-5 w-px shrink-0 bg-slate-200 max-[359px]:hidden lg:hidden" aria-hidden />
+      {/* The company's own logo is in the menu: here the space goes to its name. */}
       <div className="flex min-w-0 items-center gap-2 lg:hidden">
-        <CompanyLogo name={company.name} logo={company.branding.logo} className="size-7" />
         <span dir="auto" className="truncate text-sm font-semibold text-slate-900">
           {localName(company)}
         </span>

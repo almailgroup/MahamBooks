@@ -133,6 +133,16 @@ describe('the alerts email', () => {
     expect(email.text).toContain('Nothing needs attention in Acme Trading right now.');
   });
 
+  it('shows the Maham One logo from the app’s own address, or its name without one', () => {
+    const email = renderAlertEmail(input());
+    expect(email.html).toContain(
+      '<img src="https://books.example.com/brand/maham-one-logo-email.png" alt="Maham One" width="151" height="40"',
+    );
+    const unsafe = renderAlertEmail(input({ appUrl: 'javascript:alert(1)' }));
+    expect(unsafe.html).not.toContain('<img');
+    expect(visible(unsafe.html)).toContain('Maham One');
+  });
+
   it('is written right to left in Arabic', async () => {
     await loadLanguage('ar');
     const email = renderAlertEmail(input({ kind: 'weekly' }));

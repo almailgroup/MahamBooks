@@ -1,15 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import {
-  Building2,
-  Check,
-  ChevronDown,
-  FileText,
-  Globe2,
-  MapPin,
-  Sparkles,
-  Upload,
-} from 'lucide-react';
+import { Building2, Check, ChevronDown, Globe2, MapPin, Sparkles, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { setMeta } from '@/db/db';
 import { setupCompany } from '@/db/records';
@@ -26,6 +17,7 @@ import { cn } from '@/lib/cn';
 import type { Address, BusinessActivity, LegalForm } from '@/db/types';
 import { currentLanguage, msg, t } from '@/i18n';
 import { LanguageSwitch } from '@/i18n/language-switch';
+import { SuiteLogo } from '@/suite/logo';
 import { localName } from '@/i18n/names';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/misc';
@@ -500,12 +492,7 @@ export default function SetupPage({ firstRun = false }: { firstRun?: boolean }) 
   return (
     <div className="from-primary-50 via-surface to-page min-h-dvh bg-gradient-to-b">
       <header className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <span className="flex items-center gap-2 font-semibold text-slate-900">
-          <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
-            <FileText className="size-4.5" aria-hidden />
-          </span>
-          {suiteName()}
-        </span>
+        <SuiteLogo className="h-9" />
         <LanguageSwitch className="bg-surface shadow-xs ring-1 ring-slate-200" />
       </header>
 

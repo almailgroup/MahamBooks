@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Building2, Check, ChevronDown, ChevronsUpDown, ExternalLink, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { suiteName } from '@/lib/brand';
 import { sidebarLinks } from '@/lib/links';
 import { useCompanyContext } from '@/app/company';
 import {
@@ -18,6 +17,7 @@ import { useTaxesEnabled } from '@/features/company/taxes';
 import { AccountMenu } from '@/features/cloud/account-menu';
 import { useCurrentApp } from '@/suite/current-app';
 import { AppTiles, CurrentApp } from '@/suite/switcher';
+import { SuiteLogo } from '@/suite/logo';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
 import {
@@ -92,9 +92,7 @@ function CompanySwitcher({ onNavigate }: { onNavigate?: () => void }) {
             <span dir="auto" className="block truncate text-sm font-semibold text-slate-900">
               {localName(company)}
             </span>
-            <span className="block truncate text-xs text-slate-500">
-              {company.currency} · {suiteName()}
-            </span>
+            <span className="block truncate text-xs text-slate-500">{company.currency}</span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-slate-400" aria-hidden />
         </button>
@@ -190,6 +188,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="space-y-1.5 px-3 pt-3">
+        <Link
+          to="/"
+          onClick={onNavigate}
+          className="flex rounded-lg px-2 pt-1 pb-1.5 outline-offset-2"
+        >
+          <SuiteLogo className="h-8" />
+        </Link>
         <CompanySwitcher onNavigate={onNavigate} />
         {onNavigate ? <AppTiles onNavigate={onNavigate} /> : null}
         <CurrentApp onNavigate={onNavigate} />

@@ -10,6 +10,7 @@ import { t } from '@/i18n';
 import { appTitle, visibleApps } from './apps';
 import { useAppAccess, useCurrentApp } from './current-app';
 import type { AppTone, SuiteApp } from './types';
+import { SuiteLogo } from './logo';
 
 /** An app's colours. Literal class names, so Tailwind and the theme check see every one. */
 export const APP_TONES: Record<AppTone, string> = {
@@ -86,8 +87,8 @@ export function AppSwitcher({ className }: { className?: string }) {
           sideOffset={6}
           className="data-[state=open]:animate-fade-in bg-surface z-50 w-[23rem] max-w-[calc(100vw-1.5rem)] rounded-2xl p-2 shadow-xl ring-1 ring-slate-900/5"
         >
-          <Menu.Label className="px-2 pt-1 pb-2 text-xs font-semibold text-slate-500">
-            {suiteName()}
+          <Menu.Label className="px-2 pt-1 pb-2.5" aria-hidden>
+            <SuiteLogo className="h-6" />
           </Menu.Label>
           <div className="grid grid-cols-4 gap-1">
             {apps.map((app) => {

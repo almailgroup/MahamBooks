@@ -1,3 +1,10 @@
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/brand/maham-one-logo-dark.png">
+    <img src="public/brand/maham-one-logo.png" alt="Maham One" height="56">
+  </picture>
+</p>
+
 # Maham One
 
 Free office apps for businesses in Kuwait, in Arabic and English: accounting,
@@ -279,7 +286,9 @@ scripts/        regenerate fonts, template thumbnails and app icons
 - Regenerate the gallery thumbnails with `scripts/make-thumbnails.sh` (needs
   poppler and ImageMagick).
 - Regenerate the fonts with `scripts/subset-fonts.sh` (needs `pip install fonttools`).
-- Regenerate the app icons from `public/favicon.svg` with `node scripts/make-icons.mjs`.
+- The logo, its dark-theme version, the browser tab's icon and the app icons are
+  cut out of the official artwork in `brand/maham-one-logo-source.png` by
+  `node scripts/make-icons.mjs`; run it again if the artwork changes.
 
 ## Credits
 

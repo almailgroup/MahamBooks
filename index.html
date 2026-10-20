@@ -8,7 +8,7 @@
       content="Free accounting and invoicing for Kuwaiti businesses, in Arabic and English. محاسبة وفوترة مجانية للأعمال في الكويت."
     />
     <meta name="theme-color" content="#4f46e5" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="icon" type="image/png" sizes="64x64" href="./icons/favicon-64.png" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <title>Maham One</title>
     <script>
@@ -67,7 +67,40 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The logo while the app loads; React replaces it. -->
+    <style>
+      /* Laid out like the app's loading screen (src/app/route-shell.tsx), so the logo stays put. */
+      .boot {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        min-height: 100vh;
+        min-height: 100dvh;
+        align-items: center;
+        justify-content: center;
+      }
+      .boot::after {
+        content: '';
+        height: 20px;
+      }
+      .boot img {
+        height: 40px;
+        width: auto;
+      }
+      .boot .on-dark,
+      [data-scheme='dark'] .boot .on-light {
+        display: none;
+      }
+      [data-scheme='dark'] .boot .on-dark {
+        display: block;
+      }
+    </style>
+    <div id="root">
+      <div class="boot">
+        <img class="on-light" src="./brand/maham-one-logo.png" alt="Maham One" />
+        <img class="on-dark" src="./brand/maham-one-logo-dark.png" alt="Maham One" />
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

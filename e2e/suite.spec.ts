@@ -102,6 +102,11 @@ test('the app switcher moves between apps, each with its own sidebar', async ({ 
   await expect(nav.getByRole('button', { name: 'Sales' })).toBeVisible();
   await page.goto('#/books');
   await expect(page.getByRole('heading', { name: 'Dashboard', level: 1 })).toBeVisible();
+
+  // The Maham One logo at the top of the sidebar leads home.
+  await page.getByRole('link', { name: 'Maham One', exact: true }).click();
+  await expect(page).toHaveURL(/#\/$/);
+  await expect(page.getByRole('region', { name: 'Your apps' })).toBeVisible();
 });
 
 test('the pipeline follows the quotes and finds prospects', async ({ page }) => {

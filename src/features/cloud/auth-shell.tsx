@@ -1,13 +1,13 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { Eye, EyeOff, FileText } from 'lucide-react';
-import { suiteName } from '@/lib/brand';
+import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { LanguageSwitch } from '@/i18n/language-switch';
 import { ThemeMenu } from '@/features/theme/menu';
 import { Card } from '@/components/ui/misc';
 import { Input } from '@/components/ui/form';
+import { SuiteLogo } from '@/suite/logo';
 
 /** The frame of the account screens (sign in, invitations…): brand, language, one card. */
 export function AuthShell({
@@ -28,11 +28,8 @@ export function AuthShell({
   return (
     <div className="from-primary-50 via-surface to-page min-h-dvh bg-gradient-to-b">
       <header className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-2 font-semibold text-slate-900">
-          <span className="bg-primary-solid text-on-primary flex size-8 items-center justify-center rounded-lg">
-            <FileText className="size-4.5" aria-hidden />
-          </span>
-          {suiteName()}
+        <Link to="/" className="flex rounded-lg">
+          <SuiteLogo className="h-9" />
         </Link>
         <div className="flex items-center gap-1">
           <ThemeMenu className="size-9 rounded-lg text-slate-500" />
