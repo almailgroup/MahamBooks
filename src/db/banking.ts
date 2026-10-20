@@ -4,7 +4,16 @@ import { createJournal, newJournalLine, saveJournal } from './accounting';
 import { createPayment, savePayment } from './payments';
 import { createExpense, saveExpense } from './purchases';
 import { nowStamp } from './defaults';
-import type { BankMatch, BankTransaction, ID, ISODate, ManualJournal, TaxLine } from './types';
+import type {
+  Account,
+  BankMatch,
+  BankTransaction,
+  ID,
+  ISODate,
+  ManualJournal,
+  StatementFormat,
+  TaxLine,
+} from './types';
 import { fingerprints, type StatementLine } from '@/lib/banking/statement';
 import { newId } from '@/lib/ids';
 import { currencyPrecision, round } from '@/lib/money';
@@ -15,13 +24,15 @@ export class BankingError extends Error {}
 
 /**
  * Adds statement lines to a bank account, skipping lines already imported
- * (overlapping statements are normal).
+ * (overlapping statements are normal). With `format`, the account remembers
+ * the layout the statement was read with (null: it forgets the one it had).
  */
 export async function importStatement(
   companyId: ID,
   accountId: ID,
   lines: StatementLine[],
   fileName: string,
+  format?: StatementFormat | null,
 ): Promise<{ added: number; duplicates: number; transactions: BankTransaction[] }> {
   return db.transaction(
     'rw',
@@ -53,6 +64,7 @@ export async function importStatement(
           reference: line.reference.trim(),
           amount: round(line.amount, precision),
           balance: line.balance === null ? null : round(line.balance, precision),
+          ...(line.valueDate ? { valueDate: line.valueDate } : {}),
           fingerprint: keys[i],
           importId,
           position: i,
@@ -63,6 +75,7 @@ export async function importStatement(
         });
       });
       if (rows.length) await db.bankTransactions.bulkAdd(rows);
+      if (format !== undefined) await rememberFormat(account, format, stamp);
       const vars = { count: rows.length, account: account.name, file: fileName };
       const arabic = { account: account.nameAr };
       await logActivity(companyId, 'bank', importId, 'imported', {
@@ -79,6 +92,16 @@ export async function importStatement(
       return { added: rows.length, duplicates: lines.length - rows.length, transactions: rows };
     },
   );
+}
+
+async function rememberFormat(account: Account, format: StatementFormat | null, stamp: string) {
+  if (JSON.stringify(account.statementFormat ?? null) === JSON.stringify(format)) return;
+  const { statementFormat: _old, ...rest } = account;
+  await db.accounts.put({
+    ...rest,
+    ...(format ? { statementFormat: format } : {}),
+    updatedAt: stamp,
+  });
 }
 
 async function setMatch(id: ID, match: BankMatch | null, ignored = false) {

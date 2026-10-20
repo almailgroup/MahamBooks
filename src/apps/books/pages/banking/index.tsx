@@ -395,7 +395,7 @@ function BankAccountPage({ accountId }: { accountId: string }) {
             icon={<FileUp />}
             title={t('No statement yet')}
             description={t(
-              'Import a CSV or OFX statement from your online banking to match it to your books.',
+              'Import an Excel, CSV or OFX statement from your online banking to match it to your books.',
             )}
             action={
               <Button onClick={() => setDialog('import')}>
@@ -427,6 +427,11 @@ function BankAccountPage({ accountId }: { accountId: string }) {
                   >
                     <div className="hidden w-24 shrink-0 text-sm text-slate-600 sm:block">
                       {fmt.date(tx.date)}
+                      {tx.valueDate && tx.valueDate !== tx.date ? (
+                        <span className="block text-xs text-slate-500">
+                          {t('Value date {date}', { date: fmt.date(tx.valueDate) })}
+                        </span>
+                      ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-slate-800">

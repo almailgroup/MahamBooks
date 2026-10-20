@@ -1,4 +1,5 @@
 import type { DiscountType, TaxKind, TaxLine } from '@/lib/calc';
+import type { CsvMapping } from '@/lib/banking/statement';
 
 export type { DiscountType, TaxKind, TaxLine };
 
@@ -249,9 +250,30 @@ export interface Account {
   role: AccountRole | null;
   /** Bank, cash and card accounts can hold the details printed on documents. */
   bank: BankDetails | null;
+  /** How this account's statements are laid out, when an import was asked to remember it. */
+  statementFormat?: StatementFormat;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * A bank account's statement layout, remembered from an import so the next
+ * statement is read the same way. Missing: the layout is guessed each time.
+ */
+export interface StatementFormat {
+  /** The file it was read from; 'html' also covers Excel 2003 XML. 'pdf' is not read yet. */
+  kind: 'csv' | 'xlsx' | 'html' | 'pdf';
+  /** The row of the file the table started at (0 is the first). */
+  headerRow: number;
+  mapping: CsvMapping;
+  /** The way amounts were shown (src/lib/banking/presets.ts). */
+  preset?: string;
+  /**
+   * The column names, to find the table again when there are more or fewer
+   * rows above it (the period, a second line of address).
+   */
+  columns?: string[];
 }
 
 export interface JournalLine {
@@ -340,6 +362,8 @@ export interface BankTransaction {
   amount: number;
   /** Running balance after the line, when the statement gives it. */
   balance: number | null;
+  /** The value date, when the statement gives one. */
+  valueDate?: ISODate;
   /** Identifies the line so a statement imported twice adds nothing. */
   fingerprint: string;
   importId: ID;

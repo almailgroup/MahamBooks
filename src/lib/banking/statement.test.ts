@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkBalances,
   csvStatement,
+  debitOrCredit,
   detectDateFormats,
+  findHeaderRow,
   fingerprints,
   guessMapping,
   isOfx,
@@ -9,7 +12,10 @@ import {
   parseCsvRows,
   parseOfx,
   parseStatementDate,
+  statementDelimiter,
+  trimFooter,
 } from './statement';
+import { STATEMENT_RESULT, statementCsv } from '@/test/bank-statements';
 
 describe('amounts', () => {
   it('read the ways banks write them', () => {
@@ -187,5 +193,138 @@ describe('Kuwaiti and Arabic statements', () => {
       balance: 4,
     });
     expect(csvStatement(rows, mapping).lines.map((l) => l.amount)).toEqual([-20, 150.25]);
+  });
+});
+
+describe('statements with account details above the table', () => {
+  const read = (rows: string[][]) => {
+    const start = findHeaderRow(rows);
+    const table = trimFooter(rows.slice(start));
+    const mapping = guessMapping(table);
+    return { start, table, mapping, ...csvStatement(table, mapping) };
+  };
+
+  it('find the column names under 5 rows of account details, in English and Arabic', () => {
+    for (const lang of ['en', 'ar'] as const) {
+      const rows = parseCsvRows(statementCsv(lang));
+      const { start, mapping, lines, skipped } = read(rows);
+      expect(start).toBe(5);
+      expect(mapping).toMatchObject({
+        header: true,
+        date: 0,
+        valueDate: 1,
+        description: 2,
+        reference: 3,
+        moneyOut: 4,
+        moneyIn: 5,
+        amount: null,
+        balance: 6,
+        dateFormat: 'dd/MM/yyyy',
+      });
+      expect(skipped).toBe(0);
+      expect(lines).toEqual(STATEMENT_RESULT);
+    }
+  });
+
+  it('drop the totals and notes after the last line', () => {
+    const rows = parseCsvRows(statementCsv());
+    const { table } = read(rows);
+    expect(table).toHaveLength(4);
+    expect(table.at(-1)?.[2]).toBe('SWIFT CHARGES');
+    expect(trimFooter(parseCsvRows(statementCsv('ar')).slice(5))).toHaveLength(4);
+    // A last line whose description starts with "Total" stays.
+    const kept = [
+      ['Date', 'Description', 'Amount'],
+      ['01/10/2026', 'TOTAL FUEL STATION', '-5.000'],
+      ['Total', '', '-5.000'],
+    ];
+    expect(trimFooter(kept)).toEqual(kept.slice(0, 2));
+    // A closing balance with a date is a total too.
+    expect(
+      trimFooter([...kept.slice(0, 2), ['31/10/2026', 'Closing balance', '995.000']]),
+    ).toHaveLength(2);
+  });
+
+  it('read separate debit and credit columns with 3 decimals, and value dates', () => {
+    const { lines } = read(parseCsvRows(statementCsv()));
+    expect(lines.map((l) => l.amount)).toEqual([-45.6, 1200, -3.5]);
+    expect(lines.map((l) => l.balance)).toEqual([1954.4, 3154.4, 3150.9]);
+    expect(lines[1]).toMatchObject({ date: '2026-10-02', valueDate: '2026-10-03' });
+    // Without a value date column, lines have none.
+    const rows = parseCsvRows('Date,Description,Amount\n01/10/2026,Fee,-1.250\n');
+    expect(csvStatement(rows, guessMapping(rows)).lines[0]).not.toHaveProperty('valueDate');
+  });
+
+  it('keep reading statements that start at the first row as before', () => {
+    const uk = parseCsvRows(
+      'Date,Description,Paid out,Paid in,Balance\n01/10/2026,Fee,1.00,,9.00\n',
+    );
+    const german = parseCsvRows(
+      'Buchungstag;Verwendungszweck;Betrag;Saldo\n05.10.2026;Miete;-1,00;8,00\n',
+    );
+    const bare = parseCsvRows('2026-10-01,Coffee,-3.20\n2026-10-02,Coffee,-3.20\n');
+    expect([uk, german, bare].map(findHeaderRow)).toEqual([0, 0, 0]);
+    expect(guessMapping(uk)).toMatchObject({ valueDate: null, debitCredit: null });
+  });
+
+  it('find the table by its first line when the column names are unknown', () => {
+    const rows = [
+      ['Kontoauszug'],
+      ['Konto', 'TEST-0001'],
+      ['Buchung', 'Text', 'Umsatz'],
+      ['01.10.2026', 'Miete', '-1.250,00'],
+      ['02.10.2026', 'Gutschrift', '300,00'],
+    ];
+    expect(findHeaderRow(rows)).toBe(2);
+    expect(findHeaderRow(rows.filter((_, i) => i !== 2))).toBe(2);
+  });
+
+  it('use the delimiter of the table when the first line is a title', () => {
+    const text =
+      'Account statement\r\nDate;Description;Amount\r\n01/10/2026;Fee, monthly;-1,250\r\n';
+    expect(statementDelimiter(text)).toBe(';');
+    expect(statementDelimiter('Date,Description\n')).toBe(',');
+    expect(statementDelimiter('Title only')).toBe(',');
+    expect(parseCsvRows(text, statementDelimiter(text))[2]).toEqual([
+      '01/10/2026',
+      'Fee, monthly',
+      '-1,250',
+    ]);
+    // Without one, as before: the first line decides.
+    expect(parseCsvRows(text)[2]).toEqual(['01/10/2026;Fee', 'monthly;-1', '250']);
+  });
+
+  it('read an amount column with a debit or credit column beside it', () => {
+    expect(['Dr', 'D', 'debit', 'مدين', '-'].map(debitOrCredit)).toEqual(Array(5).fill('debit'));
+    expect(['CR', 'c.', 'Credit', 'دائن', '+'].map(debitOrCredit)).toEqual(Array(5).fill('credit'));
+    expect(debitOrCredit('Card')).toBeNull();
+    const rows = parseCsvRows(
+      'Date,Details,Amount,Dr/Cr,Balance\n01/10/2026,Fee,1.250,DR,98.750\n02/10/2026,Deposit,50.000,CR,148.750\n',
+    );
+    const mapping = { ...guessMapping(rows), debitCredit: 3 };
+    expect(csvStatement(rows, mapping).lines.map((l) => l.amount)).toEqual([-1.25, 50]);
+  });
+});
+
+describe('running balances', () => {
+  const lines = (amounts: number[], balances: (number | null)[]) =>
+    amounts.map((amount, i) => ({
+      date: '2026-10-01',
+      description: '',
+      reference: '',
+      amount,
+      balance: balances[i],
+    }));
+
+  it('agree in either order, and tell when the signs are the wrong way round', () => {
+    expect(checkBalances(STATEMENT_RESULT)).toBe('agrees');
+    expect(checkBalances([...STATEMENT_RESULT].reverse())).toBe('agrees');
+    // A line without a balance in between still counts.
+    expect(checkBalances(lines([-1.5, 2, 3], [98.5, null, 103.5]))).toBe('agrees');
+    expect(checkBalances(STATEMENT_RESULT.map((l) => ({ ...l, amount: -l.amount })))).toBe(
+      'flipped',
+    );
+    expect(checkBalances(lines([-1, -1], [99, 97]))).toBe('differs');
+    expect(checkBalances(lines([-1, -1], [99, null]))).toBeNull();
   });
 });

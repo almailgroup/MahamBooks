@@ -1,4 +1,7 @@
 import { expect, startWithDemoData, test } from './fixtures';
+import { statementHtml, statementWorkbook } from '../src/test/bank-statements';
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 test.beforeEach(async ({ page }) => {
   await startWithDemoData(page);
@@ -64,6 +67,67 @@ test('a CSV statement is read column by column and never imported twice', async 
   await dialog.getByLabel('Statement file').setInputFiles(file);
   await dialog.getByRole('button', { name: 'Import 2 lines' }).click();
   await expect(page.getByText('0 lines imported, 2 already there')).toBeVisible();
+});
+
+test('an Excel statement with account details above it is remembered and never imported twice', async ({
+  page,
+}) => {
+  // A made-up export: five rows about the account, then the table, then totals.
+  const file = { name: 'statement.xlsx', mimeType: XLSX, buffer: Buffer.from(statementWorkbook()) };
+  await page.goto('#/banking');
+  await page.getByRole('link', { name: /KFH – current account/ }).click();
+  const dialog = page.getByRole('dialog');
+  // The account has no statement yet: its empty page has a second button.
+  const importButton = page.getByRole('button', { name: 'Import statement' }).first();
+
+  await importButton.click();
+  await dialog.getByLabel('Statement file').setInputFiles(file);
+  await expect(dialog.getByLabel('The table starts at row').locator('option:checked')).toHaveText(
+    /^Row 6: Posting Date · Value Date/,
+  );
+  await expect(
+    dialog.getByText('3 lines to import · 3 rows of totals or notes after the lines left out'),
+  ).toBeVisible();
+  await expect(dialog.getByLabel('Money out').locator('option:checked')).toHaveText('Debit');
+  await expect(dialog.getByLabel(/^Value date/).locator('option:checked')).toHaveText('Value Date');
+  await expect(dialog.getByText('The amounts add up to the balances in the file.')).toBeVisible();
+  const remember = dialog.getByRole('switch', { name: 'Remember this layout for this account' });
+  await expect(remember).toHaveAttribute('aria-checked', 'false');
+  await remember.click();
+  await dialog.getByRole('button', { name: 'Import 3 lines' }).click();
+  await expect(page.getByText('3 lines imported')).toBeVisible();
+  await expect(page.getByText('TRF FROM TEST CUSTOMER ONE')).toBeVisible();
+
+  // The next import reads the file with the remembered layout and adds nothing twice.
+  await importButton.click();
+  await dialog.getByLabel('Statement file').setInputFiles(file);
+  await expect(dialog.getByText('Read with the layout remembered for this account.')).toBeVisible();
+  await expect(remember).toHaveAttribute('aria-checked', 'true');
+  await dialog.getByRole('button', { name: 'Import 3 lines' }).click();
+  await expect(page.getByText('0 lines imported, 3 already there')).toBeVisible();
+
+  // The same statement saved by the bank as an HTML ".xls" is the same lines.
+  await importButton.click();
+  await dialog.getByLabel('Statement file').setInputFiles({
+    name: 'statement.xls',
+    mimeType: 'application/vnd.ms-excel',
+    buffer: Buffer.from(statementHtml()),
+  });
+  await dialog.getByRole('button', { name: 'Import 3 lines' }).click();
+  await expect(page.getByText('0 lines imported, 3 already there')).toBeVisible();
+
+  // An old binary Excel file gets a way out.
+  await importButton.click();
+  await dialog.getByLabel('Statement file').setInputFiles({
+    name: 'old.xls',
+    mimeType: 'application/vnd.ms-excel',
+    buffer: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]),
+  });
+  await expect(
+    page.getByText(
+      'Older Excel files (.xls) can’t be read. In Excel, save the file as .xlsx or CSV.',
+    ),
+  ).toBeVisible();
 });
 
 test('money moves between accounts with a transfer', async ({ page }) => {
