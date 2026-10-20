@@ -124,6 +124,8 @@ async function stillLinked(companyId: string, ctx: SyncContext): Promise<boolean
 
 /** What a sync asks for to bring changes in: given up at once when the sync is told to stop. */
 const RECEIVING = new Set<string>(['pullRecords', 'recordIds', 'syncInfo', 'downloadFile']);
+/** The same while catching up on a table (see catchUpTables); sending uses getRecord too. */
+const CATCHING_UP = new Set<string>([...RECEIVING, 'getRecord']);
 const FILE_TRANSFERS = new Set<string>(['uploadFile', 'downloadFile']);
 
 /** Detail of the error a request ends with when its sync was told to stop. */
@@ -161,13 +163,13 @@ function deadline<T>(request: Promise<T>, ms: number, stop?: AbortSignal): Promi
  * ever, and once `stop` fires (the company is about to leave this device)
  * what the sync brings in is given up at once. What it sends goes on.
  */
-function guardedApi(ctx: SyncContext, stop?: AbortSignal): CloudApi {
+function guardedApi(ctx: SyncContext, stop?: AbortSignal, receiving = RECEIVING): CloudApi {
   return new Proxy(ctx.api, {
     get(target, key, receiver) {
       const value: unknown = Reflect.get(target, key, receiver);
       if (typeof value !== 'function' || typeof key !== 'string') return value;
       return (...args: unknown[]) => {
-        const signal = RECEIVING.has(key) ? stop : undefined;
+        const signal = receiving.has(key) ? stop : undefined;
         if (signal?.aborted) {
           return Promise.reject(new CloudError('server', t(CLOUD_ERROR_MESSAGES.server), STOPPED));
         }
@@ -325,7 +327,12 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
     await processFileQueue(sync);
     await pushAll(companyId, sync, result);
     const touched = await pullAll(companyId, sync, result);
-    await catchUpTables(companyId, sync, result, touched);
+    await catchUpTables(
+      companyId,
+      { ...ctx, api: guardedApi(ctx, run.stop, CATCHING_UP) },
+      result,
+      touched,
+    );
     await reconcile(companyId, touched);
     // Reconciling may have corrected something here: send that too.
     await pushAll(companyId, sync, result);
@@ -1319,8 +1326,9 @@ export function pulledTables(link: Pick<CloudLink, 'tables'>): string[] {
  * that pulled before moved its cursor past them, so they would never arrive.
  * Only those tables are read (their ids, then each record), and stored as a
  * pull stores them, for this person's role; the cursor stays where it is.
- * Then the link notes the tables. Stopped half way (no connection), it
- * starts again at the next sync; records already here are stored again.
+ * Then the link notes the tables. Stopped half way (no connection, or the
+ * sync was told to stop: `ctx` gives up getRecord then too), it starts again
+ * at the next sync; records already here are stored again.
  */
 async function catchUpTables(
   companyId: string,

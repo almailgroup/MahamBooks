@@ -230,4 +230,15 @@ describe('backups and the new tables', () => {
     expect(await db.chequeLayouts.get('lay-1')).toMatchObject({ bank: 'BRGN', version: 1 });
     expect(Object.keys(summarizeBackup(parseBackup(text)))).toEqual([...DATA_TABLES]);
   });
+
+  it('refuses a backup with records of a table a later version added, rather than lose them', async () => {
+    const company = await setupCompany({ name: 'Later' });
+    const backup = JSON.parse(JSON.stringify(await exportBackup(company.id)));
+    // A later version keeps the format and adds its tables.
+    backup.data.staffingCostings = [{ id: 'cost-1', companyId: company.id }];
+    expect(() => parseBackup(JSON.stringify(backup))).toThrow(/newer version/);
+    // Without records of it, nothing is lost.
+    backup.data.staffingCostings = [];
+    expect(parseBackup(JSON.stringify(backup)).data).not.toHaveProperty('staffingCostings');
+  });
 });

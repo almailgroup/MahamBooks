@@ -125,6 +125,12 @@ describe('private records of database version 16', () => {
     expect(isPrivateRecord('activities', about('doc-secret'), find)).toBe(true);
     expect(isPrivateRecord('activities', about('ren-secret'), find)).toBe(true);
     expect(isPrivateRecord('activities', about('doc-open'), find)).toBe(false);
+    // Marked as about a confidential document: private once it is gone too.
+    expect(isPrivateRecord('activities', { ...about('doc-gone'), confidential: true })).toBe(true);
+    expect(isPrivateRecord('activities', about('doc-gone'), find)).toBe(false);
+    expect(isPrivateRecord('activities', { ...about('doc-gone'), confidential: 'true' })).toBe(
+      false,
+    );
   });
 
   it('find the document of a renewal by its id, or else by its key', () => {

@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, DATA_TABLES } from '@/db/db';
-import { setupCompany } from '@/db/records';
+import { deleteCompany, setupCompany } from '@/db/records';
 import { addAttachment } from '@/db/purchases';
-import { createComplianceDocument, renewDocument, saveComplianceDocument } from '@/db/renewals';
+import {
+  createComplianceDocument,
+  deleteComplianceDocument,
+  renewDocument,
+  saveComplianceDocument,
+} from '@/db/renewals';
 import type { CloudApi } from './api';
 import { companyHasFeature, linkHasFeature } from './features';
+import { withSyncLock } from './lock';
 import { FakeCloud } from './testing/fake-cloud';
 import {
   applyRole,
@@ -202,6 +208,24 @@ describe('a device whose earlier version skipped the new tables', () => {
     expect(await ids('letterTemplates', company.id)).toEqual([]);
     expect(await ids('employeeLetters', company.id)).toEqual([]);
   });
+
+  it('stops at once when the company is taken off this device', async () => {
+    const company = await uploaded();
+    await newerDeviceSaves(company.id);
+    await asEarlierVersion(company.id);
+    // Records that never come (a slow or dead connection).
+    ctx = { ...ctx, api: { ...ctx.api, getRecord: () => new Promise<never>(() => undefined) } };
+    const sync = withSyncLock(company.id, () => syncCompany(company.id, ctx));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const removal = withSyncLock(company.id, () => deleteCompany(company.id));
+    const outcome = await Promise.race([
+      removal.then(() => 'removed'),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 2000)),
+    ]);
+    expect(outcome).toBe('removed');
+    await expect(sync).resolves.toMatchObject({ stopped: true });
+    expect(await db.companies.get(company.id)).toBeUndefined();
+  });
 });
 
 describe('a link made by this version', () => {
@@ -307,6 +331,76 @@ describe('a confidential register document', () => {
       .filter((r) => r.data.entityId === doc.id);
     expect(activity.length).toBeGreaterThan(0);
     expect(activity.every((r) => r.data._private === true)).toBe(true);
+  });
+
+  it('keeps its activity private once it is deleted', async () => {
+    const company = await uploaded();
+    // Its first activity reaches the cloud before it is marked.
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, { type: 'other', title: 'Guards cost sheet' }),
+    );
+    await syncCompany(company.id, ctx);
+    await saveComplianceDocument({ ...doc, confidential: true });
+    await syncCompany(company.id, ctx);
+    await deleteComplianceDocument(doc.id);
+    await syncCompany(company.id, ctx);
+
+    expect(server.record(company.id, 'complianceDocuments', doc.id)).toBeUndefined();
+    const activity = server
+      .rows(company.id, 'activities')
+      .filter((r) => r.data.entityId === doc.id);
+    expect(activity.map((r) => r.data.action).sort()).toEqual(['created', 'deleted', 'updated']);
+    expect(activity.every((r) => r.data._private === true && r.data.confidential === true)).toBe(
+      true,
+    );
+
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.companies.get(company.id)).toBeDefined();
+    expect(JSON.stringify(await db.activities.toArray())).not.toContain('Guards cost sheet');
+  });
+
+  it('leaves its name, number and note out of the fee’s expense', async () => {
+    const company = await uploaded();
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'other',
+        title: 'Guards cost sheet',
+        number: 'CS-0001',
+        ownerName: 'Night shift',
+        expiryDate: '2026-12-31',
+      }),
+    );
+    await db.complianceDocuments.update(doc.id, { confidential: true });
+    const { expense } = await renewDocument({
+      companyId: company.id,
+      key: `doc:${doc.id}`,
+      renewedOn: '2026-10-20',
+      newExpiry: '2027-12-31',
+      note: 'Guards for the new site',
+      fee: { amount: 25, accountId: null, paidFromAccountId: null },
+    });
+    expect(expense).toMatchObject({
+      description: 'Document renewal fee',
+      reference: '',
+      notes: '',
+      amount: 25,
+    });
+    await syncCompany(company.id, ctx);
+
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.expenses.get(expense!.id)).toBeDefined();
+    const seen = JSON.stringify([
+      await db.expenses.toArray(),
+      await db.journals.toArray(),
+      await db.activities.toArray(),
+    ]);
+    for (const text of ['Guards', 'CS-0001', 'Night shift']) expect(seen).not.toContain(text);
   });
 
   it('never reaches staff, nor its renewals and files', async () => {

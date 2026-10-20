@@ -39,16 +39,20 @@ has to be added to the app or to Vercel.
    confidential documents from staff and viewers. Until it runs, the app keeps
    the features that need it hidden; everything else works as before.
 
-Running the scripts again later is safe: they create what is missing and
-replace their own rules with the same ones. Run them again, in this order,
-whenever a new version is published.
+Each script is run once. A new version of the app that needs more from the
+database comes with a new script: run just that one, after the others. The
+later scripts are safe to run again (they create what is missing and replace
+their own rules with the same ones), but **don't run the first script again**:
+once the app keeps cheque layouts, vehicles, approval requests or HR letters,
+it stops with an error about `records_tbl_check` and changes nothing. If it
+was run again and finished without an error, run the later scripts again
+after it, in order.
 
 **Optional, recommended: the daily clean-up.** Deleted records leave a small
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
 daily job does it for every company. The email alerts script (step 7) turns it
 on; without email alerts, open **Database → Extensions**, search for
-**pg_cron**, enable it, then run the first script once more (steps 2–4) and
-the later ones after it, in order.
+**pg_cron**, enable it, then run the fourth script once more (step 8).
 
 To check: **Table Editor** now lists `profiles`, `companies`,
 `company_members`, `company_invites`, `records`, `deleted_records` and

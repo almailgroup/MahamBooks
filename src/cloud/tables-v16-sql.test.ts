@@ -67,7 +67,10 @@ const rec = (company: string, id: string, extra: Record<string, unknown> = {}) =
   ...extra,
 });
 
-/** Register documents, one confidential, with renewals, files and activity. */
+/**
+ * Register documents, one confidential, with renewals, files and activity
+ * (without the app's private mark, as an earlier version sends them).
+ */
 function registerRecords(c: string): Change[] {
   return [
     {
@@ -96,8 +99,46 @@ function registerRecords(c: string): Change[] {
       id: 'ren-open',
       data: rec(c, 'ren-open', { documentKey: 'doc:doc-open', documentId: 'doc-open' }),
     },
+    { tbl: 'attachments', id: 'att-secret', data: rec(c, 'att-secret', { ownerId: 'doc-secret' }) },
+    { tbl: 'attachments', id: 'att-ren', data: rec(c, 'att-ren', { ownerId: 'ren-secret' }) },
+    { tbl: 'attachments', id: 'att-open', data: rec(c, 'att-open', { ownerId: 'doc-open' }) },
+    {
+      tbl: 'activities',
+      id: 'act-secret',
+      data: rec(c, 'act-secret', { entity: 'compliance', entityId: 'doc-secret' }),
+    },
+    {
+      tbl: 'activities',
+      id: 'act-ren',
+      data: rec(c, 'act-ren', { entity: 'compliance', entityId: 'ren-secret' }),
+    },
+    // About a confidential document that is gone: only its mark tells.
+    {
+      tbl: 'activities',
+      id: 'act-gone',
+      data: rec(c, 'act-gone', { entity: 'compliance', entityId: 'doc-gone', confidential: true }),
+    },
+    {
+      tbl: 'activities',
+      id: 'act-open',
+      data: rec(c, 'act-open', { entity: 'compliance', entityId: 'doc-open' }),
+    },
+    { tbl: 'activities', id: 'act-inv', data: rec(c, 'act-inv', { entity: 'invoice' }) },
   ];
 }
+
+/** Ids of registerRecords that staff and viewers never read, and the others. */
+const REGISTER_PRIVATE = [
+  'doc-secret',
+  'ren-secret',
+  'ren-secret-key',
+  'att-secret',
+  'att-ren',
+  'act-secret',
+  'act-ren',
+  'act-gone',
+];
+const REGISTER_OPEN = ['doc-open', 'ren-open', 'att-open', 'act-open', 'act-inv'];
 
 /** Records of every new kind, written by the owner. */
 async function seed(t: Team) {
@@ -138,26 +179,8 @@ async function seed(t: Team) {
     { tbl: 'vehicles', id: 'veh-1', data: rec(c, 'veh-1', { plate: 'TEST-1' }) },
     { tbl: 'chequeLayouts', id: 'lay-1', data: rec(c, 'lay-1', { bank: 'BRGN' }) },
     ...registerRecords(c),
-    { tbl: 'attachments', id: 'att-secret', data: rec(c, 'att-secret', { ownerId: 'doc-secret' }) },
-    { tbl: 'attachments', id: 'att-ren', data: rec(c, 'att-ren', { ownerId: 'ren-secret' }) },
     { tbl: 'attachments', id: 'att-tpl', data: rec(c, 'att-tpl', { ownerId: 'tpl-1' }) },
     { tbl: 'attachments', id: 'att-letter', data: rec(c, 'att-letter', { ownerId: 'let-1' }) },
-    { tbl: 'attachments', id: 'att-open', data: rec(c, 'att-open', { ownerId: 'doc-open' }) },
-    {
-      tbl: 'activities',
-      id: 'act-secret',
-      data: rec(c, 'act-secret', { entity: 'compliance', entityId: 'doc-secret' }),
-    },
-    {
-      tbl: 'activities',
-      id: 'act-ren',
-      data: rec(c, 'act-ren', { entity: 'compliance', entityId: 'ren-secret' }),
-    },
-    {
-      tbl: 'activities',
-      id: 'act-open',
-      data: rec(c, 'act-open', { entity: 'compliance', entityId: 'doc-open' }),
-    },
   ]);
 }
 
@@ -166,17 +189,31 @@ const PRIVATE = [
   'let-1',
   'apr-pay',
   'apr-letter',
-  'doc-secret',
-  'ren-secret',
-  'ren-secret-key',
-  'att-secret',
-  'att-ren',
   'att-tpl',
   'att-letter',
-  'act-secret',
-  'act-ren',
+  ...REGISTER_PRIVATE,
 ];
-const OPEN = ['inv-1', 'apr-inv', 'veh-1', 'lay-1', 'doc-open', 'ren-open', 'att-open', 'act-open'];
+const OPEN = ['inv-1', 'apr-inv', 'veh-1', 'lay-1', ...REGISTER_OPEN];
+
+/** Puts the files of these attachments in Storage, as their owner uploads them. */
+async function storeFiles(owner: string, company: string, ids: string[], db: Harness = h) {
+  for (const id of ids) {
+    await db.as(owner, (q) =>
+      q(
+        `insert into storage.objects (bucket_id, name, owner, owner_id)
+         values ('company-files', $1, $2::uuid, $2)`,
+        [`${company}/${id}`, owner],
+      ),
+    );
+  }
+}
+
+async function fileReadable(user: string, company: string, id: string, db: Harness = h) {
+  const rows = await db.as(user, (q) =>
+    q(`select name from storage.objects where name = $1`, [`${company}/${id}`]),
+  );
+  return rows.length === 1;
+}
 
 async function visibleIds(user: string, company: string, db: Harness = h): Promise<Set<string>> {
   return new Set((await pull(user, company, 0, db)).map((r) => r.id));
@@ -249,27 +286,18 @@ describe('records of database version 16', () => {
 
   it('keep the files of letters and confidential documents from staff and viewers', async () => {
     const c = t.company;
-    for (const id of ['att-secret', 'att-tpl', 'att-open']) {
-      await h.as(t.owner, (q) =>
-        q(
-          `insert into storage.objects (bucket_id, name, owner, owner_id)
-           values ('company-files', $1, $2::uuid, $2)`,
-          [`${c}/${id}`, t.owner],
-        ),
-      );
-    }
-    const readable = async (user: string, id: string) =>
-      (
-        await h.as(user, (q) =>
-          q(`select name from storage.objects where name = $1`, [`${c}/${id}`]),
-        )
-      ).length === 1;
+    await storeFiles(t.owner, c, ['att-secret', 'att-ren', 'att-tpl', 'att-open']);
     for (const user of [t.staff, t.viewer]) {
-      expect(await readable(user, 'att-secret')).toBe(false);
-      expect(await readable(user, 'att-tpl')).toBe(false);
-      expect(await readable(user, 'att-open')).toBe(true);
+      expect(await fileReadable(user, c, 'att-secret')).toBe(false);
+      expect(await fileReadable(user, c, 'att-ren')).toBe(false);
+      expect(await fileReadable(user, c, 'att-tpl')).toBe(false);
+      expect(await fileReadable(user, c, 'att-open')).toBe(true);
     }
-    expect(await readable(t.accountant, 'att-tpl')).toBe(true);
+    for (const user of [t.owner, t.admin, t.accountant]) {
+      for (const id of ['att-secret', 'att-ren', 'att-tpl', 'att-open']) {
+        expect(await fileReadable(user, c, id), id).toBe(true);
+      }
+    }
   });
 
   it('can’t be changed by staff or viewers, and can by owners, admins and accountants', async () => {
@@ -334,31 +362,23 @@ describe('records of database version 16', () => {
     ]);
   });
 
-  it('stay private under the first file’s record_is_private', async () => {
+  it('stay private under the first file’s record_is_private, with their files and activity', async () => {
     await h.db.exec(firstRecordIsPrivate());
     try {
       for (const user of [t.staff, t.viewer]) {
         const ids = await visibleIds(user, t.company);
-        // Their files and activity carry the app's private mark (see sync.ts).
-        for (const id of [
-          'tpl-1',
-          'let-1',
-          'apr-pay',
-          'apr-letter',
-          'doc-secret',
-          'ren-secret',
-          'ren-secret-key',
-        ])
-          expect(ids, id).not.toContain(id);
-        expect(ids).toContain('doc-open');
-        expect(ids).toContain('apr-inv');
+        for (const id of PRIVATE) expect(ids, id).not.toContain(id);
+        for (const id of OPEN) expect(ids, id).toContain(id);
         const direct = await selectedIds(user, t.company);
-        expect(direct).not.toContain('let-1');
-        expect(direct).not.toContain('doc-secret');
+        for (const id of PRIVATE) expect(direct, id).not.toContain(id);
+        expect(await fileReadable(user, t.company, 'att-secret')).toBe(false);
+        expect(await fileReadable(user, t.company, 'att-tpl')).toBe(false);
+        expect(await fileReadable(user, t.company, 'att-open')).toBe(true);
       }
       for (const user of [t.owner, t.accountant]) {
         const ids = await visibleIds(user, t.company);
         for (const id of PRIVATE) expect(ids, id).toContain(id);
+        expect(await fileReadable(user, t.company, 'att-secret')).toBe(true);
       }
     } finally {
       await h.db.exec(readFileSync(V16, 'utf8'));
@@ -367,22 +387,26 @@ describe('records of database version 16', () => {
 });
 
 describe('the first file run again', () => {
-  it('keeps confidential documents and their renewals from staff and viewers', async () => {
+  it('keeps confidential documents, their renewals, files and activity from staff and viewers', async () => {
     const db = await startDatabase(1);
     const t = await team(db);
     const c = t.company;
     await push(t.owner, c, registerRecords(c), db);
+    await storeFiles(t.owner, c, ['att-secret', 'att-ren', 'att-open'], db);
     // No records of the new kinds yet: the first file runs through.
     await db.db.exec(readFileSync(MIGRATION, 'utf8'));
     for (const user of [t.staff, t.viewer]) {
       const ids = await visibleIds(user, c, db);
-      for (const id of ['doc-secret', 'ren-secret', 'ren-secret-key']) {
-        expect(ids, id).not.toContain(id);
+      for (const id of REGISTER_PRIVATE) expect(ids, id).not.toContain(id);
+      for (const id of REGISTER_OPEN) expect(ids, id).toContain(id);
+      for (const id of ['att-secret', 'att-ren']) {
+        expect(await fileReadable(user, c, id, db), id).toBe(false);
       }
-      expect(ids).toContain('doc-open');
-      expect(ids).toContain('ren-open');
+      expect(await fileReadable(user, c, 'att-open', db)).toBe(true);
     }
-    expect(await visibleIds(t.admin, c, db)).toContain('doc-secret');
+    const all = await visibleIds(t.admin, c, db);
+    for (const id of [...REGISTER_PRIVATE, ...REGISTER_OPEN]) expect(all, id).toContain(id);
+    expect(await fileReadable(t.admin, c, 'att-secret', db)).toBe(true);
     // Running this file after it brings back the new kinds.
     await db.db.exec(readFileSync(V16, 'utf8'));
     await push(t.owner, c, [{ tbl: 'vehicles', id: 'veh-1', data: rec(c, 'veh-1') }], db);

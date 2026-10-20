@@ -4,14 +4,16 @@
 row-level security, the functions the app calls, the Storage bucket and its
 policies, and the Realtime publication. `migrations/20261006000000_sync_fixes.sql`
 comes after it: company settings merged by field, document numbers taken in
-the cloud, deleting a company safely, and the file checks below. Both are safe
-to run again, in this order (run the second again after the first if the first
-is ever run again). Until the second runs, the app notices its functions are
-missing and works as before. `migrations/20261007000000_email_alerts.sql`
-comes next and adds email alerts (see "Email alerts" below).
-`migrations/20261102000000_tables_v16.sql` comes last: the records of the
-app's database version 16 and their privacy (see "Records of database
-version 16" below). The owner's step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
+the cloud, deleting a company safely, and the file checks below. Until the
+second runs, the app notices its functions are missing and works as before.
+`migrations/20261007000000_email_alerts.sql` comes next and adds email alerts
+(see "Email alerts" below). `migrations/20261102000000_tables_v16.sql` comes
+last: the records of the app's database version 16 and their privacy (see
+"Records of database version 16" below). Each file is run once, in this
+order; a release that needs more from the server adds a file, and only that
+one is run. The files after the first are safe to run again; the first is
+not, once there are records of version 16 (see below). The owner's
+step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
 and [`docs/email-alerts.md`](../docs/email-alerts.md).
 
 The app stays local-first: every screen reads IndexedDB on the device, and the
@@ -261,12 +263,21 @@ signed-in users, with row-level security on. Run it with
 `chequeLayouts`, `vehicles`, `approvals`, `letterTemplates` and
 `employeeLetters`. None of them can be changed by staff (`staff_can_write` is
 unchanged). It replaces `record_is_private` with the rules above, and adds a
-second, restrictive read rule on `records` (and on `deleted_records` for
-letters) that keeps letters, approval requests about people data, confidential
-documents and their renewals from staff and viewers even if the first file is
-run again and puts back its older `record_is_private`. Once the new tables
-have records, running the first file again stops at the kinds of record (it
-changes nothing); run the files again in order.
+second, restrictive read rule on `records`, on `deleted_records` for letters,
+and on the files in Storage, that keeps letters, approval requests about
+people data, confidential documents, their renewals, and the files and
+activity of any of these from staff and viewers even if the first file is run
+again and puts back its older `record_is_private`. Activity entries carry a
+mark of their own (`employeeId`, or `confidential: true`), so those about an
+employee's papers or a confidential document stay private once it is deleted.
+
+Once the new tables have records, the first file can't be run again: it stops
+where it lists the kinds of record (`records_tbl_check`) and changes nothing.
+Releases after this one add files of their own instead, and only those are
+run. Had the first file been run again before there were any, run the later
+files again after it, in order. The v16 file also schedules the daily clean-up
+of deletion markers when `pg_cron` is on, as the first file does, so turning
+`pg_cron` on and running it again is enough.
 
 `server_features()` answers `{tables_v16}`. The app asks it as it syncs and
 keeps the answer on the device, so a feature that keeps these records stays

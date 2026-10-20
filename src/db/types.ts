@@ -1101,6 +1101,11 @@ export interface Activity {
    * an event stays private (people data) even after the document is gone.
    */
   employeeId?: ID | null;
+  /**
+   * The event concerns a register document marked confidential (or its
+   * renewal): it stays private even after the document is gone.
+   */
+  confidential?: boolean;
   action: string;
   /** The message in English as it was logged. */
   message: string;

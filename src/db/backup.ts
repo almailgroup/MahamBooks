@@ -282,12 +282,23 @@ export function parseBackup(text: string): Backup {
       t('This file is not a {app} backup, or it is damaged.', { app: suiteName() }),
     );
   }
-  if (result.data.format > BACKUP_FORMAT) {
+  // A version that adds tables keeps the format: their records would be
+  // left out without a word.
+  if (result.data.format > BACKUP_FORMAT || hasUnknownRecords(json)) {
     throw new BackupError(
       t('This backup was made by a newer version of the app. Please update first.'),
     );
   }
   return result.data as Backup;
+}
+
+/** Whether the backup has records of a table this version doesn't know. */
+function hasUnknownRecords(json: unknown): boolean {
+  const data = (json as { data?: Record<string, unknown> }).data ?? {};
+  const known = new Set<string>(DATA_TABLES);
+  return Object.entries(data).some(
+    ([name, rows]) => !known.has(name) && Array.isArray(rows) && rows.length > 0,
+  );
 }
 
 export function summarizeBackup(backup: Backup): Record<DataTable, number> {

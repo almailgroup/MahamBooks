@@ -129,7 +129,7 @@ export async function saveComplianceDocument(
           text: existing ? msg('Document {title} updated') : msg('Document {title} added'),
           vars: { title: doc.title || documentTypeInfo(doc.type).label },
         },
-        { employeeId: doc.employeeId },
+        { employeeId: doc.employeeId, confidential: doc.confidential },
       );
       return doc;
     },
@@ -151,7 +151,7 @@ export async function setDocumentArchived(id: ID, archived: boolean): Promise<vo
         text: archived ? msg('Document {title} archived') : msg('Document {title} restored'),
         vars: { title: doc.title || documentTypeInfo(doc.type).label },
       },
-      { employeeId: doc.employeeId },
+      { employeeId: doc.employeeId, confidential: doc.confidential },
     );
   });
 }
@@ -169,6 +169,17 @@ export async function deleteComplianceDocument(id: ID): Promise<void> {
       }
       await db.attachments.where('ownerId').equals(id).delete();
       await db.complianceDocuments.delete(id);
+      if (doc.confidential === true) {
+        // Once it is gone nothing else tells that its activity is private:
+        // what was logged before it was marked, or by an earlier version,
+        // gets the mark too.
+        const unmarked = await db.activities
+          .where('entityId')
+          .equals(id)
+          .filter((a) => a.entity === 'compliance' && a.confidential !== true)
+          .toArray();
+        await db.activities.bulkPut(unmarked.map((a) => ({ ...a, confidential: true })));
+      }
       await logActivity(
         doc.companyId,
         'compliance',
@@ -178,7 +189,7 @@ export async function deleteComplianceDocument(id: ID): Promise<void> {
           text: msg('Document {title} deleted'),
           vars: { title: doc.title || documentTypeInfo(doc.type).label },
         },
-        { employeeId: doc.employeeId },
+        { employeeId: doc.employeeId, confidential: doc.confidential },
       );
     },
   );
@@ -481,8 +492,10 @@ export async function renewDocument(
         if (!account || account.companyId !== company.id) {
           throw new ComplianceError(t('Choose a category.'));
         }
-        // Staff and viewers see expenses: an employee's document leaves no
-        // name, number or note there. They stay on the (private) renewal.
+        // Staff and viewers see expenses: an employee's document, or a
+        // confidential one, leaves no name, number or note there. They stay
+        // on the (private) renewal.
+        const unnamed = Boolean(employee) || record?.confidential === true;
         expense = await saveExpense(
           createExpense(company.id, {
             date: input.renewedOn,
@@ -490,15 +503,15 @@ export async function renewDocument(
             amount: feeAmount,
             currency: company.currency,
             paidFromAccountId: input.fee.paidFromAccountId,
-            description: employee
+            description: unnamed
               ? t('Document renewal fee')
               : owner
                 ? t('{document} renewal – {owner}', { document: title, owner })
                 : t('{document} renewal', { document: title }),
-            reference: employee
+            reference: unnamed
               ? (input.fee.reference?.trim() ?? '')
               : input.fee.reference?.trim() || number || currentNumber,
-            notes: employee ? '' : (input.note?.trim() ?? ''),
+            notes: unnamed ? '' : (input.note?.trim() ?? ''),
           }),
         );
       }
@@ -549,7 +562,7 @@ export async function renewDocument(
             : msg('{document} renewed until {date}'),
           vars: { document: title, owner, date: input.newExpiry },
         },
-        { employeeId: employee?.id ?? null },
+        { employeeId: employee?.id ?? null, confidential: record?.confidential },
       );
       return { renewal, expense };
     },

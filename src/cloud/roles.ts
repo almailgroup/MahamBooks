@@ -127,8 +127,9 @@ export function isPrivateRecord(table: string, record: Row, lookup?: RecordLooku
       return typeof record.subjectTbl === 'string' && people.has(record.subjectTbl);
     case 'activities': {
       if (record.entity === 'employee' || record.entity === 'payroll') return true;
-      // Logged about an employee's documents: private even once they are deleted.
-      if (employeeOwned(record)) return true;
+      // Logged about an employee's documents, or a confidential one: private
+      // even once they are deleted.
+      if (employeeOwned(record) || record.confidential === true) return true;
       if (record.entity !== 'compliance' || !lookup || typeof record.entityId !== 'string') {
         return false;
       }
