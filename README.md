@@ -84,7 +84,10 @@ and the compliance calendar (Maham Compliance).
   clear, return (with the bank's charge) and replace. Returned cheques are
   booked on the day they come back, so closed periods never change. Security
   (guarantee) cheques are kept on record.
-- Receipt and payment vouchers in Arabic and English.
+- Receipt and payment vouchers (سند قبض / سند صرف) in Arabic and English, for
+  payments and expenses, printed or saved as PDFs. The stamp and the blue
+  signature, and your own signature lines, are set in Settings → Invoice
+  defaults → Receipt and payment vouchers.
 - A warning when a cash payment goes over the cash limit for the company's
   activity (for example vehicle, gold and real estate sales).
 

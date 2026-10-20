@@ -68,6 +68,10 @@ export async function saveExpense(input: Expense): Promise<Expense> {
       number: input.number.trim(),
       updatedAt: nowStamp(),
     };
+    // Who was paid, when it isn't a vendor: kept only when there is a name.
+    const payee = input.payee?.trim();
+    if (payee) expense.payee = payee;
+    else delete expense.payee;
     if (!expense.number) {
       const rule = company.numbering.expense ?? defaultNumbering().expense;
       const taken = new Set(

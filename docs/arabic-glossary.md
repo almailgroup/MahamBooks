@@ -106,6 +106,8 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Post-dated cheque (PDC)    | شيك آجل (plural: شيكات آجلة) |
 | Bounced cheque             | شيك مرتجع                    |
 | Bank transfer              | تحويل بنكي                   |
+| Receipt voucher            | سند قبض                      |
+| Payment voucher            | سند صرف                      |
 | KNET                       | كي نت                        |
 | Credit card                | بطاقة ائتمان                 |
 | Payment link               | رابط دفع                     |

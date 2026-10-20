@@ -94,6 +94,14 @@ export const booksPrintRoutes: RouteObject[] = [
     ),
   },
   {
+    path: 'expenses/:id/voucher',
+    element: (
+      <Bare>
+        <PaymentVoucher key="expense" direction="out" source="expense" />
+      </Bare>
+    ),
+  },
+  {
     path: 'cheques/print',
     element: (
       <Bare>

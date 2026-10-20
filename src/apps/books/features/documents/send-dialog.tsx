@@ -53,7 +53,7 @@ export function emailValues(doc: InvoiceDocument, company: Company, client: Clie
 }
 
 /** Whether this browser can share a PDF file with other apps (phones mostly). */
-function canSharePdf(): boolean {
+export function canSharePdf(): boolean {
   return (
     typeof navigator !== 'undefined' &&
     typeof navigator.canShare === 'function' &&

@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ChevronDown, Trash2 } from 'lucide-react';
+import { ChevronDown, Printer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteExpense, isVendor, saveExpense } from '@/db/purchases';
@@ -63,6 +64,7 @@ export function ExpenseDialog({
   const company = useCompany();
   const fmt = useFormat();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const [draft, setDraft] = useState(expense);
   const [saving, setSaving] = useState(false);
   const [vendorDialog, setVendorDialog] = useState<{ open: boolean; name: string }>({
@@ -84,6 +86,7 @@ export function ExpenseDialog({
   const [more, setMore] = useState(!isNew);
   const detailsId = useId();
   const set = (patch: Partial<Expense>) => setDraft((d) => ({ ...d, ...patch }));
+  const changed = JSON.stringify(draft) !== JSON.stringify(expense);
   const currency = draft.currency || company.currency;
   const tax = includedTax(draft.amount, draft.taxes, currency);
   const reverse = reverseChargeTax(draft.amount, draft.taxes, currency);
@@ -264,6 +267,19 @@ export function ExpenseDialog({
                   />
                 )}
               </Field>
+              {!draft.vendorId ? (
+                <Field label={t('Paid to')} optional>
+                  {(id) => (
+                    <Input
+                      id={id}
+                      value={draft.payee ?? ''}
+                      onChange={(e) => set({ payee: e.target.value })}
+                      placeholder={t('A shop or a person, when not a vendor')}
+                      dir="auto"
+                    />
+                  )}
+                </Field>
+              ) : null}
               <Field label={t('Reference')} optional>
                 {(id) => (
                   <Input
@@ -304,6 +320,16 @@ export function ExpenseDialog({
                 onClick={() => void remove()}
               >
                 <Trash2 /> {t('Delete')}
+              </Button>
+            ) : null}
+            {!isNew ? (
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/expenses/${draft.id}/voucher`)}
+                disabled={changed}
+                title={changed ? t('Save the expense first.') : undefined}
+              >
+                <Printer /> {t('Print voucher')}
               </Button>
             ) : null}
             <Button variant="outline" onClick={onClose}>

@@ -37,6 +37,7 @@ import {
   type ChequeAction,
 } from '@/apps/books/features/cheques/action-dialogs';
 import { AttachmentList } from '@/features/purchases/attachments';
+import { hasVoucher } from '@/pdf/voucher/model';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -195,7 +196,7 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
               label={t('Cheque')}
             />
           ) : null}
-          {payment.method !== 'credit_note' ? (
+          {hasVoucher(payment) ? (
             <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/voucher`}>
               <Printer /> {t('Print voucher')}
             </ButtonLink>

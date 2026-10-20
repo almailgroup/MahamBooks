@@ -545,8 +545,40 @@ export interface Company {
   demo?: boolean;
   /** The company's other tools (a task manager, an HR portal…), in the sidebar. */
   links?: CompanyLink[];
+  /** Receipt and payment vouchers; missing prints them as before. */
+  vouchers?: VoucherSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** A signature line at the foot of a voucher, labelled in both languages. */
+export interface VoucherSignatureLine {
+  /** Printed under the line; empty prints no English. */
+  en: string;
+  /** Printed under the English; empty prints no Arabic. */
+  ar: string;
+}
+
+/**
+ * Receipt and payment vouchers (سند قبض / سند صرف). They keep the payment
+ * and expense numbers. Missing settings print vouchers as before: the three
+ * standard signature lines, no stamp or signature.
+ */
+export interface VoucherSettings {
+  /**
+   * Print the company stamp and signature (in blue ink when the signature
+   * is), and the company address. Never on a void voucher. Any member can
+   * print a voucher, so this is off until the owner turns it on.
+   */
+  images?: boolean;
+  /**
+   * Signature lines for money received (`in`) and paid (`out`). The stamp
+   * and signature print over the last line but one; the last is the other
+   * party's. Missing uses the standard lines.
+   */
+  lines?: { in: VoucherSignatureLine[]; out: VoucherSignatureLine[] };
+  /** Paper of the PDF: half a page (A5, landscape); missing is the documents' paper size. */
+  paper?: 'A5';
 }
 
 /** A link in the sidebar to another tool; it opens in a new tab. */
@@ -1170,6 +1202,8 @@ export interface Expense {
   date: ISODate;
   /** Who was paid, when known. */
   vendorId: ID | null;
+  /** Who was paid when it isn't a vendor (a shop, a driver); printed on the voucher. */
+  payee?: string;
   /** Expense category (an expense or asset account). */
   accountId: ID;
   description: string;

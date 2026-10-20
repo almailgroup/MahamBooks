@@ -134,7 +134,15 @@ const LEGACY_PATHS = [
 ];
 
 /** What the suite added. */
-const SUITE_PATHS = ['/books', '/people', '/people/directory', '/crm', '/crm/prospects'];
+const SUITE_PATHS = [
+  '/books',
+  '/people',
+  '/people/directory',
+  '/crm',
+  '/crm/prospects',
+  // Payment vouchers for expenses (#24).
+  '/expenses/:id/voucher',
+];
 
 /** Real addresses, as bookmarks and emails have them. */
 const SAMPLE_URLS = [
@@ -145,6 +153,7 @@ const SAMPLE_URLS = [
   '/invoices/8c1c7f70-6f1d-4d0e-a3a5-6f0c1c0b9a11/edit',
   '/quotes/new',
   '/payments-made/p1/voucher',
+  '/expenses/x1/voucher',
   '/payroll/runs/r1/payslips',
   '/payroll/settlements/s1/print',
   '/employees/e1/settlement',

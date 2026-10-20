@@ -55,7 +55,8 @@ export default function ExpensesPage() {
         const paidFrom = e.paidFromAccountId ? byId.get(e.paidFromAccountId) : bank;
         return {
           expense: e,
-          vendor: localName(vendor),
+          // Who was paid: the vendor, or the name typed when it isn't one.
+          vendor: localName(vendor) || e.payee || '',
           category: localName(category) || '—',
           paidFrom: localName(paidFrom) || '—',
           // Search finds English and Arabic names alike.
@@ -63,6 +64,7 @@ export default function ExpensesPage() {
             e.number,
             e.description,
             e.reference,
+            e.payee,
             vendor?.name,
             vendor?.nameAr,
             category?.name,
