@@ -28,7 +28,7 @@ import { ContactSummary } from '@/features/clients/contact-summary';
 import { RetentionPanel } from '@/features/clients/retention-panel';
 import { StatementPanel } from '@/apps/books/features/statements/statement-panel';
 import { formatAddressLines, isAddressEmpty } from '@/lib/geo';
-import { CHEQUE_STATUS_META, displayStatus } from '@/lib/status';
+import { chequeStatusMeta, displayStatus } from '@/lib/status';
 import { contactPosition } from '@/lib/statements';
 import { contactRetention, retentionKindLabel } from '@/lib/retention';
 import { daysBetween, today } from '@/lib/dates';
@@ -137,7 +137,7 @@ function DocumentRow({ doc, now }: { doc: InvoiceDocument; now: string }) {
 function PaymentRow({ payment, href, out }: { payment: Payment; href: string; out: boolean }) {
   const fmt = useFormat();
   const cheque = payment.method === 'cheque' ? payment.cheque : null;
-  const status = cheque ? CHEQUE_STATUS_META[cheque.status] : null;
+  const status = cheque ? chequeStatusMeta(cheque.status) : null;
   return (
     <li>
       <Link

@@ -972,6 +972,52 @@ export interface SecurityCheque {
   updatedAt: Timestamp;
 }
 
+/** A field's box on a cheque leaf, in millimetres from the leaf's top left corner. */
+export interface ChequeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** How the date is written: 12/10/2026, or its digits spread over the leaf's date boxes. */
+export type ChequeDateStyle = 'slashes' | 'boxes';
+
+/** Where a bank's cheque leaf takes each field, for printing a cheque issued onto it. */
+export interface ChequeLayout {
+  id: ID;
+  companyId: ID;
+  /** Bank code from KUWAIT_BANKS (BRGN, KFHO…). */
+  bank: string;
+  name: string;
+  nameAr?: string;
+  /** Goes up with every change of the measurements; a print records the version it used. */
+  version: number;
+  /** The leaf, in millimetres. */
+  size: { width: number; height: number };
+  /** Moves every field at once, in millimetres (each printer also has its own, on its device). */
+  offset: { x: number; y: number };
+  fields: {
+    date: ChequeBox;
+    payee: ChequeBox;
+    /** The amount in words, over two lines. */
+    wordsLine1: ChequeBox;
+    wordsLine2: ChequeBox;
+    figures: ChequeBox;
+    /** "A/C payee only", when the cheque is crossed. */
+    crossing?: ChequeBox;
+  };
+  dateStyle: ChequeDateStyle;
+  wordsLanguage: 'ar' | 'en';
+  /** Printed before and around the figures so nothing can be added, e.g. "KD" and "**". */
+  figures: { prefix: string; guard: string };
+  /** Checked against a real leaf on the office printer. */
+  calibrated: boolean;
+  archived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export type Frequency =
   'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannually' | 'yearly';
 
@@ -1115,6 +1161,13 @@ export interface Attachment {
    * so such files are found without reading every file.
    */
   contentMissing?: 1;
+  /**
+   * What the file is a copy of: a register entry's key ("doc:<id>",
+   * "emp:<employeeId>:<type>") or an issued letter ("letter:<id>").
+   */
+  docKey?: string;
+  /** Last day the paper in the file is valid (the expiry printed on it). */
+  validUntil?: ISODate | null;
   createdAt: Timestamp;
 }
 
@@ -1289,6 +1342,17 @@ export interface ComplianceDocument {
   notes: string;
   /** No longer tracked (vehicle sold, licence cancelled); kept with its history. */
   archived: boolean;
+  /** What the document is for, from the company's list of purposes. */
+  purposeId?: ID | null;
+  /** The customer a customer's paper belongs to (owner "other"; ownerName keeps their name). */
+  clientId?: ID | null;
+  /** The vehicle it belongs to (ownerName keeps the plate). */
+  vehicleId?: ID | null;
+  /**
+   * Seen only by owners, admins and accountants, with its files, renewals
+   * and activity (a cost sheet with guards' salaries).
+   */
+  confidential?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1326,6 +1390,25 @@ export interface ComplianceMark {
   doneOn: ISODate;
   note: string;
   createdAt: Timestamp;
+}
+
+/** A company vehicle, which its papers in the register belong to. */
+export interface Vehicle {
+  id: ID;
+  companyId: ID;
+  plate: string;
+  make: string;
+  model: string;
+  year?: number | null;
+  chassisNumber?: string;
+  /** The fixed asset it is in the books as. */
+  assetId?: ID | null;
+  /** The employee who usually drives it (kept here, so its papers are not an employee's). */
+  driverEmployeeId?: ID | null;
+  notes: string;
+  archived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 /** Employee and compliance settings of a company (one row per company, id = companyId). */
@@ -2005,6 +2088,122 @@ export interface FinalSettlement {
   bankAccountId: ID | null;
   reversalJournalIds: ID[];
   notes: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Employee letters                                                           */
+/* -------------------------------------------------------------------------- */
+
+export type LetterKind =
+  | 'salary_certificate'
+  | 'experience_certificate'
+  | 'employment_certificate'
+  | 'warning'
+  | 'noc'
+  | 'salary_transfer'
+  | 'custom';
+
+/** What makes a letter's draft by itself. */
+export type LetterTrigger = 'joining' | 'leaving' | 'salary_change';
+
+export type LetterLanguage = 'en' | 'ar' | 'ar-en';
+
+/** The wording of a kind of HR letter, with fields filled from the employee's record. */
+export interface LetterTemplate {
+  id: ID;
+  companyId: ID;
+  kind: LetterKind;
+  name: string;
+  nameAr?: string;
+  language: LetterLanguage;
+  subjectEn: string;
+  subjectAr: string;
+  bodyEn: string;
+  bodyAr: string;
+  showStamp: boolean;
+  showSignature: boolean;
+  signatoryName: string;
+  signatoryTitle: string;
+  /** Events that make a draft of this letter by themselves. */
+  autoOn?: LetterTrigger[];
+  archived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** A letter to or about an employee: a draft, then numbered and frozen once issued. */
+export interface EmployeeLetter {
+  id: ID;
+  companyId: ID;
+  employeeId: ID;
+  templateId: ID | null;
+  kind: LetterKind;
+  /** Empty while a draft; given at issue and never reused. */
+  number: string;
+  language: LetterLanguage;
+  /** Who the letter is addressed to ("To whom it may concern", a bank…). */
+  addressee: string;
+  purpose: string;
+  subject: string;
+  /** The filled text, frozen at issue. */
+  body: string;
+  /** Null while a draft. */
+  issuedOn: ISODate | null;
+  status: 'draft' | 'issued' | 'void';
+  /** The event that made the draft; null for a letter made by hand. */
+  trigger: LetterTrigger | null;
+  voidReason?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Approvals                                                                  */
+/* -------------------------------------------------------------------------- */
+
+export type ApprovalKind =
+  | 'invoice_edit'
+  | 'invoice_void'
+  | 'invoice_unvoid'
+  | 'cheque_create'
+  | 'cheque_edit'
+  | 'cheque_delete'
+  | 'cheque_replace'
+  | 'security_cheque_cash'
+  | 'payroll'
+  | 'letter';
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'applied';
+
+/**
+ * A change waiting for an approver (an invoice edited after it was issued,
+ * a cheque, a pay run). It is private when the record it is about is payroll
+ * or people data.
+ */
+export interface ApprovalRequest {
+  id: ID;
+  companyId: ID;
+  kind: ApprovalKind;
+  /** The synced table of the record it is about (documents, payments, payRuns…). */
+  subjectTbl: string;
+  subjectId: ID;
+  /** The record's number or period, to show without opening it. */
+  subjectNumber: string;
+  /** What the record was when it was asked, where showing the change needs it. */
+  before?: Record<string, unknown> | null;
+  /** The change asked for: the proposed record, or what to do with it. */
+  after?: Record<string, unknown> | null;
+  reason: string;
+  status: ApprovalStatus;
+  /** The account that asked (the server sets it). */
+  requestedBy: string;
+  requestedAt: Timestamp;
+  /** The account that decided (the server sets it). */
+  decidedBy: string | null;
+  decidedAt: Timestamp | null;
+  decisionNote: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

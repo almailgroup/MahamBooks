@@ -30,7 +30,7 @@ import {
 import { nationalityCode } from '@/lib/hr/nationalities';
 import { arabicJobTitle, englishJobTitle } from '@/lib/hr/job-titles';
 import { categoryForNationality, needsResidency, needsWorkPermit } from '@/lib/hr/employees';
-import { DOCUMENT_TYPES } from '@/lib/compliance';
+import { documentTypeInfo } from '@/lib/compliance';
 import { isValidEmail } from '@/lib/email';
 import { addDaysISO, isISODate, today } from '@/lib/dates';
 import { currencyPrecision, dec, normalizeDigits, round } from '@/lib/money';
@@ -603,7 +603,7 @@ export function planEmployeeRows(
       if (doc.type === 'residency' && !needsResidency(category)) continue;
       if (date < on) summary.expired += 1;
       else summary.expiring += 1;
-      expiries.set(date, [...(expiries.get(date) ?? []), t(DOCUMENT_TYPES[doc.type].label)]);
+      expiries.set(date, [...(expiries.get(date) ?? []), t(documentTypeInfo(doc.type).label)]);
     }
     for (const [date, names] of [...expiries].sort(([a], [b]) => a.localeCompare(b))) {
       const vars = { document: names[0], documents: listOf(names), date: fmtDate(date) };

@@ -9,13 +9,22 @@ import type {
 } from '@/db/types';
 import { msg } from '@/i18n';
 import { postsToLedger } from './document-types';
+import { lookup } from './known';
 import { dec } from './money';
 
 export type DisplayStatus = DocumentStatus | 'overdue' | 'expired' | 'open';
 
 export type StatusTone = 'gray' | 'blue' | 'amber' | 'green' | 'red' | 'violet' | 'slate';
 
-/** Labels are English keys: show them with `t(STATUS_META[status].label)`. */
+export interface StatusMeta {
+  label: string;
+  tone: StatusTone;
+}
+
+/** A status this version doesn't know (saved by a newer one). */
+export const UNKNOWN_STATUS: StatusMeta = { label: msg('Unknown status'), tone: 'gray' };
+
+/** Labels are English keys: show them with `t(statusMeta(status).label)`. */
 export const STATUS_META: Record<DisplayStatus, { label: string; tone: StatusTone }> = {
   draft: { label: msg('Draft'), tone: 'gray' },
   sent: { label: msg('Sent'), tone: 'blue' },
@@ -39,6 +48,11 @@ export const STATUS_META: Record<DisplayStatus, { label: string; tone: StatusTon
   cancelled: { label: msg('Cancelled'), tone: 'slate' },
 };
 
+/** STATUS_META of a status, also of one a newer version saved. */
+export function statusMeta(status: string): StatusMeta {
+  return lookup(STATUS_META, status, UNKNOWN_STATUS);
+}
+
 export const STATUSES_BY_TYPE: Record<DocumentType, DocumentStatus[]> = {
   invoice: ['draft', 'sent', 'partial', 'paid', 'void'],
   quote: ['draft', 'sent', 'accepted', 'declined', 'invoiced', 'converted'],
@@ -57,6 +71,11 @@ export const DELIVERY_STATUS_META: Record<DeliveryStatus, { label: string; tone:
   partially_delivered: { label: msg('Partially delivered'), tone: 'amber' },
   delivered: { label: msg('Delivered'), tone: 'green' },
 };
+
+/** A sales order's delivery progress (not delivered when it has none). */
+export function deliveryStatusMeta(status: string | undefined): StatusMeta {
+  return lookup(DELIVERY_STATUS_META, status ?? 'not_delivered', UNKNOWN_STATUS);
+}
 
 /**
  * The status a draft moves to once it leaves the office: "sent" for most
@@ -131,12 +150,13 @@ export const CHEQUE_STATUS_META: Record<ChequeStatus, { label: string; tone: Sta
   cancelled: { label: msg('Cancelled'), tone: 'slate' },
 };
 
+/** A cheque's status; without a direction as CHEQUE_STATUS_META has it. */
 export function chequeStatusMeta(
   status: ChequeStatus,
-  direction: 'in' | 'out',
+  direction?: 'in' | 'out',
 ): { label: string; tone: StatusTone } {
   if (direction === 'out' && status === 'held') return { label: msg('Issued'), tone: 'blue' };
-  return CHEQUE_STATUS_META[status];
+  return lookup(CHEQUE_STATUS_META, status, UNKNOWN_STATUS);
 }
 
 export const SECURITY_CHEQUE_STATUS_META: Record<
@@ -147,3 +167,8 @@ export const SECURITY_CHEQUE_STATUS_META: Record<
   returned: { label: msg('Given back'), tone: 'slate' },
   cashed: { label: msg('Cashed'), tone: 'green' },
 };
+
+/** SECURITY_CHEQUE_STATUS_META of a status, also of one a newer version saved. */
+export function securityChequeStatusMeta(status: string): StatusMeta {
+  return lookup(SECURITY_CHEQUE_STATUS_META, status, UNKNOWN_STATUS);
+}

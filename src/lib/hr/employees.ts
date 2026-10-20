@@ -10,6 +10,7 @@ import type {
 } from '@/db/types';
 import { addDaysISO, parseISODate } from '@/lib/dates';
 import { KUWAIT_WEEKEND, kuwaitHolidays } from '@/lib/kuwait';
+import { isKnown, lookup } from '@/lib/known';
 import { msg } from '@/i18n';
 import type { EosiReason } from './eosi';
 
@@ -56,6 +57,11 @@ export const CATEGORY_LABELS: Record<EmployeeCategory, string> = {
   domestic: msg('Domestic worker'),
 };
 
+/** An employee's category in words (English key), also for one a newer version saved. */
+export function categoryLabel(category: string): string {
+  return lookup(CATEGORY_LABELS, category, msg('Other'));
+}
+
 export const GENDER_LABELS: Record<Gender, string> = {
   male: msg('Male'),
   female: msg('Female'),
@@ -66,6 +72,11 @@ export const STATUS_LABELS: Record<EmployeeStatus, string> = {
   on_leave: msg('On leave'),
   left: msg('Left'),
 };
+
+/** An employee's status in words (English key), also for one a newer version saved. */
+export function employeeStatusLabel(status: string): string {
+  return lookup(STATUS_LABELS, status, msg('Other'));
+}
 
 export const CONTRACT_LABELS: Record<ContractType, string> = {
   unlimited: msg('Unlimited'),
@@ -147,6 +158,7 @@ export function probationLimit(
 export interface WorkforceSummary {
   /** Active and on-leave staff. */
   headcount: number;
+  /** Staff in each known category (one a newer version saved counts in none). */
   byCategory: Record<EmployeeCategory, number>;
   /** Staff covered by the Labour Law (everyone except domestic workers). */
   labourLawHeadcount: number;
@@ -165,7 +177,7 @@ export function workforceSummary(
     domestic: 0,
   };
   const current = employees.filter(isCurrent);
-  for (const e of current) byCategory[e.category] += 1;
+  for (const e of current) if (isKnown(byCategory, e.category)) byCategory[e.category] += 1;
   const labourLawHeadcount = current.length - byCategory.domestic;
   return {
     headcount: current.length,

@@ -10,6 +10,7 @@ import type {
 } from '@/db/types';
 import { addDaysISO, parseISODate, toISODate } from '@/lib/dates';
 import { KUWAIT_WEEKEND } from '@/lib/kuwait';
+import { lookup } from '@/lib/known';
 import { msg } from '@/i18n';
 import { periodEnd, periodStart } from './payroll';
 
@@ -45,6 +46,14 @@ export const LEAVE_TYPES: Record<LeaveType, LeaveTypeInfo> = {
   bereavement: { label: msg('Bereavement leave'), days: 3, counting: 'working' },
   unpaid: { label: msg('Unpaid leave'), days: null, counting: 'calendar' },
 };
+
+/** Leave of a type this version doesn't know: no limit, counted in working days. */
+const OTHER_LEAVE: LeaveTypeInfo = { label: msg('Other leave'), days: null, counting: 'working' };
+
+/** What the app knows of a type of leave, also for a type a newer version saved. */
+export function leaveTypeInfo(type: string): LeaveTypeInfo {
+  return lookup(LEAVE_TYPES, type, OTHER_LEAVE);
+}
 
 export const LEAVE_TYPE_ORDER: LeaveType[] = [
   'annual',
@@ -106,7 +115,7 @@ export function countedDates(
   isDayOff: DayOff,
 ): ISODate[] {
   if (!start || !end || end < start) return [];
-  const calendar = LEAVE_TYPES[type].counting === 'calendar';
+  const calendar = leaveTypeInfo(type).counting === 'calendar';
   const out: ISODate[] = [];
   let date = start;
   for (let i = 0; i < MAX_LEAVE_SPAN && date <= end; i++) {
@@ -459,7 +468,7 @@ export function leaveWarnings(
       out.push({ code: 'not_eligible', date: balance.eligibleFrom });
     }
   }
-  const limit = LEAVE_TYPES[record.type].days;
+  const limit = leaveTypeInfo(record.type).days;
   if (limit !== null && record.type !== 'annual' && record.type !== 'sick' && record.days > limit) {
     out.push({ code: 'over_limit', limit });
   }

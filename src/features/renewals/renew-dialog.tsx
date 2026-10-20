@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { renewDocument, feeAccountSpec, findFeeAccount } from '@/db/renewals';
 import type { ISODate } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
-import { DOCUMENT_TYPES, type RegisterEntry } from '@/lib/compliance';
+import { documentTypeInfo, type RegisterEntry } from '@/lib/compliance';
 import { parseISODate, toISODate, today } from '@/lib/dates';
 import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import { Button } from '@/components/ui/button';
@@ -64,7 +64,7 @@ export function RenewDialog({
   const options = useMemo(() => {
     const list = expenseCategoryOptions(accounts ?? [], category ? [category] : []);
     if (feeAccount) return list;
-    const spec = feeAccountSpec(DOCUMENT_TYPES[entry.type].fee);
+    const spec = feeAccountSpec(documentTypeInfo(entry.type).fee);
     const name = currentLanguage() === 'ar' && spec.nameAr ? spec.nameAr : spec.name;
     return [
       { value: NEW_FEE_ACCOUNT, label: name, detail: t('New account'), keywords: spec.name },

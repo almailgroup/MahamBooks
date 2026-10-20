@@ -1,7 +1,7 @@
 import { db } from '@/db/db';
 import type { Company, DocumentType } from '@/db/types';
 import { DOCUMENT_LABELS, DOCUMENT_ROUTES } from '@/app/company';
-import { displayStatus, STATUS_META } from '@/lib/status';
+import { displayStatus, statusMeta } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
@@ -257,7 +257,7 @@ export async function recordEntries(company: Company, fmt: SearchFormat): Promis
     if (!SEARCHED_DOCUMENTS.includes(d.type)) continue;
     const client = names.get(d.clientId);
     const label = DOCUMENT_LABELS[d.type].singular;
-    const status = STATUS_META[displayStatus(d, now)];
+    const status = statusMeta(displayStatus(d, now));
     entries.push(
       makeEntry({
         key: `document:${d.id}`,

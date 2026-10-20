@@ -32,7 +32,7 @@ import {
 } from '@/lib/cheques';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
-import { SECURITY_CHEQUE_STATUS_META } from '@/lib/status';
+import { securityChequeStatusMeta } from '@/lib/status';
 import { cn } from '@/lib/cn';
 import { currentLanguage, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
@@ -522,7 +522,7 @@ export default function ChequeRegisterPage() {
               ) : (
                 <ul className="divide-y divide-slate-100">
                   {securityRows.map((s) => {
-                    const meta = SECURITY_CHEQUE_STATUS_META[s.status];
+                    const meta = securityChequeStatusMeta(s.status);
                     const client = s.clientId ? byClient.get(s.clientId) : undefined;
                     return (
                       <li

@@ -24,7 +24,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { DELIVERY_STATUS_META, displayStatus, STATUS_META, type DisplayStatus } from '@/lib/status';
+import { deliveryStatusMeta, displayStatus, statusMeta, type DisplayStatus } from '@/lib/status';
 import { today } from '@/lib/dates';
 import { hasPrices, isPurchaseType, postsToLedger } from '@/lib/document-types';
 import { downloadCsv } from '@/lib/csv';
@@ -157,7 +157,7 @@ function DeliveryBadge({ doc }: { doc: InvoiceDocument }) {
   if (doc.type !== 'sales_order' || doc.status === 'draft' || doc.status === 'cancelled') {
     return null;
   }
-  const meta = DELIVERY_STATUS_META[doc.deliveryStatus ?? 'not_delivered'];
+  const meta = deliveryStatusMeta(doc.deliveryStatus);
   return <Badge tone={meta.tone}>{t(meta.label)}</Badge>;
 }
 
@@ -261,7 +261,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
       ],
       filtered.map(({ doc, client, status }) => [
         doc.number,
-        t(STATUS_META[status].label),
+        t(statusMeta(status).label),
         client?.name ?? '',
         doc.issueDate,
         second.of(doc),

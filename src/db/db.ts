@@ -33,6 +33,11 @@ import type {
   StockMovement,
   StockEntry,
   LandedCost,
+  ChequeLayout,
+  Vehicle,
+  ApprovalRequest,
+  LetterTemplate,
+  EmployeeLetter,
 } from './types';
 import { DATABASE_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -76,6 +81,11 @@ export class InvoiceDatabase extends Dexie {
   stockMovements!: Table<StockMovement, string>;
   stockEntries!: Table<StockEntry, string>;
   landedCosts!: Table<LandedCost, string>;
+  chequeLayouts!: Table<ChequeLayout, string>;
+  vehicles!: Table<Vehicle, string>;
+  approvals!: Table<ApprovalRequest, string>;
+  letterTemplates!: Table<LetterTemplate, string>;
+  employeeLetters!: Table<EmployeeLetter, string>;
   meta!: Table<KeyValue, string>;
   // Cloud sync bookkeeping (see src/cloud): never exported or restored.
   outbox!: Table<OutboxEntry, number>;
@@ -168,6 +178,20 @@ export class InvoiceDatabase extends Dexie {
     this.version(15).stores({
       attachments: 'id, companyId, ownerId, [ownerId+name], [companyId+contentMissing]',
     });
+    // Cheque layouts, vehicles, approval requests and employee letters (empty
+    // until the features that write them are switched on), and finding
+    // register papers by customer or vehicle, items by SKU and files by what
+    // they are a copy of.
+    this.version(16).stores({
+      chequeLayouts: 'id, companyId, bank',
+      vehicles: 'id, companyId, plate',
+      approvals: 'id, companyId, [companyId+status], subjectId, kind',
+      letterTemplates: 'id, companyId, kind',
+      employeeLetters: 'id, companyId, employeeId, [companyId+issuedOn], templateId, status',
+      complianceDocuments: 'id, companyId, employeeId, expiryDate, clientId, vehicleId',
+      products: 'id, companyId, name, [companyId+sku]',
+      attachments: 'id, companyId, ownerId, [ownerId+name], [companyId+contentMissing], docKey',
+    });
     // Every change to a company kept in the cloud is queued for the server.
     this.use(outboxMiddleware(DATA_TABLES));
   }
@@ -206,6 +230,11 @@ export const DATA_TABLES = [
   'stockMovements',
   'stockEntries',
   'landedCosts',
+  'chequeLayouts',
+  'vehicles',
+  'approvals',
+  'letterTemplates',
+  'employeeLetters',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

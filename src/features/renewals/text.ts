@@ -1,5 +1,5 @@
 import type { Company, Employee } from '@/db/types';
-import { DOCUMENT_TYPES, OWNER_LABELS, type RegisterEntry } from '@/lib/compliance';
+import { documentTypeInfo, OWNER_LABELS, ownerLabel, type RegisterEntry } from '@/lib/compliance';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 
@@ -12,7 +12,7 @@ export function daysText(daysLeft: number): string {
 
 /** A register entry's name: its own title or the document type. */
 export function entryTitle(entry: Pick<RegisterEntry, 'title' | 'type'>): string {
-  return entry.title.trim() || t(DOCUMENT_TYPES[entry.type].label);
+  return entry.title.trim() || t(documentTypeInfo(entry.type).label);
 }
 
 /** Who a document belongs to, in the interface language. */
@@ -25,7 +25,7 @@ export function entryOwner(
     return localName(employees.get(entry.employeeId ?? '')) || t(OWNER_LABELS.employee);
   }
   if (entry.ownerType === 'company') return localName(company);
-  return entry.ownerName || t(OWNER_LABELS[entry.ownerType]);
+  return entry.ownerName || t(ownerLabel(entry.ownerType));
 }
 
 /** "Expires today" or "Expires in 12 days". */

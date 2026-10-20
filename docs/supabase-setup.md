@@ -31,7 +31,13 @@ has to be added to the app or to Vercel.
    (a new query, paste, **Run**). It must come after the first file.
 7. For email alerts, the third script,
    [`supabase/migrations/20261007000000_email_alerts.sql`](../supabase/migrations/20261007000000_email_alerts.sql),
-   comes last. It is part of [`docs/email-alerts.md`](email-alerts.md).
+   comes next. It is part of [`docs/email-alerts.md`](email-alerts.md).
+8. Then the fourth script,
+   [`supabase/migrations/20261102000000_tables_v16.sql`](../supabase/migrations/20261102000000_tables_v16.sql)
+   (a new query, paste, **Run**), after the others. It makes room for cheque
+   layouts, vehicles, approval requests and HR letters, and keeps letters and
+   confidential documents from staff and viewers. Until it runs, the app keeps
+   the features that need it hidden; everything else works as before.
 
 Running the scripts again later is safe: they create what is missing and
 replace their own rules with the same ones. Run them again, in this order,
@@ -41,7 +47,8 @@ whenever a new version is published.
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
 daily job does it for every company. The email alerts script (step 7) turns it
 on; without email alerts, open **Database → Extensions**, search for
-**pg_cron**, enable it, then run the first script once more (steps 2–4).
+**pg_cron**, enable it, then run the first script once more (steps 2–4) and
+the later ones after it, in order.
 
 To check: **Table Editor** now lists `profiles`, `companies`,
 `company_members`, `company_invites`, `records`, `deleted_records` and

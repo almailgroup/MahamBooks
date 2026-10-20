@@ -257,6 +257,12 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
       return row ? { counter: Number(row.counter), period: String(row.period ?? '') } : null;
     },
 
+    async serverFeatures() {
+      const result = await optionalRpc<unknown>('server_features', {});
+      if (result === MISSING || !Array.isArray(result)) return [];
+      return result.filter((feature): feature is string => typeof feature === 'string');
+    },
+
     async beginDeleteCompany(companyId) {
       const result = await optionalRpc<boolean>('begin_delete_company', { p_company: companyId });
       return result === true;

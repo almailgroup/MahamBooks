@@ -90,6 +90,32 @@ describe('a server without the second migration', () => {
   });
 });
 
+describe('what the server has (server_features)', () => {
+  it('is nothing on a server without the function, or that answers nothing', async () => {
+    expect(await fakeSupabase(() => MISSING).api.serverFeatures('co-00001')).toEqual([]);
+    const blank = fakeSupabase(() => ({ data: null, error: null, status: 204 }));
+    expect(await blank.api.serverFeatures('co-00001')).toEqual([]);
+  });
+
+  it('is the list the server answers', async () => {
+    const { api } = fakeSupabase(() => ({
+      data: ['tables_v16', 7, 'later_feature'],
+      error: null,
+      status: 200,
+    }));
+    expect(await api.serverFeatures('co-00001')).toEqual(['tables_v16', 'later_feature']);
+  });
+
+  it('fails like any request when the server can’t be reached', async () => {
+    const { api } = fakeSupabase(() => ({
+      data: null,
+      error: { message: 'TypeError: Failed to fetch' },
+      status: 0,
+    }));
+    await expect(api.serverFeatures('co-00001')).rejects.toMatchObject({ code: 'offline' });
+  });
+});
+
 describe('removing files', () => {
   it('answers with the paths Storage removed', async () => {
     const { api } = fakeSupabase(

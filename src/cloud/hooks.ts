@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
 import { msg } from '@/i18n';
 import type { CloudErrorCode } from './api';
+import { linkHasFeature, type ServerFeature } from './features';
 import type { MemberRole } from './roles';
 import { useCloud } from './store';
 import { useOnline, useRuntimeStatus } from './status';
@@ -20,6 +21,18 @@ export function useCloudLink(companyId: string | null | undefined): CloudLink | 
 /** The person's role in the company; null for a company kept on this device only. */
 export function useCompanyRole(companyId: string | null | undefined): MemberRole | null {
   return useCloudLink(companyId)?.role ?? null;
+}
+
+/**
+ * Whether the company may use a feature that needs it on the server (see
+ * features.ts): false until that is known.
+ */
+export function useServerFeature(
+  companyId: string | null | undefined,
+  feature: ServerFeature,
+): boolean {
+  const link = useCloudLink(companyId);
+  return link !== undefined && linkHasFeature(link, feature);
 }
 
 export type CloudStatusKind =

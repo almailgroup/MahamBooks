@@ -295,7 +295,8 @@ describe('the hourly schedule', () => {
     );
     const { readFileSync } = await import('node:fs');
     const { MIGRATIONS } = await import('./sql-harness');
-    await h.db.exec(readFileSync(MIGRATIONS[MIGRATIONS.length - 1], 'utf8'));
+    const script = MIGRATIONS.find((file) => file.endsWith('_email_alerts.sql'))!;
+    await h.db.exec(readFileSync(script, 'utf8'));
     const rows = await h.admin<{ secret: string }>(
       'select secret from almailbooks.email_alerts_config',
     );

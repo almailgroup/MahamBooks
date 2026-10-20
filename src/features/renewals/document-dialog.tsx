@@ -10,6 +10,7 @@ import type { ComplianceDocument, DocumentOwnerType, Employee } from '@/db/types
 import { useCompany } from '@/app/company';
 import {
   DOCUMENT_TYPES,
+  documentTypeInfo,
   OWNER_LABELS,
   registerTypesFor,
   normalizeReminderDays,
@@ -98,7 +99,7 @@ export function DocumentDialog({
       const saved = await saveComplianceDocument({ ...draft, reminderDays: parseDays(daysText) });
       await files.commit(company.id);
       toast.success(isNew ? t('Document added') : t('Document saved'), {
-        description: saved.title || t(DOCUMENT_TYPES[saved.type].label),
+        description: saved.title || t(documentTypeInfo(saved.type).label),
       });
       onClose();
     } catch (error) {
@@ -216,7 +217,7 @@ export function DocumentDialog({
                   id={id}
                   value={draft.title}
                   onChange={(e) => set({ title: e.target.value })}
-                  placeholder={t(DOCUMENT_TYPES[draft.type].label)}
+                  placeholder={t(documentTypeInfo(draft.type).label)}
                   dir="auto"
                 />
               )}

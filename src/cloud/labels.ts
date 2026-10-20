@@ -36,6 +36,11 @@ export const RECORD_LABELS: Record<DataTable, string> = {
   stockMovements: msg('Stock movement'),
   stockEntries: msg('Stock entry'),
   landedCosts: msg('Landed cost'),
+  chequeLayouts: msg('Cheque layout'),
+  vehicles: msg('Vehicle'),
+  approvals: msg('Approval request'),
+  letterTemplates: msg('Letter template'),
+  employeeLetters: msg('Employee letter'),
 };
 
 /** Why a change was refused, for the list of sync problems. */

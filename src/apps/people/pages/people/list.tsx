@@ -13,7 +13,13 @@ import {
 } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import type { EmployeeCategory } from '@/db/types';
-import { CATEGORY_LABELS, isCurrent, STATUS_LABELS, workforceSummary } from '@/lib/hr/employees';
+import {
+  CATEGORY_LABELS,
+  categoryLabel,
+  employeeStatusLabel,
+  isCurrent,
+  workforceSummary,
+} from '@/lib/hr/employees';
 import { expiryStatus, type ExpiryInfo, type RegisterEntry } from '@/lib/compliance';
 import { downloadCsv } from '@/lib/csv';
 import { countryName } from '@/lib/geo';
@@ -144,7 +150,7 @@ export default function EmployeeListPage() {
         e.name,
         e.nameAr ?? '',
         countryName(e.nationality, fmt.locale),
-        t(CATEGORY_LABELS[e.category]),
+        t(categoryLabel(e.category)),
         e.civilId,
         e.jobTitle,
         e.department,
@@ -152,7 +158,7 @@ export default function EmployeeListPage() {
         e.basicSalary,
         monthlyPay(e),
         e.iban,
-        t(STATUS_LABELS[e.status]),
+        t(employeeStatusLabel(e.status)),
       ]),
     );
 
@@ -419,14 +425,14 @@ export default function EmployeeListPage() {
                                     tone={e.status === 'left' ? 'slate' : 'blue'}
                                     className="mt-1"
                                   >
-                                    {t(STATUS_LABELS[e.status])}
+                                    {t(employeeStatusLabel(e.status))}
                                   </Badge>
                                 ) : null}
                               </div>
                             </div>
                           </td>
                           <td className="hidden px-3 py-3 text-slate-600 md:table-cell">
-                            <span className="block">{t(CATEGORY_LABELS[e.category])}</span>
+                            <span className="block">{t(categoryLabel(e.category))}</span>
                             <span className="block text-xs text-slate-500">
                               {countryName(e.nationality, fmt.locale)}
                             </span>

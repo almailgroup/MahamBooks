@@ -8,6 +8,7 @@ import {
   type AlertTopic,
 } from '@/alerts/collect';
 import { canOpen, type AccessMap } from '@/suite/apps';
+import { lookup } from '@/lib/known';
 import type { AppId } from '@/suite/types';
 
 /**
@@ -34,8 +35,21 @@ export const TOPIC_PAGES: Record<AlertTopic, string> = {
   invoices: '/invoices?status=overdue',
 };
 
+/** The app a topic belongs to; null for a topic this version doesn't know. */
+export function topicApp(topic: string): AppId | null {
+  return lookup<AlertTopic, AppId | null>(TOPIC_APPS, topic, null);
+}
+
+/** Where a topic's whole list is; the home for a topic this version doesn't know. */
+export function topicPage(topic: string): string {
+  return lookup(TOPIC_PAGES, topic, '/');
+}
+
 export function homeTopics(access: AccessMap): AlertTopic[] {
-  return ALERT_TOPICS.filter((topic) => canOpen(access[TOPIC_APPS[topic]]));
+  return ALERT_TOPICS.filter((topic) => {
+    const app = topicApp(topic);
+    return app !== null && canOpen(access[app]);
+  });
 }
 
 /**

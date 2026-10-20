@@ -5,9 +5,10 @@ import { createComplianceDocument } from '@/db/renewals';
 import type { ComplianceDocument, DocumentOwnerType } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import {
-  DOCUMENT_TYPES,
+  documentTypeInfo,
   expiryStatus,
   OWNER_LABELS,
+  ownerLabel,
   type ExpiryStatus,
   type RegisterEntry,
 } from '@/lib/compliance';
@@ -68,7 +69,7 @@ export default function DocumentsRegisterPage() {
       (status === 'all' || r.info.status === status) &&
       (!owner || r.entry.ownerType === owner) &&
       (!q ||
-        [r.title, t(DOCUMENT_TYPES[r.entry.type].label), r.owner, r.entry.number, r.entry.issuer]
+        [r.title, t(documentTypeInfo(r.entry.type).label), r.owner, r.entry.number, r.entry.issuer]
           .join(' ')
           .toLowerCase()
           .includes(q)),
@@ -220,7 +221,7 @@ export default function DocumentsRegisterPage() {
                       <td className="px-5 py-3">
                         <p className="font-medium text-slate-900">{title}</p>
                         <p className="text-xs text-slate-500">
-                          {[entry.title ? t(DOCUMENT_TYPES[entry.type].label) : '', entry.number]
+                          {[entry.title ? t(documentTypeInfo(entry.type).label) : '', entry.number]
                             .filter(Boolean)
                             .join(' · ')}
                         </p>
@@ -249,7 +250,7 @@ export default function DocumentsRegisterPage() {
                           ownerName
                         )}
                         <span className="block text-xs text-slate-500">
-                          {t(OWNER_LABELS[entry.ownerType])}
+                          {t(ownerLabel(entry.ownerType))}
                         </span>
                       </td>
                       <td className="px-3 py-3">

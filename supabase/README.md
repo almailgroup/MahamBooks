@@ -8,8 +8,10 @@ the cloud, deleting a company safely, and the file checks below. Both are safe
 to run again, in this order (run the second again after the first if the first
 is ever run again). Until the second runs, the app notices its functions are
 missing and works as before. `migrations/20261007000000_email_alerts.sql`
-comes last and adds email alerts (see "Email alerts" below). The owner's
-step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
+comes next and adds email alerts (see "Email alerts" below).
+`migrations/20261102000000_tables_v16.sql` comes last: the records of the
+app's database version 16 and their privacy (see "Records of database
+version 16" below). The owner's step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
 and [`docs/email-alerts.md`](../docs/email-alerts.md).
 
 The app stays local-first: every screen reads IndexedDB on the device, and the
@@ -30,7 +32,7 @@ that is never put in the cloud never leaves the device.
 | `storage.objects`        | Receipts and scans in the private bucket `company-files`, at `{companyId}/{attachmentId}`.      |
 | `public.email_alerts`    | Who gets the morning email of which company, what it covers, and what was last emailed.         |
 
-`tbl` is one of the app's 32 synced tables (a check constraint lists them).
+`tbl` is one of the app's 37 synced tables (a check constraint lists them).
 Every write gets `rev` from one global sequence, the time and the author from
 the server (`records_before_write`); what the app sends for them is ignored.
 A per-company advisory lock, held until commit, makes revs reach readers in
@@ -55,9 +57,13 @@ readable): `employees`, `payRuns`, `payrollSettings`, `peopleSettings`,
 `leaveRecords`, `staffLoans`, `finalSettlements`; `complianceDocuments` and
 `renewals` that belong to an employee; files (`attachments`) of an employee or
 of an employee's document or renewal; payroll journals (`kind = 'payroll'`,
-which show salaries); activity entries about employees and payroll. The rule is
-`almailbooks.record_is_private`. The app also marks files and activity about
-employees with `_private: true`, which can only make a record more private.
+which show salaries); activity entries about employees and payroll; letter
+templates and employee letters (`letterTemplates`, `employeeLetters`);
+approval requests about any of these (`approvals` whose `subjectTbl` is one of
+the tables above); register documents marked `confidential` with their
+renewals, files and activity. The rule is `almailbooks.record_is_private`. The
+app also marks files and activity about employees, letters and confidential
+documents with `_private: true`, which can only make a record more private.
 
 ## Functions
 
@@ -79,6 +85,7 @@ The app calls these (all `revoke`d from `anon` and `public`, granted to
 | `reserve_number(company, kind, date, min)`                                 | invoker | The next number of a kind of document, taken from the company's counter at once.          |
 | `begin_delete_company(company)`                                            | definer | Owners only, before the app removes any file; uploads are refused for an hour.            |
 | `stored_files(company, names)`                                             | definer | Which of these files are still stored, for members: a removal that removed nothing.       |
+| `server_features()`                                                        | invoker | What the server has beyond the first files (`tables_v16`), so the app can hide the rest.  |
 
 `create_company` refuses a company that is already in the cloud with records
 (`almail:company_exists`): the app offers to download it instead, so an older
@@ -247,6 +254,27 @@ signed-in users, with row-level security on. Run it with
   1 MB); Supabase's plan limits apply.
 - A company whose owner deletes their account goes to the longest-standing
   admin (or accountant); without either it has no owner.
+
+## Records of database version 16
+
+`20261102000000_tables_v16.sql` lets `public.records` take five more tables:
+`chequeLayouts`, `vehicles`, `approvals`, `letterTemplates` and
+`employeeLetters`. None of them can be changed by staff (`staff_can_write` is
+unchanged). It replaces `record_is_private` with the rules above, and adds a
+second, restrictive read rule on `records` (and on `deleted_records` for
+letters) that keeps letters, approval requests about people data, confidential
+documents and their renewals from staff and viewers even if the first file is
+run again and puts back its older `record_is_private`. Once the new tables
+have records, running the first file again stops at the kinds of record (it
+changes nothing); run the files again in order.
+
+`server_features()` answers `{tables_v16}`. The app asks it as it syncs and
+keeps the answer on the device, so a feature that keeps these records stays
+hidden until the owner has run the file. A device whose earlier version
+skipped the new tables' records fetches just those tables once
+(`company_record_ids` and the records), instead of syncing everything again.
+`src/cloud/tables-v16-sql.test.ts` checks the rules, and
+`src/cloud/table-parity.test.ts` that the table lists here and in the app agree.
 
 ## Email alerts
 

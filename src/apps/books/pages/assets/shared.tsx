@@ -16,7 +16,8 @@ import { accountGroup } from '@/lib/accounting/account-types';
 import { msg, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Badge } from '@/components/ui/misc';
-import type { StatusTone } from '@/lib/status';
+import { UNKNOWN_STATUS, type StatusTone } from '@/lib/status';
+import { lookup } from '@/lib/known';
 
 /** The register, the depreciation runs and the chart of accounts, kept up to date. */
 export function useAssetData():
@@ -132,7 +133,8 @@ const STATUS: Record<AssetStatus, { label: string; tone: StatusTone }> = {
 };
 
 export function AssetStatusBadge({ status }: { status: AssetStatus }) {
-  return <Badge tone={STATUS[status].tone}>{t(STATUS[status].label)}</Badge>;
+  const meta = lookup(STATUS, status, UNKNOWN_STATUS);
+  return <Badge tone={meta.tone}>{t(meta.label)}</Badge>;
 }
 
 /** "5 years", "2 years and 6 months", "18 months". */

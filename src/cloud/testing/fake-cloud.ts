@@ -70,6 +70,8 @@ export class FakeCloud {
    * missing, and createCompany takes up the owner's existing company.
    */
   legacy = false;
+  /** What public.server_features answers; a legacy server doesn't have it. */
+  features = ['tables_v16'];
   members = new Map<string, Map<string, MemberRole>>();
   records = new Map<string, Row>();
   markers = new Map<string, Marker>();
@@ -411,6 +413,12 @@ export class FakeCloud {
         this.records.set(key, { ...row, data, rev });
         this.notify(company);
         return { counter, period };
+      },
+
+      serverFeatures: async (company) => {
+        guard('serverFeatures');
+        member(company);
+        return this.legacy ? [] : [...this.features];
       },
 
       beginDeleteCompany: async (company) => {

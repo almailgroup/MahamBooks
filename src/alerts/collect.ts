@@ -46,6 +46,7 @@ export {
   isAlertTopic,
   TOPIC_DESCRIPTIONS,
   TOPIC_LABELS,
+  topicLabel,
   type AlertTopic,
 } from './topics';
 

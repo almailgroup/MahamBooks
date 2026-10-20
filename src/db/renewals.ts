@@ -19,7 +19,7 @@ import type {
 } from './types';
 import {
   complianceCalendar,
-  DOCUMENT_TYPES,
+  documentTypeInfo,
   EMPLOYEE_EXPIRY_FIELDS,
   EMPLOYEE_NUMBER_FIELDS,
   expiryStatus,
@@ -87,7 +87,7 @@ export async function saveComplianceDocument(
     async () => {
       const company = await db.companies.get(input.companyId);
       if (!company) throw new ComplianceError(t('Company not found'));
-      if (DOCUMENT_TYPES[input.type].fromEmployee) {
+      if (documentTypeInfo(input.type).fromEmployee) {
         throw new ComplianceError(
           t('Civil ID, passport, residency and work permit are kept on the employee’s page.'),
         );
@@ -127,7 +127,7 @@ export async function saveComplianceDocument(
         existing ? 'updated' : 'created',
         {
           text: existing ? msg('Document {title} updated') : msg('Document {title} added'),
-          vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+          vars: { title: doc.title || documentTypeInfo(doc.type).label },
         },
         { employeeId: doc.employeeId },
       );
@@ -149,7 +149,7 @@ export async function setDocumentArchived(id: ID, archived: boolean): Promise<vo
       archived ? 'archived' : 'restored',
       {
         text: archived ? msg('Document {title} archived') : msg('Document {title} restored'),
-        vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+        vars: { title: doc.title || documentTypeInfo(doc.type).label },
       },
       { employeeId: doc.employeeId },
     );
@@ -176,7 +176,7 @@ export async function deleteComplianceDocument(id: ID): Promise<void> {
         'deleted',
         {
           text: msg('Document {title} deleted'),
-          vars: { title: doc.title || DOCUMENT_TYPES[doc.type].label },
+          vars: { title: doc.title || documentTypeInfo(doc.type).label },
         },
         { employeeId: doc.employeeId },
       );
@@ -346,7 +346,7 @@ export function findFeeAccount(
   company: Company,
   type: ComplianceDocumentType,
 ): Account | null {
-  const spec = feeAccountSpec(DOCUMENT_TYPES[type].fee);
+  const spec = feeAccountSpec(documentTypeInfo(type).fee);
   const sameName = (a: Account) =>
     a.name.trim().toLowerCase() === spec.name.toLowerCase() ||
     (Boolean(spec.nameAr) && a.nameAr?.trim() === spec.nameAr);
@@ -368,7 +368,7 @@ export async function ensureFeeAccount(
   const accounts = await db.accounts.where('companyId').equals(company.id).toArray();
   const found = findFeeAccount(accounts, company, type);
   if (found) return found;
-  const spec = feeAccountSpec(DOCUMENT_TYPES[type].fee);
+  const spec = feeAccountSpec(documentTypeInfo(type).fee);
   const codes = new Set(accounts.map((a) => a.code));
   let code = spec.code;
   for (let n = Number(spec.code) + 1; codes.has(code); n++) code = String(n);
@@ -469,7 +469,7 @@ export async function renewDocument(
 
       const precision = currencyPrecision(company.currency);
       const feeAmount = round(Math.max(0, input.fee?.amount ?? 0), precision);
-      const label = DOCUMENT_TYPES[type].label;
+      const label = documentTypeInfo(type).label;
       const title = record?.title || t(label);
       const owner = employee?.name ?? record?.ownerName ?? '';
 

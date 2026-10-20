@@ -18,7 +18,7 @@ import {
 import { formatDate, formatMoney } from '@/lib/format';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { toISODate, today } from '@/lib/dates';
-import { chequeStatusMeta, SECURITY_CHEQUE_STATUS_META } from '@/lib/status';
+import { chequeStatusMeta, securityChequeStatusMeta } from '@/lib/status';
 import { t } from '@/i18n';
 import arabic from '@/i18n/ar/payments';
 import { Button } from '@/components/ui/button';
@@ -228,7 +228,7 @@ export default function ChequeRegisterPrintPage() {
               <tbody>
                 {tab === 'security'
                   ? securityRows.map((s) => {
-                      const meta = SECURITY_CHEQUE_STATUS_META[s.status];
+                      const meta = securityChequeStatusMeta(s.status);
                       const who = name(s.clientId);
                       return (
                         <tr key={s.id} className="break-inside-avoid">

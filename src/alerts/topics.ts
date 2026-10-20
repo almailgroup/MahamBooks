@@ -1,3 +1,4 @@
+import { lookup } from '@/lib/known';
 import { msg } from '@/i18n';
 
 /** What the morning email can cover; each person picks theirs in Settings → Email alerts. */
@@ -15,6 +16,11 @@ export const TOPIC_LABELS: Record<AlertTopic, string> = {
   bills: msg('Bills to pay'),
   invoices: msg('Overdue invoices'),
 };
+
+/** A topic in words (English key), also one a newer version saved. */
+export function topicLabel(topic: string): string {
+  return lookup(TOPIC_LABELS, topic, msg('Other'));
+}
 
 export const TOPIC_DESCRIPTIONS: Record<AlertTopic, string> = {
   documents: msg(

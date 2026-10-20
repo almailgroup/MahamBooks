@@ -8,16 +8,16 @@ import { deleteEmployee, employeeDeletion } from '@/db/people';
 import { addAttachment, removeAttachment } from '@/db/purchases';
 import { useCompany, useFormat } from '@/app/company';
 import {
-  CATEGORY_LABELS,
+  categoryLabel,
   CONTRACT_LABELS,
   GENDER_LABELS,
   LEAVING_REASON_LABELS,
   PAY_BASIS_LABELS,
   RESIDENCY_ARTICLES,
-  STATUS_LABELS,
+  employeeStatusLabel,
   needsResidency,
 } from '@/lib/hr/employees';
-import { DOCUMENT_TYPES, normalizeReminderDays } from '@/lib/compliance';
+import { documentTypeInfo, normalizeReminderDays } from '@/lib/compliance';
 import { bankFromIban, formatIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { countryName } from '@/lib/geo';
 import { currencyPrecision, dec, round } from '@/lib/money';
@@ -232,9 +232,9 @@ export default function EmployeeDetailPage() {
                       : 'slate'
                 }
               >
-                {t(STATUS_LABELS[employee.status])}
+                {t(employeeStatusLabel(employee.status))}
               </Badge>
-              <Badge tone="gray">{t(CATEGORY_LABELS[employee.category])}</Badge>
+              <Badge tone="gray">{t(categoryLabel(employee.category))}</Badge>
             </div>
             <p className="mt-1 text-sm text-slate-500">
               {[employee.number, job, employee.department].filter(Boolean).join(' · ')}
@@ -343,7 +343,7 @@ export default function EmployeeDetailPage() {
                     >
                       <div>
                         <p className="font-medium text-slate-900">
-                          {t(DOCUMENT_TYPES[r.type].label)}
+                          {t(documentTypeInfo(r.type).label)}
                         </p>
                         <p className="text-xs text-slate-500">
                           {t('Renewed on {date}, valid until {expiry}', {

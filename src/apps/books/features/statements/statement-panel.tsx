@@ -19,7 +19,7 @@ import { fromMinor } from '@/lib/money';
 import { cn } from '@/lib/cn';
 import { whatsappUrl } from '@/lib/whatsapp';
 import { currentLanguage, t } from '@/i18n';
-import { CHEQUE_STATUS_META } from '@/lib/status';
+import { chequeStatusMeta } from '@/lib/status';
 import { Button } from '@/components/ui/button';
 import { DateField } from '@/components/ui/date-field';
 import { Field, Select } from '@/components/ui/form';
@@ -475,8 +475,8 @@ export function StatementPanel({
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
-                  <Badge tone={CHEQUE_STATUS_META[c.status].tone}>
-                    {t(CHEQUE_STATUS_META[c.status].label)}
+                  <Badge tone={chequeStatusMeta(c.status).tone}>
+                    {t(chequeStatusMeta(c.status).label)}
                   </Badge>
                   <span className="tabular font-semibold text-slate-900">{money(c.amount)}</span>
                 </span>

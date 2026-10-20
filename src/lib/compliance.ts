@@ -13,6 +13,7 @@ import type {
 } from '@/db/types';
 import { addDaysISO, daysBetween, parseISODate, toISODate } from '@/lib/dates';
 import { isShareholding } from '@/lib/kuwait-rules';
+import { lookup } from '@/lib/known';
 import { msg } from '@/i18n';
 import { insuredWithPifss, isCurrent, needsResidency, needsWorkPermit } from './hr/employees';
 
@@ -106,12 +107,22 @@ export const DOCUMENT_TYPES: Record<ComplianceDocumentType, DocumentTypeInfo> = 
   other: { label: msg('Other document'), owner: 'other', fee: 'government' },
 };
 
+/** What the app knows of a type of document; a type a newer version saved is an other document. */
+export function documentTypeInfo(type: string): DocumentTypeInfo {
+  return lookup(DOCUMENT_TYPES, type, DOCUMENT_TYPES.other);
+}
+
 export const OWNER_LABELS: Record<DocumentOwnerType, string> = {
   company: msg('Company'),
   employee: msg('Employee'),
   vehicle: msg('Vehicle'),
   other: msg('Other'),
 };
+
+/** Who a kind of owner is, in words (English key); one a newer version saved is other. */
+export function ownerLabel(owner: string): string {
+  return lookup(OWNER_LABELS, owner, OWNER_LABELS.other);
+}
 
 /** Types that can be added to the register for an owner (employee papers on file are excluded). */
 export function registerTypesFor(owner: DocumentOwnerType): ComplianceDocumentType[] {

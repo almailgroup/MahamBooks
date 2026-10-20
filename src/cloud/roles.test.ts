@@ -7,6 +7,7 @@ import {
   canWriteRecord,
   isPrivateRecord,
   MEMBER_ROLES,
+  renewedDocumentId,
   sameData,
   staffCompanyChangeOk,
   type RecordLookup,
@@ -70,6 +71,80 @@ describe('private records', () => {
     expect(isPrivateRecord('attachments', { ownerId: 'inv-1', _private: true }, lookup)).toBe(true);
     expect(isPrivateRecord('activities', { entity: 'invoice', _private: true })).toBe(true);
     expect(isPrivateRecord('employees', { _private: false })).toBe(true);
+  });
+});
+
+describe('private records of database version 16', () => {
+  const records: Record<string, Record<string, Record<string, unknown>>> = {
+    complianceDocuments: {
+      'doc-secret': { id: 'doc-secret', employeeId: null, confidential: true },
+      'doc-open': { id: 'doc-open', employeeId: null, confidential: false },
+    },
+    renewals: {
+      'ren-secret': { id: 'ren-secret', documentKey: 'doc:doc-secret', documentId: 'doc-secret' },
+      'ren-open': { id: 'ren-open', documentKey: 'doc:doc-open', documentId: 'doc-open' },
+    },
+    letterTemplates: { 'tpl-1': { id: 'tpl-1' } },
+    employeeLetters: { 'let-1': { id: 'let-1', employeeId: 'emp-1' } },
+  };
+  const find: RecordLookup = (table, id) => records[table]?.[id] ?? null;
+
+  it('are letters, whatever they contain, and approvals about payroll or people data', () => {
+    for (const table of ['letterTemplates', 'employeeLetters']) {
+      expect(isPrivateRecord(table, null)).toBe(true);
+      expect(isPrivateRecord(table, { id: 'x' })).toBe(true);
+    }
+    const approval = (subjectTbl: unknown) => ({ id: 'apr', kind: 'payroll', subjectTbl });
+    expect(isPrivateRecord('approvals', approval('payRuns'))).toBe(true);
+    expect(isPrivateRecord('approvals', approval('employeeLetters'))).toBe(true);
+    expect(isPrivateRecord('approvals', approval('documents'))).toBe(false);
+    expect(isPrivateRecord('approvals', approval(undefined))).toBe(false);
+    expect(isPrivateRecord('vehicles', { id: 'v', driverEmployeeId: 'emp-1' })).toBe(false);
+    expect(isPrivateRecord('chequeLayouts', { id: 'l' })).toBe(false);
+  });
+
+  it('include confidential register documents with their renewals, files and activity', () => {
+    expect(isPrivateRecord('complianceDocuments', { confidential: true })).toBe(true);
+    expect(isPrivateRecord('complianceDocuments', { confidential: false })).toBe(false);
+    expect(isPrivateRecord('complianceDocuments', { confidential: 'true' })).toBe(false);
+    // A renewal is found to be of a confidential document by its key or its id.
+    expect(isPrivateRecord('renewals', { documentKey: 'doc:doc-secret' }, find)).toBe(true);
+    expect(isPrivateRecord('renewals', { documentId: 'doc-secret' }, find)).toBe(true);
+    expect(isPrivateRecord('renewals', { documentKey: 'doc:doc-secret' })).toBe(false);
+    expect(isPrivateRecord('renewals', { documentKey: 'doc:doc-open' }, find)).toBe(false);
+    expect(isPrivateRecord('renewals', { documentKey: 'emp:emp-1:passport' }, find)).toBe(false);
+
+    const file = (ownerId: string) => ({ id: 'att', ownerId });
+    for (const owner of ['doc-secret', 'ren-secret', 'tpl-1', 'let-1']) {
+      expect(isPrivateRecord('attachments', file(owner), find), owner).toBe(true);
+    }
+    expect(isPrivateRecord('attachments', file('doc-open'), find)).toBe(false);
+    expect(isPrivateRecord('attachments', file('ren-open'), find)).toBe(false);
+
+    const about = (entityId: string) => ({ entity: 'compliance', entityId });
+    expect(isPrivateRecord('activities', about('doc-secret'), find)).toBe(true);
+    expect(isPrivateRecord('activities', about('ren-secret'), find)).toBe(true);
+    expect(isPrivateRecord('activities', about('doc-open'), find)).toBe(false);
+  });
+
+  it('find the document of a renewal by its id, or else by its key', () => {
+    expect(renewedDocumentId({ documentId: 'd1', documentKey: 'doc:d1' })).toBe('d1');
+    expect(renewedDocumentId({ documentId: null, documentKey: 'doc:d2' })).toBe('d2');
+    expect(renewedDocumentId({ documentId: '', documentKey: 'emp:e1:passport' })).toBeNull();
+    expect(renewedDocumentId({ documentKey: 'doc:' })).toBeNull();
+    expect(renewedDocumentId(null)).toBeNull();
+  });
+
+  it('are written by owners, admins and accountants, never by staff or viewers', () => {
+    const tables = ['chequeLayouts', 'vehicles', 'approvals', 'letterTemplates', 'employeeLetters'];
+    for (const table of tables) {
+      const record = { id: 'x', subjectTbl: 'documents' };
+      expect(canWriteRecord('staff', table, record, find), table).toBe(false);
+      expect(canWriteRecord('viewer', table, record, find), table).toBe(false);
+      for (const role of ['owner', 'admin', 'accountant', null] as const) {
+        expect(canWriteRecord(role, table, record, find), `${role} ${table}`).toBe(true);
+      }
+    }
   });
 });
 

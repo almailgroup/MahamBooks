@@ -44,7 +44,7 @@ import {
   useCompany,
   useFormat,
 } from '@/app/company';
-import { DELIVERY_STATUS_META, displayStatus } from '@/lib/status';
+import { deliveryStatusMeta, displayStatus } from '@/lib/status';
 import { hasPrices, postsToLedger } from '@/lib/document-types';
 import { daysBetween, today } from '@/lib/dates';
 import { t, tp } from '@/i18n';
@@ -462,7 +462,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
 
   const deliveryMeta =
     type === 'sales_order' && doc.status !== 'draft' && doc.status !== 'cancelled'
-      ? DELIVERY_STATUS_META[doc.deliveryStatus ?? 'not_delivered']
+      ? deliveryStatusMeta(doc.deliveryStatus)
       : null;
 
   return (

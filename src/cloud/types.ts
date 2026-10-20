@@ -42,6 +42,17 @@ export interface CloudLink {
   epoch?: number;
   /** Documents that arrived with a number another document here already has. */
   duplicates?: string[];
+  /**
+   * The tables this device pulls the company with: those of the version that
+   * linked it or caught up last. A link without it was made by a version
+   * before database version 16, which pulled without that version's tables
+   * (see catchUpTables in sync.ts).
+   */
+  tables?: string[];
+  /** What the server has beyond the first migrations, as last asked (see features.ts). */
+  features?: string[];
+  /** When `features` was asked. */
+  featuresAt?: string;
 }
 
 /** A change made here that the server has not confirmed yet (table `outbox`). */

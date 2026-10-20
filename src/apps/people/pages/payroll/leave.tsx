@@ -6,7 +6,7 @@ import { companyDayOff } from '@/db/payroll';
 import {
   employeeLeaveBalance,
   employeesNeedingLeaveOpening,
-  LEAVE_TYPES,
+  leaveTypeInfo,
   sickDaysByTier,
 } from '@/lib/hr/leave';
 import { isCurrent } from '@/lib/hr/employees';
@@ -126,7 +126,7 @@ export default function PayrollLeavePage() {
                         {away ? (
                           <Badge tone="blue">
                             {t('{leave} until {date}', {
-                              leave: t(LEAVE_TYPES[away.type].label),
+                              leave: t(leaveTypeInfo(away.type).label),
                               date: fmt.date(away.end),
                             })}
                           </Badge>

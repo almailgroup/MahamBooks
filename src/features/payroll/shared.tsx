@@ -6,6 +6,7 @@ import type { PayWarning } from '@/lib/hr/payroll';
 import { countryName } from '@/lib/geo';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
+import { lookup } from '@/lib/known';
 import { useFormat } from '@/app/company';
 import { Badge, PageHeader } from '@/components/ui/misc';
 import { Button } from '@/components/ui/button';
@@ -65,8 +66,14 @@ export const RUN_STATUS: Record<PayRunStatus, { label: string; tone: 'gray' | 'b
     paid: { label: msg('Paid'), tone: 'green' },
   };
 
+/** A pay run's status, also one a newer version saved. */
+export function runStatus(status: string): (typeof RUN_STATUS)[PayRunStatus] {
+  return lookup(RUN_STATUS, status, { label: msg('Unknown status'), tone: 'gray' });
+}
+
 export function RunStatusBadge({ status }: { status: PayRunStatus }) {
-  return <Badge tone={RUN_STATUS[status].tone}>{t(RUN_STATUS[status].label)}</Badge>;
+  const meta = runStatus(status);
+  return <Badge tone={meta.tone}>{t(meta.label)}</Badge>;
 }
 
 /** "Verify" next to a legal figure that changes and should be checked before relying on it. */

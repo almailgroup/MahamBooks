@@ -13,6 +13,7 @@ import {
   type PulledRow,
   type PushChange,
   type PushResult,
+  type RecordKey,
 } from './api';
 import { companyOps, onlyCounters, rebaseCompany } from './company-patch';
 import { blobToDataUrl, contentHash, dataUrlToBlob, filePath } from './files';
@@ -25,6 +26,7 @@ import {
   canSeePeople,
   isPrivateRecord,
   PEOPLE_TABLES,
+  renewedDocumentId,
   sameData,
   type MemberRole,
 } from './roles';
@@ -47,6 +49,11 @@ export const PUSH_BATCH = 200;
 export const PUSH_BYTES = 512 * 1024;
 export const PULL_PAGE = 500;
 const ID_PAGE = 1000;
+/** Records asked for at once, and fetched at the same time, while catching up on a table. */
+const CATCH_UP_PAGE = 100;
+const CATCH_UP_AT_ONCE = 8;
+/** How long what the server has (server_features) is taken as known before asking again. */
+export const FEATURES_RECHECK_MS = 10 * 60_000;
 /** Files younger than this are left alone by the clean-up: they may be on their way. */
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** Tries to remove a file before it is shown as a problem. */
@@ -208,6 +215,8 @@ function newLink(
     lastSyncAt: null,
     lastError: null,
     lastErrorAt: null,
+    // Pulled from the start with every table this version has.
+    tables: [...DATA_TABLES],
   };
 }
 
@@ -316,9 +325,11 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
     await processFileQueue(sync);
     await pushAll(companyId, sync, result);
     const touched = await pullAll(companyId, sync, result);
+    await catchUpTables(companyId, sync, result, touched);
     await reconcile(companyId, touched);
     // Reconciling may have corrected something here: send that too.
     await pushAll(companyId, sync, result);
+    await refreshFeatures(companyId, sync);
     const after = await db.syncState.get(companyId);
     if (after && after.status !== 'removed') {
       await db.syncState.update(companyId, {
@@ -571,22 +582,28 @@ async function buildBatch(
   return plan;
 }
 
-/** Ids of employees and of their documents and renewals: what makes a file private. */
+/**
+ * Ids of employees, letters, private register documents (an employee's, or
+ * confidential) and their renewals: what makes a file private.
+ */
 async function privateOwnerIds(companyId: string): Promise<Set<string>> {
-  const [employees, documents, renewals] = await Promise.all([
+  const [employees, templates, letters, documents, renewals] = await Promise.all([
     db.employees.where('companyId').equals(companyId).primaryKeys(),
+    db.letterTemplates.where('companyId').equals(companyId).primaryKeys(),
+    db.employeeLetters.where('companyId').equals(companyId).primaryKeys(),
     db.complianceDocuments
       .where('companyId')
       .equals(companyId)
-      .filter((d) => Boolean(d.employeeId))
+      .filter((d) => Boolean(d.employeeId) || d.confidential === true)
       .primaryKeys(),
-    db.renewals
-      .where('companyId')
-      .equals(companyId)
-      .filter((r) => Boolean(r.employeeId))
-      .primaryKeys(),
+    db.renewals.where('companyId').equals(companyId).toArray(),
   ]);
-  return new Set([...employees, ...documents, ...renewals].map(String));
+  const owners = new Set([...employees, ...templates, ...letters, ...documents].map(String));
+  for (const renewal of renewals) {
+    const documentId = renewedDocumentId(renewal as unknown as Record<string, unknown>);
+    if (renewal.employeeId || (documentId && owners.has(documentId))) owners.add(renewal.id);
+  }
+  return owners;
 }
 
 /** The record as the cloud keeps it, with files and activity about employees marked private. */
@@ -940,16 +957,27 @@ async function pullAll(companyId: string, ctx: SyncContext, result: SyncResult):
   return touched;
 }
 
-/** Ids of employees and their documents and renewals in a page of changes. */
+/**
+ * Ids of employees, letters, private register documents and their renewals
+ * in a page of changes (see privateOwnerIds).
+ */
 function pageOwners(rows: PulledRow[]): Set<string> {
   const owners = new Set<string>();
   for (const row of rows) {
     if (row.deleted || !row.data) continue;
-    const employeeOwned = typeof row.data.employeeId === 'string' && row.data.employeeId !== '';
     if (
       row.tbl === 'employees' ||
-      ((row.tbl === 'complianceDocuments' || row.tbl === 'renewals') && employeeOwned)
+      row.tbl === 'letterTemplates' ||
+      row.tbl === 'employeeLetters' ||
+      (row.tbl === 'complianceDocuments' && isPrivateRecord(row.tbl, row.data))
     ) {
+      owners.add(row.id);
+    }
+  }
+  for (const row of rows) {
+    if (row.deleted || !row.data || row.tbl !== 'renewals') continue;
+    const documentId = renewedDocumentId(row.data);
+    if (isPrivateRecord(row.tbl, row.data) || (documentId && owners.has(documentId))) {
       owners.add(row.id);
     }
   }
@@ -961,13 +989,15 @@ function pageOwners(rows: PulledRow[]): Set<string> {
  * cursor past it. `asked` is where the page was asked from: when the cursor
  * was reset meanwhile (a role that now sees more), the page is thrown away
  * ('stale') and asked for again. Rows the person's role may not hold (a page
- * asked for before the role changed) are left out.
+ * asked for before the role changed) are left out. With `keepCursor` (records
+ * of a table brought in by themselves, see catchUpTables) the cursor stays.
  */
 export async function applyRows(
   companyId: string,
   rows: PulledRow[],
   touched: Touched = { tables: new Set(), documents: new Set() },
   asked?: { since: number; epoch: number },
+  { keepCursor = false }: { keepCursor?: boolean } = {},
 ): Promise<Applied> {
   let outcome: Applied = 'applied';
   await db.transaction('rw', tablesForApply(), async () => {
@@ -992,7 +1022,7 @@ export async function applyRows(
     let pendingCompany = link.pendingCompany ?? null;
     let pendingCompanyRev = link.pendingCompanyRev;
     for (const row of rows) {
-      cursor = Math.max(cursor, row.rev);
+      if (!keepCursor) cursor = Math.max(cursor, row.rev);
       if (!SYNCED.has(row.tbl)) continue;
       // Payroll and people data this role may not hold.
       if (hidePeople && !row.deleted && isPrivateRecord(row.tbl, row.data, lookup)) continue;
@@ -1252,13 +1282,122 @@ async function fullResync(companyId: string, ctx: SyncContext, touched: Touched)
       await table(name).bulkDelete(gone.map((r) => String(r.id)));
       await db.syncRevs.bulkDelete(gone.map((r) => [name, String(r.id)] as [string, string]));
     }
-    await db.syncState.update(companyId, { cursor: 0 });
+    // Everything comes again, of every table.
+    await db.syncState.update(companyId, { cursor: 0, tables: [...DATA_TABLES] });
   });
   const link = await db.syncState.get(companyId);
   if (link?.role === 'owner') {
     // Left-over files of records deleted while this device was away.
     void cleanupFiles(companyId, ctx).catch(() => undefined);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tables added later                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Tables of database version 16. A version before it moved its cursor past
+ * their records without storing them (it didn't know them); its links have
+ * no `tables`.
+ */
+const V16_TABLES: readonly string[] = [
+  'chequeLayouts',
+  'vehicles',
+  'approvals',
+  'letterTemplates',
+  'employeeLetters',
+];
+
+/** The tables a link's device has pulled the company with (see CloudLink.tables). */
+export function pulledTables(link: Pick<CloudLink, 'tables'>): string[] {
+  return link.tables ?? DATA_TABLES.filter((name) => !V16_TABLES.includes(name));
+}
+
+/**
+ * Brings in the records of the tables a link hasn't pulled with: the version
+ * that pulled before moved its cursor past them, so they would never arrive.
+ * Only those tables are read (their ids, then each record), and stored as a
+ * pull stores them, for this person's role; the cursor stays where it is.
+ * Then the link notes the tables. Stopped half way (no connection), it
+ * starts again at the next sync; records already here are stored again.
+ */
+async function catchUpTables(
+  companyId: string,
+  ctx: SyncContext,
+  result: SyncResult,
+  touched: Touched,
+): Promise<void> {
+  const link = await db.syncState.get(companyId);
+  if (!link || link.status === 'removed') return;
+  const known = new Set(pulledTables(link));
+  const missing = DATA_TABLES.filter((name) => !known.has(name));
+  if (missing.length === 0) return;
+  // A pull from the start brings every table anyway.
+  if (link.cursor > 0) {
+    const asked = { since: link.cursor, epoch: link.epoch ?? 0 };
+    for (const name of missing) {
+      let after: RecordKey | null = null;
+      for (;;) {
+        let page: RecordKey[];
+        let rows: PulledRow[];
+        try {
+          page = await ctx.api.recordIds(companyId, after, CATCH_UP_PAGE, name);
+          rows = await fetchRows(companyId, name, page, ctx);
+        } catch (error) {
+          throw cloudError(error);
+        }
+        if (rows.length) {
+          const applied = await applyRows(companyId, rows, touched, asked, { keepCursor: true });
+          // Gone from this device, or everything is coming again from the start.
+          if (applied !== 'applied') return;
+          result.pulled += rows.length;
+        }
+        if (page.length < CATCH_UP_PAGE) break;
+        after = page[page.length - 1];
+      }
+    }
+  }
+  await db.syncState.update(companyId, { tables: [...DATA_TABLES] });
+}
+
+/** These records as the cloud has them now, as pulled rows; those deleted meanwhile are left out. */
+async function fetchRows(
+  companyId: string,
+  tbl: string,
+  keys: RecordKey[],
+  ctx: SyncContext,
+): Promise<PulledRow[]> {
+  const rows: PulledRow[] = [];
+  for (let i = 0; i < keys.length; i += CATCH_UP_AT_ONCE) {
+    const group = keys.slice(i, i + CATCH_UP_AT_ONCE);
+    const found = await Promise.all(group.map((key) => ctx.api.getRecord(companyId, tbl, key.id)));
+    found.forEach((record, j) => {
+      if (record) {
+        rows.push({ tbl, id: group[j].id, data: record.data, rev: record.rev, deleted: false });
+      }
+    });
+  }
+  return rows;
+}
+
+/**
+ * Notes what the server has (see features.ts), asked at most every
+ * FEATURES_RECHECK_MS: the owner may run a migration at any time. When it
+ * can't be asked, what was known stays.
+ */
+async function refreshFeatures(companyId: string, ctx: SyncContext): Promise<void> {
+  const link = await db.syncState.get(companyId);
+  if (!link || link.status === 'removed') return;
+  const askedAt = link.featuresAt ? Date.parse(link.featuresAt) : 0;
+  if (link.features && Date.now() - askedAt < FEATURES_RECHECK_MS) return;
+  let features: string[];
+  try {
+    features = await ctx.api.serverFeatures(companyId);
+  } catch {
+    return;
+  }
+  await db.syncState.update(companyId, { features, featuresAt: new Date().toISOString() });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1331,7 +1470,7 @@ export async function applyRole(companyId: string, role: MemberRole): Promise<vo
     const seesMore = !canSeePeople(link.role) && canSeePeople(role);
     await db.syncState.update(companyId, {
       role,
-      ...(seesMore ? { cursor: 0, epoch: (link.epoch ?? 0) + 1 } : {}),
+      ...(seesMore ? { cursor: 0, epoch: (link.epoch ?? 0) + 1, tables: [...DATA_TABLES] } : {}),
     });
     if (!canSeePeople(role)) await removeHiddenRecords(companyId);
   });

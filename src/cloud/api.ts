@@ -214,6 +214,12 @@ export interface CloudApi {
     min: number,
   ): Promise<ReservedCounter | null>;
   /**
+   * What the server has beyond the first migrations ('tables_v16'…), from
+   * public.server_features; empty on a server without it. The same for every
+   * company today, asked per company so a later server may answer per company.
+   */
+  serverFeatures(companyId: string): Promise<string[]>;
+  /**
    * Owners: starts deleting the company in the cloud (new uploads are
    * refused meanwhile). False when the server can't (an older version);
    * throws when the person is not the owner.

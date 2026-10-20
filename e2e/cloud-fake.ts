@@ -339,6 +339,8 @@ export class FakeSupabase {
       }
       case 'company_record_ids':
         return [];
+      case 'server_features':
+        return ['tables_v16'];
       case 'company_team': {
         const entry = this.companies.get(company);
         return [...(entry?.members ?? new Map<string, Role>()).entries()].map(([id, role]) => {

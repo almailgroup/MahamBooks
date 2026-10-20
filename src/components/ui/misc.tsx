@@ -9,7 +9,7 @@ import {
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
-import { STATUS_META, type DisplayStatus, type StatusTone } from '@/lib/status';
+import { statusMeta, type DisplayStatus, type StatusTone } from '@/lib/status';
 
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
@@ -84,7 +84,7 @@ export function Badge({
 }
 
 export function StatusBadge({ status, className }: { status: DisplayStatus; className?: string }) {
-  const meta = STATUS_META[status];
+  const meta = statusMeta(status);
   return (
     <Badge tone={meta.tone} className={className}>
       {t(meta.label)}

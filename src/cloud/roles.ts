@@ -47,6 +47,8 @@ export const PEOPLE_TABLES = [
   'leaveRecords',
   'staffLoans',
   'finalSettlements',
+  'letterTemplates',
+  'employeeLetters',
 ] as const;
 
 /** Tables staff may change (the company record only in its document numbers). */
@@ -84,22 +86,45 @@ type Row = Record<string, unknown> | null | undefined;
 /** Looks up another record of the same company (an attachment's owner). */
 export type RecordLookup = (table: string, id: string) => Row;
 
+/** The register document a renewal is of, or null for one of an employee's own papers. */
+export function renewedDocumentId(renewal: Row): string | null {
+  if (typeof renewal?.documentId === 'string' && renewal.documentId !== '') {
+    return renewal.documentId;
+  }
+  const key = renewal?.documentKey;
+  return typeof key === 'string' && key.startsWith('doc:') && key.length > 4 ? key.slice(4) : null;
+}
+
 /**
  * Whether a record is payroll or people data. `lookup` finds the record an
- * attachment or an activity is about; without it only the record itself is
- * judged.
+ * attachment, an activity or a renewal is about; without it only the record
+ * itself is judged.
  */
 export function isPrivateRecord(table: string, record: Row, lookup?: RecordLookup): boolean {
   if (people.has(table)) return true;
   if (!record) return false;
   if (record._private === true) return true;
   const employeeOwned = (row: Row) => typeof row?.employeeId === 'string' && row.employeeId !== '';
+  // An employee's paper in the register, or one marked confidential.
+  const privateDocument = (row: Row) => employeeOwned(row) || row?.confidential === true;
+  // A renewal of either (the document is found with `lookup`).
+  const privateRenewal = (row: Row) => {
+    const documentId = renewedDocumentId(row);
+    return (
+      employeeOwned(row) ||
+      Boolean(documentId && lookup && privateDocument(lookup('complianceDocuments', documentId)))
+    );
+  };
   switch (table) {
     case 'complianceDocuments':
+      return privateDocument(record);
     case 'renewals':
-      return employeeOwned(record);
+      return privateRenewal(record);
     case 'journals':
       return record.kind === 'payroll';
+    case 'approvals':
+      // A request about payroll or people data (a pay run…).
+      return typeof record.subjectTbl === 'string' && people.has(record.subjectTbl);
     case 'activities': {
       if (record.entity === 'employee' || record.entity === 'payroll') return true;
       // Logged about an employee's documents: private even once they are deleted.
@@ -108,16 +133,18 @@ export function isPrivateRecord(table: string, record: Row, lookup?: RecordLooku
         return false;
       }
       return (
-        employeeOwned(lookup('complianceDocuments', record.entityId)) ||
-        employeeOwned(lookup('renewals', record.entityId))
+        privateDocument(lookup('complianceDocuments', record.entityId)) ||
+        privateRenewal(lookup('renewals', record.entityId))
       );
     }
     case 'attachments': {
       if (!lookup || typeof record.ownerId !== 'string') return false;
       return (
         Boolean(lookup('employees', record.ownerId)) ||
-        employeeOwned(lookup('complianceDocuments', record.ownerId)) ||
-        employeeOwned(lookup('renewals', record.ownerId))
+        Boolean(lookup('letterTemplates', record.ownerId)) ||
+        Boolean(lookup('employeeLetters', record.ownerId)) ||
+        privateDocument(lookup('complianceDocuments', record.ownerId)) ||
+        privateRenewal(lookup('renewals', record.ownerId))
       );
     }
     default:

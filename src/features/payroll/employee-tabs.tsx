@@ -12,7 +12,7 @@ import {
   loanBalance,
   loanRecoveredMinor,
 } from '@/db/payroll';
-import { employeeLeaveBalance, LEAVE_TYPES, sickDaysByTier, SICK_TIERS } from '@/lib/hr/leave';
+import { employeeLeaveBalance, leaveTypeInfo, sickDaysByTier, SICK_TIERS } from '@/lib/hr/leave';
 import { formatPeriod } from '@/lib/hr/payroll';
 import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
@@ -225,7 +225,7 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                       ? t('Opening balance')
                       : r.kind === 'adjustment'
                         ? t('Balance adjustment')
-                        : t(LEAVE_TYPES[r.type].label)}
+                        : t(leaveTypeInfo(r.type).label)}
                     {r.status === 'cancelled' ? (
                       <Badge tone="slate" className="ms-2">
                         {t('Cancelled')}

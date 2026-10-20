@@ -20,7 +20,7 @@ import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-ph
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
 import { expiryStatus } from '@/lib/compliance';
-import { LEAVE_TYPES } from '@/lib/hr/leave';
+import { leaveTypeInfo } from '@/lib/hr/leave';
 import { today } from '@/lib/dates';
 import { localName } from '@/i18n/names';
 import { useLanguage } from '@/i18n/provider';
@@ -160,7 +160,7 @@ export default function PeopleOverview() {
                         photo={e.photoId ? photos.get(e.photoId) : undefined}
                       />
                     }
-                    detail={`${t(LEAVE_TYPES[r.type].label)} · ${t('Until {date}', {
+                    detail={`${t(leaveTypeInfo(r.type).label)} · ${t('Until {date}', {
                       date: fmt.date(r.end),
                     })}`}
                   />

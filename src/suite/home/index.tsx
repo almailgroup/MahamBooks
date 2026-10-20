@@ -5,6 +5,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   ArrowRight,
   CalendarClock,
+  CircleAlert,
   CircleCheck,
   FileBadge,
   FileText,
@@ -16,7 +17,7 @@ import { db } from '@/db/db';
 import type { InvoiceDocument } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import {
-  TOPIC_LABELS,
+  topicLabel,
   alertLookups,
   type Alert,
   type AlertData,
@@ -29,6 +30,7 @@ import { displayStatus } from '@/lib/status';
 import { currencyPrecision, round, sum } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
+import { lookup } from '@/lib/known';
 import { Card, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
 import { useRoleView } from '@/features/cloud/role-gates';
@@ -42,8 +44,8 @@ import {
   homeAlerts,
   homeTopics,
   loadHomeAlertData,
-  TOPIC_APPS,
-  TOPIC_PAGES,
+  topicApp,
+  topicPage,
 } from './attention';
 
 /**
@@ -110,7 +112,7 @@ export default function SuiteHome() {
       result.people = tp(staff, '{count} employee', '{count} employees');
     }
     if (alerts) {
-      const due = alerts.filter((a) => TOPIC_APPS[a.topic] === 'compliance').length;
+      const due = alerts.filter((a) => topicApp(a.topic) === 'compliance').length;
       result.compliance = due
         ? tp(due, '{count} needs attention', '{count} need attention')
         : t('All up to date');
@@ -184,10 +186,10 @@ function AttentionList({
         {[...counts].map(([topic, count]) => (
           <li key={topic}>
             <Link
-              to={TOPIC_PAGES[topic]}
+              to={topicPage(topic)}
               className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-slate-200 px-3 text-xs font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 pointer-coarse:min-h-11"
             >
-              {t(TOPIC_LABELS[topic])}
+              {t(topicLabel(topic))}
               <span className="tabular text-slate-500">{fmt.quantity(count)}</span>
             </Link>
           </li>
@@ -196,7 +198,7 @@ function AttentionList({
       <ul className="mt-3 divide-y divide-slate-100">
         {shown.map((alert) => {
           const line = describeAlert(alert, lookups);
-          const Icon = TOPIC_ICONS[alert.topic];
+          const Icon = lookup(TOPIC_ICONS, alert.topic, CircleAlert);
           return (
             <li key={alert.key}>
               <Link
