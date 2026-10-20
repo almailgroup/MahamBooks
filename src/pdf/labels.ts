@@ -81,6 +81,9 @@ export const LABEL_KEYS = [
   'cancelledStamp',
   'receiverSignature',
   'draftStamp',
+  'sku',
+  'customerAcceptance',
+  'acceptanceStatement',
 ] as const;
 
 export type LabelKey = (typeof LABEL_KEYS)[number];
@@ -175,6 +178,9 @@ const en: Labels = {
   cancelledStamp: 'Cancelled',
   receiverSignature: 'Signature',
   draftStamp: 'Draft',
+  sku: 'SKU',
+  customerAcceptance: 'Customer acceptance',
+  acceptanceStatement: 'We accept this offer and its terms.',
 };
 
 /** Arabic as printed on Kuwaiti invoices (see docs/arabic-glossary.md). */
@@ -259,6 +265,9 @@ const ar: Labels = {
   cancelledStamp: 'ملغى',
   receiverSignature: 'التوقيع',
   draftStamp: 'مسودة',
+  sku: 'رمز الصنف',
+  customerAcceptance: 'قبول العميل',
+  acceptanceStatement: 'نوافق على هذا العرض وشروطه.',
 };
 
 const translations: Record<LabelLanguage, Labels> = {
@@ -345,6 +354,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Annulé',
     receiverSignature: 'Signature',
     draftStamp: 'Brouillon',
+    sku: 'Réf.',
+    customerAcceptance: 'Acceptation du client',
+    acceptanceStatement: 'Nous acceptons cette offre et ses conditions.',
   },
   es: {
     invoice: 'Factura',
@@ -427,6 +439,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Cancelado',
     receiverSignature: 'Firma',
     draftStamp: 'Borrador',
+    sku: 'Ref.',
+    customerAcceptance: 'Aceptación del cliente',
+    acceptanceStatement: 'Aceptamos esta oferta y sus condiciones.',
   },
   de: {
     invoice: 'Rechnung',
@@ -509,6 +524,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Storniert',
     receiverSignature: 'Unterschrift',
     draftStamp: 'Entwurf',
+    sku: 'Art.-Nr.',
+    customerAcceptance: 'Annahme durch den Kunden',
+    acceptanceStatement: 'Wir nehmen dieses Angebot und seine Bedingungen an.',
   },
   pt: {
     invoice: 'Fatura',
@@ -591,6 +609,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Cancelado',
     receiverSignature: 'Assinatura',
     draftStamp: 'Rascunho',
+    sku: 'Ref.',
+    customerAcceptance: 'Aceitação do cliente',
+    acceptanceStatement: 'Aceitamos esta proposta e as suas condições.',
   },
   it: {
     invoice: 'Fattura',
@@ -673,6 +694,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Annullato',
     receiverSignature: 'Firma',
     draftStamp: 'Bozza',
+    sku: 'Cod.',
+    customerAcceptance: 'Accettazione del cliente',
+    acceptanceStatement: 'Accettiamo questa offerta e le sue condizioni.',
   },
   nl: {
     invoice: 'Factuur',
@@ -755,6 +779,9 @@ const translations: Record<LabelLanguage, Labels> = {
     cancelledStamp: 'Geannuleerd',
     receiverSignature: 'Handtekening',
     draftStamp: 'Concept',
+    sku: 'Art.nr.',
+    customerAcceptance: 'Akkoord van de klant',
+    acceptanceStatement: 'Wij gaan akkoord met deze offerte en de voorwaarden.',
   },
 };
 

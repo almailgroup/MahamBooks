@@ -7,6 +7,7 @@ import {
   ItemsTable,
   Label,
   Logo,
+  LogoRow,
   MetaRows,
   PageFooter,
   Party,
@@ -19,12 +20,20 @@ import {
   companyIdLine,
   en,
   fitSize,
+  logoRowHeight,
   sx,
 } from './shared';
 import { templateMeta } from '../template-meta';
 import type { TemplateDefinition, TemplateProps } from './types';
 
 const HEADER_HEIGHT = 150;
+/** The white card the logo sits on in the header. */
+const LOGO_CHIP: Style = {
+  backgroundColor: '#ffffff',
+  borderRadius: 8,
+  paddingVertical: 8,
+  paddingHorizontal: 12,
+};
 
 function Gradient({ model, theme }: TemplateProps) {
   const c = model.company;
@@ -42,102 +51,98 @@ function Gradient({ model, theme }: TemplateProps) {
     marginBottom: 5,
   };
 
+  // The logo on a line of its own makes the header taller.
+  const height = HEADER_HEIGHT + (model.logo.row ? logoRowHeight(model) + 16 : 0);
+
   return (
-    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: HEADER_HEIGHT + 22 }}>
-      <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={W} height={HEADER_HEIGHT}>
+    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: height + 22 }} logoRow={false}>
+      <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={W} height={height}>
         <Defs>
           <LinearGradient id="header" x1="0" y1="0" x2="1" y2="1">
             <Stop offset="0" stopColor={from} />
             <Stop offset="1" stopColor={to} />
           </LinearGradient>
         </Defs>
-        <Rect x="0" y="0" width={W} height={HEADER_HEIGHT} fill="url(#header)" />
+        <Rect x="0" y="0" width={W} height={height} fill="url(#header)" />
       </Svg>
 
-      <View
-        style={{
-          position: 'absolute',
-          top: 34,
-          left: 40,
-          right: 40,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-        }}
-      >
-        <View style={{ width: '55%' }}>
-          {c.logo ? (
-            <View
+      <View style={{ position: 'absolute', top: 34, left: 40, right: 40 }}>
+        <LogoRow model={model} chip={LOGO_CHIP} />
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+          }}
+        >
+          <View style={{ width: '55%' }}>
+            {c.logo ? (
+              <View style={sx({ alignSelf: 'flex-start' }, LOGO_CHIP)}>
+                <Logo src={c.logo} width={140} height={40} maxScale={1.25} />
+              </View>
+            ) : (
+              <View>
+                <Text style={{ fontSize: 18, fontWeight: 800, color: onHeader }}>{c.name}</Text>
+                {c.nameSecondary ? (
+                  <Text style={{ fontSize: 10, fontWeight: 600, color: onHeader, opacity: 0.9 }}>
+                    {c.nameSecondary}
+                  </Text>
+                ) : null}
+              </View>
+            )}
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={{ fontSize: 28, fontWeight: 800, color: onHeader, letterSpacing: -0.5 }}>
+              {model.title}
+            </Text>
+            {model.titleSecondary ? (
+              <Text
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  color: onHeader,
+                  opacity: 0.85,
+                  textTransform: 'uppercase',
+                  letterSpacing: 2,
+                }}
+              >
+                {model.titleSecondary}
+              </Text>
+            ) : null}
+            {model.number ? (
+              <Text
+                style={sx({ fontSize: 10, color: onHeader, opacity: 0.85, marginTop: 2 }, TNUM)}
+              >
+                {model.number}
+              </Text>
+            ) : null}
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
               style={{
-                alignSelf: 'flex-start',
-                backgroundColor: '#ffffff',
-                borderRadius: 8,
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-              }}
-            >
-              <Logo src={c.logo} width={140} height={40} />
-            </View>
-          ) : (
-            <View>
-              <Text style={{ fontSize: 18, fontWeight: 800, color: onHeader }}>{c.name}</Text>
-              {c.nameSecondary ? (
-                <Text style={{ fontSize: 10, fontWeight: 600, color: onHeader, opacity: 0.9 }}>
-                  {c.nameSecondary}
-                </Text>
-              ) : null}
-            </View>
-          )}
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={{ fontSize: 28, fontWeight: 800, color: onHeader, letterSpacing: -0.5 }}>
-            {model.title}
-          </Text>
-          {model.titleSecondary ? (
-            <Text
-              style={{
-                fontSize: 9,
-                fontWeight: 700,
+                fontSize: 7,
                 color: onHeader,
                 opacity: 0.85,
+                marginTop: model.titleSecondary ? 8 : 14,
                 textTransform: 'uppercase',
-                letterSpacing: 2,
+                letterSpacing: 0.9,
               }}
+              secondaryStyle={{ opacity: 1 }}
+            />
+            <Text
+              style={sx(
+                {
+                  fontSize: fitSize(model.amountDue.value, 18, 18),
+                  fontWeight: 800,
+                  color: onHeader,
+                  marginTop: 1,
+                },
+                TNUM,
+              )}
             >
-              {model.titleSecondary}
+              {model.amountDue.value}
             </Text>
-          ) : null}
-          {model.number ? (
-            <Text style={sx({ fontSize: 10, color: onHeader, opacity: 0.85, marginTop: 2 }, TNUM)}>
-              {model.number}
-            </Text>
-          ) : null}
-          <Label
-            text={model.amountDue.label}
-            secondary={model.amountDue.secondary}
-            style={{
-              fontSize: 7,
-              color: onHeader,
-              opacity: 0.85,
-              marginTop: model.titleSecondary ? 8 : 14,
-              textTransform: 'uppercase',
-              letterSpacing: 0.9,
-            }}
-            secondaryStyle={{ opacity: 1 }}
-          />
-          <Text
-            style={sx(
-              {
-                fontSize: fitSize(model.amountDue.value, 18, 18),
-                fontWeight: 800,
-                color: onHeader,
-                marginTop: 1,
-              },
-              TNUM,
-            )}
-          >
-            {model.amountDue.value}
-          </Text>
+          </View>
         </View>
       </View>
 
@@ -186,8 +191,13 @@ function Gradient({ model, theme }: TemplateProps) {
         </View>
       </View>
 
-      {/* Placed before the table so it always lands on the first page. */}
-      <Stamp model={model} theme={theme} style={{ top: 166, right: 205 }} />
+      {/* Placed before the table so it always lands on the first page; the logo's own
+          line (on its card) moves it down. */}
+      <Stamp
+        model={model}
+        theme={theme}
+        style={{ top: 166 + (model.logo.row ? 16 : 0), right: 205 }}
+      />
 
       <ItemsTable
         model={model}

@@ -3,10 +3,16 @@ import { join } from 'node:path';
 import { describe, expect, it, beforeAll } from 'vitest';
 import { renderToBuffer } from '@react-pdf/renderer';
 import QRCode from 'qrcode';
-import type { Client, Company, DocumentLanguage, InvoiceDocument } from '@/db/types';
+import type {
+  Client,
+  Company,
+  DocumentLanguage,
+  DocumentLayout,
+  InvoiceDocument,
+} from '@/db/types';
 import { computeDocument } from '@/lib/document-calc';
 import { registerFonts, type FontId } from './fonts';
-import { buildRenderModel } from './model';
+import { buildRenderModel, type BuildModelOptions } from './model';
 import { createPdfElement } from './element';
 import { TEMPLATES } from './templates';
 import {
@@ -47,7 +53,22 @@ type Variant = {
   doc: (language: DocumentLanguage) => InvoiceDocument;
   company?: () => Company;
   client?: () => Client | null;
+  options?: Partial<BuildModelOptions>;
 };
+
+/** The company with a layout for every document. */
+const laidOut =
+  (layout: DocumentLayout): (() => Company) =>
+  () => ({
+    ...company,
+    branding: { ...company.branding, layout },
+  });
+
+/** Lines picked from items, the first with a picture. */
+const pictured = (doc: InvoiceDocument): InvoiceDocument => ({
+  ...doc,
+  items: doc.items.map((item, i) => ({ ...item, productId: `item-${i}` })),
+});
 
 const LANGUAGES: DocumentLanguage[] = ['en', 'ar', 'ar-en'];
 
@@ -195,6 +216,62 @@ const variants: Variant[] = [
       ),
   },
   {
+    name: 'quote with every layout option',
+    company: laidOut({
+      logoPosition: 'center',
+      logoSize: 'large',
+      showSku: true,
+      showItemImages: true,
+      showAcceptance: true,
+    }),
+    options: { itemImages: { 'item-0': IMAGE, 'item-2': IMAGE } },
+    doc: (l) =>
+      pictured(
+        sampleDocument(
+          company,
+          client,
+          'quote',
+          { intro: 'Further to your request, we are pleased to quote as follows.' },
+          l,
+        ),
+      ),
+  },
+  {
+    name: 'paid proforma with a small logo on top and the acceptance box',
+    company: laidOut({ logoPosition: 'start', logoSize: 'small', showAcceptance: true }),
+    doc: (l) =>
+      sampleDocument(company, client, 'invoice', { type: 'proforma', status: 'accepted' }, l),
+  },
+  {
+    name: 'invoice with the logo on top at the end, SKUs and many lines',
+    company: laidOut({ logoPosition: 'end', showSku: true }),
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        { items: sampleLongItems().map((item, i) => ({ ...item, sku: `SKU-${i}` })) },
+        l,
+      ),
+  },
+  {
+    name: 'large logo where the template puts it, with a delivery note',
+    company: laidOut({ logoSize: 'large', showSku: true }),
+    doc: (l) =>
+      sampleDocument(
+        company,
+        client,
+        'invoice',
+        {
+          type: 'delivery_note',
+          status: 'draft',
+          items: sampleGoods().map((item) => ({ ...item, sku: 'LBL-100' })),
+          dueDate: null,
+        },
+        l,
+      ),
+  },
+  {
     name: 'inclusive-fr-letter',
     languages: ['fr'],
     company: () => ({
@@ -246,7 +323,7 @@ describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, tem
         variant.doc(language),
         variant.company?.() ?? company,
         variant.client ? variant.client() : client,
-        { qrCode: qr, language },
+        { qrCode: qr, language, ...variant.options },
       );
       expect(model.dir).toBe(language.startsWith('ar') ? 'rtl' : 'ltr');
       const { element } = createPdfElement(model, template.id);
@@ -286,6 +363,37 @@ describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, tem
     const sent = await render('sent');
     expect(sent).not.toContain('مسودة');
     expect(sent).not.toContain('DRAFT');
+  }, 30000);
+});
+
+describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, template) => {
+  it('prints the introduction, the SKUs and the acceptance box of a quote', async () => {
+    const own: Company = {
+      ...company,
+      branding: {
+        ...company.branding,
+        byType: { quote: { layout: { showSku: true, showAcceptance: true, logoPosition: 'end' } } },
+      },
+    };
+    const doc = sampleDocument(own, client, 'quote', { intro: 'Further to your request' }, 'ar-en');
+    const model = buildRenderModel(doc, own, client, { language: 'ar-en' });
+    const text = (
+      await pdfText(await renderToBuffer(createPdfElement(model, template.id).element))
+    ).toLowerCase();
+    expect(text).toContain('furthertoyourrequest');
+    expect(text).toContain('dsg-101');
+    expect(text).toContain('customeracceptance');
+    expect(text).toContain('weacceptthisofferanditsterms.');
+    // Invoices keep the company's layout: none of it.
+    const invoice = sampleDocument(own, client, 'invoice', {}, 'ar-en');
+    const plain = await pdfText(
+      await renderToBuffer(
+        createPdfElement(buildRenderModel(invoice, own, client, { language: 'ar-en' }), template.id)
+          .element,
+      ),
+    );
+    expect(plain).not.toContain('DSG-101');
+    expect(plain.toLowerCase()).not.toContain('customeracceptance');
   }, 30000);
 });
 

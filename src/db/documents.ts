@@ -161,6 +161,8 @@ export async function draftDocument(
     taxes: d.documentTaxes && priced ? taxes : [],
     notes: wording.notes,
     terms: wording.terms,
+    // Quotes start with the company's introduction, when it has one.
+    ...(type === 'quote' && d.quoteIntro?.trim() ? { intro: d.quoteIntro } : {}),
     // Bills are the vendor's documents: nothing of ours is printed on them.
     footer: type === 'bill' || type === 'vendor_credit' ? '' : d.footer,
     pricesIncludeTax: isPurchaseType(type) ? false : d.pricesIncludeTax,
@@ -858,6 +860,9 @@ export async function duplicateDocument(
     footer: source.footer,
     privateNotes: source.privateNotes,
     templateId: source.templateId,
+    ...(source.accentColor ? { accentColor: source.accentColor } : {}),
+    // A copy of a quote keeps its introduction; another type of document has none.
+    ...(type === source.type ? { intro: source.intro } : {}),
     // Credit notes don't print where the goods went.
     deliveryPlace:
       type === 'credit' || type === 'vendor_credit' ? '' : (source.deliveryPlace ?? ''),

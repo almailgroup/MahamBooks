@@ -94,6 +94,9 @@ const HUMAN: Record<LabelKey, string> = {
   cancelledStamp: msg('Cancelled stamp'),
   receiverSignature: msg('Signature of the person receiving'),
   draftStamp: msg('Draft watermark'),
+  sku: msg('SKU column'),
+  customerAcceptance: msg('Customer acceptance box'),
+  acceptanceStatement: msg('Acceptance wording on quotes'),
 };
 
 const HINTS: Partial<Record<LabelKey, string>> = {

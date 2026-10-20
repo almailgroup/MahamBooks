@@ -140,6 +140,7 @@ export function sampleItems(language: DocumentLanguage = 'en'): LineItem[] {
       quantity: 1,
       unit: unit('job', 'عمل'),
       unitPrice: 185,
+      sku: 'DSG-101',
     }),
     item({
       name: 'Full-colour letter printing',
@@ -148,6 +149,7 @@ export function sampleItems(language: DocumentLanguage = 'en'): LineItem[] {
       quantity: 12500,
       unit: unit('pcs', 'قطعة'),
       unitPrice: 0.028,
+      sku: 'PRT-A4-100',
     }),
     item({
       name: 'Envelope inserting & sealing',
@@ -156,6 +158,7 @@ export function sampleItems(language: DocumentLanguage = 'en'): LineItem[] {
       quantity: 12500,
       unit: unit('pcs', 'قطعة'),
       unitPrice: 0.012,
+      sku: 'ENV-C5',
     }),
     item({
       name: 'Local delivery — Kuwait City & Hawalli',
@@ -164,6 +167,7 @@ export function sampleItems(language: DocumentLanguage = 'en'): LineItem[] {
       quantity: 12500,
       unit: unit('pcs', 'قطعة'),
       unitPrice: 0.045,
+      sku: 'DLV-KW',
     }),
     item({
       name: 'Project management',

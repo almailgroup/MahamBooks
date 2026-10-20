@@ -516,6 +516,7 @@ function Editor({
                           updateLine(item.id, {
                             name,
                             productId: null,
+                            sku: undefined,
                             ...(stockItem(item) ? { accountId: defaultAccount } : {}),
                           });
                           setErrors((x) => ({ ...x, items: undefined }));
@@ -528,6 +529,8 @@ function Editor({
                             name: product.name,
                             nameAr: product.nameAr ?? '',
                             unit: product.unit,
+                            // Purchase orders print it in the SKU column when the design shows one.
+                            sku: product.sku.trim() || undefined,
                             unitPrice: product.costPrice || item.unitPrice,
                             accountId: stock ? inventoryAccount : item.accountId,
                           });

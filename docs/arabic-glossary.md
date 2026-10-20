@@ -44,6 +44,7 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Payment received             | دفعة مستلمة (plural: المقبوضات) |
 | Payment made                 | دفعة مسددة (plural: المدفوعات)  |
 | Recurring invoice            | فاتورة متكررة                   |
+| Customer acceptance (quote)  | قبول العميل                     |
 | Customer / Client            | عميل (plural: العملاء)          |
 | Vendor / Supplier            | مورد (plural: الموردون)         |
 | Contact                      | جهة اتصال                       |
@@ -241,6 +242,7 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Reports       | التقارير          |
 | Settings      | الإعدادات         |
 | Templates     | القوالب           |
+| Quote design  | تصميم عرض السعر   |
 | Sales         | المبيعات          |
 | Purchases     | المشتريات         |
 | Banking       | البنوك            |

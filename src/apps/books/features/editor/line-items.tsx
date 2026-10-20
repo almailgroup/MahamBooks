@@ -157,6 +157,8 @@ export function LineItemsEditor({
           : product.description,
       unitPrice: product.unitPrice,
       unit: product.unit,
+      // Printed in the SKU column when the design shows one.
+      sku: product.sku.trim() || undefined,
       taxes: showTaxes ? (product.taxRateIds.length ? taxes : items[index].taxes) : [],
     });
   };
@@ -322,7 +324,7 @@ export function LineItemsEditor({
                 <ItemNameInput
                   ariaLabel={t('Item {number} name', { number: index + 1 })}
                   value={item.name}
-                  onChange={(name) => update(index, { name, productId: null })}
+                  onChange={(name) => update(index, { name, productId: null, sku: undefined })}
                   products={products}
                   onPick={(p) => pickProduct(index, p)}
                   formatPrice={formatPrice}

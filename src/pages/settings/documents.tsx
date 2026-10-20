@@ -144,6 +144,21 @@ export default function DocumentSettings() {
         <div className="grid gap-4 lg:grid-cols-2">
           {textArea('invoiceNotes', t('Invoice notes'))}
           {textArea('invoiceTerms', t('Invoice terms'))}
+          <Field
+            label={t('Quote introduction')}
+            hint={t('Printed above the items of new quotes, e.g. “Further to your request…”.')}
+            className="lg:col-span-2"
+          >
+            {(id) => (
+              <Textarea
+                id={id}
+                value={d.quoteIntro ?? ''}
+                onChange={(e) => setDefaults({ quoteIntro: e.target.value })}
+                rows={2}
+                dir="auto"
+              />
+            )}
+          </Field>
           {textArea('quoteNotes', t('Quote notes'))}
           {textArea('quoteTerms', t('Quote terms'))}
           {textArea('creditNotes', t('Credit note notes'))}

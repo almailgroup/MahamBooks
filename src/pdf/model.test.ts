@@ -6,6 +6,7 @@ import { composeBankDetails } from '@/features/company/bank';
 import {
   buildRenderModel,
   documentLanguage,
+  LOGO_SCALE,
   paymentLinkOf,
   printedBankDetails,
   printsAsDraft,
@@ -13,6 +14,7 @@ import {
   showsAmountInWords,
 } from './model';
 import { sampleClient, sampleCompany, sampleDocument, sampleGoods } from './sample';
+import { ltr } from './bidi';
 
 const company = sampleCompany();
 const client = sampleClient(company.id);
@@ -505,5 +507,111 @@ describe('buildRenderModel: orders and delivery notes', () => {
 
   it('refuses to print bills, which are the vendor’s documents', () => {
     expect(() => model('en', { type: 'bill' })).toThrow();
+  });
+});
+
+describe('buildRenderModel: designs per type and layout', () => {
+  const LOGO = 'data:image/png;base64,TE9HTw==';
+  const PICTURE = 'data:image/png;base64,UElD';
+  const withLogo: Company = { ...company, branding: { ...company.branding, logo: LOGO } };
+  const designed = (branding: Partial<Company['branding']>): Company => ({
+    ...withLogo,
+    branding: { ...withLogo.branding, ...branding },
+  });
+  const quote = (
+    c: Company,
+    overrides: Partial<InvoiceDocument> = {},
+    language: DocumentLanguage = 'en',
+  ) =>
+    buildRenderModel(sampleDocument(c, client, 'quote', overrides, language), c, client, {
+      language,
+    });
+
+  it('prints as before when no design or layout is set', () => {
+    for (const type of ['invoice', 'quote', 'credit'] as const) {
+      const m = buildRenderModel(sampleDocument(withLogo, client, type), withLogo, client);
+      expect(m.accent).toBe(withLogo.branding.accentColor);
+      expect(m.company.logo).toBe(LOGO);
+      expect(m.logo).toEqual({ scale: 1, row: null });
+      expect(m.intro).toBe('');
+      expect(m.acceptance).toBe(false);
+      expect(m.columns).toMatchObject({ sku: false, images: false });
+      expect(m.items.every((i) => i.sku === '' && i.image === null)).toBe(true);
+    }
+    // Settings at their defaults change nothing either.
+    const defaults = designed({ layout: { logoSize: 'medium', showSku: false }, byType: {} });
+    expect(quote(defaults)).toEqual(quote(withLogo));
+  });
+
+  it('takes the colour from the document, then its type, then the company', () => {
+    const c = designed({ byType: { quote: { accentColor: '#0f766e' } } });
+    expect(quote(c).accent).toBe('#0f766e');
+    expect(quote(c, { accentColor: '#be123c' }).accent).toBe('#be123c');
+    expect(buildRenderModel(sampleDocument(c, client), c, client).accent).toBe(
+      c.branding.accentColor,
+    );
+    // The template gallery's colour still wins.
+    const preview = buildRenderModel(sampleDocument(c, client, 'quote'), c, client, {
+      accent: '#111111',
+    });
+    expect(preview.accent).toBe('#111111');
+  });
+
+  it('prints an SKU column for lines that have one, when the layout shows it', () => {
+    const c = designed({ byType: { quote: { layout: { showSku: true } } } });
+    const m = quote(c);
+    expect(m.columns.sku).toBe(true);
+    expect(m.items.map((i) => i.sku)).toEqual(['DSG-101', 'PRT-A4-100', 'ENV-C5', 'DLV-KW', '']);
+    // Only quotes have it here; invoices keep the company's layout.
+    expect(buildRenderModel(sampleDocument(c, client), c, client).columns.sku).toBe(false);
+    // Lines without SKUs (documents from before) print no column.
+    const old = sampleDocument(c, client, 'quote');
+    const bare = { ...old, items: old.items.map(({ sku: _sku, ...line }) => line) };
+    expect(buildRenderModel(bare, c, client).columns.sku).toBe(false);
+    // In Arabic documents the code reads left to right.
+    expect(quote(c, {}, 'ar').items[0].sku).toBe(ltr('DSG-101'));
+  });
+
+  it('moves the logo to a line of its own and scales it', () => {
+    const c = designed({ layout: { logoPosition: 'center', logoSize: 'large' } });
+    const m = buildRenderModel(sampleDocument(c, client), c, client);
+    expect(m.logo).toEqual({ scale: LOGO_SCALE.large, row: { src: LOGO, align: 'center' } });
+    // The template then prints its header as it does without a logo.
+    expect(m.company.logo).toBeNull();
+    const small = designed({ layout: { logoSize: 'small' } });
+    expect(buildRenderModel(sampleDocument(small, client), small, client).logo).toEqual({
+      scale: LOGO_SCALE.small,
+      row: null,
+    });
+    // No logo, no line for it.
+    const none = designed({ logo: null, layout: { logoPosition: 'end' } });
+    expect(buildRenderModel(sampleDocument(none, client), none, client).logo.row).toBeNull();
+  });
+
+  it('prints the acceptance box on quotes and proformas only', () => {
+    const c = designed({ layout: { showAcceptance: true } });
+    expect(quote(c).acceptance).toBe(true);
+    const of = (type: 'invoice' | 'credit' | 'proforma') =>
+      buildRenderModel(sampleDocument(c, client, 'invoice', { type }), c, client).acceptance;
+    expect([of('proforma'), of('invoice'), of('credit')]).toEqual([true, false, false]);
+    expect(quote(c, {}, 'ar-en').labels.customerAcceptance).toBe('قبول العميل');
+  });
+
+  it('prints the quote’s introduction', () => {
+    expect(quote(withLogo, { intro: '  Further to your request:  ' }).intro).toBe(
+      'Further to your request:',
+    );
+  });
+
+  it('prints item pictures only when the layout shows them', () => {
+    const doc = sampleDocument(withLogo, client, 'quote');
+    const items = doc.items.map((item, i) => (i === 0 ? { ...item, productId: 'p1' } : item));
+    const pictures = { p1: PICTURE };
+    const off = buildRenderModel({ ...doc, items }, withLogo, client, { itemImages: pictures });
+    expect(off.columns.images).toBe(false);
+    const c = designed({ layout: { showItemImages: true } });
+    const on = buildRenderModel({ ...doc, items }, c, client, { itemImages: pictures });
+    expect(on.columns.images).toBe(true);
+    expect(on.items.map((i) => i.image)).toEqual([PICTURE, null, null, null, null]);
   });
 });

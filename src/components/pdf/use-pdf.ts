@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Client, Company, DocumentLanguage } from '@/db/types';
 import { buildRenderModel, qrLinkOf, type RenderableDocument, type RenderModel } from '@/pdf/model';
 import { renderPdf } from '@/pdf/client';
+import { documentTemplate } from '@/pdf/template-resolve';
 
 const qrCache = new Map<string, string>();
 
@@ -43,7 +44,7 @@ export async function generatePdf(
   templateId?: string | null,
 ): Promise<{ blob: Blob; model: RenderModel }> {
   const model = await prepareModel(doc, company, client);
-  const blob = await renderPdf(model, templateId ?? doc.templateId ?? company.branding.templateId);
+  const blob = await renderPdf(model, templateId ?? documentTemplate(doc, company));
   return { blob, model };
 }
 

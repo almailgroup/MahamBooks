@@ -21,6 +21,7 @@ import { Combobox } from '@/components/ui/combobox';
 import { CurrencySelect } from '@/components/fields';
 import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { useLivePdf } from '@/components/pdf/use-pdf';
+import { documentTemplate } from '@/pdf/template-resolve';
 import { LineItemsEditor } from '@/apps/books/features/editor/line-items';
 import { TotalsPanel } from '@/apps/books/features/editor/totals-panel';
 import { ClientDialog } from '@/features/clients/client-dialog';
@@ -119,7 +120,7 @@ export default function RecurringEditorPage() {
       : null,
     company,
     client,
-    profile?.template.templateId ?? company.branding.templateId,
+    documentTemplate({ type: 'invoice', templateId: profile?.template.templateId }, company),
   );
 
   const dirty = profile !== null && JSON.stringify(profile) !== original;

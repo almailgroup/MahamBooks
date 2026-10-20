@@ -134,6 +134,10 @@ and the compliance calendar (Maham Compliance).
   live preview while you type. The signature can be drawn on the screen and
   printed in blue ink (Settings → Company profile → Branding). Drafts print
   with a DRAFT watermark instead of the stamp and signature.
+- Quotes and credit notes can have a design of their own (Templates →
+  Quotes): template, colour, logo size and place, an SKU column and a box for
+  the customer to accept. Quotes can start with an introduction (Settings →
+  Invoice defaults), and any document can have its own colour.
 - Several companies in one app.
 - **Accounts and teams**: keep a company in the cloud, use it on every device
   and invite your accountant and staff by a link on WhatsApp or email, each

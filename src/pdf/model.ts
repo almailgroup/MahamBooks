@@ -4,6 +4,8 @@ import type {
   DocumentLanguage,
   InvoiceDocument,
   ISODate,
+  LogoPosition,
+  LogoSize,
   PageSize,
 } from '@/db/types';
 import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
@@ -24,6 +26,7 @@ import type { FontId } from './fonts';
 import { documentLabels, isRtlLanguage, type LabelKey, type Labels } from './labels';
 import { ltr } from './bidi';
 import { hasPrices, isPrintable, type PrintableDocumentType } from '@/lib/document-types';
+import { documentAccent, documentLayout } from './template-resolve';
 
 export interface RenderItem {
   kind: 'item' | 'heading';
@@ -47,6 +50,10 @@ export interface RenderItem {
   discount: string;
   tax: string;
   amount: string;
+  /** The SKU the line was picked with, when the layout prints SKUs; empty otherwise. */
+  sku: string;
+  /** Picture of the item (a data URL) when the layout prints them; null otherwise. */
+  image: string | null;
 }
 
 export type TotalKind =
@@ -141,6 +148,10 @@ export interface RenderModel {
     condition: boolean;
     unit: boolean;
     serial: boolean;
+    /** The layout prints SKUs and a line has one. */
+    sku: boolean;
+    /** The layout prints item pictures and an item has one. */
+    images: boolean;
   };
   totals: RenderTotal[];
   grandTotal: RenderTotal;
@@ -158,6 +169,20 @@ export interface RenderModel {
    * (blank lines to fill in by hand until it is marked as delivered).
    */
   receipt: { name: string; civilId: string; date: string } | null;
+  /** Quotes: the introduction printed above the items; empty when there is none. */
+  intro: string;
+  /** Quotes and proformas: a box for the customer to accept, sign and date. */
+  acceptance: boolean;
+  /** The logo's size and place from the document's design (see DocumentLayout). */
+  logo: {
+    /** Against the size the template gives it (1 is as designed). */
+    scale: number;
+    /**
+     * The logo on a line of its own above the header. `company.logo` is
+     * then null, so the template prints its header as it does without one.
+     */
+    row: { src: string; align: LogoPosition } | null;
+  };
   notes: string;
   terms: string;
   footer: string;
@@ -196,7 +221,12 @@ export type RenderableDocument = Pick<
   | 'receiverName'
   | 'receiverCivilId'
 > &
-  Partial<Pick<InvoiceDocument, 'retentionPercent' | 'retentionReleases' | 'posting'>> & {
+  Partial<
+    Pick<
+      InvoiceDocument,
+      'retentionPercent' | 'retentionReleases' | 'posting' | 'accentColor' | 'intro'
+    >
+  > & {
     totals: Pick<InvoiceDocument['totals'], 'paid'>;
   };
 
@@ -252,7 +282,12 @@ export interface BuildModelOptions {
   accent?: string;
   /** Language override (template gallery previews). */
   language?: DocumentLanguage;
+  /** Pictures of the items by product id, printed when the layout shows them. */
+  itemImages?: Record<string, string>;
 }
+
+/** How much larger or smaller each logo size prints than the template's own. */
+export const LOGO_SCALE: Record<LogoSize, number> = { small: 0.75, medium: 1, large: 1.35 };
 
 /** Numbers and dates in Arabic documents: Arabic words, Western digits. */
 export const ARABIC_LOCALE = 'ar-KW-u-nu-latn';
@@ -490,13 +525,18 @@ export function buildRenderModel(
     meta.push(row('deliveryPlace', clean(doc.deliveryPlace)));
   }
 
+  const layout = documentLayout(doc, company);
+  const images = layout.showItemImages ? (options.itemImages ?? {}) : {};
   const items: RenderItem[] = doc.items.map((item, i) => {
     const named = names(clean(item.name), item.nameAr, language);
     const description = clean(item.description);
+    const sku = layout.showSku ? clean(item.sku) : '';
     const base = {
       title: named.name || description,
       titleSecondary: named.nameSecondary,
       detail: named.name ? description : '',
+      sku: sku && rtl ? ltr(sku) : sku,
+      image: (item.productId && images[item.productId]) || null,
     };
     if (item.kind === 'heading') {
       return {
@@ -512,6 +552,8 @@ export function buildRenderModel(
         discount: '',
         tax: '',
         amount: '',
+        sku: '',
+        image: null,
       };
     }
     const line = result.lines[i];
@@ -752,6 +794,11 @@ export function buildRenderModel(
     company.nameAr,
     language,
   );
+  const position = layout.logoPosition;
+  const logoRow =
+    company.branding.logo && (position === 'start' || position === 'center' || position === 'end')
+      ? { src: company.branding.logo, align: position }
+      : null;
   const titleKey = TITLE_KEYS[type];
   const title = labels[titleKey];
   const titleSecondary = en(titleKey);
@@ -774,7 +821,7 @@ export function buildRenderModel(
     recipientLabelSecondary: en(RECIPIENT_KEYS[type]),
     company: {
       ...companyNames,
-      logo: company.branding.logo,
+      logo: logoRow ? null : company.branding.logo,
       addressLines: formatAddressLines(company.address, addressLocale),
       email: clean(company.email),
       phone: unbreakable(company.phone),
@@ -804,6 +851,8 @@ export function buildRenderModel(
       condition: items.some((i) => i.condition !== ''),
       unit: !priced && items.some((i) => i.unit !== ''),
       serial: !priced && items.some((i) => i.serialNo !== ''),
+      sku: items.some((i) => i.sku !== ''),
+      images: items.some((i) => i.image !== null),
     },
     totals,
     grandTotal,
@@ -814,13 +863,19 @@ export function buildRenderModel(
     signatures,
     watermark: draft ? 'draft' : null,
     receipt,
+    intro: clean(doc.intro),
+    acceptance: Boolean(layout.showAcceptance) && (type === 'quote' || type === 'proforma'),
+    logo: {
+      scale: LOGO_SCALE[layout.logoSize ?? 'medium'] ?? 1,
+      row: logoRow,
+    },
     notes: clean(doc.notes),
     terms: clean(doc.terms),
     footer: clean(doc.footer),
     payment: priced ? payment : null,
     currency,
     pageSize: company.defaults.pageSize,
-    accent: normalizeHex(options.accent ?? company.branding.accentColor),
+    accent: normalizeHex(options.accent ?? documentAccent(doc, company)),
     fontId: (company.branding.fontId as FontId | null) ?? null,
     documentTitle: `${titleSecondary || title} ${clean(doc.number)}`.trim(),
   };

@@ -28,7 +28,7 @@ export const CRM: SuiteApp = {
   tone: 'sky',
   home: '/crm',
   owns: ['crm'],
-  shares: ['clients', 'quotes', 'sales-orders'],
+  shares: ['clients', 'quotes', 'sales-orders', 'templates'],
   nav: [
     { kind: 'link', to: '/', label: msg('Home'), icon: House, end: true },
     {

@@ -1,5 +1,6 @@
 import type { DiscountType, TaxKind, TaxLine } from '@/lib/calc';
 import type { CsvMapping } from '@/lib/banking/statement';
+import type { PrintableDocumentType } from '@/lib/document-types';
 
 export type { DiscountType, TaxKind, TaxLine };
 
@@ -145,6 +146,8 @@ export interface DocumentDefaults {
    * payment link. Whether it prints at all is `PaymentSettings.showQrCode`.
    */
   qrContent?: QrContent;
+  /** A few lines new quotes start with, printed above the items. Missing means none. */
+  quoteIntro?: string;
 }
 
 /** What a printed QR code opens. */
@@ -176,6 +179,46 @@ export interface Branding {
   signatureInk?: SignatureInk;
   /** The signature as uploaded (at most 600 px), kept while it prints in blue. */
   signatureOriginal?: string | null;
+  /** Layout of the company's documents (Templates). Missing prints as before. */
+  layout?: DocumentLayout;
+  /**
+   * Types of document with a design of their own (quotes, credit notes).
+   * A type missing here, and what its design leaves out, use the template,
+   * colour and layout above.
+   */
+  byType?: Partial<Record<PrintableDocumentType, DocumentDesign>>;
+}
+
+/** How large the logo prints, against the size its template gives it. */
+export type LogoSize = 'small' | 'medium' | 'large';
+
+/**
+ * The logo on a line of its own above the header: at the start (left in
+ * English, right in Arabic), in the centre or at the end.
+ */
+export type LogoPosition = 'start' | 'center' | 'end';
+
+/** Layout choices of a document design; each one missing prints as before. */
+export interface DocumentLayout {
+  /** Missing is medium: the template's own size. */
+  logoSize?: LogoSize;
+  /** Missing is where the template puts the logo. */
+  logoPosition?: LogoPosition;
+  /** A column with the SKU of lines picked from an item that has one. */
+  showSku?: boolean;
+  /** A picture beside each item that has one. */
+  showItemImages?: boolean;
+  /** Quotes and proformas: a box for the customer to accept, sign and date. */
+  showAcceptance?: boolean;
+}
+
+/** A type of document's own design; what it leaves out follows the company's. */
+export interface DocumentDesign {
+  templateId?: string;
+  /** Hex colour, e.g. "#0f766e". */
+  accentColor?: string;
+  /** Replaces the company's layout as a whole. */
+  layout?: DocumentLayout;
 }
 
 export interface PaymentSettings {
@@ -770,6 +813,8 @@ export interface LineItem {
   sourceLineId?: ID;
   /** Stock items: warehouse the goods leave from or arrive at; null uses the default one. */
   warehouseId?: ID | null;
+  /** The item's SKU when the line was picked from it (printed in the SKU column). */
+  sku?: string;
 }
 
 export type ItemCondition = 'new' | 'used';
@@ -826,6 +871,10 @@ export interface InvoiceDocument {
   privateNotes: string;
   /** Template override; null uses the company default. */
   templateId: string | null;
+  /** Brand colour of this document; missing uses its type's or the company's. */
+  accentColor?: string;
+  /** Quotes: a few lines printed above the items, e.g. "Further to your request…". */
+  intro?: string;
   /** Cached result of the calculation; recomputed on every save. */
   totals: DocumentTotals;
   sentAt: Timestamp | null;
