@@ -1,8 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { useNavigate } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { getCurrentCompanyId, setCurrentCompanyId } from '@/db/records';
-import type { Company, DocumentType, ISODate } from '@/db/types';
+import type { Company, DocumentType, ID, ISODate } from '@/db/types';
+import { discardUnsavedChanges, hasUnsavedChanges } from '@/hooks/use-unsaved-guard';
+import { useConfirm } from '@/components/ui/overlay';
+import { localName } from '@/i18n/names';
 import {
   formatDate,
   formatDateTime,
@@ -17,9 +22,14 @@ interface CompanyContextValue {
   company: Company;
   companies: Company[];
   switchCompany: (id: string) => Promise<void>;
+  /** Makes a company current; done once the pages are shown with it. */
+  showCompany: (id: string) => Promise<void>;
 }
 
 const CompanyContext = createContext<CompanyContextValue | null>(null);
+
+/** Callers of showCompany, until their company is the one shown. */
+let waiting: { id: ID; done: () => void }[] = [];
 
 /**
  * Loads the companies and the active one. Renders `fallback` while loading and
@@ -41,11 +51,31 @@ export function CompanyProvider({
     await setCurrentCompanyId(id);
   }, []);
 
+  const showCompany = useCallback(
+    (id: string) =>
+      new Promise<void>((resolve, reject) => {
+        waiting.push({ id, done: resolve });
+        setCurrentCompanyId(id).catch((error: unknown) => {
+          waiting = waiting.filter((w) => w.done !== resolve);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        });
+      }),
+    [],
+  );
+
   const value = useMemo<CompanyContextValue | null>(() => {
     if (!companies || companies.length === 0) return null;
     const company = companies.find((c) => c.id === currentId) ?? companies[0];
-    return { company, companies, switchCompany };
-  }, [companies, currentId, switchCompany]);
+    return { company, companies, switchCompany, showCompany };
+  }, [companies, currentId, switchCompany, showCompany]);
+
+  const shownId = value?.company.id;
+  useEffect(() => {
+    if (!shownId || !waiting.length) return;
+    const ready = waiting.filter((w) => w.id === shownId);
+    waiting = waiting.filter((w) => w.id !== shownId);
+    for (const w of ready) w.done();
+  }, [shownId]);
 
   if (companies === undefined || currentId === undefined) return <>{fallback}</>;
   if (!value) return <>{onboarding}</>;
@@ -60,6 +90,44 @@ export function useCompanyContext(): CompanyContextValue {
 
 export function useCompany(): Company {
   return useCompanyContext().company;
+}
+
+/**
+ * Opens a page of another company: asks first when a form has changes not
+ * saved yet, makes the company current, then goes to the page (never the
+ * other way round, so the page doesn't flash "could not be found") and
+ * says which company is open now. False when nothing was opened.
+ */
+export function useOpenInCompany(): (companyId: ID, to: string) => Promise<boolean> {
+  const { company, companies, showCompany } = useCompanyContext();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  return useCallback(
+    async (companyId: ID, to: string) => {
+      if (companyId === company.id) {
+        navigate(to);
+        return true;
+      }
+      const target = companies.find((c) => c.id === companyId);
+      if (!target) return false;
+      if (hasUnsavedChanges()) {
+        const ok = await confirm({
+          title: t('Discard unsaved changes?'),
+          description: t('You have changes that have not been saved yet.'),
+          confirmLabel: t('Discard changes'),
+          cancelLabel: t('Keep editing'),
+          danger: true,
+        });
+        if (!ok) return false;
+        discardUnsavedChanges();
+      }
+      await showCompany(companyId);
+      navigate(to);
+      toast.success(t('{company} is open now.', { company: localName(target) }));
+      return true;
+    },
+    [company.id, companies, confirm, navigate, showCompany],
+  );
 }
 
 /**

@@ -5,6 +5,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowRight,
+  Building2,
   Clock,
   CornerDownLeft,
   FileText,
@@ -20,7 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { useCompany, useFormat } from '@/app/company';
+import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { CREATE_ACTIONS } from '@/features/shell/create';
 import { APPS } from '@/suite/apps';
@@ -31,13 +32,14 @@ import { msg, t, tp } from '@/i18n';
 import { useTheme } from '@/features/theme/provider';
 import { chooseTheme } from '@/lib/themes';
 import { makeEntry, searchEntries, type SearchEntry, type SearchKind } from './rank';
-import { recordEntries, staticEntries } from './sources';
+import { otherCompanyEmployeeEntries, recordEntries, staticEntries } from './sources';
 import { isPeopleItem, loadRecent, rememberRecent, type RecentItem } from './recent';
 import { toast } from 'sonner';
 import { useCloud } from '@/cloud/store';
 import { useCloudStatus } from '@/cloud/hooks';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { syncLabel } from '@/features/cloud/sync-status';
+import { useEmployeesEverywhere } from '@/features/people/hooks';
 
 const SECTION_LABELS: Record<SearchKind, string> = {
   recent: msg('Recent'),
@@ -47,6 +49,7 @@ const SECTION_LABELS: Record<SearchKind, string> = {
   vendor: msg('Vendors'),
   item: msg('Products & services'),
   employee: msg('Employees'),
+  elsewhere: msg('Employees in other companies'),
   document: msg('Documents'),
 };
 
@@ -58,6 +61,7 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   vendor: Truck,
   item: Package,
   employee: IdCard,
+  elsewhere: Building2,
   document: FileText,
 };
 
@@ -239,10 +243,18 @@ function PaletteBody({
     // `language` changes the names and words shown.
     [company, fmt, language],
   );
-  const records = useMemo(
-    () => (hidePeople ? found?.filter((entry) => !isPeopleItem(entry)) : found),
-    [found, hidePeople],
-  );
+  // Employees of the other companies switched on for the search across
+  // companies: each judged by its own role, whatever the open company's is.
+  const everywhere = useEmployeesEverywhere();
+  const openInCompany = useOpenInCompany();
+  const records = useMemo(() => {
+    const own = hidePeople ? found?.filter((entry) => !isPeopleItem(entry)) : found;
+    if (!own || !everywhere) return own;
+    return [
+      ...own,
+      ...otherCompanyEmployeeEntries(everywhere.employees, everywhere.companies, company.id),
+    ];
+  }, [found, hidePeople, everywhere, company.id]);
 
   const sections = useMemo<Section[]>(() => {
     const all = records ? [...fixed, ...records] : fixed;
@@ -307,6 +319,18 @@ function PaletteBody({
     }
     if (entry.key === SYNC_KEY) {
       void manager?.syncNow(company.id).then(() => toast.success(t('Sync finished')));
+      return;
+    }
+    if (entry.companyId && entry.companyId !== company.id) {
+      // Recent in the company it belongs to, where it is one of its employees.
+      rememberRecent(entry.companyId, {
+        key: `employee:${entry.key.slice('elsewhere:'.length)}`,
+        kind: 'employee',
+        title: entry.title,
+        subtitle: t('Employee'),
+        to: entry.to,
+      });
+      void openInCompany(entry.companyId, entry.to);
       return;
     }
     rememberRecent(company.id, {

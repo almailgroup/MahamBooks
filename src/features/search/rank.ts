@@ -1,7 +1,16 @@
 import { amountQuery, compactSearch, normalizeSearch } from './normalize';
 
 export type SearchKind =
-  'page' | 'action' | 'client' | 'vendor' | 'item' | 'employee' | 'document' | 'recent';
+  | 'page'
+  | 'action'
+  | 'client'
+  | 'vendor'
+  | 'item'
+  | 'employee'
+  /** An employee of another company on this device (the search across companies). */
+  | 'elsewhere'
+  | 'document'
+  | 'recent';
 
 /** One thing the command palette can find. Text fields are already normalised. */
 export interface SearchEntry {
@@ -14,6 +23,8 @@ export interface SearchEntry {
   /** Amount shown at the end of the row. */
   amount?: string;
   to: string;
+  /** The company `to` is a page of, when it is not the open one. */
+  companyId?: string;
   /** Names in every language (normalised): the best matches. */
   names: string[];
   /** Numbers, emails, phones, the customer on a document (normalised). */
@@ -33,6 +44,7 @@ export interface EntryInput {
   subtitle?: string;
   amount?: string;
   to: string;
+  companyId?: string;
   names: (string | undefined | null)[];
   terms?: (string | undefined | null)[];
   numbers?: (string | undefined | null)[];
@@ -55,6 +67,7 @@ export function makeEntry(input: EntryInput): SearchEntry {
     subtitle: input.subtitle,
     amount: input.amount,
     to: input.to,
+    ...(input.companyId ? { companyId: input.companyId } : {}),
     names: clean(input.names),
     terms: clean([...(input.terms ?? []), ...numbers]),
     compact: [...new Set(numbers.map(compactSearch).filter(Boolean))],

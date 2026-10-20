@@ -547,3 +547,26 @@ export async function savePeopleSettings(input: PeopleSettings): Promise<PeopleS
   });
   return settings;
 }
+
+/**
+ * Lets the company's employees be found from the other companies on this
+ * device (People → All companies, and search), or stops it.
+ */
+export async function setGroupSearch(companyId: ID, on: boolean): Promise<PeopleSettings> {
+  return db.transaction('rw', [db.peopleSettings, db.activities], async () => {
+    const before = await getPeopleSettings(companyId);
+    if ((before.groupSearch === true) === on) return before;
+    const settings = {
+      ...normalizePeopleSettings({ ...before, groupSearch: on }),
+      updatedAt: nowStamp(),
+    };
+    await db.peopleSettings.put(settings);
+    // Private, like the rest of payroll and people.
+    await logActivity(companyId, 'payroll', settings.id, 'settings', {
+      text: on
+        ? msg('Employees included in the search across companies')
+        : msg('Employees left out of the search across companies'),
+    });
+    return settings;
+  });
+}

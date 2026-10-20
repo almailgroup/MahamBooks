@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { accessMap } from '@/suite/apps';
+import { createCompany } from '@/db/defaults';
+import { createEmployee } from '@/db/people';
+import type { CloudLink } from '@/cloud/types';
+import type { MemberRole } from '@/cloud/roles';
+import { peopleCompanies } from '@/features/people/all-companies';
 import { searchEntries } from './rank';
-import { staticEntries } from './sources';
+import { otherCompanyEmployeeEntries, staticEntries } from './sources';
 
 const keys = (...args: Parameters<typeof staticEntries>) =>
   staticEntries(...args).map((e) => e.key);
@@ -75,5 +80,63 @@ describe('the pages and actions search finds', () => {
   it('show VAT returns only when taxes are on', () => {
     expect(keys(true)).toContain('page:/vat');
     expect(keys(false)).not.toContain('page:/vat');
+  });
+});
+
+describe('employees of other companies', () => {
+  const me = 'user-me';
+  const company = (id: string, name: string) => createCompany({ id, name });
+  const link = (companyId: string, role: MemberRole): CloudLink => ({
+    companyId,
+    userId: me,
+    role,
+    status: 'ready',
+    cursor: 0,
+    name: companyId,
+    linkedAt: '2026-10-01T09:00:00Z',
+    lastSyncAt: null,
+    lastError: null,
+    lastErrorAt: null,
+  });
+  const companies = [
+    company('open', 'Made-up Open Co'),
+    company('owned', 'Made-up Owned Co'),
+    company('staffed', 'Made-up Staffed Co'),
+    company('off', 'Made-up Off Co'),
+  ];
+  const links = [link('owned', 'owner'), link('staffed', 'staff'), link('off', 'owner')];
+  const switchedOn = ['open', 'owned', 'staffed'].map((companyId) => ({
+    companyId,
+    groupSearch: true,
+  }));
+  const employees = [
+    createEmployee('open', { id: 'e-open', name: 'Test Person Open' }),
+    createEmployee('owned', { id: 'e-owned', name: 'Test Person Owned', jobTitle: 'Guard' }),
+    createEmployee('owned', { id: 'e-left', name: 'Test Person Left', status: 'left' }),
+    createEmployee('staffed', { id: 'e-staffed', name: 'Test Person Staffed' }),
+    createEmployee('off', { id: 'e-off', name: 'Test Person Off' }),
+  ];
+
+  it('never come from a company the person may not see or didn’t switch on', () => {
+    const { included } = peopleCompanies(companies, links, me, switchedOn);
+    const entries = otherCompanyEmployeeEntries(employees, included, 'open');
+    expect(entries.map((e) => e.key)).toEqual(['elsewhere:e-owned']);
+    expect(entries[0]).toMatchObject({
+      kind: 'elsewhere',
+      companyId: 'owned',
+      to: '/employees/e-owned',
+      subtitle: 'Made-up Owned Co · Guard',
+    });
+    expect(searchEntries(entries, 'test person').map((e) => e.key)).toEqual(['elsewhere:e-owned']);
+    // Found by the company's name too.
+    expect(searchEntries(entries, 'owned co').map((e) => e.key)).toEqual(['elsewhere:e-owned']);
+  });
+
+  it('are nothing when no other company is switched on', () => {
+    const { included } = peopleCompanies(companies, links, me, [
+      { companyId: 'open', groupSearch: true },
+    ]);
+    expect(otherCompanyEmployeeEntries(employees, included, 'open')).toEqual([]);
+    expect(otherCompanyEmployeeEntries(employees, [], 'open')).toEqual([]);
   });
 });

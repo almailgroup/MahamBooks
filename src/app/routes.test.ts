@@ -134,7 +134,14 @@ const LEGACY_PATHS = [
 ];
 
 /** What the suite added. */
-const SUITE_PATHS = ['/books', '/people', '/people/directory', '/crm', '/crm/prospects'];
+const SUITE_PATHS = [
+  '/books',
+  '/people',
+  '/people/directory',
+  '/people/all',
+  '/crm',
+  '/crm/prospects',
+];
 
 /** Real addresses, as bookmarks and emails have them. */
 const SAMPLE_URLS = [
@@ -156,6 +163,7 @@ const SAMPLE_URLS = [
   '/settings/team',
   '/people',
   '/people/directory',
+  '/people/all',
   '/crm',
   '/crm/prospects',
   '/invite/abc',

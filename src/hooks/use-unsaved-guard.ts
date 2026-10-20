@@ -9,9 +9,21 @@ import { useConfirm } from '@/components/ui/overlay';
  */
 const unsaved = new Set<object>();
 
+/** Forms whose changes the person chose to lose: they no longer ask before leaving. */
+const discarded = new WeakSet<object>();
+
 /** Whether a form on the page has changes that have not been saved yet. */
 export function hasUnsavedChanges(): boolean {
   return unsaved.size > 0;
+}
+
+/**
+ * After the person has agreed to lose the changes (opening another
+ * company's page): the forms let the next page open without asking again.
+ */
+export function discardUnsavedChanges(): void {
+  for (const key of unsaved) discarded.add(key);
+  unsaved.clear();
 }
 
 /**
@@ -24,7 +36,10 @@ export function useUnsavedGuard(dirty: boolean) {
   const token = useRef({});
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
-      dirty && !skip.current && currentLocation.pathname !== nextLocation.pathname,
+      dirty &&
+      !skip.current &&
+      !discarded.has(token.current) &&
+      currentLocation.pathname !== nextLocation.pathname,
   );
 
   useEffect(() => {
@@ -41,9 +56,9 @@ export function useUnsavedGuard(dirty: boolean) {
   useEffect(() => {
     if (!dirty) return;
     const key = token.current;
-    if (!skip.current) unsaved.add(key);
+    if (!skip.current && !discarded.has(key)) unsaved.add(key);
     const handler = (event: BeforeUnloadEvent) => {
-      if (skip.current) return;
+      if (skip.current || discarded.has(key)) return;
       event.preventDefault();
       event.returnValue = '';
     };

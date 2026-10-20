@@ -2,6 +2,7 @@ import { lazy, type ReactNode } from 'react';
 import type { RouteObject } from 'react-router';
 import { Bare } from '@/app/route-shell';
 import { AppGate } from '@/suite/app-gate';
+import { AnyCompanyPeopleGate } from '@/features/cloud/role-gates';
 
 /**
  * Maham People's pages: employees, payroll, leave and loans. Only roles that
@@ -10,6 +11,7 @@ import { AppGate } from '@/suite/app-gate';
 
 const Overview = lazy(() => import('./pages/overview/index'));
 const Directory = lazy(() => import('./pages/overview/directory'));
+const AllCompanies = lazy(() => import('./pages/overview/all-companies'));
 const EmployeeList = lazy(() => import('./pages/people/list'));
 const EmployeeDetail = lazy(() => import('./pages/people/detail'));
 const EmployeeForm = lazy(() => import('./pages/people/form'));
@@ -59,6 +61,15 @@ export const peoplePrintRoutes: RouteObject[] = [
 export const peopleRoutes: RouteObject[] = [
   page('people', <Overview />),
   page('people/directory', <Directory />),
+  // Employees of several companies: each company's own role decides, not the open one's.
+  {
+    path: 'people/all',
+    element: (
+      <AnyCompanyPeopleGate>
+        <AllCompanies />
+      </AnyCompanyPeopleGate>
+    ),
+  },
   page('employees', <EmployeeList />),
   page('employees/new', <EmployeeForm key="new" />),
   page('employees/:id', <EmployeeDetail />),

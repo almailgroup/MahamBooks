@@ -135,7 +135,11 @@ test('a company type is chosen at set-up, changed in Settings and shown with the
   await expect(page.getByText('Made-up Cleaning is ready.')).toBeVisible();
 
   await page.goto('./#/settings/companies');
-  const rows = page.getByRole('main').getByRole('listitem');
+  // The companies, not the employee search's switches below them.
+  const rows = page
+    .getByRole('main')
+    .getByRole('listitem')
+    .filter({ hasNot: page.getByRole('switch') });
   await expect(rows.filter({ hasText: 'Made-up Guarding' })).toContainText('Facility management');
   await expect(rows.filter({ hasText: 'Made-up Cleaning' })).toContainText('Facility management');
 

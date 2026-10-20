@@ -81,6 +81,31 @@ owners and admins in Settings → Team):
 - CRM's first version only reads quotes and customers, which staff may already
   change in Books.
 
+## Employees across companies
+
+People → All companies (`/people/all`) lists the employees of several
+companies on this device at once, and search shows them under _Employees in
+other companies_. It reads only what is already on the device; nothing new
+is asked of the server.
+
+- **Off until switched on.** Each company is switched on in Settings →
+  Companies (_Employee search across companies_) or on the page itself; the
+  switch is kept in the company's employee settings (`groupSearch`), so it
+  travels with the company and its backups. Until two companies are on,
+  Employees shows no link to the page.
+- **Each company decides for itself.** A company's employees show when the
+  person sees People there, from that company's own link: owner, admin or
+  accountant, signed in with the account the company was linked with, or a
+  company kept on this device only. Staff and viewer companies, companies no
+  longer shared and another account's companies on a shared computer never
+  show, whatever the role in the company that is open
+  (`src/features/people/all-companies.ts`).
+- **Only who works where.** The page and its spreadsheet show names, job,
+  department and category (the spreadsheet also phone and email); never pay,
+  IBANs or Civil IDs.
+  Opening someone switches to their company first (asking before unsaved
+  changes are lost), then opens their page there.
+
 ## Code layout
 
 ```

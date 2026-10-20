@@ -10,7 +10,9 @@ import {
   newAllowance,
   saveEmployee,
   savePeopleSettings,
+  setGroupSearch,
 } from './people';
+import { isPrivateRecord } from '@/cloud/roles';
 import { addAttachment } from './purchases';
 import {
   createComplianceDocument,
@@ -202,6 +204,38 @@ describe('people settings', () => {
       auditFilingMonths: 1,
       pifssDueDay: 28,
     });
+  });
+
+  it('leave a company out of the search across companies until it is switched on', async () => {
+    const company = await kuwaitCompany();
+    expect((await getPeopleSettings(company.id)).groupSearch).toBeUndefined();
+    await savePeopleSettings({ ...defaultPeopleSettings(company.id), kuwaitizationTarget: 20 });
+    const logged = () => db.activities.where('companyId').equals(company.id).count();
+    const before = await logged();
+
+    await setGroupSearch(company.id, true);
+    expect(await getPeopleSettings(company.id)).toMatchObject({
+      groupSearch: true,
+      kuwaitizationTarget: 20,
+    });
+    // Saving the compliance settings later keeps it.
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), pifssDueDay: 10 });
+    expect((await getPeopleSettings(company.id)).groupSearch).toBe(true);
+    // Switching it on again changes nothing.
+    await setGroupSearch(company.id, true);
+    await setGroupSearch(company.id, false);
+    expect((await getPeopleSettings(company.id)).groupSearch).toBe(false);
+
+    // Logged twice (on, off), as payroll and people data staff don't see.
+    const activities = await db.activities.where('companyId').equals(company.id).toArray();
+    const mine = activities.filter((a) => a.entity === 'payroll' && a.action === 'settings');
+    expect(await logged()).toBe(before + 3);
+    expect(mine).toHaveLength(2);
+    for (const activity of mine) {
+      expect(isPrivateRecord('activities', activity as unknown as Record<string, unknown>)).toBe(
+        true,
+      );
+    }
   });
 });
 

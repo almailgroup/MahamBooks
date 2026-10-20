@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany, unsentChanges } from '@/db/records';
@@ -10,14 +10,25 @@ import { useCompanyContext } from '@/app/company';
 import { CompanyLogo } from '@/app/layout';
 import { countryName, currencyName } from '@/lib/geo';
 import { companyTypeName } from '@/features/company/company-types';
+import { usePeopleCompanies } from '@/features/people/hooks';
+import { GroupSearchSwitches } from '@/features/people/group-search';
 import { currentLanguage, t } from '@/i18n';
 import { localName } from '@/i18n/names';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/overlay';
 import { SettingsSection } from './shared';
 
 export default function CompaniesSettings() {
+  return (
+    <div className="space-y-6">
+      <CompanyList />
+      <EmployeeSearch />
+    </div>
+  );
+}
+
+function CompanyList() {
   const { company, companies, switchCompany } = useCompanyContext();
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -129,6 +140,34 @@ export default function CompaniesSettings() {
           );
         })}
       </ul>
+    </SettingsSection>
+  );
+}
+
+/**
+ * The switch of each company for the employee search across companies:
+ * shown only where it can find anything, with two companies or more whose
+ * employees the person sees.
+ */
+function EmployeeSearch() {
+  const people = usePeopleCompanies();
+  if (!people || people.eligible.length < 2) return null;
+  return (
+    <SettingsSection
+      id="employee-search"
+      title={t('Employee search across companies')}
+      description={t(
+        'Find the employees of the companies switched on here from any of them: on People → All companies and in search. Salaries, IBANs and Civil IDs aren’t shown there.',
+      )}
+      actions={
+        people.included.length > 1 ? (
+          <ButtonLink to="/people/all" size="sm" variant="outline">
+            <Search /> {t('Search all companies')}
+          </ButtonLink>
+        ) : null
+      }
+    >
+      <GroupSearchSwitches group={people} />
     </SettingsSection>
   );
 }

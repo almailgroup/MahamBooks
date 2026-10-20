@@ -1446,9 +1446,15 @@ export interface PeopleSettings {
   auditFilingMonths: number;
   /** Day of the following month PIFSS contributions are paid by. */
   pifssDueDay: number;
+  /**
+   * The company's employees are found from the other companies on the
+   * device too (People → All companies, and search). Missing or false: only
+   * from this company, as before.
+   */
+  groupSearch?: boolean;
   updatedAt: Timestamp;
 }
-/* Fixed assets                                                               */
+/* Fixed assets                                                              */
 /* -------------------------------------------------------------------------- */
 
 /**

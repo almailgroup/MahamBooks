@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
+  Building2,
   Download,
   FilePlus2,
   FileUp,
@@ -26,7 +27,7 @@ import { countryName } from '@/lib/geo';
 import { currencyPrecision, dec, round } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { cn } from '@/lib/cn';
-import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
+import { useEmployees, usePeopleCompanies, usePeopleSettings } from '@/features/people/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { entryTitle, ExpiryBadge } from '@/features/renewals/display';
 import { ComplianceSettingsDialog } from '@/features/renewals/settings-dialog';
@@ -71,6 +72,8 @@ export default function EmployeeListPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulk, setBulk] = useState<'documents' | 'photos' | null>(null);
   const photos = useEmployeePhotos(employees);
+  // Two companies or more switched on for the search across companies.
+  const everywhere = (usePeopleCompanies()?.included.length ?? 0) > 1;
 
   const on = today();
   const worst = useMemo(() => worstDocuments(register?.entries ?? [], on), [register, on]);
@@ -169,6 +172,11 @@ export default function EmployeeListPage() {
         description={t('Your staff, their papers and end-of-service estimates.')}
         actions={
           <>
+            {everywhere ? (
+              <ButtonLink to="/people/all" variant="outline">
+                <Building2 /> {t('Search all companies')}
+              </ButtonLink>
+            ) : null}
             {employees.length > 0 ? (
               <>
                 <Button variant="outline" onClick={exportCsv}>

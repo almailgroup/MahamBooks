@@ -9,6 +9,7 @@ import type { ReadOnlyState } from '@/components/ui/read-only';
 import { cn } from '@/lib/cn';
 import { useCloudLink } from '@/cloud/hooks';
 import { canSeePeople, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
+import { usePeopleCompanies } from '@/features/people/hooks';
 
 export interface RoleView {
   /** Null for a company kept on this device only. */
@@ -54,6 +55,35 @@ export function PeopleGate({ children }: { children: ReactNode }) {
         description={t(
           'As {role} in this company you don’t see salaries, payroll or employee documents. Ask the owner if you need them.',
           { role: t(ROLE_LABELS[role ?? 'viewer']) },
+        )}
+        action={
+          <Link to="/" className={buttonClass('outline')}>
+            {t('Go to the home page')}
+          </Link>
+        }
+      />
+    </Card>
+  );
+}
+
+/**
+ * Pages of employees of several companies: shown when the person sees
+ * People in at least one company on this device, each company judged by
+ * its own link (never by the role in the company that is open). The page
+ * itself shows only the companies they see.
+ */
+export function AnyCompanyPeopleGate({ children }: { children: ReactNode }) {
+  const group = usePeopleCompanies();
+  // Nothing until the links and the account are known.
+  if (!group) return null;
+  if (group.eligible.length > 0) return <>{children}</>;
+  return (
+    <Card className="mx-auto max-w-xl">
+      <EmptyState
+        icon={<Lock />}
+        title={t('Payroll and people are private')}
+        description={t(
+          'Your role doesn’t show employees in any company on this device. Ask the owner if you need them.',
         )}
         action={
           <Link to="/" className={buttonClass('outline')}>

@@ -1,8 +1,9 @@
 import { db } from '@/db/db';
-import type { Company, DocumentType } from '@/db/types';
+import type { Company, DocumentType, Employee, ID } from '@/db/types';
 import { DOCUMENT_LABELS, DOCUMENT_ROUTES } from '@/app/company';
 import { displayStatus, statusMeta } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
+import { isCurrent } from '@/lib/hr/employees';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
 import { visibleNav } from '@/features/shell/nav';
@@ -300,6 +301,38 @@ export async function recordEntries(company: Company, fmt: SearchFormat): Promis
     );
   }
   return entries;
+}
+
+/**
+ * Current employees of the other companies switched on for the search
+ * across companies (`companies`, see features/people/all-companies.ts),
+ * their company's name under each. Never one of the open company or of a
+ * company not given, whatever `employees` holds.
+ */
+export function otherCompanyEmployeeEntries(
+  employees: readonly Employee[],
+  companies: readonly Company[],
+  openId: ID,
+): SearchEntry[] {
+  const byId = new Map(companies.filter((c) => c.id !== openId).map((c) => [c.id, c]));
+  return employees.flatMap((e) => {
+    const company = byId.get(e.companyId);
+    if (!company || !isCurrent(e)) return [];
+    const job = localName({ name: e.jobTitle, nameAr: e.jobTitleAr });
+    return [
+      makeEntry({
+        key: `elsewhere:${e.id}`,
+        kind: 'elsewhere',
+        title: localName(e),
+        subtitle: [localName(company), job].filter(Boolean).join(' · '),
+        to: `/employees/${e.id}`,
+        companyId: company.id,
+        names: [e.name, e.nameAr],
+        terms: [e.jobTitle, e.jobTitleAr, e.department, company.name, company.nameAr],
+        numbers: [e.number, e.civilId, e.phone],
+      }),
+    ];
+  });
 }
 
 /** 0 to 1 by date, so a later document wins a tie without beating a better match. */
