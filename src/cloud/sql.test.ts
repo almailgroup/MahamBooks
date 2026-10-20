@@ -1150,6 +1150,40 @@ describe('files', () => {
     expect(await readable(t2.viewer, `${c}/att-new`)).toBe(true);
   });
 
+  it('of a payment are uploaded by staff, and only seen by viewers', async () => {
+    const t2 = await team();
+    const c = t2.company;
+    await push(t2.staff, c, [
+      { tbl: 'payments', id: 'pay-1', data: rec(c, 'pay-1', { method: 'cheque', amount: 120 }) },
+    ]);
+    // A scan of the cheque: the file first, then its record (can_use_file).
+    expect(await upload(t2.staff, `${c}/att-pay`)).toEqual([{ name: `${c}/att-pay` }]);
+    await push(t2.staff, c, [
+      { tbl: 'attachments', id: 'att-pay', data: rec(c, 'att-pay', { ownerId: 'pay-1' }) },
+    ]);
+    for (const user of [t2.owner, t2.accountant, t2.staff, t2.viewer]) {
+      expect(await readable(user, `${c}/att-pay`)).toBe(true);
+      expect(await visibleIds(user, c)).toContain('att-pay');
+    }
+    expect(await readable(t2.outsider, `${c}/att-pay`)).toBe(false);
+    // Viewers can't add a scan, replace one or remove one.
+    await expect(upload(t2.viewer, `${c}/att-pay-2`)).rejects.toThrow(/row-level security/);
+    await expect(upload(t2.viewer, `${c}/att-pay`)).rejects.toThrow(/row-level security/);
+    expect(await remove(t2.viewer, `${c}/att-pay`)).toEqual([]);
+    await expect(
+      push(t2.viewer, c, [
+        { tbl: 'attachments', id: 'att-pay-2', data: rec(c, 'att-pay-2', { ownerId: 'pay-1' }) },
+      ]),
+    ).rejects.toThrow(/row-level security|almail:permission/);
+    // Staff delete the payment with its scan: the records, then the file.
+    await push(t2.staff, c, [
+      { tbl: 'payments', id: 'pay-1', deleted: true },
+      { tbl: 'attachments', id: 'att-pay', deleted: true },
+    ]);
+    expect(await remove(t2.staff, `${c}/att-pay`)).toEqual([`${c}/att-pay`]);
+    expect(await exists(`${c}/att-pay`)).toBe(false);
+  });
+
   it('can be removed after their record is deleted, private ones only by those who saw them', async () => {
     const t2 = await team();
     const c = t2.company;

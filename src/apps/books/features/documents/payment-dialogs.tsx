@@ -12,6 +12,7 @@ import type {
 import { createPayment, newCheque, savePayment } from '@/db/payments';
 import { useFormat } from '@/app/company';
 import { today } from '@/lib/dates';
+import { newId } from '@/lib/ids';
 import { currencyPrecision, dec, round, toMinor } from '@/lib/money';
 import { providersFor, takesFee } from '@/lib/payment-methods';
 import { t } from '@/i18n';
@@ -29,6 +30,8 @@ import {
   useCashCheck,
 } from '@/apps/books/features/payments/fields';
 import { DateField } from '@/components/ui/date-field';
+import { useReadOnly } from '@/components/ui/read-only';
+import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
 
 /** Records a payment against one invoice (money in) or bill (money out). */
 export function RecordPaymentDialog({
@@ -68,6 +71,10 @@ export function RecordPaymentDialog({
   const [accountId, setAccountId] = useState<string | null>(null);
   const [cashConfirmed, setCashConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Known before saving, so scans can be attached to the payment to be.
+  const [paymentId] = useState(newId);
+  const attachments = useDraftAttachments(paymentId);
+  const { readOnly } = useReadOnly();
   const precision = currencyPrecision(invoice.currency);
   const money = (n: number) => fmt.money(n, invoice.currency);
   const overpaid = toMinor(amount, precision) > toMinor(invoice.totals.balance, precision);
@@ -107,8 +114,9 @@ export function RecordPaymentDialog({
     setSaving(true);
     try {
       const applied = Math.min(amount, Math.max(0, invoice.totals.balance));
-      await savePayment(
+      const saved = await savePayment(
         createPayment(company.id, {
+          id: paymentId,
           direction,
           clientId: invoice.clientId,
           accountId,
@@ -127,7 +135,17 @@ export function RecordPaymentDialog({
             applied > 0 ? [{ documentId: invoice.id, amount: round(applied, precision) }] : [],
         }),
       );
-      toast.success(t('Payment of {amount} recorded', { amount: money(amount) }));
+      const filesSaved = await attachments.commit(company.id).then(
+        () => true,
+        () => false,
+      );
+      if (filesSaved) toast.success(t('Payment of {amount} recorded', { amount: money(amount) }));
+      else
+        toast.error(
+          t('Payment {number} saved, but its files were not. Attach them again on the payment.', {
+            number: saved.number,
+          }),
+        );
       onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not record the payment.'));
@@ -257,6 +275,20 @@ export function RecordPaymentDialog({
               <Textarea id={id} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
             )}
           </Field>
+          <section aria-label={t('Attachments')}>
+            <p className="mb-2 text-sm font-medium text-slate-700">
+              {t('Attachments')}
+              <span className="ms-1 font-normal text-slate-500">({t('optional')})</span>
+            </p>
+            <AttachmentList
+              files={attachments.files}
+              onAdd={attachments.add}
+              onRemove={attachments.remove}
+              emptyText={t('A scan of the cheque or the transfer receipt.')}
+              camera
+              readOnly={readOnly}
+            />
+          </section>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

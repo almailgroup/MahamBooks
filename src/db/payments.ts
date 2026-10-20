@@ -499,10 +499,19 @@ export async function savePayment(input: Payment): Promise<Payment> {
   );
 }
 
+/** Deletes a payment with its files (scans of the cheque or the transfer). */
 export async function deletePayment(id: ID): Promise<void> {
   await db.transaction(
     'rw',
-    [db.payments, db.documents, db.clients, db.companies, db.activities, db.securityCheques],
+    [
+      db.payments,
+      db.documents,
+      db.clients,
+      db.companies,
+      db.activities,
+      db.securityCheques,
+      db.attachments,
+    ],
     async () => {
       const payment = await db.payments.get(id);
       if (!payment) return;
@@ -517,6 +526,7 @@ export async function deletePayment(id: ID): Promise<void> {
       const company = await db.companies.get(payment.companyId);
       if (company) assertUnlocked(company, payment.date);
       await db.payments.delete(id);
+      await db.attachments.where('ownerId').equals(id).delete();
       // A replacement cheque that is deleted no longer replaces anything.
       const replaced = payment.cheque?.replacesId
         ? await db.payments.get(payment.cheque.replacesId)

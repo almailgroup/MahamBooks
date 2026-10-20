@@ -42,6 +42,8 @@ import {
   useCashCheck,
 } from '@/apps/books/features/payments/fields';
 import { DateField } from '@/components/ui/date-field';
+import { useReadOnly } from '@/components/ui/read-only';
+import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
 
 const METHODS = new Set<string>([
   'bank_transfer',
@@ -68,6 +70,8 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
   const [saving, setSaving] = useState(false);
   const [missing, setMissing] = useState(false);
   const [cashConfirmed, setCashConfirmed] = useState(false);
+  const { readOnly } = useReadOnly();
+  const attachments = useDraftAttachments(payment?.id ?? '');
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +123,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
     [clientId],
   );
 
-  const dirty = payment !== null && JSON.stringify(payment) !== original;
+  const dirty = (payment !== null && JSON.stringify(payment) !== original) || attachments.dirty;
   const allowNavigation = useUnsavedGuard(dirty && !saving);
 
   // The payment as stored before editing; what it already holds is available again.
@@ -305,7 +309,18 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
         creditId: isCredit ? payment.creditId : null,
         cheque: isCheque ? payment.cheque : null,
       });
-      toast.success(t('Payment {number} saved', { number: saved.number }));
+      // The payment is saved even when its files can't be: say so.
+      const filesSaved = await attachments.commit(company.id).then(
+        () => true,
+        () => false,
+      );
+      if (filesSaved) toast.success(t('Payment {number} saved', { number: saved.number }));
+      else
+        toast.error(
+          t('Payment {number} saved, but its files were not. Attach them again on the payment.', {
+            number: saved.number,
+          }),
+        );
       allowNavigation();
       navigate(`${copy.base}/${saved.id}`);
     } catch (error) {
@@ -599,6 +614,22 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
           </CardBody>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader
+          title={t('Attachments')}
+          description={t('A scan of the cheque or the transfer receipt.')}
+        />
+        <CardBody>
+          <AttachmentList
+            files={attachments.files}
+            onAdd={attachments.add}
+            onRemove={attachments.remove}
+            camera
+            readOnly={readOnly}
+          />
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader

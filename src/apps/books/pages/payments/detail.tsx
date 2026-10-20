@@ -11,6 +11,7 @@ import {
   paymentMethodLabel,
   unappliedAmount,
 } from '@/db/payments';
+import { addAttachment, removeAttachment } from '@/db/purchases';
 import type { ChequeDetails, InvoiceDocument, Payment } from '@/db/types';
 import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
 import { fillTemplate, mailtoLink } from '@/lib/email';
@@ -22,6 +23,7 @@ import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/overlay';
+import { useReadOnly } from '@/components/ui/read-only';
 import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import {
   PAYMENT_COPY,
@@ -34,6 +36,7 @@ import {
   ChequeActionsMenu,
   type ChequeAction,
 } from '@/apps/books/features/cheques/action-dialogs';
+import { AttachmentList } from '@/features/purchases/attachments';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -71,6 +74,8 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
     return (await db.payments.bulkGet(ids)).filter((p): p is Payment => Boolean(p));
   }, [payment?.cheque?.replacedById, payment?.cheque?.replacesId]);
   const accounts = useAccounts();
+  const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
+  const { readOnly } = useReadOnly();
 
   if (payment === undefined || client === undefined || !docs)
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -112,7 +117,9 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const remove = async () => {
     const ok = await confirm({
       title: t('Delete payment {number}?', { number: payment.number }),
-      description: t(copy.deleteDescription),
+      description: files?.length
+        ? `${t(copy.deleteDescription)} ${t('Its attached files are deleted with it.')}`
+        : t(copy.deleteDescription),
       confirmLabel: t('Delete'),
       danger: true,
     });
@@ -427,6 +434,23 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
           </Card>
         </div>
       </div>
+
+      <Card>
+        <CardHeader
+          title={t('Attachments')}
+          description={t('A scan of the cheque or the transfer receipt.')}
+        />
+        <CardBody>
+          <AttachmentList
+            files={files ?? []}
+            onAdd={(file) => addAttachment(company.id, payment.id, file)}
+            onRemove={(fileId) => removeAttachment(fileId)}
+            emptyText={t('No files attached.')}
+            camera
+            readOnly={readOnly}
+          />
+        </CardBody>
+      </Card>
 
       {cheque ? (
         <ChequeActionDialog

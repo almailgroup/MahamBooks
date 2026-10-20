@@ -67,6 +67,18 @@ describe('private records', () => {
     expect(isPrivateRecord('attachments', file('inv-1'), lookup)).toBe(false);
   });
 
+  it('leave out the scans of a payment, which staff may add and viewers only see', () => {
+    const payment = { id: 'pay-1', method: 'cheque', amount: 120 };
+    const find: RecordLookup = (table, id) =>
+      table === 'payments' && id === payment.id ? payment : lookup(table, id);
+    const scan = { id: 'att-pay', ownerId: payment.id, name: 'cheque.jpg' };
+    expect(isPrivateRecord('attachments', scan, find)).toBe(false);
+    expect(canWriteRecord('staff', 'attachments', scan, find)).toBe(true);
+    expect(canWriteRecord('staff', 'payments', payment, find)).toBe(true);
+    expect(canWriteRecord('viewer', 'attachments', scan, find)).toBe(false);
+    expect(canWriteRecord('viewer', 'payments', payment, find)).toBe(false);
+  });
+
   it('include anything marked private, which can only add privacy', () => {
     expect(isPrivateRecord('attachments', { ownerId: 'inv-1', _private: true }, lookup)).toBe(true);
     expect(isPrivateRecord('activities', { entity: 'invoice', _private: true })).toBe(true);

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/db';
 import { createClient } from '@/db/defaults';
 import { deleteCompany, saveClient, setupCompany, UnsentChangesError } from '@/db/records';
+import { createPayment, deletePayment, savePayment } from '@/db/payments';
+import { addAttachment } from '@/db/purchases';
 import { wipeAllData } from '@/db/backup';
 import type { Company } from '@/db/types';
 import { CloudPermissionError, markRemote, onLocalChange } from './outbox';
@@ -201,5 +203,37 @@ describe('roles on this device', () => {
         updatedAt: '',
       }),
     ).rejects.toBeInstanceOf(CloudPermissionError);
+  });
+
+  it('let staff attach a scan to a payment and delete them together, and viewers neither', async () => {
+    const acme = await company();
+    const client = await saveClient(createClient(acme.id, { name: 'Sample Trading' }));
+    const scan = { name: 'cheque.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,AAAA' };
+    await link(acme, 'staff');
+    const payment = await savePayment(
+      createPayment(acme.id, { clientId: client.id, amount: 120, currency: 'KWD' }),
+    );
+    const file = await addAttachment(acme.id, payment.id, scan);
+    expect(await queued()).toContain(`put attachments ${file.id}`);
+    await db.outbox.clear();
+    await deletePayment(payment.id);
+    expect(await queued()).toEqual(
+      expect.arrayContaining([`delete payments ${payment.id}`, `delete attachments ${file.id}`]),
+    );
+    expect(await db.attachments.get(file.id)).toBeUndefined();
+
+    const kept = await savePayment(
+      createPayment(acme.id, { clientId: client.id, amount: 80, currency: 'KWD' }),
+    );
+    const keptFile = await addAttachment(acme.id, kept.id, scan);
+    await link(acme, 'viewer');
+    await expect(addAttachment(acme.id, kept.id, scan)).rejects.toBeInstanceOf(
+      CloudPermissionError,
+    );
+    await expect(deletePayment(kept.id)).rejects.toBeInstanceOf(CloudPermissionError);
+    expect(await db.payments.get(kept.id)).toBeDefined();
+    expect(await db.attachments.get(keptFile.id)).toBeDefined();
+    expect(await db.attachments.where('ownerId').equals(kept.id).count()).toBe(1);
+    expect(await db.outbox.count()).toBe(0);
   });
 });

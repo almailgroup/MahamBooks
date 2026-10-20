@@ -129,6 +129,7 @@ export async function issueNow(profileId: ID): Promise<InvoiceDocument | null> {
       db.accounts,
       db.products,
       db.assets,
+      db.attachments,
     ]),
     async () => {
       const profile = await db.recurring.get(profileId);
