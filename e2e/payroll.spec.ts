@@ -163,3 +163,78 @@ test('a month’s payroll is prepared, approved, paid and sent to the bank as a 
   await page.goto('#/reports/balance-sheet');
   await expect(page.getByText('Balanced', { exact: true })).toBeVisible();
 });
+
+test('the Leave page and employees’ balances follow the company’s leave policy', async ({
+  page,
+}) => {
+  await createCompany(page, 'Made-up Guarding');
+  await addEmployee(page, {
+    name: 'Made-up Guard',
+    nameAr: 'حارس افتراضي',
+    country: 'India',
+    salary: '300',
+    iban: 'KW81CBKU0000000000001234560101',
+  });
+  const employeePage = page.url();
+
+  // The law's 30 days a year until a policy is set.
+  await page.goto('#/payroll/leave');
+  await expect(page.getByText(/: 2\.5 days a month, less leave taken\.$/)).toBeVisible();
+
+  await page.goto('#/payroll/settings');
+  const card = page
+    .locator('div.rounded-xl')
+    .filter({ has: page.getByRole('heading', { name: 'Annual leave', exact: true }) });
+  await expect(card.getByText(/^The law’s leave applies: 30 working days a year/)).toBeVisible();
+  await card.getByRole('button', { name: 'Set the company’s leave policy' }).click();
+  // Fewer than 30 days breaches art. 70.
+  await card.getByLabel('Days a year').fill('25');
+  await expect(card.getByText('At least 30 days a year (art. 70).')).toBeVisible();
+  await card.getByLabel('Days a year').fill('45');
+  // From a date that has passed: the balances from it change.
+  await card.getByLabel('From').fill('2024-01-01');
+  await expect(card.getByText(/^This date has passed: balances from it change/)).toBeVisible();
+  await expect(card.getByLabel('Months before the first leave')).toHaveValue('9');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Payroll settings saved')).toBeVisible();
+
+  await page.goto('#/payroll/leave');
+  await expect(page.getByText(/: 3\.75 days a month, less leave taken\.$/)).toBeVisible();
+  await page.goto(`${employeePage}?tab=leave`);
+  await expect(
+    page.getByText('45 days a year, 3.75 days for each month of service (art. 70).'),
+  ).toBeVisible();
+
+  // Their contract gives them 60 days a year; never fewer than 30.
+  await page.goto(`${employeePage}/edit`);
+  const own = page.getByLabel('Annual leave days');
+  await expect(own).toHaveAttribute('placeholder', '45');
+  await own.fill('20');
+  await page.getByRole('button', { name: 'Save employee' }).first().click();
+  await expect(page.getByText('At least 30 days a year (art. 70).')).toBeVisible();
+  await own.fill('60');
+  await page.getByRole('button', { name: 'Save employee' }).first().click();
+  await expect(page).toHaveURL(/#\/employees\/[0-9a-f-]{36}$/);
+  await page.goto(`${employeePage}?tab=leave`);
+  await expect(
+    page.getByText('60 days a year in their contract, 5 days for each month of service.'),
+  ).toBeVisible();
+
+  // Once annual leave is recorded, the counting stays as it is.
+  await page.goto('#/payroll/leave');
+  await expect(
+    page.getByText(/: 3\.75 days a month, or each employee’s own entitlement, less leave taken\.$/),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Record leave' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Record leave' });
+  await dialog.getByLabel('First day').fill('2026-03-02');
+  await dialog.getByLabel('Last day').fill('2026-03-03');
+  await expect(dialog.getByText('2 working days', { exact: false })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Leave recorded for Made-up Guard')).toBeVisible();
+  await page.goto('#/payroll/settings');
+  await expect(card.getByLabel('Leave is counted in')).toBeDisabled();
+  await expect(
+    card.getByText('Annual leave has been recorded, so the way it is counted stays as it is.'),
+  ).toBeVisible();
+});

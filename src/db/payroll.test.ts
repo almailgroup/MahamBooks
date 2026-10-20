@@ -26,7 +26,8 @@ import {
   undoPayRunPayment,
   updatePayLine,
 } from './payroll';
-import type { Company, Employee, ManualJournal } from './types';
+import type { Company, Employee, LeavePolicy, ManualJournal } from './types';
+import { DEFAULT_LEAVE_POLICY } from '@/lib/hr/leave';
 import { buildSalaryFile } from '@/lib/hr/salary-file';
 import { eosProvisionFor } from '@/lib/hr/payroll';
 import { toMinor } from '@/lib/money';
@@ -471,5 +472,110 @@ describe('final settlement', () => {
     expect(reversed.status).toBe('reversed');
     const after = await balances(c);
     expect(after['1320']).toBe(300_000);
+  });
+});
+
+describe('the annual leave policy', () => {
+  const law = (overrides: Partial<LeavePolicy>): LeavePolicy => ({
+    ...DEFAULT_LEAVE_POLICY,
+    ...overrides,
+  });
+
+  it('is saved only once set, with 30 days a year at least, and keeps its counting once leave is recorded', async () => {
+    const c = await company();
+    const { expat } = await staff(c);
+    expect((await getPayrollSettings(c.id)).leavePolicy).toBeUndefined();
+    await savePayrollSettings({ ...(await getPayrollSettings(c.id)), payDay: 25 });
+    expect(await db.payrollSettings.get(c.id)).not.toHaveProperty('leavePolicy');
+
+    const settings = await getPayrollSettings(c.id);
+    await expect(
+      savePayrollSettings({
+        ...settings,
+        leavePolicy: law({ annualDays: [{ from: '2026-07-01', days: 25 }] }),
+      }),
+    ).rejects.toThrow(/less than 30 days/);
+    await expect(
+      savePayrollSettings({ ...settings, leavePolicy: law({ annualDays: [] }) }),
+    ).rejects.toThrow(/date the leave policy applies from/);
+    const saved = await savePayrollSettings({
+      ...settings,
+      leavePolicy: {
+        annualDays: [
+          { from: '2027-01-01', days: 45.555 },
+          { from: '2026-07-01', days: 40 },
+          { from: 'someday', days: 50 },
+        ],
+        firstYearMonths: 12,
+        carryForwardMax: 0,
+        counting: 'calendar',
+      },
+    });
+    expect(saved.leavePolicy).toEqual({
+      annualDays: [
+        { from: '2026-07-01', days: 40 },
+        { from: '2027-01-01', days: 45.56 },
+      ],
+      firstYearMonths: 9,
+      carryForwardMax: null,
+      counting: 'calendar',
+    });
+
+    // Thursday 1 – Sunday 4 October in calendar days, the weekend included.
+    const leave = await saveLeaveRecord(
+      createLeaveRecord(c.id, expat.id, { start: '2026-10-01', end: '2026-10-04' }),
+    );
+    expect(leave.days).toBe(4);
+    const policy = saved.leavePolicy!;
+    await expect(
+      savePayrollSettings({ ...saved, leavePolicy: { ...policy, counting: 'working' } }),
+    ).rejects.toThrow(/counted can’t change/);
+    await savePayrollSettings({ ...saved, leavePolicy: { ...policy, carryForwardMax: 60 } });
+    expect((await getPayrollSettings(c.id)).leavePolicy?.carryForwardMax).toBe(60);
+  });
+
+  it('brings the leave provision up only from the policy’s date', async () => {
+    const c = await company();
+    // KD 520 a month: KD 20 a day over 26 days.
+    const guard = await saveEmployee(
+      createEmployee(c.id, {
+        name: 'Made-up Guard',
+        category: 'expat',
+        nationality: 'IN',
+        hireDate: '2026-01-01',
+        basicSalary: 520,
+        iban: IBAN,
+      }),
+    );
+    // Hired with 60 days a year in the contract.
+    const manager = await saveEmployee(
+      createEmployee(c.id, {
+        name: 'Made-up Manager',
+        category: 'expat',
+        nationality: 'IN',
+        hireDate: '2026-09-01',
+        basicSalary: 520,
+        iban: IBAN,
+        annualLeaveDays: 60,
+      }),
+    );
+    const september = await approvePayRun((await createPayRun(c.id, '2026-09')).id);
+    const share = (run: typeof september, id: string) =>
+      run.provisions?.find((p) => p.employeeId === id);
+    expect(share(september, guard.id)).toMatchObject({ leaveDays: 22.5, leave: 450 });
+    expect(share(september, manager.id)).toMatchObject({ leaveDays: 5, leave: 100 });
+
+    // 45 days a year from October: 3.75 days for October, nothing again for the months before.
+    await savePayrollSettings({
+      ...(await getPayrollSettings(c.id)),
+      leavePolicy: law({ annualDays: [{ from: '2026-10-01', days: 45 }] }),
+    });
+    const october = await approvePayRun((await createPayRun(c.id, '2026-10')).id);
+    expect(share(october, guard.id)).toMatchObject({ leaveDays: 26.25, leave: 525 });
+    // The manager's own 60 days a year stay theirs.
+    expect(share(october, manager.id)).toMatchObject({ leaveDays: 10, leave: 200 });
+    const b = await balances(c);
+    expect(b['2320']).toBe(-toMinor(525 + 200, 3));
+    expect(b['6050']).toBe(toMinor(525 + 200, 3));
   });
 });

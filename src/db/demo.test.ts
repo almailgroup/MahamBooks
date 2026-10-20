@@ -3,13 +3,17 @@ import { db } from './db';
 import { seedDemoCompany } from './demo';
 import { loadLedger } from './accounting';
 import { heldRetention } from './retention';
-import type { Company } from './types';
+import type { Company, ISODate, LeavePolicy } from './types';
 import { balanceSheet, trialBalance } from '@/lib/accounting/statements';
 import { bookEntries, matchKey } from '@/lib/banking/match';
 import { chequePayments, isOpenCheque } from '@/lib/cheques';
 import { stockLevels } from '@/lib/inventory/costing';
 import { balanced, payRunPostings, payRunTotals } from '@/lib/hr/payroll';
-import { employeesNeedingLeaveOpening } from '@/lib/hr/leave';
+import {
+  DEFAULT_LEAVE_POLICY,
+  employeeLeaveBalance,
+  employeesNeedingLeaveOpening,
+} from '@/lib/hr/leave';
 import { isValidCivilId, isValidIban } from '@/lib/kuwait';
 import { addDaysISO, today } from '@/lib/dates';
 import { toMinor } from '@/lib/money';
@@ -229,6 +233,42 @@ describe('the demo company', () => {
     expect(settlements.map((s) => s.status)).toEqual(['paid']);
     expect(await db.staffLoans.where('companyId').equals(company.id).count()).toBe(1);
     expect(await db.leaveRecords.where('companyId').equals(company.id).count()).toBeGreaterThan(8);
+  });
+
+  it('keeps every leave balance, provision and settlement with the law’s leave set as a policy', async () => {
+    const employees = await db.employees.where('companyId').equals(company.id).toArray();
+    const leave = await db.leaveRecords.where('companyId').equals(company.id).toArray();
+    const runs = (await db.payRuns.where('companyId').equals(company.id).toArray()).filter(
+      (r) => r.status !== 'draft' && r.provisions,
+    );
+    expect(runs.length).toBeGreaterThanOrEqual(10);
+    const hired = employees.map((e) => e.hireDate!).sort()[0];
+    const law = (from: ISODate): LeavePolicy => ({
+      ...DEFAULT_LEAVE_POLICY,
+      annualDays: [{ from, days: 30 }],
+    });
+    // The law's days from the first hire date, and again from a date in the middle of the year.
+    const policies = [
+      undefined,
+      DEFAULT_LEAVE_POLICY,
+      law(hired),
+      law(runs[4].date.slice(0, 8) + '17'),
+    ];
+    for (const run of runs) {
+      for (const p of run.provisions!) {
+        const e = employees.find((x) => x.id === p.employeeId)!;
+        for (const policy of policies) {
+          const balance = employeeLeaveBalance(e, leave, run.date, policy);
+          expect(Math.max(0, balance.balance), `${e.name}, ${run.period}`).toBe(p.leaveDays);
+        }
+      }
+    }
+    const [settlement] = await db.finalSettlements.where('companyId').equals(company.id).toArray();
+    const leaver = employees.find((e) => e.id === settlement.employeeId)!;
+    for (const policy of policies) {
+      const balance = employeeLeaveBalance(leaver, leave, settlement.leavingDate, policy);
+      expect(Math.max(0, balance.balance)).toBe(settlement.leaveDays);
+    }
   });
 
   it('holds post-dated cheques, cleared ones and a returned one with its replacement', async () => {

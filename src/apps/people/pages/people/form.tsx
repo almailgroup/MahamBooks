@@ -13,6 +13,7 @@ import {
   type EmployeeErrors,
 } from '@/features/people/employee-form';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
+import { usePayrollSettings } from '@/features/payroll/hooks';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { Button } from '@/components/ui/button';
 import { Card, PageHeader, Spinner } from '@/components/ui/misc';
@@ -41,6 +42,7 @@ function EmployeeFormPage() {
   const files = useDraftAttachments(id ?? newId);
   const employees = useEmployees();
   const settings = usePeopleSettings();
+  const payroll = usePayrollSettings();
 
   // The page shown after saving: loaded now, so saving moves straight to it.
   useEffect(() => {
@@ -91,8 +93,11 @@ function EmployeeFormPage() {
       </Card>
     );
   }
-  // With the settings: the department list decides how the department is chosen.
-  if (!employee || !settings) return <Spinner className="py-24" label={t('Loading…')} />;
+  // With the settings: the department list decides how the department is chosen,
+  // and a leave policy asks for the employee's own days a year.
+  if (!employee || !settings || !payroll) {
+    return <Spinner className="py-24" label={t('Loading…')} />;
+  }
 
   const save = async () => {
     const found = validateEmployee(employee);
@@ -158,6 +163,7 @@ function EmployeeFormPage() {
         departments={departments}
         departmentList={settings.departments}
         drivingLicences={checksDrivingLicences(settings)}
+        leavePolicy={payroll.leavePolicy}
         files={{
           ...files,
           // The photo is kept with the personnel file but changed on the employee's page.

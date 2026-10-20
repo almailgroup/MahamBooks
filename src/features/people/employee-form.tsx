@@ -8,6 +8,7 @@ import type {
   EmployeeAllowance,
   EmployeeStatus,
   Gender,
+  LeavePolicy,
   LeavingReason,
   PayBasis,
 } from '@/db/types';
@@ -31,6 +32,7 @@ import {
 } from '@/lib/hr/employees';
 import { hasDepartmentList } from '@/lib/hr/departments';
 import { isDriverTitle } from '@/lib/hr/job-titles';
+import { ANNUAL_LEAVE_DAYS, annualDaysOn } from '@/lib/hr/leave';
 import { eosWage } from '@/lib/hr/eosi';
 import {
   bankFromIban,
@@ -54,7 +56,16 @@ import { FileList } from './file-list';
 import { DateField } from '@/components/ui/date-field';
 
 export type EmployeeErrors = Partial<
-  Record<'name' | 'iban' | 'contractEnd' | 'leavingDate' | 'leavingReason' | 'number', string>
+  Record<
+    | 'name'
+    | 'iban'
+    | 'contractEnd'
+    | 'leavingDate'
+    | 'leavingReason'
+    | 'number'
+    | 'annualLeaveDays',
+    string
+  >
 >;
 
 /** Blocking problems; soft warnings (Civil ID, probation) are shown on the fields. */
@@ -81,6 +92,9 @@ export function validateEmployee(employee: Employee): EmployeeErrors {
   // Never a reason nobody chose: it decides the end-of-service indemnity.
   if (employee.status === 'left' && !employee.leavingReason) {
     errors.leavingReason = t('Choose the reason for leaving.');
+  }
+  if (employee.annualLeaveDays && employee.annualLeaveDays < ANNUAL_LEAVE_DAYS) {
+    errors.annualLeaveDays = t('At least 30 days a year (art. 70).');
   }
   return errors;
 }
@@ -157,6 +171,7 @@ export function EmployeeForm({
   departments,
   departmentList,
   drivingLicences = false,
+  leavePolicy,
   files,
 }: {
   value: Employee;
@@ -169,6 +184,11 @@ export function EmployeeForm({
   departmentList?: Department[];
   /** The company checks drivers' licences: "Drives for work" is asked. */
   drivingLicences?: boolean;
+  /**
+   * The company's annual leave policy: once it has one, the employee's own
+   * days a year are asked.
+   */
+  leavePolicy?: LeavePolicy;
   files: {
     files: AttachedFile[];
     add: (file: AttachedFile) => void;
@@ -201,6 +221,7 @@ export function EmployeeForm({
     value.contractEnd &&
     value.contractEnd > toISODate(addYears(parseISODate(value.hireDate), 5));
 
+  const companyLeaveDays = annualDaysOn(today(), leavePolicy);
   const stateless = isStateless(value);
   const category: CategoryFilter = stateless ? 'stateless' : value.category;
   // Stateless staff are expatriates with the flag, and no country.
@@ -677,6 +698,29 @@ export function EmployeeForm({
                 value={value.contractEnd ?? ''}
                 onChange={(iso) => set({ contractEnd: iso || null })}
                 aria-invalid={Boolean(errors.contractEnd)}
+              />
+            )}
+          </Field>
+        ) : null}
+        {leavePolicy || value.annualLeaveDays ? (
+          <Field
+            label={t('Annual leave days')}
+            optional
+            error={errors.annualLeaveDays}
+            hint={t(
+              'Days a year in their contract, in place of the company’s {days}. Their balance is counted at this rate from their hire date or opening balance.',
+              { days: fmt.quantity(companyLeaveDays) },
+            )}
+          >
+            {(id) => (
+              <NumberInput
+                id={id}
+                value={value.annualLeaveDays ?? 0}
+                onValueChange={(days) => set({ annualLeaveDays: days > 0 ? days : null })}
+                allowNegative={false}
+                blankZero
+                placeholder={fmt.quantity(companyLeaveDays)}
+                aria-invalid={Boolean(errors.annualLeaveDays)}
               />
             )}
           </Field>

@@ -18,7 +18,7 @@ import { compactIban, normalizeKuwaitPhone } from '@/lib/kuwait';
 import { normalizeReminderDays } from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
 import { defaultPeopleSettings, withPeopleDefaults } from '@/lib/hr/people-settings';
-import { isOpeningRecord } from '@/lib/hr/leave';
+import { ANNUAL_LEAVE_DAYS, isOpeningRecord } from '@/lib/hr/leave';
 import { isStateless } from '@/lib/hr/employees';
 import { departmentKey, findDepartment, normalizeDepartments } from '@/lib/hr/departments';
 import { msg, t } from '@/i18n';
@@ -181,6 +181,17 @@ export async function saveEmployee(
       };
       // The flag counts only on an expatriate; when it doesn't, it is left out.
       if (!isStateless(employee)) delete employee.stateless;
+      // Days a year of their own: none, or at least the law's 30.
+      if (employee.annualLeaveDays !== undefined) {
+        const days = employee.annualLeaveDays;
+        if (days === null || !Number.isFinite(days) || days <= 0) {
+          employee.annualLeaveDays = null;
+        } else if (days < ANNUAL_LEAVE_DAYS) {
+          throw new EmployeeError(t('Annual leave can’t be less than 30 days a year (art. 70).'));
+        } else {
+          employee.annualLeaveDays = round(Math.min(366, days), 2);
+        }
+      }
 
       const others = (await db.employees.where('companyId').equals(company.id).toArray()).filter(
         (e) => e.id !== employee.id,

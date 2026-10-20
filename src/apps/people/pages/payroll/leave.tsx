@@ -4,15 +4,17 @@ import { CalendarPlus, ListChecks, Plane } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import { companyDayOff } from '@/db/payroll';
 import {
+  annualDaysOn,
   employeeLeaveBalance,
   employeesNeedingLeaveOpening,
   leaveTypeInfo,
   sickDaysByTier,
 } from '@/lib/hr/leave';
+import { round } from '@/lib/money';
 import { isCurrent } from '@/lib/hr/employees';
 import { today } from '@/lib/dates';
 import { useEmployees } from '@/features/people/hooks';
-import { useLeaveRecords } from '@/features/payroll/hooks';
+import { useLeaveRecords, usePayrollSettings } from '@/features/payroll/hooks';
 import { LeaveDialog } from '@/features/payroll/leave-dialog';
 import { LeaveOpeningsDialog } from '@/features/payroll/leave-openings-dialog';
 import { PayrollHeader } from '@/features/payroll/shared';
@@ -28,11 +30,15 @@ export default function PayrollLeavePage() {
   const navigate = useNavigate();
   const employees = useEmployees();
   const records = useLeaveRecords();
+  const settings = usePayrollSettings();
   const [recording, setRecording] = useState(false);
   const [opening, setOpening] = useState(false);
   const dayOff = useMemo(() => companyDayOff(company), [company]);
-  if (!employees || !records) return <Spinner className="py-24" label={t('Loading…')} />;
+  if (!employees || !records || !settings) {
+    return <Spinner className="py-24" label={t('Loading…')} />;
+  }
 
+  const policy = settings.leavePolicy;
   const on = today();
   const year = Number(on.slice(0, 4));
   const current = employees
@@ -52,13 +58,18 @@ export default function PayrollLeavePage() {
     );
     return {
       employee: e,
-      balance: employeeLeaveBalance(e, own, on).balance,
+      balance: employeeLeaveBalance(e, own, on, policy).balance,
       taken: taken.reduce((s, r) => s + r.days, 0),
       sick: sickDaysByTier(own, year, dayOff).reduce((s, x) => s + x.days, 0),
       away,
     };
   });
   const needing = employeesNeedingLeaveOpening(current, records).filter((e) => !e.leaveOpening);
+  // The company's days a year, as a share of each month.
+  const footer = {
+    date: fmt.date(on),
+    days: fmt.quantity(round(annualDaysOn(on, policy) / 12, 2)),
+  };
   const record = (
     <div className="flex flex-wrap gap-2">
       <Button variant="outline" onClick={() => setOpening(true)} disabled={current.length === 0}>
@@ -153,9 +164,12 @@ export default function PayrollLeavePage() {
             </table>
           </div>
           <p className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
-            {t('Balances in days on {date}: 2.5 days a month, less leave taken.', {
-              date: fmt.date(on),
-            })}
+            {current.some((e) => e.annualLeaveDays)
+              ? t(
+                  'Balances in days on {date}: {days} days a month, or each employee’s own entitlement, less leave taken.',
+                  footer,
+                )
+              : t('Balances in days on {date}: {days} days a month, less leave taken.', footer)}
           </p>
         </Card>
       )}

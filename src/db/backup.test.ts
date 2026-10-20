@@ -19,6 +19,7 @@ import {
   savePeopleSettings,
 } from './people';
 import { createComplianceDocument, saveComplianceDocument } from './renewals';
+import { getPayrollSettings, savePayrollSettings } from './payroll';
 
 beforeEach(async () => {
   await db.delete();
@@ -150,6 +151,33 @@ describe('backup', () => {
     expect((await db.peopleSettings.get(a.id))?.drivingLicences).toBe(true);
     expect((await db.employees.get(driver.id))?.drivingLicenceRequired).toBe(true);
     expect((await db.complianceDocuments.get(licence.id))?.licenceClass).toBe('Heavy');
+  });
+
+  it('keeps the leave policy and employees’ own days of annual leave', async () => {
+    const a = await setupCompany({ name: 'Made-up Security' });
+    await savePayrollSettings({
+      ...(await getPayrollSettings(a.id)),
+      leavePolicy: {
+        annualDays: [{ from: '2026-11-01', days: 35 }],
+        firstYearMonths: 6,
+        carryForwardMax: 40,
+        counting: 'working',
+      },
+    });
+    const guard = await saveEmployee(
+      createEmployee(a.id, { name: 'Made-up Supervisor', annualLeaveDays: 45 }),
+    );
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.payrollSettings.get(a.id))?.leavePolicy).toEqual({
+      annualDays: [{ from: '2026-11-01', days: 35 }],
+      firstYearMonths: 6,
+      carryForwardMax: 40,
+      counting: 'working',
+    });
+    expect((await db.employees.get(guard.id))?.annualLeaveDays).toBe(45);
   });
 
   it('merges without deleting existing data', async () => {

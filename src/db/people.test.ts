@@ -179,6 +179,21 @@ describe('employees', () => {
     await expect(deleteEmployee(b.id)).rejects.toThrow('Mark them as left instead');
     expect(await db.employees.get(b.id)).toBeDefined();
   });
+
+  it('keep their own days of annual leave, never fewer than 30 a year', async () => {
+    const company = await kuwaitCompany();
+    const plain = await saveEmployee(createEmployee(company.id, { name: 'Made-up Clerk' }));
+    expect(plain).not.toHaveProperty('annualLeaveDays');
+    await expect(saveEmployee({ ...plain, annualLeaveDays: 25 })).rejects.toThrow(
+      /less than 30 days/,
+    );
+    const own = await saveEmployee({ ...plain, annualLeaveDays: 42.505 });
+    expect(own.annualLeaveDays).toBe(42.51);
+    // Cleared on the form: the company's policy again.
+    const cleared = await saveEmployee({ ...own, annualLeaveDays: null });
+    expect((await db.employees.get(cleared.id))?.annualLeaveDays).toBeNull();
+    expect((await saveEmployee({ ...cleared, annualLeaveDays: 0 })).annualLeaveDays).toBeNull();
+  });
 });
 
 describe('people settings', () => {

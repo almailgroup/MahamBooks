@@ -12,15 +12,22 @@ import {
   cancelStaffLoan,
   createLeaveRecord,
   createPayRun,
+  getPayrollSettings,
   loanBalance,
   reopenPayRun,
   saveLeaveRecord,
+  settlementDefaults,
+  settlementSetup,
   updatePayLine,
 } from './payroll';
-import type { Company, Employee, ManualJournal } from './types';
+import type { Company, Employee, LeavePolicy, ManualJournal } from './types';
 import { importEmployees, type ImportOptions } from './import';
 import { guessColumns } from '@/features/company/import-columns';
-import { annualLeaveBalance, employeesNeedingLeaveOpening } from '@/lib/hr/leave';
+import {
+  annualLeaveBalance,
+  DEFAULT_LEAVE_POLICY,
+  employeesNeedingLeaveOpening,
+} from '@/lib/hr/leave';
 import { toMinor } from '@/lib/money';
 
 beforeEach(async () => {
@@ -228,5 +235,43 @@ describe('opening balance of an imported employee', () => {
       leaveDays: 12.5,
       leave: 125,
     });
+  });
+});
+
+describe('final settlements under a leave policy', () => {
+  it('are unchanged until the policy’s date, and count its days only from then', async () => {
+    const c = await setupCompany({ name: 'Test Trading Co' });
+    const e = await staff(c, { category: 'expat', nationality: 'IN' });
+    const taken = await saveLeaveRecord(
+      createLeaveRecord(c.id, e.id, { start: '2025-08-03', end: '2025-08-07' }),
+    );
+    expect(taken.days).toBe(5);
+    const data = async (leavePolicy?: LeavePolicy) => ({
+      settings: { ...(await getPayrollSettings(c.id)), leavePolicy },
+      people: { eosDailyDivisor: 26 },
+      leave: await db.leaveRecords.toArray(),
+      loans: [],
+      runs: [],
+      settlements: [],
+    });
+    const policy = (from: string, days: number): LeavePolicy => ({
+      ...DEFAULT_LEAVE_POLICY,
+      annualDays: [{ from, days }],
+    });
+    // 54 months from 1 January 2022 at 2.5 days, less the 5 taken.
+    const before = settlementSetup(e, '2026-06-30', await data(), 3);
+    expect(before.leave.balance).toBe(130);
+    // A policy from after the leaving date, or the law's 30 days written out, change nothing.
+    for (const leavePolicy of [policy('2026-07-01', 45), policy('2020-01-01', 30)]) {
+      const setup = settlementSetup(e, '2026-06-30', await data(leavePolicy), 3);
+      expect(setup.leave).toEqual(before.leave);
+      expect(settlementDefaults(e, '2026-06-30', 'resignation', setup, 3)).toEqual(
+        settlementDefaults(e, '2026-06-30', 'resignation', before, 3),
+      );
+    }
+    // 45 days a year from 1 January 2026: six months at 3.75 days instead of 2.5.
+    const from2026 = settlementSetup(e, '2026-06-30', await data(policy('2026-01-01', 45)), 3);
+    expect(from2026.leave.balance).toBe(137.5);
+    expect(settlementDefaults(e, '2026-06-30', 'resignation', from2026, 3).leaveDays).toBe(137.5);
   });
 });

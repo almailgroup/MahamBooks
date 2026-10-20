@@ -158,6 +158,36 @@ is asked of the server.
   dates, instead of the personnel file. Licences, their scans and the
   setting are people data, private as before.
 
+## Annual leave policy
+
+- **The law's until set.** Payroll → Settings has an _Annual leave_
+  (الإجازة السنوية) card. Until _Set the company’s leave policy_ is used and
+  saved, there is no `payrollSettings.leavePolicy` and every balance,
+  provision and settlement is worked out as before: 30 working days a year,
+  2.5 a month, usable after nine months, every unused day carried forward
+  (`DEFAULT_LEAVE_POLICY` in `src/lib/hr/leave.ts`).
+- **Dated days a year.** The policy lists days a year from dates (at least
+  30, art. 70). Before its first date the law's 30 apply, so balances before
+  it never change; each month of service earns a twelfth of the days in
+  force, and a month in which they change earns a share of each by its
+  days. A date already past is flagged: the next approved pay run's leave
+  provision takes in the difference ("target less held", as before).
+- **Also:** the months before the first leave (nine, or fewer), a cap on
+  the unused days carried into a new calendar year (none by default; it
+  applies from the first new year on or after the policy's first date, and
+  the days lost show as _Over the carry-forward cap_ on the employee's leave
+  tab), and whether annual leave counts working or calendar days. The
+  counting can't change once annual leave has been recorded, since each
+  record keeps the days it was saved with; the card disables it and saving
+  refuses it.
+- **Employees' own days.** Once the company has a policy, the employee's
+  form asks _Annual leave days_ (`Employee.annualLeaveDays`, at least 30,
+  the company's days as the placeholder). It replaces the company's days
+  for that employee, from their hire date or opening balance.
+- The Leave page, the employee's leave tab and the leave dialog take their
+  texts from the policy. Both fields are payroll and employee data, private
+  as before; older versions ignore them and keep the law's figures.
+
 ## Code layout
 
 ```

@@ -13,6 +13,7 @@ import { nowStamp } from './defaults';
 import { getPeopleSettings } from './people';
 import type {
   Account,
+  AnnualLeaveDays,
   ChartTemplateId,
   Company,
   ContributionRates,
@@ -21,6 +22,7 @@ import type {
   GccScheme,
   ID,
   ISODate,
+  LeavePolicy,
   LeaveRecord,
   LoanRecovery,
   ManualJournal,
@@ -77,9 +79,12 @@ import {
   type SettlementAmounts,
 } from '@/lib/hr/payroll';
 import {
+  ANNUAL_LEAVE_DAYS,
+  annualLeaveRecorded,
   countLeaveDays,
   employeeLeaveBalance,
   dayOffChecker,
+  FIRST_YEAR_MONTHS,
   leaveInPeriod,
   MAX_LEAVE_SPAN,
   type DayOff,
@@ -284,10 +289,41 @@ export async function getPayrollSettings(companyId: ID): Promise<PayrollSettings
 const percent = (n: number) => (Number.isFinite(n) ? Math.min(100, Math.max(0, round(n, 3))) : 0);
 const capOf = (n: number | null) =>
   n === null || !Number.isFinite(n) || n <= 0 ? null : round(n, 3);
+const whole = (n: number, min: number, max: number, fallback: number) =>
+  Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
+
+/** Days a year in a contract or a policy: to two places, at most a year. */
+const leaveDaysOf = (n: number) => round(Math.min(366, n), 2);
+
+/** A leave policy as saved: one entry a date, oldest first. */
+function normalizeLeavePolicy(input: LeavePolicy): LeavePolicy {
+  const byDate = new Map<ISODate, AnnualLeaveDays>();
+  for (const r of input.annualDays) {
+    if (isISODate(r.from) && Number.isFinite(r.days)) {
+      byDate.set(r.from, { from: r.from, days: leaveDaysOf(r.days) });
+    }
+  }
+  const cap = input.carryForwardMax;
+  return {
+    ...input,
+    annualDays: [...byDate.values()].sort((a, b) => a.from.localeCompare(b.from)),
+    firstYearMonths: whole(input.firstYearMonths, 0, FIRST_YEAR_MONTHS, FIRST_YEAR_MONTHS),
+    carryForwardMax: cap === null || !Number.isFinite(cap) || cap <= 0 ? null : leaveDaysOf(cap),
+    counting: input.counting === 'calendar' ? 'calendar' : 'working',
+  };
+}
+
+/** Refuses a leave policy the law doesn't allow, or one without the date it starts. */
+function assertLeavePolicy(policy: LeavePolicy) {
+  if (policy.annualDays.length === 0) {
+    throw new PayrollError(t('Enter the date the leave policy applies from.'));
+  }
+  if (policy.annualDays.some((r) => r.days < ANNUAL_LEAVE_DAYS)) {
+    throw new PayrollError(t('Annual leave can’t be less than 30 days a year (art. 70).'));
+  }
+}
 
 export function normalizePayrollSettings(input: PayrollSettings): PayrollSettings {
-  const whole = (n: number, min: number, max: number, fallback: number) =>
-    Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
   const byDate = new Map<string, ContributionRates>();
   for (const r of input.pifss) {
     if (!isISODate(r.from)) continue;
@@ -326,12 +362,29 @@ export function normalizePayrollSettings(input: PayrollSettings): PayrollSetting
     ),
     pamFileNumber: input.pamFileNumber.trim(),
     salaryFile: { ...input.salaryFile, columns: columns.length ? columns : ['iban', 'amount'] },
+    ...(input.leavePolicy ? { leavePolicy: normalizeLeavePolicy(input.leavePolicy) } : {}),
   };
 }
 
+/**
+ * Saves the payroll settings. A leave policy needs a date and at least 30
+ * days a year; the way annual leave is counted can't change once annual leave
+ * has been recorded, since each record keeps the days it was saved with.
+ */
 export async function savePayrollSettings(input: PayrollSettings): Promise<PayrollSettings> {
   const settings = { ...normalizePayrollSettings(input), updatedAt: nowStamp() };
-  await db.transaction('rw', [db.payrollSettings, db.activities], async () => {
+  if (settings.leavePolicy) assertLeavePolicy(settings.leavePolicy);
+  await db.transaction('rw', [db.payrollSettings, db.leaveRecords, db.activities], async () => {
+    const saved = await db.payrollSettings.get(settings.companyId);
+    const counting = (s?: PayrollSettings) => s?.leavePolicy?.counting ?? 'working';
+    if (counting(settings) !== counting(saved)) {
+      const records = await db.leaveRecords.where('companyId').equals(settings.companyId).toArray();
+      if (annualLeaveRecorded(records)) {
+        throw new PayrollError(
+          t('Annual leave has been recorded, so the way it is counted can’t change.'),
+        );
+      }
+    }
     await db.payrollSettings.put(settings);
     await logActivity(settings.companyId, 'payroll', settings.id, 'settings', {
       text: msg('Payroll settings updated'),
@@ -750,7 +803,7 @@ async function assertPayUnchanged(
 export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> {
   return db.transaction(
     'rw',
-    [db.companies, db.employees, db.leaveRecords, db.activities, db.payRuns],
+    [db.companies, db.employees, db.leaveRecords, db.activities, db.payRuns, db.payrollSettings],
     async () => {
       const company = await loadCompany(input.companyId);
       const employee = await db.employees.get(input.employeeId);
@@ -767,7 +820,14 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
         if (daysBetween(input.start, input.end) + 1 > MAX_LEAVE_SPAN) {
           throw new PayrollError(t('Leave can’t be longer than a year.'));
         }
-        const days = countLeaveDays(input.type, input.start, input.end, companyDayOff(company));
+        const { leavePolicy } = await getPayrollSettings(company.id);
+        const days = countLeaveDays(
+          input.type,
+          input.start,
+          input.end,
+          companyDayOff(company),
+          leavePolicy,
+        );
         if (days === 0) {
           throw new PayrollError(t('These dates are all weekends or public holidays.'));
         }
@@ -1208,7 +1268,7 @@ function provisionLines(ctx: Context, date: ISODate, rules: PayRules): Provision
           ? 0
           : eosProvisionFor(e, date, ctx.people.eosDailyDivisor, p);
       // From the opening balance by then; before the first one, worked back from it.
-      const balance = employeeLeaveBalance(e, ctx.leave, date).balance;
+      const balance = employeeLeaveBalance(e, ctx.leave, date, ctx.settings.leavePolicy).balance;
       const leaveDays = Math.max(0, balance);
       const wage = e.allowances.reduce(
         (s, a) => s + toMinor(a.amount, p),
@@ -1591,7 +1651,7 @@ export function settlementSetup(
   return {
     rules: payRulesFor(data.settings, period),
     eosDivisor: data.people.eosDailyDivisor,
-    leave: employeeLeaveBalance(employee, data.leave, leavingDate),
+    leave: employeeLeaveBalance(employee, data.leave, leavingDate, data.settings.leavePolicy),
     loans: data.loans
       .filter((l) => l.employeeId === employee.id && l.status === 'active')
       .map((loan) => ({ loan, balance: loanBalance(loan, data.runs, data.settlements, precision) }))

@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { addMonths, startOfMonth } from 'date-fns';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { accountingSettings } from '@/db/chart-setup';
@@ -9,19 +10,32 @@ import {
   payrollAccount,
   savePayrollSettings,
 } from '@/db/payroll';
-import type { ContributionRates, GccScheme, PayrollAccountKey, PayrollSettings } from '@/db/types';
+import type {
+  AnnualLeaveDays,
+  ContributionRates,
+  GccScheme,
+  LeavePolicy,
+  PayrollAccountKey,
+  PayrollSettings,
+} from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { GCC_COUNTRIES } from '@/lib/hr/employees';
+import {
+  ANNUAL_LEAVE_DAYS,
+  annualLeaveRecorded,
+  DEFAULT_LEAVE_POLICY,
+  FIRST_YEAR_MONTHS,
+} from '@/lib/hr/leave';
 import { PAYROLL_RULES } from '@/lib/hr/payroll';
 import { countryName } from '@/lib/geo';
-import { today } from '@/lib/dates';
+import { parseISODate, today, toISODate } from '@/lib/dates';
 import { moneyAccounts, PayrollHeader, VerifyBadge } from '@/features/payroll/shared';
-import { useAccounts, usePayrollSettings } from '@/features/payroll/hooks';
+import { useAccounts, useLeaveRecords, usePayrollSettings } from '@/features/payroll/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
 import { localName } from '@/i18n/names';
-import { t } from '@/i18n';
+import { t, tp } from '@/i18n';
 import { DateField } from '@/components/ui/date-field';
 
 const ACCOUNT_KEYS = Object.keys(PAYROLL_ACCOUNTS) as PayrollAccountKey[];
@@ -98,15 +112,225 @@ function RatesHeader({ first }: { first: string }) {
   );
 }
 
+/** The first day of next month: where a new leave policy, or new days a year, start. */
+const nextMonthStart = () => toISODate(startOfMonth(addMonths(parseISODate(today()), 1)));
+
+const newLeavePolicy = (): LeavePolicy => ({
+  ...DEFAULT_LEAVE_POLICY,
+  annualDays: [{ from: nextMonthStart(), days: ANNUAL_LEAVE_DAYS }],
+});
+
+/** Nine months (the law) down to none. */
+const FIRST_YEAR_CHOICES = Array.from(
+  { length: FIRST_YEAR_MONTHS + 1 },
+  (_, i) => FIRST_YEAR_MONTHS - i,
+);
+
+/**
+ * The company's annual leave policy. The law's applies until the owner sets
+ * one (D1): days a year from dates, the months before the first leave, a cap
+ * on the days carried forward, and how leave is counted, which stays as it is
+ * once annual leave has been recorded.
+ */
+function LeavePolicyCard({
+  policy,
+  saved,
+  countingLocked,
+  onChange,
+}: {
+  policy: LeavePolicy | undefined;
+  saved: LeavePolicy | undefined;
+  countingLocked: boolean;
+  onChange: (policy: LeavePolicy) => void;
+}) {
+  const id = useId();
+  if (!policy) {
+    return (
+      <Card>
+        <CardHeader
+          title={t('Annual leave')}
+          description={t(
+            'The law’s leave applies: 30 working days a year, 2.5 days for each month of service, usable after nine months (art. 70). Unused days carry forward and are paid when the employee leaves (art. 73).',
+          )}
+        />
+        <CardBody className="space-y-3">
+          <p className="text-sm text-slate-600">
+            {t(
+              'Set a policy for more days a year, contract entitlements, a cap on the days carried forward, or leave counted in calendar days. Balances before the date it applies from don’t change.',
+            )}
+          </p>
+          <Button variant="outline" onClick={() => onChange(newLeavePolicy())}>
+            <Plus /> {t('Set the company’s leave policy')}
+          </Button>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  const set = (patch: Partial<LeavePolicy>) => onChange({ ...policy, ...patch });
+  const setRow = (index: number, patch: Partial<AnnualLeaveDays>) =>
+    set({ annualDays: policy.annualDays.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
+  // A date already saved has changed the balances from it once: no need to say so again.
+  const unsaved = (r: AnnualLeaveDays) =>
+    !saved?.annualDays.some((x) => x.from === r.from && x.days === r.days);
+  const on = today();
+  return (
+    <Card>
+      <CardHeader
+        title={t('Annual leave')}
+        description={t(
+          'Days a year are earned from their date on; balances before the first date are the law’s and don’t change.',
+        )}
+      />
+      <CardBody className="space-y-5">
+        <div>
+          <div className="hidden grid-cols-[11rem_1fr_auto] gap-2 text-xs font-medium text-slate-500 sm:grid">
+            <span>{t('From')}</span>
+            <span>{t('Days a year')}</span>
+            <span className="w-9" />
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {policy.annualDays.map((r, i) => (
+              <li key={i} className="py-2">
+                <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 sm:grid-cols-[11rem_1fr_auto]">
+                  <div className="flex flex-col gap-1">
+                    <CellLabel htmlFor={`${id}-from-${i}`}>{t('From')}</CellLabel>
+                    <DateField
+                      id={`${id}-from-${i}`}
+                      value={r.from}
+                      onChange={(iso) => iso && setRow(i, { from: iso })}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <CellLabel htmlFor={`${id}-days-${i}`}>{t('Days a year')}</CellLabel>
+                    <NumberInput
+                      id={`${id}-days-${i}`}
+                      value={r.days}
+                      onValueChange={(days) => setRow(i, { days })}
+                      allowNegative={false}
+                      aria-invalid={r.days < ANNUAL_LEAVE_DAYS}
+                    />
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => set({ annualDays: policy.annualDays.filter((_, j) => j !== i) })}
+                    disabled={policy.annualDays.length === 1}
+                    aria-label={t('Remove')}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+                {r.days < ANNUAL_LEAVE_DAYS ? (
+                  <p className="mt-1 text-xs text-red-600">
+                    {t('At least 30 days a year (art. 70).')}
+                  </p>
+                ) : unsaved(r) && r.from <= on ? (
+                  <p className="mt-1 text-xs text-amber-700">
+                    {t(
+                      'This date has passed: balances from it change, and the next approved pay run’s leave provision takes in the difference.',
+                    )}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() =>
+              set({
+                annualDays: [
+                  ...policy.annualDays,
+                  {
+                    from: nextMonthStart(),
+                    days: policy.annualDays.at(-1)?.days ?? ANNUAL_LEAVE_DAYS,
+                  },
+                ],
+              })
+            }
+          >
+            <Plus /> {t('Change the days from a date')}
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <Field
+            label={t('Months before the first leave')}
+            hint={t('Nine under the Labour Law (art. 70); fewer lets new staff take leave sooner.')}
+          >
+            {(field) => (
+              <Select
+                id={field}
+                value={policy.firstYearMonths}
+                onChange={(e) => set({ firstYearMonths: Number(e.target.value) })}
+              >
+                {FIRST_YEAR_CHOICES.map((n) => (
+                  <option key={n} value={n}>
+                    {tp(n, '{count} month', '{count} months')}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field
+            label={t('Most days carried into a new year')}
+            optional
+            hint={t(
+              'Unused days above it are lost when a new year starts. Leave it empty to carry every day forward: unused days are paid when the employee leaves (art. 73).',
+            )}
+          >
+            {(field) => (
+              <NumberInput
+                id={field}
+                value={policy.carryForwardMax ?? 0}
+                onValueChange={(n) => set({ carryForwardMax: n > 0 ? n : null })}
+                allowNegative={false}
+                blankZero
+                placeholder={t('No cap')}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('Leave is counted in')}
+            hint={
+              countingLocked
+                ? t('Annual leave has been recorded, so the way it is counted stays as it is.')
+                : t('Working days skip Fridays, Saturdays and public holidays.')
+            }
+          >
+            {(field) => (
+              <Select
+                id={field}
+                value={policy.counting}
+                disabled={countingLocked}
+                onChange={(e) =>
+                  set({ counting: e.target.value === 'calendar' ? 'calendar' : 'working' })
+                }
+              >
+                <option value="working">{t('Working days')}</option>
+                <option value="calendar">{t('Calendar days')}</option>
+              </Select>
+            )}
+          </Field>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function PayrollSettingsPage() {
   const company = useCompany();
   const fmt = useFormat();
   const saved = usePayrollSettings();
   const accounts = useAccounts();
+  const leave = useLeaveRecords();
   const [draft, setDraft] = useState<PayrollSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const value = draft ?? saved;
-  if (!value || !accounts) return <Spinner className="py-24" label={t('Loading…')} />;
+  if (!value || !saved || !accounts || !leave) {
+    return <Spinner className="py-24" label={t('Loading…')} />;
+  }
 
   const set = (patch: Partial<PayrollSettings>) => setDraft({ ...value, ...patch });
   const template = accountingSettings(company).template;
@@ -372,6 +596,13 @@ export default function PayrollSettingsPage() {
             ) : null}
           </CardBody>
         </Card>
+
+        <LeavePolicyCard
+          policy={value.leavePolicy}
+          saved={saved.leavePolicy}
+          countingLocked={annualLeaveRecorded(leave)}
+          onChange={(leavePolicy) => set({ leavePolicy })}
+        />
 
         <Card>
           <CardHeader title={t('Provisions')} />

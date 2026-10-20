@@ -12,9 +12,16 @@ import {
   loanBalance,
   loanRecoveredMinor,
 } from '@/db/payroll';
-import { employeeLeaveBalance, leaveTypeInfo, sickDaysByTier, SICK_TIERS } from '@/lib/hr/leave';
+import {
+  annualDaysOn,
+  DEFAULT_LEAVE_POLICY,
+  employeeLeaveBalance,
+  leaveTypeInfo,
+  sickDaysByTier,
+  SICK_TIERS,
+} from '@/lib/hr/leave';
 import { formatPeriod } from '@/lib/hr/payroll';
-import { currencyPrecision, fromMinor, toMinor } from '@/lib/money';
+import { currencyPrecision, fromMinor, round, toMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { isCurrent } from '@/lib/hr/employees';
 import { useCompany, useFormat } from '@/app/company';
@@ -32,7 +39,7 @@ import {
   useSettlements,
   useStaffLoans,
 } from './hooks';
-import { LeaveDialog } from './leave-dialog';
+import { firstLeaveText, LeaveDialog } from './leave-dialog';
 import { LeaveOpeningDialog } from './leave-opening-dialog';
 import { LoanDialog } from './loan-dialog';
 import { AmountRow } from './shared';
@@ -43,15 +50,19 @@ export function LeaveTab({ employee }: { employee: Employee }) {
   const confirm = useConfirm();
   const records = useLeaveRecords(employee.id);
   const employees = useEmployees();
+  const settings = usePayrollSettings();
   const [dialog, setDialog] = useState<'leave' | 'balance' | 'opening' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const dayOff = useMemo(() => companyDayOff(company), [company]);
-  if (!records || !employees) return <Spinner className="py-12" />;
+  if (!records || !employees || !settings) return <Spinner className="py-12" />;
   const brought = employee.leaveOpening ?? null;
+  const policy = settings.leavePolicy ?? DEFAULT_LEAVE_POLICY;
 
   const on = today();
   const year = Number(on.slice(0, 4));
-  const balance = employeeLeaveBalance(employee, records, on);
+  const balance = employeeLeaveBalance(employee, records, on, policy);
+  const days = annualDaysOn(on, policy, employee.annualLeaveDays);
+  const yearly = { days: fmt.quantity(days), monthly: fmt.quantity(round(days / 12, 2)) };
   const sick = sickDaysByTier(records, year, dayOff);
   const list = [...records].sort(
     (a, b) => b.start.localeCompare(a.start) || b.createdAt.localeCompare(a.createdAt),
@@ -101,7 +112,17 @@ export function LeaveTab({ employee }: { employee: Employee }) {
         <Card>
           <CardHeader
             title={t('Annual leave')}
-            description={t('30 days a year, 2.5 days for each month of service (art. 70).')}
+            description={
+              employee.annualLeaveDays
+                ? t(
+                    '{days} days a year in their contract, {monthly} days for each month of service.',
+                    yearly,
+                  )
+                : t(
+                    '{days} days a year, {monthly} days for each month of service (art. 70).',
+                    yearly,
+                  )
+            }
           />
           <CardBody className="space-y-3">
             <p className="tabular text-3xl font-semibold tracking-tight text-slate-900">
@@ -129,6 +150,12 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                 />
               ) : null}
               <AmountRow label={t('Taken')} value={`−${fmt.quantity(balance.taken)}`} />
+              {balance.forfeited ? (
+                <AmountRow
+                  label={t('Over the carry-forward cap')}
+                  value={`−${fmt.quantity(balance.forfeited)}`}
+                />
+              ) : null}
             </dl>
             {brought ? (
               <div className="rounded-lg border border-slate-200 p-3 text-sm">
@@ -167,9 +194,7 @@ export function LeaveTab({ employee }: { employee: Employee }) {
             ) : null}
             {balance.eligibleFrom && on < balance.eligibleFrom ? (
               <p className="text-xs text-slate-500">
-                {t('Annual leave can be taken from {date}, after nine months of service.', {
-                  date: fmt.date(balance.eligibleFrom),
-                })}
+                {firstLeaveText(fmt.date(balance.eligibleFrom), policy.firstYearMonths)}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2 pt-1">

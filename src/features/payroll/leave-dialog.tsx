@@ -4,7 +4,10 @@ import type { Employee, ID, LeaveRecord, LeaveType } from '@/db/types';
 import { companyDayOff, createLeaveRecord, saveLeaveRecord } from '@/db/payroll';
 import {
   countLeaveDays,
+  DEFAULT_LEAVE_POLICY,
   employeeLeaveBalance,
+  FIRST_YEAR_MONTHS,
+  leaveCounting,
   LEAVE_TYPE_ORDER,
   LEAVE_TYPES,
   leaveWarnings,
@@ -20,8 +23,21 @@ import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { AlertTriangle } from 'lucide-react';
 import { DateField } from '@/components/ui/date-field';
+import { usePayrollSettings } from './hooks';
 
-function useLeaveWarningText() {
+/** When a new employee can take annual leave, after the policy's months of service. */
+export function firstLeaveText(date: string, months: number): string {
+  return months === FIRST_YEAR_MONTHS
+    ? t('Annual leave can be taken from {date}, after nine months of service.', { date })
+    : tp(
+        months,
+        'Annual leave can be taken from {date}, after {count} month of service.',
+        'Annual leave can be taken from {date}, after {count} months of service.',
+        { date },
+      );
+}
+
+function useLeaveWarningText(firstYearMonths: number) {
   const fmt = useFormat();
   return (w: LeaveWarning) => {
     switch (w.code) {
@@ -30,9 +46,7 @@ function useLeaveWarningText() {
           days: fmt.quantity(w.balance),
         });
       case 'not_eligible':
-        return t('Annual leave can be taken from {date}, after nine months of service.', {
-          date: fmt.date(w.date),
-        });
+        return firstLeaveText(fmt.date(w.date), firstYearMonths);
       case 'over_limit':
         return t('More than the {days} days allowed.', { days: w.limit });
       case 'hajj_taken':
@@ -59,7 +73,9 @@ export function LeaveDialog({
 }) {
   const company = useCompany();
   const fmt = useFormat();
-  const warningText = useLeaveWarningText();
+  const settings = usePayrollSettings();
+  const policy = settings?.leavePolicy;
+  const warningText = useLeaveWarningText((policy ?? DEFAULT_LEAVE_POLICY).firstYearMonths);
   const choices = employees.filter((e) => isCurrent(e) || e.id === employeeId);
   const [who, setWho] = useState<ID>(employeeId ?? choices[0]?.id ?? '');
   const [type, setType] = useState<LeaveType>('annual');
@@ -74,8 +90,8 @@ export function LeaveDialog({
   const employee = employees.find((e) => e.id === who);
   const own = records.filter((r) => r.employeeId === who);
 
-  const counted = mode === 'leave' ? countLeaveDays(type, start, end, dayOff) : 0;
-  const balance = employee ? employeeLeaveBalance(employee, own, start) : null;
+  const counted = mode === 'leave' ? countLeaveDays(type, start, end, dayOff, policy) : 0;
+  const balance = employee ? employeeLeaveBalance(employee, own, start, policy) : null;
   const warnings =
     mode === 'leave'
       ? leaveWarnings({ id: '', type, kind: 'leave', start, end, days: counted }, own, balance)
@@ -108,6 +124,8 @@ export function LeaveDialog({
     }
   };
 
+  // Days are counted as the company's leave policy says.
+  if (!settings) return null;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -181,7 +199,7 @@ export function LeaveDialog({
                 className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"
                 aria-live="polite"
               >
-                {LEAVE_TYPES[type].counting === 'calendar'
+                {leaveCounting(type, policy) === 'calendar'
                   ? tp(counted, '{count} calendar day', '{count} calendar days')
                   : tp(counted, '{count} working day', '{count} working days')}
                 {type === 'annual' && balance

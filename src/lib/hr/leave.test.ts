@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { Employee, LeaveRecord } from '@/db/types';
+import type { Employee, LeavePolicy, LeaveRecord } from '@/db/types';
 import { kuwaitHolidays } from '@/lib/kuwait';
 import {
+  annualDaysOn,
   annualLeaveBalance,
+  annualLeaveRecorded,
   completedMonths,
   countLeaveDays,
   dayOffChecker,
+  DEFAULT_LEAVE_POLICY,
+  employeeLeaveBalance,
   employeesNeedingLeaveOpening,
+  leaveCounting,
   leaveInPeriod,
+  leavePolicyStart,
   leaveWarnings,
   sickDayRates,
   sickDaysByTier,
@@ -272,5 +278,143 @@ describe('employees needing an opening leave balance', () => {
       'imported',
       'cancelled-record',
     ]);
+  });
+});
+
+describe('the company’s leave policy', () => {
+  const policy = (overrides: Partial<LeavePolicy>): LeavePolicy => ({
+    ...DEFAULT_LEAVE_POLICY,
+    ...overrides,
+  });
+
+  it('is the law’s until one is set: the same balances as before', () => {
+    const records = [
+      record({ start: '2022-06-01', end: '2022-06-05', days: 5 }),
+      record({ kind: 'opening', start: '2024-01-01', end: '2024-01-01', days: 12 }),
+      record({ kind: 'adjustment', start: '2024-02-01', end: '2024-02-01', days: -2 }),
+      record({ start: '2025-03-01', end: '2025-03-10', days: 8 }),
+      record({ start: '2025-04-01', end: '2025-04-01', days: 1, status: 'cancelled' }),
+    ];
+    const brought = { date: '2021-07-05', days: 4, confirmed: true };
+    // The law's days written out from a date, and an entitlement of the same 30 days.
+    const law = policy({ annualDays: [{ from: '2015-01-01', days: 30 }] });
+    // The same days again from a date in the middle of a month of service.
+    const again = policy({ annualDays: [{ from: '2023-03-15', days: 30 }] });
+    for (const on of ['2021-03-31', '2021-07-04', '2023-12-31', '2024-06-30', '2026-10-31']) {
+      const today = annualLeaveBalance(records, '2020-05-01', on, brought);
+      expect(annualLeaveBalance(records, '2020-05-01', on, brought, DEFAULT_LEAVE_POLICY)).toEqual(
+        today,
+      );
+      expect(annualLeaveBalance(records, '2020-05-01', on, brought, law)).toEqual(today);
+      expect(annualLeaveBalance(records, '2020-05-01', on, brought, again)).toEqual(today);
+      expect(annualLeaveBalance(records, '2020-05-01', on, brought, null, 30)).toEqual(today);
+    }
+    expect(annualLeaveBalance(records, '2020-05-01', '2026-10-31', brought)).not.toHaveProperty(
+      'forfeited',
+    );
+    expect(annualDaysOn('2026-10-31')).toBe(30);
+    expect(
+      countLeaveDays('annual', '2026-02-23', '2026-03-01', official, DEFAULT_LEAVE_POLICY),
+    ).toBe(3);
+    expect(leavePolicyStart(DEFAULT_LEAVE_POLICY)).toBeNull();
+  });
+
+  it('gives 3.75 days a month for 45 days a year, from the policy or the employee’s contract', () => {
+    const generous = policy({ annualDays: [{ from: '2026-01-01', days: 45 }] });
+    expect(annualLeaveBalance([], '2026-01-01', '2026-06-30', null, generous)).toMatchObject({
+      accrued: 22.5,
+      balance: 22.5,
+    });
+    expect(annualDaysOn('2025-12-31', generous)).toBe(30);
+    expect(annualDaysOn('2026-01-01', generous)).toBe(45);
+    // The employee's own days count throughout, whatever the policy's dates.
+    const employee = { id: 'e', hireDate: '2020-01-01', annualLeaveDays: 45 };
+    expect(employeeLeaveBalance(employee, [], '2020-04-30').balance).toBe(15);
+    expect(employeeLeaveBalance(employee, [], '2020-04-30', generous).balance).toBe(15);
+    expect(annualDaysOn('2020-04-30', generous, 45)).toBe(45);
+  });
+
+  it('counts a change in the middle of the year from its date only', () => {
+    const july = policy({ annualDays: [{ from: '2026-07-01', days: 45 }] });
+    // Six months at 2.5 days, then six at 3.75.
+    expect(annualLeaveBalance([], '2026-01-01', '2026-06-30', null, july).balance).toBe(15);
+    expect(annualLeaveBalance([], '2026-01-01', '2026-12-31', null, july).balance).toBe(37.5);
+    // Hired on the 15th: the month from 15 June to 14 July earns 16 days' share at 30 days
+    // a year and 14 days' at 45, 1.33 + 1.75.
+    expect(annualLeaveBalance([], '2026-01-15', '2026-06-30', null, july).balance).toBe(12.5);
+    expect(annualLeaveBalance([], '2026-01-15', '2026-07-14', null, july).balance).toBe(15.58);
+    // Back to 30 days a year in 2027.
+    const back = policy({
+      annualDays: [
+        { from: '2026-07-01', days: 45 },
+        { from: '2027-01-01', days: 30 },
+      ],
+    });
+    expect(annualLeaveBalance([], '2026-01-01', '2027-06-30', null, back).balance).toBe(52.5);
+    // From an opening balance after the change, at the new days.
+    const opening = [record({ kind: 'opening', start: '2026-09-01', end: '2026-09-01', days: 10 })];
+    expect(annualLeaveBalance(opening, '2021-03-01', '2026-12-31', null, july)).toMatchObject({
+      from: '2026-09-01',
+      accrued: 15,
+      balance: 25,
+    });
+    // Worked back from leave brought forward: September earned 3.75 days.
+    const brought = { date: '2026-10-05', days: 12.5, confirmed: true };
+    expect(annualLeaveBalance([], '2021-03-01', '2026-08-31', brought, july).balance).toBe(8.75);
+  });
+
+  it('loses unused days over the cap when a new year starts, from the policy’s date', () => {
+    const capped = policy({ annualDays: [{ from: '2026-01-01', days: 30 }], carryForwardMax: 10 });
+    expect(leavePolicyStart(capped)).toBe('2026-01-01');
+    expect(annualLeaveBalance([], '2025-01-01', '2025-12-31', null, capped)).toMatchObject({
+      balance: 30,
+    });
+    // 30 days at the end of 2025, 10 of them carried into 2026.
+    expect(annualLeaveBalance([], '2025-01-01', '2026-01-31', null, capped)).toMatchObject({
+      accrued: 32.5,
+      forfeited: 20,
+      balance: 12.5,
+    });
+    // 35 days at the end of 2026 after 5 taken in March: 25 more lost.
+    const taken = [record({ start: '2026-03-01', end: '2026-03-05', days: 5 })];
+    expect(annualLeaveBalance(taken, '2025-01-01', '2027-01-31', null, capped)).toMatchObject({
+      accrued: 62.5,
+      taken: 5,
+      forfeited: 45,
+      balance: 12.5,
+    });
+    expect(annualLeaveBalance(taken, '2025-01-01', '2027-01-31').balance).toBe(57.5);
+    // A policy from June 2026 leaves the start of 2026 alone.
+    const june = policy({ annualDays: [{ from: '2026-06-01', days: 30 }], carryForwardMax: 10 });
+    expect(annualLeaveBalance([], '2025-01-01', '2026-01-31', null, june).balance).toBe(32.5);
+    expect(annualLeaveBalance([], '2025-01-01', '2027-01-31', null, june)).toMatchObject({
+      forfeited: 50,
+      balance: 12.5,
+    });
+  });
+
+  it('sets the months before the first leave and how annual leave is counted', () => {
+    const six = policy({ firstYearMonths: 6 });
+    expect(annualLeaveBalance([], '2026-01-01', '2026-03-31', null, six).eligibleFrom).toBe(
+      '2026-07-01',
+    );
+    const calendar = policy({ counting: 'calendar' });
+    expect(leaveCounting('annual')).toBe('working');
+    expect(leaveCounting('annual', calendar)).toBe('calendar');
+    expect(leaveCounting('maternity', calendar)).toBe('calendar');
+    expect(leaveCounting('sick', calendar)).toBe('working');
+    // Mon 23 Feb – Sun 1 Mar 2026: every day of annual leave, still three working days of sick leave.
+    expect(countLeaveDays('annual', '2026-02-23', '2026-03-01', official, calendar)).toBe(7);
+    expect(countLeaveDays('sick', '2026-02-23', '2026-03-01', official, calendar)).toBe(3);
+    // The counting stays once annual leave is recorded: other leave and cancelled leave don't count.
+    expect(annualLeaveRecorded([])).toBe(false);
+    expect(
+      annualLeaveRecorded([
+        record({ kind: 'opening', days: 10 }),
+        record({ type: 'sick' }),
+        record({ status: 'cancelled' }),
+      ]),
+    ).toBe(false);
+    expect(annualLeaveRecorded([record({ days: 1 })])).toBe(true);
   });
 });

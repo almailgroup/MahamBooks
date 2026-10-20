@@ -1327,6 +1327,11 @@ export interface Employee {
    * leave counts from the hire date.
    */
   leaveOpening?: LeaveOpening | null;
+  /**
+   * Days of annual leave a year in the employee's contract, in place of the
+   * company's (at least 30). Missing or null: the company's leave policy.
+   */
+  annualLeaveDays?: number | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1912,7 +1917,34 @@ export interface PayrollSettings {
   /** The company's file number with the Public Authority for Manpower. */
   pamFileNumber: string;
   salaryFile: SalaryFileLayout;
+  /**
+   * The company's annual leave policy, saved from Payroll → Settings. Missing:
+   * the law's, as before (see DEFAULT_LEAVE_POLICY).
+   */
+  leavePolicy?: LeavePolicy;
   updatedAt: Timestamp;
+}
+
+/** Days of annual leave a year, earned from a date on. */
+export interface AnnualLeaveDays {
+  from: ISODate;
+  /** At least 30 (art. 70). */
+  days: number;
+}
+
+/** How a company gives annual leave; balances before its first date don't change. */
+export interface LeavePolicy {
+  /** Days a year from each date, oldest first; before the first date, the law's 30. */
+  annualDays: AnnualLeaveDays[];
+  /** Months of service before annual leave can be taken in the first year (nine, art. 70). */
+  firstYearMonths: number;
+  /**
+   * Most unused days carried into a new calendar year, from the first date
+   * on; the rest is lost. Null: every unused day carries forward.
+   */
+  carryForwardMax: number | null;
+  /** How annual leave is counted. Kept once leave is recorded: its days are stored when saved. */
+  counting: 'working' | 'calendar';
 }
 
 /** Rules a pay run was worked out with, copied from the settings when it was prepared. */
