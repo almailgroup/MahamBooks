@@ -1,8 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { Building2, Check, ChevronDown, ChevronsUpDown, ExternalLink, Plus } from 'lucide-react';
+import {
+  Building2,
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  ExternalLink,
+  Plug,
+  Plus,
+} from 'lucide-react';
+import type { CompanyLink } from '@/db/types';
 import { cn } from '@/lib/cn';
-import { sidebarLinks } from '@/lib/links';
+import { linkSections, sidebarLinks } from '@/lib/links';
 import { useCompanyContext } from '@/app/company';
 import {
   DropdownContent,
@@ -16,6 +25,7 @@ import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
+import { APPS } from '@/suite/apps';
 import { useCurrentApp } from '@/suite/current-app';
 import { AppTiles, CurrentApp } from '@/suite/switcher';
 import { SuiteLogo } from '@/suite/logo';
@@ -24,6 +34,7 @@ import { t } from '@/i18n';
 import {
   activeGroupId,
   activeLink,
+  INTEGRATIONS_GROUP,
   isGroupOpen,
   loadGroupState,
   navLinks,
@@ -162,31 +173,111 @@ function useGroupState(active: string | null) {
   return { state, toggle };
 }
 
-/** The company's other tools (Settings → Links); they open in a new tab. */
-function CompanyLinks({ onNavigate }: { onNavigate?: () => void }) {
-  const { company } = useCompanyContext();
-  const links = sidebarLinks(company.links);
-  if (!links.length) return null;
+/** A company link: it opens in a new tab. In a group, the icon follows the name. */
+function ExternalItem({
+  link,
+  className,
+  nested,
+  onNavigate,
+}: {
+  link: CompanyLink;
+  className: string;
+  nested?: boolean;
+  onNavigate?: () => void;
+}) {
   return (
-    <ul className="mt-3 space-y-0.5" aria-label={t('Links')}>
-      {links.map((link) => (
-        <li key={link.id}>
-          <a
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onNavigate}
+    <a
+      href={link.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onNavigate}
+      className={className}
+    >
+      {nested ? null : <ExternalLink aria-hidden />}
+      <span className="min-w-0 flex-1 truncate">
+        {localName({ name: link.label, nameAr: link.labelAr })}
+      </span>
+      {nested ? <ExternalLink aria-hidden /> : null}
+      <span className="sr-only">{t('(opens in a new tab)')}</span>
+    </a>
+  );
+}
+
+/**
+ * The company's other tools and its integrations (Settings → Links), those
+ * chosen for the open app; they open in a new tab.
+ */
+function CompanyLinks({
+  app,
+  open,
+  onToggle,
+  onNavigate,
+}: {
+  app: string;
+  /** Whether the Integrations group shows its links. */
+  open: boolean;
+  onToggle: () => void;
+  onNavigate?: () => void;
+}) {
+  const { company } = useCompanyContext();
+  const panelId = useId();
+  const { links, integrations } = linkSections(
+    sidebarLinks(company.links, { open: [app], apps: APPS.map((a) => a.id) }),
+  );
+  return (
+    <>
+      {links.length ? (
+        <ul className="mt-3 space-y-0.5" aria-label={t('Links')}>
+          {links.map((link) => (
+            <li key={link.id}>
+              <ExternalItem
+                link={link}
+                onNavigate={onNavigate}
+                className={cn(itemBase, itemHeight, itemIdle)}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {integrations.length ? (
+        <div className="mt-3">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={onToggle}
             className={cn(itemBase, itemHeight, itemIdle)}
           >
-            <ExternalLink aria-hidden />
-            <span className="min-w-0 flex-1 truncate">
-              {localName({ name: link.label, nameAr: link.labelAr })}
-            </span>
-            <span className="sr-only">{t('(opens in a new tab)')}</span>
-          </a>
-        </li>
-      ))}
-    </ul>
+            <Plug aria-hidden />
+            <span className="flex-1 text-start">{t('Integrations')}</span>
+            <ChevronDown
+              className={cn(
+                'size-4! text-slate-400 transition-transform duration-150',
+                !open && '-rotate-90 rtl:rotate-90',
+              )}
+              aria-hidden
+            />
+          </button>
+          <ul
+            id={panelId}
+            hidden={!open}
+            className="mt-px mb-1 space-y-px"
+            aria-label={t('Integrations')}
+          >
+            {integrations.map((link) => (
+              <li key={link.id}>
+                <ExternalItem
+                  link={link}
+                  nested
+                  onNavigate={onNavigate}
+                  className="hover:bg-surface/70 flex h-[1.875rem] items-center gap-2 rounded-xl ps-[2.625rem] pe-3 text-sm text-slate-600 transition-colors hover:text-slate-900 pointer-coarse:h-11 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-slate-400"
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -250,7 +341,12 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             ),
           )}
         </ul>
-        <CompanyLinks onNavigate={onNavigate} />
+        <CompanyLinks
+          app={app.id}
+          open={isGroupOpen(state, INTEGRATIONS_GROUP)}
+          onToggle={() => toggle(INTEGRATIONS_GROUP)}
+          onNavigate={onNavigate}
+        />
       </nav>
       <div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <ul className="space-y-0.5">

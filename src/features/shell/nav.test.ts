@@ -4,6 +4,7 @@ import { PEOPLE } from '@/apps/people/manifest';
 import {
   activeGroupId,
   activeLink,
+  INTEGRATIONS_GROUP,
   isActivePath,
   isGroupOpen,
   loadGroupState,
@@ -51,6 +52,9 @@ describe('navigation', () => {
   it('remembers open and closed groups', () => {
     expect(isGroupOpen({}, 'sales')).toBe(true);
     expect(isGroupOpen({}, 'accounting')).toBe(false);
+    // The company's integrations show until someone closes them.
+    expect(isGroupOpen({}, INTEGRATIONS_GROUP)).toBe(true);
+    expect(isGroupOpen({ [INTEGRATIONS_GROUP]: false }, INTEGRATIONS_GROUP)).toBe(false);
     saveGroupState({ sales: false, accounting: true });
     const state = loadGroupState();
     expect(isGroupOpen(state, 'sales')).toBe(false);

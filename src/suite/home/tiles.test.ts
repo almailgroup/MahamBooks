@@ -81,6 +81,25 @@ describe('the home’s round tiles', () => {
     expect(initialsOf('  ')).toBe('?');
   });
 
+  it('find an integration by its name in either language or by "integrations"', () => {
+    const tiles = linkTiles([
+      { id: 'tasks', label: 'Tasks', url: 'https://tasks.example.com' },
+      {
+        id: 'deema',
+        label: 'Deema',
+        labelAr: 'ديما',
+        url: 'https://merchant.example.com',
+        section: 'integrations',
+        preset: 'deema',
+      },
+    ]);
+    const find = (q: string) => filterTiles(tiles, q).map((tile) => tile.key);
+    expect(find('integrations')).toEqual(['link:deema']);
+    expect(find('deema')).toEqual(['link:deema']);
+    expect(find('ديما')).toEqual(['link:deema']);
+    expect(find('tasks')).toEqual(['link:tasks']);
+  });
+
   it('are found by name, keyword or app, in English or Arabic, each place once', () => {
     const all = [
       ...appTiles(owner),

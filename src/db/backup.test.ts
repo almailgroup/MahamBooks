@@ -71,6 +71,27 @@ describe('backup', () => {
     });
   });
 
+  it('keeps where each link shows and the integration it was added as', async () => {
+    const links = [
+      { id: 'l1', label: 'Tasks', url: 'https://tasks.example.com/' },
+      {
+        id: 'l2',
+        label: 'Taly',
+        labelAr: 'تالي',
+        url: 'https://merchant.example.com/',
+        section: 'integrations' as const,
+        preset: 'taly' as const,
+        apps: ['books', 'crm'],
+      },
+    ];
+    const a = await setupCompany({ name: 'Made-up Trading', links });
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.companies.get(a.id))?.links).toEqual(links);
+  });
+
   it('merges without deleting existing data', async () => {
     const a = await setupCompany({ name: 'A' });
     const backup = await exportBackup(a.id);

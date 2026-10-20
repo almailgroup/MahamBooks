@@ -4,11 +4,11 @@ import { Plus, Search } from 'lucide-react';
 import { useCompany } from '@/app/company';
 import { Input } from '@/components/ui/form';
 import { useRoleView } from '@/features/cloud/role-gates';
-import { sidebarLinks } from '@/lib/links';
+import { linkSections, sidebarLinks } from '@/lib/links';
 import { cn } from '@/lib/cn';
 import { useLanguage } from '@/i18n/provider';
 import { t, tp } from '@/i18n';
-import { appById, appTitle, type AccessMap } from '../apps';
+import { APPS, appById, appTitle, visibleApps, type AccessMap } from '../apps';
 import { useCurrentApp } from '../current-app';
 import { APP_TONES, AppMark, PreviewBadge } from '../switcher';
 import type { AppId } from '../types';
@@ -53,13 +53,22 @@ export function Launcher({
     const apps = appTiles(access, language);
     const create = createTiles(current.id, access, readOnly);
     const groups = toolGroups(access, language);
-    const links = linkTiles(sidebarLinks(company.links));
+    // The links chosen for an app the person may open.
+    const sections = linkSections(
+      sidebarLinks(company.links, {
+        open: visibleApps(access).map((app) => app.id),
+        apps: APPS.map((app) => app.id),
+      }),
+    );
+    const links = linkTiles(sections.links);
+    const integrations = linkTiles(sections.integrations);
     return {
       apps,
       create,
       groups,
       links,
-      all: [...apps, ...create, ...groups.flatMap((g) => g.tiles), ...links],
+      integrations,
+      all: [...apps, ...create, ...groups.flatMap((g) => g.tiles), ...links, ...integrations],
     };
     // Labels are translated when built: the language is a dependency.
   }, [access, current.id, readOnly, company.links, language]);
@@ -71,6 +80,7 @@ export function Launcher({
     create: useId(),
     tools: useId(),
     links: useId(),
+    integrations: useId(),
     found: useId(),
     foundTitle: useId(),
   };
@@ -191,6 +201,17 @@ export function Launcher({
               <SectionTitle id={ids.links}>{t('Company tools')}</SectionTitle>
               <TileGrid>
                 {tiles.links.map((tile) => (
+                  <RoundTile key={tile.key} tile={tile} />
+                ))}
+              </TileGrid>
+            </section>
+          ) : null}
+
+          {tiles.integrations.length ? (
+            <section aria-labelledby={ids.integrations}>
+              <SectionTitle id={ids.integrations}>{t('Integrations')}</SectionTitle>
+              <TileGrid>
+                {tiles.integrations.map((tile) => (
                   <RoundTile key={tile.key} tile={tile} />
                 ))}
               </TileGrid>

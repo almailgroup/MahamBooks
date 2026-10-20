@@ -138,10 +138,14 @@ export function initialsOf(name: string): string {
   return letters.join(joiner) || '?';
 }
 
-/** The company's own links (Settings → Links); they open in a new tab. */
+/**
+ * The company's own links and integrations (Settings → Links); they open in
+ * a new tab. An integration is also found by typing "integrations".
+ */
 export function linkTiles(links: readonly CompanyLink[]): Tile[] {
   return links.map((link) => {
     const label = localName({ name: link.label, nameAr: link.labelAr });
+    const section = link.section === 'integrations' ? [t('Integrations'), 'integrations'] : [];
     return {
       key: `link:${link.id}`,
       label,
@@ -149,7 +153,7 @@ export function linkTiles(links: readonly CompanyLink[]): Tile[] {
       initials: initialsOf(label),
       tone: 'neutral' as const,
       href: link.url,
-      terms: terms(link.label, link.labelAr, link.url),
+      terms: terms(link.label, link.labelAr, link.url, ...section),
     };
   });
 }

@@ -530,7 +530,19 @@ export interface CompanyLink {
   labelAr?: string;
   /** Web address: http or https only. */
   url: string;
+  /** Under Integrations in the sidebar; missing for the list of links. */
+  section?: 'integrations';
+  /** The integration it was added as (Settings → Links), for its hint. */
+  preset?: LinkPresetId;
+  /**
+   * The apps whose sidebar shows it (AppId values, kept as text so the apps
+   * of a newer build survive); missing for every app.
+   */
+  apps?: string[];
 }
+
+/** The integrations Settings → Links adds with their names filled in. */
+export type LinkPresetId = 'deema' | 'taly' | 'tahseel';
 
 export interface ClientContact {
   id: ID;

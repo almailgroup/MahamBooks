@@ -93,8 +93,11 @@ export type GroupState = Record<string, boolean>;
 
 const GROUPS_KEY = 'almailbooks.nav.groups';
 
-/** Groups open until someone closes them: the everyday sales pages. */
-export const DEFAULT_OPEN = new Set(['sales']);
+/** The sidebar's group of the company's integrations (Settings → Links). */
+export const INTEGRATIONS_GROUP = 'integrations';
+
+/** Groups open until someone closes them: the everyday sales pages and the integrations. */
+export const DEFAULT_OPEN = new Set(['sales', INTEGRATIONS_GROUP]);
 
 export function loadGroupState(): GroupState {
   try {

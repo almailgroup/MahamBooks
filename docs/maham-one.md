@@ -15,8 +15,13 @@ cloud sync.
 
 The suite's home (`/`) is a launcher: every app someone may open, the things
 most often created ("New invoice", "Record expense"…), each app's main tools
-and the company's own links (Settings → Links), each a round tile one click
-away, with a box to find one by typing its name (Enter opens the first).
+and the company's own links and integrations (Settings → Links), each a round
+tile one click away, with a box to find one by typing its name (Enter opens
+the first). A link shows in every app's sidebar or only in the apps chosen
+for it; Deema, Taly and Tahseel are added with their names filled in and
+show under _Integrations_ (التكاملات) in Maham Books and Maham CRM until
+the owner chooses otherwise. They are web pages that open in a new tab: no
+key or payment goes through them.
 Below them: what needs attention today (the same items as the morning email)
 and money at a glance. The grid button in the header switches apps; on phones
 the apps are at the top of the menu.
