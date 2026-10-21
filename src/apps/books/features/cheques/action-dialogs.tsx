@@ -23,6 +23,8 @@ import { newCheque } from '@/db/payments';
 import type { ChequeDetails, Payment } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { today } from '@/lib/dates';
+import { printableAfterLeaf, printRefusal } from '@/lib/cheque-print';
+import { useReadOnly } from '@/components/ui/read-only';
 import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
@@ -102,8 +104,14 @@ export function ChequeActionsMenu({
   label?: string;
 }) {
   const navigate = useNavigate();
+  const company = useCompany();
+  const { readOnly } = useReadOnly();
   const base = PAYMENT_COPY[paymentDirection(payment)].base;
   const actions = chequeActions(payment);
+  // Cheques issued that can be printed (or printed again on a new leaf).
+  const refusal = printRefusal(payment);
+  const printable =
+    showPaymentLink && Boolean(company.chequePrinting) && !readOnly && printableAfterLeaf(refusal);
   return (
     <DropdownMenu>
       <DropdownTrigger asChild>
@@ -136,6 +144,14 @@ export function ChequeActionsMenu({
         {showPaymentLink ? (
           <DropdownItem icon={<ExternalLink />} onSelect={() => navigate(`${base}/${payment.id}`)}>
             {t('Open payment {number}', { number: payment.number })}
+          </DropdownItem>
+        ) : null}
+        {printable ? (
+          <DropdownItem
+            icon={<Printer />}
+            onSelect={() => navigate(`${base}/${payment.id}/cheque`)}
+          >
+            {t('Print cheque')}
           </DropdownItem>
         ) : null}
         {showPaymentLink ? (

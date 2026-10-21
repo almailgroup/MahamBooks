@@ -603,6 +603,12 @@ export interface Company {
    * units and codes by hand and gives items no pictures, as before.
    */
   items?: ItemSettings;
+  /**
+   * Cheques issued can be printed onto the bank's leaves (Burgan Bank, KFH)
+   * from the payment and the cheque register, with the layouts in Cheques →
+   * Cheque layouts. Missing: cheques are written by hand, as before.
+   */
+  chequePrinting?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1055,6 +1061,46 @@ export interface ChequeDetails {
   replacedById?: ID | null;
   /** Payment whose cheque this one replaces. */
   replacesId?: ID | null;
+  /**
+   * When the cheque (issued) was printed onto its leaf and the print was
+   * confirmed. A printed cheque is not printed again: its leaf is marked
+   * spoiled first. Set by the cheque print page, never by the payment form.
+   */
+  printedAt?: Timestamp | null;
+  /** Leaves printed for this cheque, spoiled ones included. */
+  printCount?: number;
+  /** The layout it was printed with (a built-in one is "preset-<bank>"). */
+  printedLayoutId?: ID | null;
+  /** What was printed on the leaf, as printed. */
+  printedText?: ChequePrintedText | null;
+  /** Printed crossed: "A/C payee only" (يصرف للمستفيد الأول). */
+  crossed?: boolean;
+  /** Leaves spoiled for this cheque, oldest first: each was destroyed and the cheque moved to the next. */
+  spoiledLeaves?: SpoiledChequeLeaf[];
+}
+
+/** The text printed on a cheque leaf. */
+export interface ChequePrintedText {
+  date: string;
+  payee: string;
+  /** The amount in words, line by line. */
+  words: string[];
+  figures: string;
+  /** The crossing, when the cheque was crossed. */
+  crossing?: string;
+  /** The version of the layout it was printed with. */
+  layoutVersion: number;
+}
+
+/** A cheque leaf that was spoiled: printed wrongly, printed before a change, or printed again. */
+export interface SpoiledChequeLeaf {
+  /** The number of the leaf. */
+  number: string;
+  at: Timestamp;
+  /** Why, as written at the time. */
+  reason: string;
+  /** What was printed on it, when it was printed. */
+  printedText?: ChequePrintedText | null;
 }
 
 export interface PaymentAllocation {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Info, Wand2 } from 'lucide-react';
+import { AlertTriangle, Info, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { createPayment, isChequeSettled, newCheque, savePayment } from '@/db/payments';
@@ -603,6 +603,15 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                 direction={direction}
                 paymentDate={payment.date}
               />
+            ) : null}
+            {before?.cheque?.printedAt && !settled ? (
+              <p className="mt-4 flex gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                {t(
+                  'This cheque was printed on {date}. Saving another amount, payee, number, bank or date marks the printed leaf spoiled: destroy it and print the cheque again.',
+                  { date: fmt.dateTime(before.cheque.printedAt) },
+                )}
+              </p>
             ) : null}
             {settled ? (
               <p className="mt-4 text-sm text-slate-500">

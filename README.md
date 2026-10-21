@@ -84,6 +84,16 @@ and the compliance calendar (Maham Compliance).
   clear, return (with the bank's charge) and replace. Returned cheques are
   booked on the day they come back, so closed periods never change. Security
   (guarantee) cheques are kept on record.
+- Cheques issued print straight onto Burgan Bank and KFH leaves (طباعة الشيك),
+  once switched on in Settings → Payment details: the date, the payee, the
+  amount in Arabic (or English) words over the leaf's two lines and in
+  figures, and, when asked, "يصرف للمستفيد الأول / A/C payee only". Cheques →
+  Cheque layouts (نماذج الشيكات) sets each field in millimetres with a preview
+  at real size; a test print with rulers and 0.5 mm nudges is kept per
+  printer, on the device. Every print is recorded on the cheque; a misprinted
+  or reprinted leaf is recorded as spoiled (ورقة تالفة) and the cheque moves
+  to the next leaf. The built-in layouts are not yet measured on real leaves:
+  make a test print first.
 - Receipt and payment vouchers (سند قبض / سند صرف) in Arabic and English, for
   payments and expenses, printed or saved as PDFs. The stamp and the blue
   signature, and your own signature lines, are set in Settings → Invoice

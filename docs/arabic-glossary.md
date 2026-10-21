@@ -98,31 +98,35 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 
 ## Money and banking
 
-| English                    | Arabic                       |
-| -------------------------- | ---------------------------- |
-| Kuwaiti dinar              | دينار كويتي                  |
-| Fils                       | فلس                          |
-| Cash                       | نقداً / النقدية              |
-| Cheque                     | شيك                          |
-| Post-dated cheque (PDC)    | شيك آجل (plural: شيكات آجلة) |
-| Bounced cheque             | شيك مرتجع                    |
-| Bank transfer              | تحويل بنكي                   |
-| Receipt voucher            | سند قبض                      |
-| Payment voucher            | سند صرف                      |
-| KNET                       | كي نت                        |
-| Credit card                | بطاقة ائتمان                 |
-| Payment link               | رابط دفع                     |
-| Petty cash                 | العهدة النقدية               |
-| Bank account               | حساب بنكي                    |
-| Bank statement             | كشف الحساب البنكي            |
-| Statement line             | حركة كشف الحساب              |
-| Reconcile / Reconciliation | تسوية / التسوية البنكية      |
-| Match                      | مطابقة                       |
-| Transfer                   | تحويل                        |
-| Exchange rate              | سعر الصرف                    |
-| IBAN                       | رقم الآيبان (IBAN)           |
-| Opening balance            | الرصيد الافتتاحي             |
-| Closing balance            | الرصيد الختامي               |
+| English                         | Arabic                       |
+| ------------------------------- | ---------------------------- |
+| Kuwaiti dinar                   | دينار كويتي                  |
+| Fils                            | فلس                          |
+| Cash                            | نقداً / النقدية              |
+| Cheque                          | شيك                          |
+| Post-dated cheque (PDC)         | شيك آجل (plural: شيكات آجلة) |
+| Bounced cheque                  | شيك مرتجع                    |
+| Print cheque                    | طباعة الشيك                  |
+| Cheque layouts                  | نماذج الشيكات                |
+| Spoiled leaf (of a cheque book) | ورقة تالفة                   |
+| A/C payee only (crossed cheque) | يصرف للمستفيد الأول          |
+| Bank transfer                   | تحويل بنكي                   |
+| Receipt voucher                 | سند قبض                      |
+| Payment voucher                 | سند صرف                      |
+| KNET                            | كي نت                        |
+| Credit card                     | بطاقة ائتمان                 |
+| Payment link                    | رابط دفع                     |
+| Petty cash                      | العهدة النقدية               |
+| Bank account                    | حساب بنكي                    |
+| Bank statement                  | كشف الحساب البنكي            |
+| Statement line                  | حركة كشف الحساب              |
+| Reconcile / Reconciliation      | تسوية / التسوية البنكية      |
+| Match                           | مطابقة                       |
+| Transfer                        | تحويل                        |
+| Exchange rate                   | سعر الصرف                    |
+| IBAN                            | رقم الآيبان (IBAN)           |
+| Opening balance                 | الرصيد الافتتاحي             |
+| Closing balance                 | الرصيد الختامي               |
 
 ## Accounting
 

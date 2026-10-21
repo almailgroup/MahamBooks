@@ -27,6 +27,9 @@ const PaymentForm = lazy(() => import('./pages/payments/form'));
 const PaymentVoucher = lazy(() => import('./pages/payments/voucher'));
 const ChequeRegister = lazy(() => import('./pages/cheques/index'));
 const ChequeRegisterPrint = lazy(() => import('./pages/cheques/print'));
+const ChequePrint = lazy(() => import('./pages/cheques/cheque-print'));
+const ChequeLayouts = lazy(() => import('./pages/cheques/layouts'));
+const ChequeTestPrint = lazy(() => import('./pages/cheques/test-print'));
 const RecurringList = lazy(() => import('./pages/recurring/list'));
 const RecurringEditor = lazy(() => import('./pages/recurring/editor'));
 const Reports = lazy(() => import('./pages/reports/index'));
@@ -76,7 +79,10 @@ const paymentRoutes = (path: string, direction: 'in' | 'out') => [
   { path: `${path}/:id/edit`, element: <PaymentForm key={direction} direction={direction} /> },
 ];
 
-/** Print views: vouchers, the cheque register, the count sheet and item labels, without the navigation. */
+/**
+ * Print views: vouchers, cheques and the cheque register, the count sheet and
+ * item labels, without the navigation.
+ */
 export const booksPrintRoutes: RouteObject[] = [
   {
     path: 'payments/:id/voucher',
@@ -107,6 +113,22 @@ export const booksPrintRoutes: RouteObject[] = [
     element: (
       <Bare>
         <ChequeRegisterPrint />
+      </Bare>
+    ),
+  },
+  {
+    path: 'payments-made/:id/cheque',
+    element: (
+      <Bare>
+        <ChequePrint />
+      </Bare>
+    ),
+  },
+  {
+    path: 'cheques/test-print',
+    element: (
+      <Bare>
+        <ChequeTestPrint />
       </Bare>
     ),
   },
@@ -142,6 +164,7 @@ export const booksRoutes: RouteObject[] = [
   { path: 'recurring/:id', element: <RecurringEditor /> },
   ...paymentRoutes('payments', 'in'),
   { path: 'cheques', element: <ChequeRegister /> },
+  { path: 'cheques/layouts', element: <ChequeLayouts /> },
   ...contactRoutes('clients', 'customer'),
   ...contactRoutes('vendors', 'vendor'),
   ...purchaseRoutes('bills', 'bill'),

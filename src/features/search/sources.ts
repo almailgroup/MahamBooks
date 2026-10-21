@@ -60,6 +60,7 @@ const SUB_PAGES: { label: string; to: string; keywords?: string; app?: AppId }[]
   { label: msg('Payment details'), to: '/settings/payments', keywords: 'bank iban' },
   { label: msg('Numbering'), to: '/settings/numbering' },
   { label: msg('Items and units'), to: '/settings/items', keywords: 'sku codes units' },
+  { label: msg('Cheque layouts'), to: '/cheques/layouts', keywords: 'print cheque burgan kfh' },
   { label: msg('Email templates'), to: '/settings/emails' },
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },

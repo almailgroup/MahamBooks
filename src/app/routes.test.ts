@@ -144,6 +144,10 @@ const SUITE_PATHS = [
   '/expenses/:id/voucher',
   // Item labels (#28).
   '/products/labels',
+  // Cheque printing (#23).
+  '/payments-made/:id/cheque',
+  '/cheques/layouts',
+  '/cheques/test-print',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */
@@ -157,6 +161,9 @@ const SAMPLE_URLS = [
   '/payments-made/p1/voucher',
   '/expenses/x1/voucher',
   '/products/labels?ids=p1,p2&layout=thermal-50x25',
+  '/payments-made/p1/cheque',
+  '/cheques/layouts?bank=KFHO',
+  '/cheques/test-print?bank=BRGN',
   '/payroll/runs/r1/payslips',
   '/payroll/settlements/s1/print',
   '/employees/e1/settlement',

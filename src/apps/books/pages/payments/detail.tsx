@@ -38,6 +38,7 @@ import {
 } from '@/apps/books/features/cheques/action-dialogs';
 import { AttachmentList } from '@/features/purchases/attachments';
 import { hasVoucher } from '@/pdf/voucher/model';
+import { printableAfterLeaf, printRefusal } from '@/lib/cheque-print';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -114,13 +115,28 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const replacedBy = linked?.find((p) => p.id === cheque?.replacedById);
   const replaces = linked?.find((p) => p.id === cheque?.replacesId);
   const language = currentLanguage();
+  // Cheques issued print onto the bank's leaf once printing is on; a printed
+  // one can be printed again after its leaf is marked spoiled.
+  const refusal = printRefusal(payment);
+  const printable =
+    Boolean(company.chequePrinting) &&
+    direction === 'out' &&
+    !readOnly &&
+    printableAfterLeaf(refusal);
 
   const remove = async () => {
+    const description = [
+      t(copy.deleteDescription),
+      files?.length ? t('Its attached files are deleted with it.') : '',
+      cheque?.printedAt
+        ? t('Cheque {number} was printed: destroy the printed leaf.', { number: cheque.number })
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     const ok = await confirm({
       title: t('Delete payment {number}?', { number: payment.number }),
-      description: files?.length
-        ? `${t(copy.deleteDescription)} ${t('Its attached files are deleted with it.')}`
-        : t(copy.deleteDescription),
+      description,
       confirmLabel: t('Delete'),
       danger: true,
     });
@@ -195,6 +211,11 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
               showPaymentLink={false}
               label={t('Cheque')}
             />
+          ) : null}
+          {printable ? (
+            <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/cheque`}>
+              <Printer /> {t('Print cheque')}
+            </ButtonLink>
           ) : null}
           {hasVoucher(payment) ? (
             <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/voucher`}>
@@ -332,6 +353,26 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
                   <Row
                     label={t('Civil ID')}
                     value={<span dir="ltr">{cheque.drawerCivilId}</span>}
+                  />
+                ) : null}
+                {cheque.printedAt ? (
+                  <Row
+                    label={t('Printed on')}
+                    value={
+                      cheque.crossed
+                        ? `${fmt.dateTime(cheque.printedAt)} · ${t('A/C payee only')}`
+                        : fmt.dateTime(cheque.printedAt)
+                    }
+                  />
+                ) : null}
+                {cheque.spoiledLeaves?.length ? (
+                  <Row
+                    label={t('Spoiled leaves')}
+                    value={
+                      <span dir="ltr">
+                        {cheque.spoiledLeaves.map((leaf) => leaf.number).join(', ')}
+                      </span>
+                    }
                   />
                 ) : null}
                 {cheque.depositedOn ? (

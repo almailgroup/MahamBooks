@@ -17,6 +17,7 @@ test('every page renders without errors', async ({ page }) => {
     ['#/payments', 'Record payment'],
     ['#/payments/new', 'Apply to invoices'],
     ['#/cheques', '004418'],
+    ['#/cheques/layouts', 'Burgan Bank'],
     ['#/clients', 'Al Bawaba Construction Co. W.L.L.'],
     ['#/vendors', 'Shenzhen Brightway Lighting Co., Ltd.'],
     ['#/purchase-orders', 'PO-'],
