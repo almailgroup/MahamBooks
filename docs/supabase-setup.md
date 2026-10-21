@@ -261,7 +261,9 @@ decided on another device meanwhile stays as the cloud has it. Whoever asked
 can take a request back while it waits. The cloud stamps who asked, who
 decided and when, and a decision once made can't be undone by an older copy.
 An approval that can't be carried out (the period was locked meanwhile, say)
-stays approved, to be carried out again or rejected.
+stays approved, to be carried out again or rejected. Carrying it out again
+asks the cloud first, so a device that is offline, or whose copy is behind
+(another approver rejected it meanwhile), carries nothing out.
 
 **Void and reissue** (إبطال وإعادة إصدار), on any issued invoice or credit
 note once approvals or the numbering below are on, voids it and opens a new

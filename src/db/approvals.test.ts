@@ -550,6 +550,28 @@ describe('numbers are never reused (D12)', () => {
     );
   });
 
+  it('voids as it always did until approvals or numbering on issue are on', async () => {
+    const { company, client } = await setup(null);
+    const invoice = await issue(company, client);
+    await setDocumentStatus(invoice.id, 'void');
+    const voided = await db.documents.get(invoice.id);
+    expect(voided?.status).toBe('void');
+    for (const field of ['voidedAt', 'voidedBy', 'voidReason']) {
+      expect(voided).not.toHaveProperty(field);
+    }
+    await setDocumentStatus(invoice.id, 'sent');
+    const back = await db.documents.get(invoice.id);
+    for (const field of ['voidedAt', 'voidedBy', 'voidReason']) {
+      expect(back).not.toHaveProperty(field);
+    }
+    // Numbering on issue on: who voided it and when are kept.
+    await saveCompany({ ...company, defaults: { ...company.defaults, numberOnIssue: true } });
+    await setDocumentStatus(invoice.id, 'void');
+    expect((await db.documents.get(invoice.id))?.voidedAt).toBeTruthy();
+    await setDocumentStatus(invoice.id, 'sent');
+    expect(await db.documents.get(invoice.id)).toMatchObject({ voidedAt: null, voidedBy: null });
+  });
+
   it('numbers drafts only when they are issued, with numberOnIssue', async () => {
     const created = await setupCompany({ name: 'Gulf Pearl Trading', currency: 'KWD' });
     const company = await saveCompany({

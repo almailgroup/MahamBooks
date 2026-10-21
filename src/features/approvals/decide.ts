@@ -22,7 +22,10 @@ export async function approve(id: ID, manager: SyncManager | null, note = ''): P
 
 /**
  * Carries out an approved request (again), once the cloud has the decision.
- * A company kept on this device carries it out at once.
+ * A company kept on this device carries it out at once. In one kept in the
+ * cloud, this device's copy may be behind the cloud's (another approver may
+ * have rejected it, or carried it out, since): it is carried out only while
+ * the cloud has it as approved, and refused while the cloud can't be asked.
  */
 export async function carryOut(id: ID, manager: SyncManager | null): Promise<Carried> {
   const request = await db.approvals.get(id);
@@ -52,7 +55,39 @@ export async function carryOut(id: ID, manager: SyncManager | null): Promise<Car
     }
     return 'waiting';
   }
-  // The cloud has it as approved: carried out here (the sync may have tried, and said nothing).
+  if (link) {
+    // What the cloud keeps decides, not this device's copy.
+    const kept = await keptInCloud(request.companyId, id, manager);
+    if (kept !== 'approved') {
+      // Its copy is brought here (a sync that can't run leaves it for the next).
+      await manager?.syncNow(request.companyId).catch(() => undefined);
+      if (kept === 'applied') return 'done';
+      throw new ApprovalError(t('This request was decided on another device meanwhile.'));
+    }
+  }
   await applyApproval(id);
   return 'done';
+}
+
+/**
+ * The status of a request as the cloud has it now (null: it has none).
+ * Throws when the cloud can't be asked.
+ */
+async function keptInCloud(
+  companyId: ID,
+  id: ID,
+  manager: SyncManager | null,
+): Promise<string | null> {
+  const unreachable = () =>
+    new ApprovalError(
+      t(
+        'This device can’t reach the cloud, which keeps the last word on this request. Carry it out again once it is online.',
+      ),
+    );
+  if (!manager) throw unreachable();
+  const record = await manager.cloudRecord(companyId, 'approvals', id).catch(() => {
+    throw unreachable();
+  });
+  if (!record) return null;
+  return typeof record.data.status === 'string' ? record.data.status : 'pending';
 }

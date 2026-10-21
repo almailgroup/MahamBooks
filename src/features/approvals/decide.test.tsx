@@ -73,8 +73,12 @@ async function asked() {
 }
 
 /** A stand-in for the sync: the cloud takes what is sent, and keeps `kept` when given. */
-function syncing(kept?: 'cancelled'): SyncManager {
+function syncing(kept?: 'cancelled' | 'rejected'): SyncManager {
   return {
+    cloudRecord: async (_companyId: string, _table: string, id: string) => {
+      const request = await db.approvals.get(id);
+      return request ? { data: { ...request, ...(kept ? { status: kept } : {}) }, rev: 1 } : null;
+    },
     syncNow: async (companyId: string) => {
       const sent = await db.outbox.where('table').equals('approvals').toArray();
       await db.transaction('rw', [db.approvals, db.outbox], async () => {
@@ -109,6 +113,25 @@ describe('approving in a company kept in the cloud', () => {
     expect((await db.documents.get(invoice.id))?.terms).not.toBe('Cash on delivery.');
     expect(await carryOut(request.id, syncing())).toBe('done');
     expect((await db.documents.get(invoice.id))?.terms).toBe('Cash on delivery.');
+  });
+
+  it('carries out again only what the cloud still has as approved', async () => {
+    const { invoice, request } = await asked();
+    await decideApproval(request.id, 'approved');
+    // The cloud took the decision; carrying it out failed then.
+    await db.outbox.clear();
+    // Offline, this device's copy may be behind: nothing is carried out.
+    await expect(carryOut(request.id, null)).rejects.toThrow(/can’t reach the cloud/);
+    // Rejected meanwhile by another approver.
+    await expect(carryOut(request.id, syncing('rejected'))).rejects.toThrow(
+      /decided on another device/,
+    );
+    expect((await db.documents.get(invoice.id))?.terms).not.toBe('Cash on delivery.');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    // Still approved in the cloud.
+    expect(await carryOut(request.id, syncing())).toBe('done');
+    expect((await db.documents.get(invoice.id))?.terms).toBe('Cash on delivery.');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'applied' });
   });
 
   it('says so when the cloud kept another decision, and changes nothing', async () => {

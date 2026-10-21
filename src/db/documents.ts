@@ -45,6 +45,7 @@ import {
   ApprovalRequiredError,
   approverOf,
   assertApproved,
+  correctsByNewNumber,
   voidsInsteadOfDeleting,
 } from './approvals';
 import { approvalRulesOf, rulesCoverDocument } from '@/cloud/roles';
@@ -822,12 +823,15 @@ export async function setDocumentStatus(
     }
     let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
     if (status === 'void' && doc.status !== 'void') {
-      // Who voided it and when (why comes in `patch`).
-      next.voidedAt = nowStamp();
-      next.voidedBy = link?.userId ?? null;
+      // Who voided it and when (why comes in `patch`): once corrections go
+      // by a new number, or a reason is given; stored as it always was otherwise.
+      if (correctsByNewNumber(company) || patch.voidReason !== undefined) {
+        next.voidedAt = nowStamp();
+        next.voidedBy = link?.userId ?? null;
+      }
     } else if (doc.status === 'void' && status !== 'void') {
-      next.voidedAt = null;
-      next.voidedBy = null;
+      if (next.voidedAt !== undefined) next.voidedAt = null;
+      if (next.voidedBy !== undefined) next.voidedBy = null;
       delete next.voidReason;
     }
     // An issued invoice the company's rules keep for approvers: sent for approval instead.

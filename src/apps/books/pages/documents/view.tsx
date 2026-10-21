@@ -35,7 +35,7 @@ import {
   setDocumentStatus,
   waitsForNumber,
 } from '@/db/documents';
-import { approvalsOn, requestApproval } from '@/db/approvals';
+import { correctsByNewNumber, requestApproval } from '@/db/approvals';
 import { progressOf, type PartTarget } from '@/db/orders';
 import { activityByline, activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
@@ -339,7 +339,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const voidsInstead = approvals.voidsInstead(doc);
   // Corrections by a new number (D12), once the owner has turned approvals or
   // numbering on issue on: until then voiding is as it always was.
-  const correcting = approvalsOn(company) || company.defaults.numberOnIssue === true;
+  const correcting = correctsByNewNumber(company);
   // Voided under the rules, or to issue it again, money paid against it
   // becomes the customer's credit.
   const freed = (again: boolean) =>

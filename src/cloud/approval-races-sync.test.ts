@@ -3,6 +3,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { db } from '@/db/db';
 import { createClient } from '@/db/defaults';
 import { saveClient, saveCompany, setupCompany } from '@/db/records';
+import { accountingSettings } from '@/db/chart-setup';
 import { deleteDocument, draftDocument, saveDocument } from '@/db/documents';
 import { createPayment, ensurePaymentAccount, newCheque, savePayment } from '@/db/payments';
 import {
@@ -17,9 +18,11 @@ import { madeBy, requestChequeConfirmation } from '@/db/cheque-approvals';
 import { replaceCheque } from '@/db/cheques';
 import { addAttachment } from '@/db/purchases';
 import { canSendForApproval, sendParkedForApproval } from '@/features/approvals/parked';
+import { carryOut } from '@/features/approvals/decide';
 import type { ApprovalRules, InvoiceDocument, Payment } from '@/db/types';
-import type { MemberRole } from './roles';
+import { approvalRulesOf, type MemberRole } from './roles';
 import { FakeCloud } from './testing/fake-cloud';
+import { SyncManager } from './manager';
 import { parkedEntries, startDownload, startUpload, syncCompany, type SyncContext } from './sync';
 
 /**
@@ -36,6 +39,9 @@ const CHEQUES: ApprovalRules = { cheques: { issued: true, securityOut: true }, e
 
 let server: FakeCloud;
 const ctx = (user: string): SyncContext => ({ api: server.client(user), userId: user });
+/** The app's sync on a device of `user` (one tab: no lock between tabs). */
+const manager = (user: string) =>
+  new SyncManager(ctx(user), { lock: (_name, fn) => fn(), autoDownload: false });
 
 // One IndexedDB per device, so each keeps its own copy while another works.
 const devices = new Map<string, IDBFactory>();
@@ -267,6 +273,104 @@ describe('a decision reaching the cloud', () => {
   });
 });
 
+/** Locks the books up to `lockDate` (null: open) on this device. */
+async function lockBooks(companyId: string, lockDate: string | null) {
+  const current = (await db.companies.get(companyId))!;
+  await saveCompany({ ...current, accounting: { ...accountingSettings(current), lockDate } });
+}
+
+describe('Carry it out again', () => {
+  /**
+   * Staff ask for a cheque to be confirmed; the owner confirms it on the
+   * phone while the books are locked, so it stays approved and isn't
+   * carried out; the laptop then has it approved too.
+   */
+  async function approvedNotCarriedOut() {
+    const c = await company(CHEQUES);
+    await device('staff', c, STAFF, 'staff');
+    const { proposal, request } = await askWithScan(c.companyId, c.bill);
+    await device('phone', c, OWNER, 'owner');
+    await lockBooks(c.companyId, '2026-10-31');
+    await decideApproval(request.id, 'approved');
+    await syncCompany(c.companyId, ctx(OWNER));
+    expect(server.record(c.companyId, 'approvals', request.id)).toMatchObject({
+      status: 'approved',
+    });
+    expect(server.record(c.companyId, 'payments', proposal.id)).toBeUndefined();
+    await device('laptop', c, OWNER, 'owner');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    return { c, proposal, request };
+  }
+
+  it('carries out nothing on a device that is behind, once another approver rejected it', async () => {
+    const { c, proposal, request } = await approvedNotCarriedOut();
+    // The phone turns it down, as it can't be carried out.
+    await on('phone');
+    await decideApproval(request.id, 'rejected', 'The books are closed.');
+    await syncCompany(c.companyId, ctx(OWNER));
+    expect(server.record(c.companyId, 'approvals', request.id)).toMatchObject({
+      status: 'rejected',
+    });
+    // The laptop, still with its approved copy, opens the books and tries again.
+    await on('laptop');
+    await lockBooks(c.companyId, null);
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    // Offline: the cloud has the last word, so nothing is carried out.
+    await expect(carryOut(request.id, null)).rejects.toThrow(/can’t reach the cloud/);
+    server.offline = true;
+    await expect(carryOut(request.id, manager(OWNER))).rejects.toThrow(/can’t reach the cloud/);
+    server.offline = false;
+    expect(await db.payments.get(proposal.id)).toBeUndefined();
+    // Online: the cloud's decision comes here, and still nothing is carried out.
+    await expect(carryOut(request.id, manager(OWNER))).rejects.toThrow(/decided on another device/);
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'rejected' });
+    expect(await db.payments.get(proposal.id)).toBeUndefined();
+    await syncCompany(c.companyId, ctx(OWNER));
+    expect(server.record(c.companyId, 'approvals', request.id)).toMatchObject({
+      status: 'rejected',
+    });
+    expect(server.record(c.companyId, 'payments', proposal.id)).toBeUndefined();
+    expect((await db.documents.get(c.bill.id))?.totals.balance).toBe(250);
+  });
+
+  it('is done once, when another of the approver’s devices carried it out first', async () => {
+    const { c, proposal, request } = await approvedNotCarriedOut();
+    await on('phone');
+    await lockBooks(c.companyId, null);
+    expect(await carryOut(request.id, manager(OWNER))).toBe('done');
+    await syncCompany(c.companyId, ctx(OWNER));
+    expect(server.record(c.companyId, 'approvals', request.id)).toMatchObject({
+      status: 'applied',
+    });
+    // The laptop's copy is still approved: it isn't carried out a second time.
+    await on('laptop');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    expect(await carryOut(request.id, manager(OWNER))).toBe('done');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'applied' });
+    await syncCompany(c.companyId, ctx(OWNER));
+    const paid = server
+      .rows(c.companyId, 'payments')
+      .filter((p) => p.data.approvalId === request.id);
+    expect(paid.map((p) => p.id)).toEqual([proposal.id]);
+    expect((await db.documents.get(c.bill.id))?.totals.balance).toBe(0);
+  });
+
+  it('carries it out on a device that is behind while the cloud still has it approved', async () => {
+    const { c, proposal, request } = await approvedNotCarriedOut();
+    await on('laptop');
+    await lockBooks(c.companyId, null);
+    expect(await carryOut(request.id, manager(OWNER))).toBe('done');
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'applied' });
+    await syncCompany(c.companyId, ctx(OWNER));
+    expect(server.record(c.companyId, 'approvals', request.id)).toMatchObject({
+      status: 'applied',
+    });
+    expect(server.record(c.companyId, 'payments', proposal.id)).toMatchObject({
+      approvalId: request.id,
+    });
+  });
+});
+
 describe('a change the cloud refuses', () => {
   it('leaves the bill a refused cheque pays as the cloud has it, without going back and forth', async () => {
     const c = await company(null);
@@ -390,7 +494,10 @@ describe('a change the cloud refuses', () => {
     );
     // Now the rules are known here: deleting it asks for a void instead.
     const entry = parked.find((e) => e.table === 'documents')!;
-    expect(canSendForApproval(entry)).toBe(true);
+    expect(canSendForApproval(entry, approvalRulesOf(await db.companies.get(owned.id)))).toBe(true);
+    // Not offered while the rules are off.
+    expect(canSendForApproval(entry, null)).toBe(false);
+    expect(canSendForApproval(entry, { cheques: { issued: true } })).toBe(false);
     const request = await sendParkedForApproval(owned.id, entry, ctx(STAFF), 'Issued twice');
     expect(request).toMatchObject({ kind: 'invoice_void', subjectId: invoice.id });
     // Everything is back as the cloud has it.

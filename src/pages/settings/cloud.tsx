@@ -29,7 +29,7 @@ import { useCloud } from '@/cloud/store';
 import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
 import { useCloudStatus } from '@/cloud/hooks';
 import { PARKED_REASONS, RECORD_LABELS } from '@/cloud/labels';
-import { canEdit, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
+import { approvalRulesOf, canEdit, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
 import {
   cleanupFiles,
   discardParked,
@@ -57,6 +57,9 @@ import { PaymentError } from '@/db/payments';
 import { ReasonDialog } from '@/features/approvals/reason-dialog';
 import { useMyName } from '@/features/approvals/hooks';
 import { SettingsSection } from './shared';
+
+/** A company's approval rules, as the cloud reads them (null: off). */
+type CompanyRules = ReturnType<typeof approvalRulesOf>;
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
 
@@ -306,7 +309,12 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
       </div>
 
       {parked && parked.length > 0 ? (
-        <Problems companyId={company.id} entries={parked} role={link?.role} />
+        <Problems
+          companyId={company.id}
+          entries={parked}
+          role={link?.role}
+          rules={approvalRulesOf(company)}
+        />
       ) : null}
       {numbers && numbers.length > 0 ? <NumberProblems groups={numbers} current={current} /> : null}
       {skus && skus.length > 0 ? <SkuProblems groups={skus} current={current} /> : null}
@@ -444,8 +452,8 @@ function FileProblems({ companyId, tasks }: { companyId: string; tasks: FileTask
 }
 
 /** Which of the changes made together stands for them: what was changed, before its log. */
-function rankOf(entry: OutboxEntry): number {
-  if (canSendForApproval(entry) || canSendForConfirmation(entry)) return 0;
+function rankOf(entry: OutboxEntry, rules: CompanyRules): number {
+  if (canSendForApproval(entry, rules) || canSendForConfirmation(entry)) return 0;
   if (entry.table === 'activities') return 3;
   return entry.table === 'documents' || entry.table === 'payments' ? 1 : 2;
 }
@@ -455,7 +463,10 @@ function rankOf(entry: OutboxEntry): number {
  * together in one go (they are sent, refused and undone together): by the
  * one that stands for them, with how many more wait with it.
  */
-function shownOnce(entries: OutboxEntry[]): { entry: OutboxEntry; withIt: number }[] {
+function shownOnce(
+  entries: OutboxEntry[],
+  rules: CompanyRules,
+): { entry: OutboxEntry; withIt: number }[] {
   const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
   const together = new Map<string, OutboxEntry[]>();
   const shown: { entry: OutboxEntry; withIt: number }[] = [];
@@ -469,7 +480,9 @@ function shownOnce(entries: OutboxEntry[]): { entry: OutboxEntry; withIt: number
     else together.set(entry.group, [entry]);
   }
   for (const group of together.values()) {
-    const [first, ...rest] = group.sort((a, b) => rankOf(a) - rankOf(b) || a.seq! - b.seq!);
+    const [first, ...rest] = group.sort(
+      (a, b) => rankOf(a, rules) - rankOf(b, rules) || a.seq! - b.seq!,
+    );
     shown.push({ entry: first, withIt: rest.length });
   }
   return shown.sort((a, b) => a.entry.seq! - b.entry.seq!);
@@ -479,10 +492,13 @@ function Problems({
   companyId,
   entries,
   role,
+  rules,
 }: {
   companyId: string;
   entries: OutboxEntry[];
   role: MemberRole | undefined;
+  /** The company's approval rules: what a refused change may be sent for approval as. */
+  rules: CompanyRules;
 }) {
   const { user, api, manager } = useCloud();
   const confirm = useConfirm();
@@ -492,7 +508,7 @@ function Problems({
   const [asking, setAsking] = useState<OutboxEntry | null>(null);
   // A cheque the rules keep for an approver's confirmation, to send for it (#9).
   const [confirming, setConfirming] = useState<OutboxEntry | null>(null);
-  const unique = shownOnce(entries);
+  const unique = shownOnce(entries, rules);
 
   /** Takes the cloud's copy back; a record the cloud never had is only deleted once agreed. */
   const undo = async (entry: OutboxEntry, ctx: SyncContext) => {
@@ -579,7 +595,7 @@ function Problems({
                 <Undo2 /> {t('Undo my change')}
               </Button>
             ) : null}
-            {api && user && canSendForApproval(entry) ? (
+            {api && user && canSendForApproval(entry, rules) ? (
               <Button size="xs" variant="ghost" onClick={() => setAsking(entry)}>
                 <Send /> {t('Send for approval instead')}
               </Button>

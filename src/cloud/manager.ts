@@ -171,6 +171,18 @@ export class SyncManager {
   }
 
   /**
+   * One record as the cloud has it now: null when it has none (or this
+   * person may not see it). Throws when the cloud can't be reached.
+   */
+  cloudRecord(
+    companyId: string,
+    table: string,
+    id: string,
+  ): Promise<{ data: Record<string, unknown>; rev: number } | null> {
+    return this.ctx.api.getRecord(companyId, table, id);
+  }
+
+  /**
    * Brings roles up to date, notices companies this account has left, and
    * downloads the ones it has that aren't on this device yet.
    */

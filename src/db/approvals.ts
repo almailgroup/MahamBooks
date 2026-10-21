@@ -81,6 +81,17 @@ export function approvalsOn(company: Pick<Company, 'approvalRules'> | null | und
   return approvalRulesOf(company) !== null;
 }
 
+/**
+ * Whether corrections go by a new number (D12): voided with why, who and
+ * when, and issued again in its place. Once the owner has turned approvals
+ * or numbering on issue on; until then voiding is as it always was.
+ */
+export function correctsByNewNumber(
+  company: Pick<Company, 'approvalRules' | 'defaults'> | null | undefined,
+): boolean {
+  return approvalsOn(company) || company?.defaults?.numberOnIssue === true;
+}
+
 /** Whether the person decides requests: everyone in a company kept on this device. */
 export function approverOf(link: CloudLink | null | undefined): boolean {
   return !link || isApprover(link.role, link.approver);

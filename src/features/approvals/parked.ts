@@ -10,15 +10,23 @@ import { t } from '@/i18n';
 
 /**
  * A change the cloud refused because it needs an approver, which can be sent
- * for approval: also an issued document deleted, which the rules void
- * instead (the cloud refuses that as any delete it doesn't allow).
+ * for approval: also an issued document deleted while the company's rules
+ * (`rules`, see approvalRulesOf) cover documents, which they void instead
+ * (the cloud refuses that as any delete it doesn't allow). Which type it
+ * was is known from the cloud's copy only, when it is sent.
  */
 export function canSendForApproval(
   entry: Pick<OutboxEntry, 'table' | 'error'> & Partial<Pick<OutboxEntry, 'op'>>,
+  rules: object | null | undefined,
 ): boolean {
   if (entry.table !== 'documents') return false;
+  if (entry.error === 'approval_required') return true;
+  const types = rules && 'documentTypes' in rules ? rules.documentTypes : undefined;
   return (
-    entry.error === 'approval_required' || (entry.op === 'delete' && entry.error === 'permission')
+    entry.op === 'delete' &&
+    entry.error === 'permission' &&
+    Array.isArray(types) &&
+    types.length > 0
   );
 }
 
