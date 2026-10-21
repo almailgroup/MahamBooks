@@ -30,6 +30,33 @@ it. Accountants, staff and viewers can't get it.
 The email names the paper and the person ("Residency · Ravi Kumar") but never
 shows Civil ID, passport or residency numbers, salaries or other payroll data.
 
+## Changes by your team
+
+The same function also emails **what the rest of the team changed**, to the
+owner (the Super Admin) and the admins or accountants the owner allowed to
+approve, once the change feed script
+([`supabase/migrations/20261123000000_change_feed.sql`](../supabase/migrations/20261123000000_change_feed.sql))
+has run. Each of them turns it on in **Settings → Email alerts → Changes by
+your team** (تغييرات الفريق):
+
+- **Important changes within about 5 minutes**: an issued invoice or credit
+  note changed, voided or deleted, cheques, approval requests and decisions,
+  team changes, the numbering, lock date or approval rules, pay runs. Each
+  kind can be left for the summary instead.
+- **Everything else in a summary at 8:00 Kuwait time**, on days the team
+  changed something (it can be turned off).
+- At most **one email every 15 minutes and 20 a day** per person and
+  company; whatever comes meanwhile goes in the next one. Everything is also
+  in the app, under the bell (المستجدات).
+
+The emails say who changed what, with the customer and the amount; nobody
+gets their own changes. Changes to payroll and people data say only what
+happened, without names, Civil IDs or amounts. A schedule every 5 minutes
+(**Integrations → Cron → maham-change-notifications**) calls the function
+only when someone has something new. These emails count towards Resend's
+100 a day too: with the owner and two approvers on, a busy day can take up
+to 60, so a paid Resend plan is advisable.
+
 ## How it works
 
 ```
@@ -195,3 +222,10 @@ Sundays); a quiet day without an email is expected.
   [`supabase/README.md`](../supabase/README.md).
 - Tests: `src/alerts/*.test.ts` and `src/cloud/email-alerts-sql.test.ts` run
   the function against the real database scripts with Resend faked.
+- The changes of the team: `{"action":"notify"}` with the same secret, from
+  `almailbooks.run_change_notifications()` every 5 minutes. `changes.ts` puts
+  the changes in words (the app's bell uses the same) and decides when to
+  email (`notifyDecision`); `renderChangesEmail` in `email.ts` writes the
+  email; `runChangeNotifications` in `server.ts` claims who is due, saves the
+  Resend idempotency key and the last change covered before sending, and
+  answers `{ok, checked, sent, skipped, failed}`. No new secret is needed.

@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadLanguage } from '@/i18n';
 import { alertLookups, collectAlerts, type Alert } from './collect';
-import { MAX_PER_TOPIC, renderAlertEmail, safeAppUrl, type AlertEmailInput } from './email';
+import {
+  MAX_CHANGES_PER_PERSON,
+  MAX_PER_TOPIC,
+  renderAlertEmail,
+  renderChangesEmail,
+  safeAppUrl,
+  type ChangesEmailInput,
+} from './email';
+import type { AlertEmailInput } from './email';
+import type { ChangeEvent } from '@/cloud/api';
 import { sampleData, TODAY } from './testing';
 
 afterEach(async () => {
@@ -173,5 +182,137 @@ describe('safeAppUrl', () => {
     expect(safeAppUrl('javascript:alert(1)')).toBe('');
     expect(safeAppUrl('https://x.example.com/"><script>')).toBe('');
     expect(safeAppUrl('')).toBe('');
+  });
+});
+
+describe('the email of changes by the team', () => {
+  let seq = 0;
+  const change = (overrides: Partial<ChangeEvent> = {}): ChangeEvent => {
+    seq += 1;
+    return {
+      id: seq,
+      at: '2026-10-06T07:05:00.000Z',
+      actor: 'user-sara',
+      actorName: 'Sara Made-up',
+      subjectName: '',
+      kind: 'document',
+      op: 'update',
+      tbl: 'documents',
+      recordId: `doc-${seq}`,
+      count: 1,
+      important: true,
+      private: false,
+      summary: {
+        what: 'voided',
+        type: 'invoice',
+        number: `INV-${seq}`,
+        total: 120,
+        currency: 'KWD',
+        client: 'Gulf Hotel',
+        clientAr: 'فندق الخليج',
+      },
+      unread: true,
+      ...overrides,
+    };
+  };
+  const changesInput = (overrides: Partial<ChangesEmailInput> = {}): ChangesEmailInput => ({
+    kind: 'immediate',
+    company: sampleData().company,
+    events: [
+      change(),
+      change({ important: false, kind: 'contact', tbl: 'clients', count: 12, op: 'mixed' }),
+      change({
+        actor: 'user-ali',
+        actorName: 'Ali Made-up',
+        kind: 'cheque',
+        tbl: 'payments',
+        summary: { what: 'returned', cheque: '100200', amount: 250, currency: 'KWD' },
+      }),
+      change({
+        actor: 'user-ali',
+        actorName: 'Ali Made-up',
+        kind: 'people',
+        tbl: 'payRuns',
+        private: true,
+        summary: { what: 'paid', status: 'paid', period: '2026-09' },
+      }),
+    ],
+    appUrl: 'https://books.example.com/',
+    to: 'owner@example.com',
+    ...overrides,
+  });
+
+  it('groups the changes by who made them, important ones each, the rest counted', () => {
+    const email = renderChangesEmail(changesInput());
+    expect(email.subject).toBe('Acme Trading: 3 important changes by your team');
+    const text = plain(visible(email.html));
+    for (const part of [
+      'Acme Trading',
+      'Your team made changes in Acme Trading that you asked to hear about at once.',
+      'Sara Made-up (13)',
+      'Voided invoice INV-',
+      'Gulf Hotel · KD 120.000',
+      '12 changes to customers and vendors',
+      'Ali Made-up (2)',
+      'Marked cheque 100200 as returned',
+      'Marked the pay run for 2026-09 as paid',
+      'Open Updates',
+      'at most one email every 15 minutes and 20 a day',
+      'Sent to owner@example.com.',
+    ]) {
+      expect(text).toContain(part);
+    }
+    // The button opens Updates in the app; times are Kuwait's.
+    expect(email.html).toContain('href="https://books.example.com/#/notifications"');
+    expect(text).toContain('10:05');
+    expect(email.text).toContain('- Voided invoice INV-');
+  });
+
+  it('sums up the morning, and lists at most ten important changes a person', () => {
+    const many = Array.from({ length: MAX_CHANGES_PER_PERSON + 3 }, () => change());
+    const email = renderChangesEmail(changesInput({ kind: 'daily', events: many }));
+    expect(email.subject).toBe('Acme Trading: 13 changes by your team');
+    expect(email.text).toContain(
+      'Good morning. This is what your team changed in Acme Trading since the last email.',
+    );
+    expect(email.text.match(/- Voided invoice/g)).toHaveLength(MAX_CHANGES_PER_PERSON);
+    expect(email.text).toContain('And 3 more in Maham One.');
+  });
+
+  it('escapes what comes from the records, and keeps payroll anonymous', () => {
+    const email = renderChangesEmail(
+      changesInput({
+        events: [
+          change({
+            actorName: '<b>Someone</b>',
+            summary: { what: 'voided', type: 'invoice', number: '<i>1</i>' },
+          }),
+          change({
+            tbl: 'employees',
+            kind: 'people',
+            private: true,
+            summary: { what: 'added', name: 'Made-up Person', amount: 900 },
+          }),
+        ],
+      }),
+    );
+    expect(email.html).not.toContain('<b>Someone</b>');
+    expect(email.html).toContain('&lt;b&gt;Someone&lt;/b&gt;');
+    expect(email.html).not.toContain('Made-up Person');
+    expect(email.html).not.toContain('900');
+  });
+
+  it('is in Arabic for Arabic readers, right to left', async () => {
+    await loadLanguage('ar');
+    const email = renderChangesEmail(changesInput());
+    expect(email.subject).toBe('أكمي للتجارة: 3 تغييرات مهمة من فريقك');
+    expect(email.html).toContain('<html lang="ar" dir="rtl">');
+    const text = visible(email.html);
+    for (const part of ['إبطال فاتورة', 'فندق الخليج', 'فتح المستجدات', 'تغييرات الفريق']) {
+      expect(text).toContain(part);
+    }
+    for (const english of ['Voided', 'Open ', 'Sent to', 'changes to']) {
+      expect(text).not.toContain(english);
+    }
   });
 });

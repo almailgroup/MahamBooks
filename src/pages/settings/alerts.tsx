@@ -18,6 +18,9 @@ import {
 } from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
 import { useCloudLink } from '@/cloud/hooks';
+import { linkHasFeature } from '@/cloud/features';
+import { getsChangeFeed } from '@/cloud/roles';
+import { ChangesForm } from './change-alerts';
 import { ALERT_TOPICS, TOPIC_DESCRIPTIONS, TOPIC_LABELS, type AlertTopic } from '@/alerts/topics';
 import { SaveBar, SettingsSection } from './shared';
 
@@ -92,7 +95,11 @@ export default function AlertSettings() {
     );
   }
 
-  if (link.role !== 'owner' && link.role !== 'admin') {
+  const morning = link.role === 'owner' || link.role === 'admin';
+  // The changes of the team (#7): the owner and approvers, once the server has the feed.
+  const changes = linkHasFeature(link, 'change_feed') && getsChangeFeed(link.role, link.approver);
+
+  if (!morning && !changes) {
     return (
       <SettingsSection title={t('Email alerts')}>
         <EmptyState
@@ -107,7 +114,10 @@ export default function AlertSettings() {
 
   return (
     <ReadOnlyContext.Provider value={NOT_READ_ONLY}>
-      <AlertsForm api={api} companyId={company.id} email={user.email} />
+      <div className="space-y-8">
+        {morning ? <AlertsForm api={api} companyId={company.id} email={user.email} /> : null}
+        {changes ? <ChangesForm api={api} companyId={company.id} email={user.email} /> : null}
+      </div>
     </ReadOnlyContext.Provider>
   );
 }

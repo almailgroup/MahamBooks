@@ -1446,7 +1446,9 @@ export type ActivityEntity =
   | 'asset'
   | 'year_end'
   | 'payroll'
-  | 'stock';
+  | 'stock'
+  | 'approval'
+  | 'member';
 
 export interface Activity {
   id: ID;
@@ -1477,6 +1479,13 @@ export interface Activity {
   messageMoney?: Record<string, { amount: number; currency: string }>;
   /** Arabic names among the values (an account's, a client's), shown to Arabic readers. */
   messageVarsAr?: Record<string, string>;
+  /**
+   * The account that made the change, in a company kept in the cloud (D8);
+   * missing for one kept on this device and for what older versions logged.
+   */
+  by?: string;
+  /** Their name as the team knows it, to show without asking the cloud. */
+  byName?: string;
 }
 
 /** Money spent without a bill: fuel, a train ticket, a software subscription. */

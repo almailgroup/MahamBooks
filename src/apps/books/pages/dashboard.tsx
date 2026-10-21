@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { db } from '@/db/db';
-import { activityText } from '@/db/activity';
+import { activityByline, activityText } from '@/db/activity';
 import type { Account, Activity, Client, ID, InvoiceDocument } from '@/db/types';
 import { saveCompany } from '@/db/records';
 import { accountingSettings } from '@/db/chart-setup';
@@ -1468,7 +1468,9 @@ function ActivityCard({
                   />
                   <span className="min-w-0">
                     <span className="block text-sm text-slate-700">{activityText(a, fmt)}</span>
-                    <span className="text-xs text-slate-500">{when(a.at, fmt)}</span>
+                    <span className="text-xs text-slate-500">
+                      {activityByline(a, when(a.at, fmt))}
+                    </span>
                   </span>
                 </>
               );

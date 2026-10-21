@@ -10,11 +10,13 @@ second runs, the app notices its functions are missing and works as before.
 (see "Email alerts" below). `migrations/20261102000000_tables_v16.sql` comes
 next: the records of the app's database version 16 and their privacy (see
 "Records of database version 16" below).
-`migrations/20261116000000_super_admin_approvals.sql` comes last: the Super
+`migrations/20261116000000_super_admin_approvals.sql` comes next: the Super
 Admin's controls, approvals and cheque confirmation (see "The Super Admin",
-"Approvals" and "Cheque confirmation" below). Each file is run once, in this
-order; a release that needs more from the server adds a file, and only that
-one is run. The files after the first are safe to run again; the first is
+"Approvals" and "Cheque confirmation" below).
+`migrations/20261123000000_change_feed.sql` comes last: the changes of the
+team for the owner and approvers (see "The change feed" below). Each file is
+run once, in this order; a release that needs more from the server adds a
+file, and only that one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
 step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
 and [`docs/email-alerts.md`](../docs/email-alerts.md).
@@ -36,6 +38,8 @@ that is never put in the cloud never leaves the device.
 | `public.sync_signals`    | One row per company with the latest rev; the only table published to Realtime.                  |
 | `storage.objects`        | Receipts and scans in the private bucket `company-files`, at `{companyId}/{attachmentId}`.      |
 | `public.email_alerts`    | Who gets the morning email of which company, what it covers, and what was last emailed.         |
+| `public.change_events`   | The change feed: who changed what, when; folded per sync, important changes one row each.       |
+| `public.notification_*`  | Each recipient's choice of the changes emailed (`_settings`) and how far they read (`_reads`).  |
 
 `tbl` is one of the app's 37 synced tables (a check constraint lists them).
 Every write gets `rev` from one global sequence, the time and the author from
@@ -97,6 +101,8 @@ The app calls these (all `revoke`d from `anon` and `public`, granted to
 | `server_features()`                                                        | invoker | What the server has beyond the first files (`tables_v16`…), so the app can hide the rest. |
 | `set_member_permissions`, `set_team_rules`                                 | definer | Owner only: a member's limits and approver mark; who makes admins and accountants.        |
 | `team_permissions`, `my_permissions`, `owned_companies_overview`           | definer | Limits and approver marks (everyone's for owners and admins), and the companies owned.    |
+| `notification_status`, `notification_feed`, `mark_notifications_read`      | definer | The changes of the team, for the owner and approvers only; never their own changes.       |
+| `change_notification_settings`, `set_change_notifications`                 | definer | The caller's own choice for the changes emailed (owner and approvers only).               |
 
 `create_company` refuses a company that is already in the cloud with records
 (`almail:company_exists`): the app offers to download it instead, so an older
@@ -327,7 +333,8 @@ owner (`company_members_one_owner`); someone becomes Super Admin through
   left, ownership, succession when the owner's account is deleted) to
   `public.change_events` as kind `member`, with ids and roles only. It does
   nothing until `20261123000000_change_feed.sql` creates that table, and
-  ignores any error writing to it, so it never stops a team change.
+  ignores any error writing to it, so it never stops a team change. Once it
+  exists, these show in the feed (see "The change feed").
 - `server_features()` also answers `super_admin`.
 - `src/cloud/super-admin-sql.test.ts` checks all of it, and that the app's
   test cloud (`src/cloud/testing/fake-cloud.ts`) refuses the same changes.
@@ -408,6 +415,73 @@ approver's device records the payment when they confirm it.
   the content functions match the app's, and that the test cloud
   (`src/cloud/testing/fake-cloud.ts`) answers the same; the e2e fake
   (`e2e/cloud-fake.ts`) mirrors it too.
+
+## The change feed
+
+`20261123000000_change_feed.sql` (#7 of docs/requirements-plan.md, D7 and D8).
+It stops before changing anything without the Super Admin file.
+
+- `public.change_events`: `id`, `company_id`, `at`, `actor`, `op`, `tbl`,
+  `record_id`, `kind`, `important`, `private`, `count`, `fold_key` and
+  `summary`, unique `(company_id, fold_key)`; row-level security on, no grants. A BEFORE INSERT
+  trigger takes the company's write lock (`lock_company`, as records take
+  their rev) before it numbers the row, so a company's changes are numbered
+  in the order they commit and "up to id N" never skips one stored late.
+- `records_change_event`, AFTER INSERT OR UPDATE OR DELETE on
+  `public.records`, its whole body inside `exception when others`: a problem
+  in it is ignored and the push goes on (tested with a feed that refuses
+  every row). It returns at once without a signed-in caller (the SQL editor,
+  the server's jobs), for `activities`, for a copy sent again unchanged
+  (`old.data = new.data`), during `delete_company`, and **while nobody of the
+  company has turned the feed on** (`notification_settings.enabled`), so
+  until then it records nothing. Ordinary changes of one push fold into one
+  row per person, table (documents also per type), kind and privacy
+  (`fold_key` = transaction id and those); important ones get a row each
+  (`almailbooks.change_details`: an issued invoice or credit note edited,
+  voided, restored or deleted; cheque payments recorded, changed, voided,
+  returned, cancelled or deleted; security cheques recorded, changed, cashed
+  or deleted; approval requests, approvals and rejections; numbering rules,
+  the lock date and the approval rules; pay runs added, deleted or moved on).
+  A company record whose counters only moved on is left out. `private` is
+  `record_is_private` of the old or new record; private summaries keep only
+  what happened (and a pay run's stage and month): no names, numbers or
+  amounts. The app's copy of these rules is `src/cloud/change-feed.ts`.
+- `public.notification_settings` (one row per member who saved a choice,
+  removed with the membership; `enabled`, `immediate_kinds`, `digest`
+  `daily`/`off`, `app_url`, and what the function keeps: `emailed_upto`,
+  `digest_on`, `sent_on`/`sent_count`, `last_sent_at`, `last_error`,
+  `claimed_until`, `send_key`/`send_upto`), and `public.notification_reads`
+  (`read_upto`). A trigger on `company_members` turns a person's off when
+  they stop being the owner or an approver.
+- `notification_status(company)`: for the owner and approvers whether they
+  turned it on, unread (up to 100) and the newest id; everyone else gets
+  "off". `notification_feed(company, after, before, limit)`: owner and
+  approvers only (42501 otherwise), newest first, the caller's own changes
+  left out, private ones only to owners, admins and accountants, with the
+  author's (and for team changes the member's) name.
+  `mark_notifications_read(company, upto)` never goes back.
+  `set_change_notifications(company, enabled, kinds, digest, app_url)`: owner
+  and approvers; turned on, it starts from now (earlier
+  changes are not emailed and read as read).
+- `almailbooks.run_change_notifications()`, scheduled every 5 minutes
+  (`maham-change-notifications`), posts `{"action":"notify"}` to the
+  email-alerts function with the email alerts secret, only when someone who
+  turned it on has changes newer than what they were emailed (not their
+  own). `almailbooks.purge_change_events()` (daily,
+  `maham-change-feed-purge`) removes changes older than 180 days.
+- The function claims each due person (`claimed_until`), reads their changes
+  after `emailed_upto`, and sends important changes of the chosen kinds at
+  once and the rest in the 8:00 summary, at most one email every 15 minutes
+  and 20 a day (`notifyDecision` in `src/alerts/changes.ts`). The Resend
+  `Idempotency-Key` and the last change covered are saved first, so an
+  email whose answer was lost goes again as it was, once.
+- `server_features()` also answers `change_feed`.
+- Tests: `src/cloud/change-feed-sql.test.ts` (nobody asking = as before, an
+  older app's batch, every role, folds of a 500-change push, upserts,
+  deletes, important changes, privacy, a feed that refuses everything,
+  delete_company, the schedule, the purge, the app's copy of the rules and
+  the test cloud), `src/alerts/server.test.ts` ("notify") and
+  `src/alerts/changes.test.ts`.
 
 ## Email alerts
 

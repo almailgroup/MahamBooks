@@ -1,12 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALERT_TOPICS, isAlertTopic } from '@/alerts/topics';
 import { isMemberRole, readPermissions, type MemberRole } from './roles';
+import { IMMEDIATE_KINDS, isImmediateKind } from './change-feed';
 import { FILES_BUCKET } from './config';
 import {
   AlertEmailError,
   cloudError,
   isAlertEmailErrorCode,
   storageCloudError,
+  type ChangeEvent,
+  type ChangeNotificationSettings,
   type CloudApi,
   type EmailAlertSettings,
   type CloudCompany,
@@ -44,6 +47,68 @@ function emailAlertSettings(row: EmailAlertRow | undefined): EmailAlertSettings 
     lastError: row?.last_error ?? '',
     lastErrorAt: row?.last_error_at ?? null,
     functionReady: Boolean(row?.function_ready),
+  };
+}
+
+interface ChangeSettingsRow {
+  enabled: boolean | null;
+  immediate_kinds: string[] | null;
+  digest: string | null;
+  last_sent_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  function_ready: boolean | null;
+}
+
+function changeSettings(row: ChangeSettingsRow | undefined): ChangeNotificationSettings {
+  return {
+    enabled: Boolean(row?.enabled),
+    immediateKinds: (row?.immediate_kinds ?? [...IMMEDIATE_KINDS]).filter(isImmediateKind),
+    digest: row?.digest === 'off' ? 'off' : 'daily',
+    lastSentAt: row?.last_sent_at ?? null,
+    lastError: row?.last_error ?? '',
+    lastErrorAt: row?.last_error_at ?? null,
+    functionReady: Boolean(row?.function_ready),
+  };
+}
+
+interface ChangeRow {
+  id: number | string;
+  at: string;
+  actor: string | null;
+  actor_name: string | null;
+  subject_name: string | null;
+  kind: string;
+  op: string;
+  tbl: string;
+  record_id: string;
+  count: number | string;
+  important: boolean;
+  private: boolean;
+  summary: unknown;
+  unread: boolean;
+}
+
+function changeEvent(row: ChangeRow): ChangeEvent {
+  const summary = row.summary;
+  return {
+    id: Number(row.id),
+    at: row.at,
+    actor: row.actor ?? null,
+    actorName: row.actor_name ?? '',
+    subjectName: row.subject_name ?? '',
+    kind: String(row.kind ?? ''),
+    op: String(row.op ?? ''),
+    tbl: String(row.tbl ?? ''),
+    recordId: String(row.record_id ?? ''),
+    count: Math.max(1, Number(row.count) || 1),
+    important: Boolean(row.important),
+    private: Boolean(row.private),
+    summary:
+      summary && typeof summary === 'object' && !Array.isArray(summary)
+        ? (summary as Record<string, unknown>)
+        : {},
+    unread: Boolean(row.unread),
   };
 }
 
@@ -478,6 +543,51 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
       );
       if (error || !data) throw await alertEmailError(error);
       return { to: data.to, count: data.count };
+    },
+
+    async changeFeedStatus(companyId) {
+      const rows = await optionalRpc<
+        { enabled: boolean | null; unread: number | string; latest: number | string }[]
+      >('notification_status', { p_company: companyId });
+      if (rows === MISSING) return null;
+      const [row] = rows;
+      return {
+        enabled: Boolean(row?.enabled),
+        unread: Number(row?.unread ?? 0) || 0,
+        latest: Number(row?.latest ?? 0) || 0,
+      };
+    },
+
+    async changeFeed(companyId, page = {}) {
+      const rows = await optionalRpc<ChangeRow[]>('notification_feed', {
+        p_company: companyId,
+        p_after: page.after ?? 0,
+        p_before: page.before ?? null,
+        p_limit: page.limit ?? 50,
+      });
+      return rows === MISSING ? null : rows.map(changeEvent);
+    },
+
+    async markChangesRead(companyId, upto) {
+      await rpc('mark_notifications_read', { p_company: companyId, p_upto: upto });
+    },
+
+    async changeNotifications(companyId) {
+      const rows = await optionalRpc<ChangeSettingsRow[]>('change_notification_settings', {
+        p_company: companyId,
+      });
+      return rows === MISSING ? null : changeSettings(rows[0]);
+    },
+
+    async setChangeNotifications(companyId, settings) {
+      const rows = await optionalRpc<ChangeSettingsRow[]>('set_change_notifications', {
+        p_company: companyId,
+        p_enabled: settings.enabled,
+        p_immediate_kinds: settings.immediateKinds,
+        p_digest: settings.digest,
+        p_app_url: settings.appUrl,
+      });
+      return rows === MISSING ? null : changeSettings(rows[0]);
     },
   };
 }

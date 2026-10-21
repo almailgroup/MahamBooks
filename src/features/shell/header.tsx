@@ -11,6 +11,7 @@ import { shortcutLabel } from '@/features/search/command-palette';
 import { t } from '@/i18n';
 import { createColumns } from '@/suite/apps';
 import { AppSwitcher } from '@/suite/switcher';
+import { NotificationBell } from '@/features/notifications/bell';
 import { SuiteMark } from '@/suite/logo';
 import type { CreateGroup } from './create';
 import { useCreateGroups } from './bottom-bar';
@@ -85,6 +86,7 @@ export function AppHeader({
       </Button>
       <ThemeMenu className="hidden sm:inline-flex" />
       <LanguageSwitch />
+      <NotificationBell />
       <AppSwitcher />
       <NewMenu />
     </header>

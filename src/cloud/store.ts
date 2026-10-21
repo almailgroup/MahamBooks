@@ -14,6 +14,7 @@ import { supabaseApi } from './supabase-api';
 import { withSyncLock } from './lock';
 import { cloudCounterReserver } from './reserve';
 import { setCounterReserver } from '@/lib/numbering';
+import { setActivityAuthor, setAuthorCompanies } from '@/db/author';
 
 /**
  * The account and the cloud, for the whole app (outside React, so a change
@@ -47,6 +48,11 @@ const listeners = new Set<() => void>();
 
 function update(patch: Partial<CloudSnapshot>) {
   snapshot = { ...snapshot, ...patch };
+  if ('user' in patch) {
+    // The activity log names whoever is signed in (D8).
+    const user = snapshot.user;
+    setActivityAuthor(user ? { id: user.id, name: user.fullName || user.email } : null);
+  }
   for (const listener of listeners) listener();
 }
 
@@ -122,7 +128,10 @@ function startSync(userId: string) {
   links = liveQuery(() =>
     db.syncState.filter((l) => l.userId === userId && l.status !== 'removed').primaryKeys(),
   ).subscribe({
-    next: (ids) => manager.setCompanies(ids),
+    next: (ids) => {
+      manager.setCompanies(ids);
+      setAuthorCompanies(ids);
+    },
     error: () => undefined,
   });
 }
@@ -131,6 +140,7 @@ function stopSync() {
   links?.unsubscribe();
   links = null;
   setCounterReserver(null);
+  setAuthorCompanies([]);
   snapshot.manager?.stop();
   syncStatus.clear();
   update({ manager: null });

@@ -19,6 +19,7 @@ const SuiteHome = lazy(() => import('@/suite/home/index'));
 const Settings = lazy(() => import('@/pages/settings/index'));
 const Files = lazy(() => import('@/pages/files'));
 const Approvals = lazy(() => import('@/pages/approvals'));
+const Notifications = lazy(() => import('@/pages/notifications'));
 const NotFound = lazy(() => import('@/pages/not-found'));
 const AuthPage = lazy(() => import('@/pages/account/auth'));
 const AuthCallback = lazy(() => import('@/pages/account/callback'));
@@ -104,6 +105,8 @@ export const routes: RouteObject[] = [
           { path: 'files', element: <Files /> },
           // Approval requests of every app (Books now, People later).
           { path: 'approvals', element: <Approvals /> },
+          // The changes of the team, for the owner and approvers (the bell).
+          { path: 'notifications', element: <Notifications /> },
           { path: 'settings/*', element: <Settings /> },
           { path: 'setup', element: <SetupPage /> },
           { path: '*', element: <NotFound /> },

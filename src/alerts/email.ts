@@ -7,6 +7,15 @@ import { daysLeftLabel, daysText, entryOwner, entryTitle } from '@/features/rene
 import { currentLanguage, interfaceLocale, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { ALERT_TOPICS, TOPIC_LABELS, type Alert, type AlertTone, type AlertTopic } from './collect';
+import type { ChangeEvent } from '@/cloud/api';
+import {
+  changeKindLabel,
+  describeChange,
+  groupChanges,
+  MAX_CHANGE_EMAILS_A_DAY,
+  MIN_MINUTES_BETWEEN_EMAILS,
+  type ChangeEmailKind,
+} from './changes';
 
 /**
  * The alerts email, in the interface language at the time it is rendered
@@ -403,6 +412,201 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
             <p style="margin:12px 0 0;font-size:15px;line-height:22px;color:${COLORS.text};">${e(intro)}</p>
           </td>
         </tr>${list.map(section).join('')}${button || spacer}
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;" dir="${dir}">
+        <tr>
+          <td style="${cell(`padding:16px 24px;text-align:${start};font-size:12px;line-height:18px;color:${COLORS.muted};`)}">${footer.map((f) => `<p style="margin:0 0 6px;">${e(f)}</p>`).join('')}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+`;
+  return { subject, html, text };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Changes by the team (#7)                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Important changes listed per person; the rest are counted. */
+export const MAX_CHANGES_PER_PERSON = 10;
+
+export interface ChangesEmailInput {
+  kind: ChangeEmailKind;
+  company: Company;
+  /** The changes waiting, any order. */
+  events: ChangeEvent[];
+  /** Where the app is, for the button (it opens Updates); empty for no button. */
+  appUrl: string;
+  /** The recipient's address, named at the bottom. */
+  to: string;
+}
+
+/**
+ * The email of the changes by the team: who changed what, the important
+ * changes each with their customer and amount, the rest counted by kind.
+ * Payroll and people changes carry no names or amounts (the feed keeps
+ * none), and nothing here shows a Civil ID, an IBAN or a salary.
+ */
+export function renderChangesEmail(input: ChangesEmailInput): AlertEmail {
+  const ar = currentLanguage() === 'ar';
+  const dir = ar ? 'rtl' : 'ltr';
+  const start = ar ? 'right' : 'left';
+  const end = ar ? 'left' : 'right';
+  const font = ar ? FONTS.ar : FONTS.en;
+  const fmt = formatter(input.company);
+  const app = suiteName();
+  const company = localName(input.company);
+  const groups = groupChanges(input.events);
+  const total = input.events.reduce((sum, e) => sum + e.count, 0);
+  const important = input.events.filter((e) => e.important).length;
+  const time = new Intl.DateTimeFormat(interfaceLocale(input.company.locale), {
+    timeZone: 'Asia/Kuwait',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const when = (at: string) => {
+    const date = new Date(at);
+    return Number.isNaN(date.getTime()) ? '' : time.format(date);
+  };
+  const subject =
+    input.kind === 'immediate' && important > 0
+      ? tp(
+          important,
+          '{company}: {count} important change by your team',
+          '{company}: {count} important changes by your team',
+          { company },
+        )
+      : tp(
+          total,
+          '{company}: {count} change by your team',
+          '{company}: {count} changes by your team',
+          {
+            company,
+          },
+        );
+  const intro =
+    input.kind === 'immediate'
+      ? t('Your team made changes in {company} that you asked to hear about at once.', {
+          company,
+        })
+      : t('Good morning. This is what your team changed in {company} since the last email.', {
+          company,
+        });
+  const base = safeAppUrl(input.appUrl);
+  const url = base ? `${base}#/notifications` : '';
+  const footer = [
+    t(
+      'You get these emails because you turned on Changes by your team for {company} in {app}: important changes within a few minutes (at most one email every {minutes} minutes and {max} a day), and the rest every morning at 8:00 (Kuwait time).',
+      { company, app, minutes: MIN_MINUTES_BETWEEN_EMAILS, max: MAX_CHANGE_EMAILS_A_DAY },
+    ),
+    t('To change or stop them, open Settings → Email alerts in {app}.', { app }),
+    t('Sent to {email}.', { email: input.to }),
+  ];
+  const format = { money: fmt.money, date: fmt.date };
+  const sections = groups.map((group) => {
+    const shown = group.important.slice(0, MAX_CHANGES_PER_PERSON);
+    const hidden = group.important.length - shown.length;
+    return {
+      actor: group.actor,
+      total: group.total,
+      lines: shown.map((event) => ({ ...describeChange(event, format), when: when(event.at) })),
+      others: [
+        ...group.others.map((o) =>
+          tp(o.count, '{count} change to {things}', '{count} changes to {things}', {
+            things: ar ? t(changeKindLabel(o.kind)) : t(changeKindLabel(o.kind)).toLowerCase(),
+          }),
+        ),
+        ...(hidden > 0
+          ? [tp(hidden, 'And {count} more in {app}.', 'And {count} more in {app}.', { app })]
+          : []),
+      ],
+    };
+  });
+
+  // Text version.
+  const text = [
+    `${app} · ${company}`,
+    '',
+    intro,
+    ...sections.flatMap((s) => [
+      '',
+      `${s.actor} (${s.total})`,
+      ...s.lines.flatMap((l) => [`- ${l.text}${l.detail ? ` · ${l.detail}` : ''}`, `  ${l.when}`]),
+      ...s.others.map((o) => `- ${o}`),
+    ]),
+    '',
+    ...(url ? [`${t('Open Updates')}: ${url}`, ''] : []),
+    ...footer,
+  ].join('\n');
+
+  // HTML version.
+  const e = escapeHtml;
+  const cell = (style: string) => `font-family:${font};color:${COLORS.text};${style}`;
+  const row = (l: (typeof sections)[number]['lines'][number]) => `
+              <tr>
+                <td style="${cell(`padding:10px 0;border-top:1px solid ${COLORS.line};vertical-align:top;text-align:${start};font-size:14px;line-height:20px;`)}">
+                  <div style="font-weight:600;">${e(l.text)}</div>${l.detail ? `\n                  <div style="color:${COLORS.muted};font-size:13px;">${e(l.detail)}</div>` : ''}
+                </td>
+                <td style="${cell(`padding:10px 0;padding-${start}:12px;border-top:1px solid ${COLORS.line};vertical-align:top;text-align:${end};font-size:13px;line-height:20px;color:${COLORS.muted};white-space:nowrap;`)}">${e(l.when)}</td>
+              </tr>`;
+  const other = (o: string) => `
+              <tr>
+                <td colspan="2" style="${cell(`padding:8px 0;border-top:1px solid ${COLORS.line};text-align:${start};font-size:13px;line-height:20px;color:${COLORS.muted};`)}">${e(o)}</td>
+              </tr>`;
+  const section = (s: (typeof sections)[number]) => `
+        <tr>
+          <td style="padding:20px 24px 6px;">
+            <div style="${cell(`text-align:${start};font-size:16px;font-weight:700;`)}">${e(s.actor)} <span style="color:${COLORS.muted};font-weight:400;">(${s.total})</span></div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 24px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${s.lines.map(row).join('')}${s.others.map(other).join('')}
+            </table>
+          </td>
+        </tr>`;
+  const button = url
+    ? `
+        <tr>
+          <td style="padding:24px;text-align:${start};">
+            <a href="${e(url)}" style="display:inline-block;background:${COLORS.brand};color:#ffffff;text-decoration:none;font-family:${font};font-size:15px;font-weight:600;padding:12px 22px;border-radius:8px;">${e(t('Open Updates'))}</a>
+          </td>
+        </tr>`
+    : `
+        <tr>
+          <td style="height:24px;line-height:24px;font-size:0;">&nbsp;</td>
+        </tr>`;
+  const logoUrl = base ? new URL('brand/maham-one-logo-email.png', base).toString() : '';
+  const logo = logoUrl
+    ? `<img src="${e(logoUrl)}" alt="${e(app)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" style="display:block;border:0;outline:none;width:${LOGO_WIDTH}px;height:${LOGO_HEIGHT}px;color:${COLORS.brand};font-size:15px;font-weight:700;">`
+    : `<div style="font-size:13px;font-weight:700;color:${COLORS.brand};">${e(app)}</div>`;
+  const html = `<!doctype html>
+<html lang="${ar ? 'ar' : 'en'}" dir="${dir}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>${e(subject)}</title>
+</head>
+<body dir="${dir}" style="margin:0;padding:0;background:${COLORS.page};">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${e(intro)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLORS.page};" dir="${dir}">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:${COLORS.card};border-radius:12px;border:1px solid ${COLORS.line};" dir="${dir}">
+        <tr>
+          <td style="${cell(`padding:24px 24px 0;text-align:${start};`)}">
+            ${logo}
+            <div style="font-size:20px;font-weight:700;margin-top:4px;">${e(company)}</div>
+            <p style="margin:12px 0 0;font-size:15px;line-height:22px;color:${COLORS.text};">${e(intro)}</p>
+          </td>
+        </tr>${sections.map(section).join('')}${button}
       </table>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;" dir="${dir}">
         <tr>

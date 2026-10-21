@@ -17,7 +17,9 @@ import {
   type AlertData,
   type AlertTopic,
 } from './collect';
-import { renderAlertEmail, type AlertEmailKind } from './email';
+import { renderAlertEmail, renderChangesEmail, type AlertEmailKind } from './email';
+import { notifyDecision, type ChangeEmailKind } from './changes';
+import type { ChangeEvent } from '@/cloud/api';
 
 /**
  * The email-alerts function (a Supabase Edge Function; see edge.ts for how
@@ -30,6 +32,12 @@ import { renderAlertEmail, type AlertEmailKind } from './email';
  *   - the app (POST {"action":"send","companyId"} with the person's
  *     session): emails that person what needs attention now;
  *   - anything else (a GET after deploying): it answers whether it is ready.
+ *
+ *   - the 5-minute schedule of the change feed (POST {"action":"notify"},
+ *     the same secret): emails the owner and the approvers who turned on
+ *     "Changes by your team" what the rest of the team changed, important
+ *     changes at once and the rest in the 8:00 summary, within the caps
+ *     (see notifyDecision in changes.ts);
  *
  * Every call writes the function's own address to the config, where the
  * schedule reads it. It reads the company's records with the database's
@@ -481,6 +489,295 @@ export async function runDueAlerts(deps: AlertsDeps): Promise<RunSummary> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Changes by the team (20261123000000_change_feed.sql)                       */
+/* -------------------------------------------------------------------------- */
+
+export interface NotifySummary {
+  /** People with new changes looked at. */
+  checked: number;
+  sent: number;
+  /** Waiting: the caps, or the summary's hour. */
+  skipped: number;
+  failed: number;
+}
+
+interface ChangeSubscription {
+  company_id: string;
+  user_id: string;
+  immediate_kinds: string[] | null;
+  digest: string;
+  app_url: string;
+  emailed_upto: number | string;
+  digest_on: string | null;
+  sent_on: string | null;
+  sent_count: number;
+  last_sent_ms: number | null;
+  send_key: string | null;
+  send_upto: number | string | null;
+}
+
+/** Changes read for one email at most; the rest go in the next. */
+const CHANGES_PER_EMAIL = 1000;
+
+interface ChangeRow {
+  id: number | string;
+  at: string | Date;
+  actor: string | null;
+  actor_name: string | null;
+  subject_name: string | null;
+  kind: string;
+  op: string;
+  tbl: string;
+  record_id: string;
+  count: number;
+  important: boolean;
+  private: boolean;
+  summary: Record<string, unknown> | null;
+}
+
+/** The changes after `after` (up to `upto`) that `user` hears about: never their own. */
+async function waitingChanges(
+  deps: AlertsDeps,
+  sub: ChangeSubscription,
+  upto: number | null,
+): Promise<ChangeEvent[]> {
+  const rows = await deps.sql<ChangeRow>(
+    `select e.id, e.at, e.actor,
+            coalesce(nullif(btrim(p.full_name), ''), p.email, '') as actor_name,
+            case when e.kind = 'member'
+              then coalesce(nullif(btrim(sp.full_name), ''), sp.email, '') else '' end as subject_name,
+            e.kind, e.op, e.tbl, e.record_id, e.count, e.important, e.private, e.summary
+     from public.change_events e
+     left join public.profiles p on p.id = e.actor
+     left join public.profiles sp on e.kind = 'member' and sp.id::text = e.summary ->> 'user'
+     where e.company_id = $1 and e.id > $2::bigint
+       and ($3::bigint is null or e.id <= $3::bigint)
+       and e.actor is distinct from $4::uuid
+     order by e.id
+     limit ${CHANGES_PER_EMAIL}`,
+    [sub.company_id, Number(sub.emailed_upto) || 0, upto, sub.user_id],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    at: r.at instanceof Date ? r.at.toISOString() : String(r.at),
+    actor: r.actor,
+    actorName: r.actor_name ?? '',
+    subjectName: r.subject_name ?? '',
+    kind: r.kind,
+    op: r.op,
+    tbl: r.tbl,
+    recordId: r.record_id,
+    count: Number(r.count) || 1,
+    important: Boolean(r.important),
+    private: Boolean(r.private),
+    summary: r.summary && typeof r.summary === 'object' ? r.summary : {},
+    unread: true,
+  }));
+}
+
+/** What the changes email needs of the company: its names and how it writes amounts and dates. */
+async function companyForChanges(deps: AlertsDeps, companyId: string): Promise<Company | null> {
+  const [row] = await deps.sql<{ data: Record<string, unknown> | null; name: string }>(
+    `select c.name,
+            (select jsonb_build_object(
+                'name', r.data -> 'name', 'nameAr', r.data -> 'nameAr', 'locale', r.data -> 'locale',
+                'dateFormat', r.data -> 'dateFormat', 'currency', r.data -> 'currency',
+                'currencyDisplay', r.data -> 'currencyDisplay')
+               from public.records r
+              where r.company_id = c.id and r.tbl = 'companies' and r.id = c.id) as data
+     from public.companies c where c.id = $1`,
+    [companyId],
+  );
+  if (!row) return null;
+  const data = row.data ?? {};
+  const text = (value: unknown, fallback = '') =>
+    typeof value === 'string' && value ? value : fallback;
+  return {
+    id: companyId,
+    name: text(data.name, row.name),
+    nameAr: text(data.nameAr) || undefined,
+    locale: text(data.locale, 'en-KW'),
+    dateFormat: text(data.dateFormat, 'dd/MM/yyyy'),
+    currency: text(data.currency, 'KWD'),
+    currencyDisplay: data.currencyDisplay === 'code' ? 'code' : 'local',
+  } as Company;
+}
+
+async function notifyDone(
+  deps: AlertsDeps,
+  sub: ChangeSubscription,
+  done: {
+    emailedUpto?: number;
+    summaryOn?: ISODate;
+    sentOn?: ISODate;
+    problem?: string;
+  },
+): Promise<void> {
+  await deps.sql(
+    `update public.notification_settings
+     set emailed_upto = greatest(emailed_upto, coalesce($3::bigint, emailed_upto)),
+         digest_on = coalesce($4::date, digest_on),
+         sent_count = case when $5::date is null then sent_count
+                           when sent_on = $5::date then sent_count + 1 else 1 end,
+         sent_on = coalesce($5::date, sent_on),
+         last_sent_at = case when $5::date is null then last_sent_at else $7::timestamptz end,
+         last_error = $6,
+         last_error_at = case when $6 = '' then null else now() end,
+         claimed_until = null,
+         send_key = null,
+         send_upto = null
+     where company_id = $1 and user_id = $2`,
+    [
+      sub.company_id,
+      sub.user_id,
+      done.emailedUpto ?? null,
+      done.summaryOn ?? null,
+      done.sentOn ?? null,
+      (done.problem ?? '').slice(0, 1000),
+      // The function's own clock: the next run measures the 15 minutes with it.
+      deps.now().toISOString(),
+    ],
+  );
+}
+
+async function notifyFailed(deps: AlertsDeps, sub: ChangeSubscription, error: unknown) {
+  const problem = error instanceof Error ? error.message : String(error);
+  await deps.sql(
+    `update public.notification_settings
+     set last_error = $3, last_error_at = now(), claimed_until = null,
+         send_key = case when $4::boolean then null else send_key end,
+         send_upto = case when $4::boolean then null else send_upto end
+     where company_id = $1 and user_id = $2`,
+    [
+      sub.company_id,
+      sub.user_id,
+      problem.slice(0, 1000) || 'Unknown problem',
+      error instanceof AlertsError && error.refused,
+    ],
+  );
+}
+
+/**
+ * Emails the changes of the team to whoever has new ones due: the owner and
+ * the approvers who turned them on, at their account's confirmed address.
+ */
+export async function runChangeNotifications(deps: AlertsDeps): Promise<NotifySummary> {
+  const now = deps.now();
+  const clock = kuwaitClock(now);
+  const summary: NotifySummary = { checked: 0, sent: 0, skipped: 0, failed: 0 };
+  // Only people who are still the owner or an approver, with something new, not being worked on.
+  const due = await deps.sql<ChangeSubscription>(
+    `update public.notification_settings s
+     set claimed_until = now() + interval '5 minutes'
+     from public.company_members m
+     where m.company_id = s.company_id and m.user_id = s.user_id
+       and (m.role = 'owner' or (m.can_approve and m.role in ('admin', 'accountant')))
+       and s.enabled
+       and (s.claimed_until is null or s.claimed_until < now())
+       and exists (
+         select 1 from public.change_events e
+         where e.company_id = s.company_id and e.id > s.emailed_upto
+           and e.actor is distinct from s.user_id
+       )
+     returning s.company_id, s.user_id, s.immediate_kinds, s.digest, s.app_url, s.emailed_upto,
+       s.digest_on::text as digest_on, s.sent_on::text as sent_on, s.sent_count,
+       (extract(epoch from s.last_sent_at) * 1000)::float8 as last_sent_ms,
+       s.send_key, s.send_upto`,
+  );
+  let first = true;
+  for (const sub of due) {
+    summary.checked += 1;
+    try {
+      // An email whose answer was lost goes again as it was, with its key.
+      const retry = sub.send_key && sub.send_upto !== null ? Number(sub.send_upto) : null;
+      const waiting = await waitingChanges(deps, sub, retry);
+      if (!waiting.length) {
+        await notifyDone(deps, sub, {});
+        continue;
+      }
+      const newest = waiting[waiting.length - 1].id;
+      let kind: ChangeEmailKind | null;
+      let summaryDone = false;
+      const immediateKinds = sub.immediate_kinds ?? [];
+      if (retry !== null) {
+        kind = waiting.some((e) => e.important && immediateKinds.includes(e.kind))
+          ? 'immediate'
+          : 'daily';
+        summaryDone = kind === 'daily';
+      } else {
+        const decision = notifyDecision(
+          waiting,
+          {
+            immediateKinds,
+            digest: sub.digest === 'off' ? 'off' : 'daily',
+            digestOn: sub.digest_on,
+            sentOn: sub.sent_on,
+            sentCount: Number(sub.sent_count) || 0,
+            lastSentMs: sub.last_sent_ms === null ? null : Number(sub.last_sent_ms),
+          },
+          clock,
+          now.getTime(),
+        );
+        kind = decision.send;
+        summaryDone = decision.summaryDone;
+        if (!kind) {
+          await notifyDone(deps, sub, {
+            emailedUpto: decision.letGo ? newest : undefined,
+            summaryOn: summaryDone ? clock.date : undefined,
+          });
+          summary.skipped += 1;
+          continue;
+        }
+      }
+      const who = await person(deps, sub.user_id);
+      if (!who?.confirmed) {
+        await notifyDone(deps, sub, { problem: 'The account has no confirmed email address.' });
+        summary.skipped += 1;
+        continue;
+      }
+      const company = await companyForChanges(deps, sub.company_id);
+      if (!company) {
+        await notifyDone(deps, sub, { problem: 'The company is not in the cloud.' });
+        summary.skipped += 1;
+        continue;
+      }
+      const email = await inLanguage(who.language, () =>
+        renderChangesEmail({
+          kind: kind!,
+          company,
+          events: waiting,
+          appUrl: sub.app_url,
+          to: who.email,
+        }),
+      );
+      // The key, and what the email covers, saved first.
+      const key = sub.send_key ?? `changes/${clock.date}/${crypto.randomUUID()}`;
+      if (!sub.send_key) {
+        await deps.sql(
+          `update public.notification_settings set send_key = $3, send_upto = $4::bigint
+           where company_id = $1 and user_id = $2`,
+          [sub.company_id, sub.user_id, key, newest],
+        );
+      }
+      if (!first) await deps.sleep(PAUSE_BETWEEN_EMAILS_MS);
+      first = false;
+      await sendEmail(deps, { to: who.email, ...email, idempotencyKey: key });
+      await notifyDone(deps, sub, {
+        emailedUpto: newest,
+        summaryOn: summaryDone ? clock.date : undefined,
+        sentOn: clock.date,
+      });
+      summary.sent += 1;
+    } catch (error) {
+      deps.log(`email-alerts: changes ${sub.company_id}/${sub.user_id}: ${String(error)}`);
+      await notifyFailed(deps, sub, error);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+/* -------------------------------------------------------------------------- */
 /* "Send it now" from the app                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -609,6 +906,16 @@ export async function handleAlertsRequest(request: Request, deps: AlertsDeps): P
       }
       const summary = await runDueAlerts(deps);
       deps.log(`email-alerts: ${JSON.stringify(summary)}`);
+      return json(200, { ok: true, ...summary });
+    }
+    if (body.action === 'notify') {
+      const secret = await schedulerSecret(deps);
+      const given = request.headers.get('x-alerts-secret') ?? '';
+      if (!secret || !sameText(given, secret)) {
+        return json(401, { ok: false, error: 'auth', message: 'Only the schedule runs this.' });
+      }
+      const summary = await runChangeNotifications(deps);
+      deps.log(`email-alerts: changes ${JSON.stringify(summary)}`);
       return json(200, { ok: true, ...summary });
     }
     if (body.action === 'send') {

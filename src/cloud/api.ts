@@ -1,6 +1,7 @@
 import { msg, t } from '@/i18n';
 import type { AlertTopic } from '@/alerts/topics';
 import type { MemberPermissions, MemberRole } from './roles';
+import type { ChangeDigest, ImmediateKind } from './change-feed';
 
 /**
  * What the app asks of the cloud. The sync engine only talks to this
@@ -154,6 +155,56 @@ export interface EmailAlertSettings {
   functionReady: boolean;
 }
 
+/**
+ * A change of the team's, from the change feed (notification_feed): who
+ * made it, what kind of record and what happened. Folds of ordinary changes
+ * of one sync have a count above 1.
+ */
+export interface ChangeEvent {
+  id: number;
+  at: string;
+  /** The account that made it; null for the server's own changes. */
+  actor: string | null;
+  actorName: string;
+  /** For team changes: the member it was about. */
+  subjectName: string;
+  /** document, payment, cheque, approval, settings, member, people… (see change-feed.ts). */
+  kind: string;
+  /** insert, update, delete, or mixed for a fold. */
+  op: string;
+  tbl: string;
+  recordId: string;
+  count: number;
+  important: boolean;
+  /** About payroll or people data: no names or amounts in it. */
+  private: boolean;
+  summary: Record<string, unknown>;
+  unread: boolean;
+}
+
+/** Whether the person gets the changes of the team, and what is unread (notification_status). */
+export interface ChangeFeedStatus {
+  enabled: boolean;
+  /** Unread changes, counted up to 100. */
+  unread: number;
+  /** The newest change the person may see; 0 when there is none. */
+  latest: number;
+}
+
+/** The person's choice for the changes of the team (Settings → Email alerts). */
+export interface ChangeNotificationSettings {
+  enabled: boolean;
+  /** Important changes of these kinds are emailed within minutes. */
+  immediateKinds: ImmediateKind[];
+  /** Everything else in a summary at 8:00 Kuwait time, or not by email. */
+  digest: ChangeDigest;
+  lastSentAt: string | null;
+  lastError: string;
+  lastErrorAt: string | null;
+  /** The email-alerts function has been published and has run at least once. */
+  functionReady: boolean;
+}
+
 export type AlertEmailErrorCode =
   | 'offline'
   | 'auth'
@@ -299,6 +350,34 @@ export interface CloudApi {
    * Throws AlertEmailError.
    */
   sendAlertEmail(companyId: string): Promise<{ to: string; count: number }>;
+  /**
+   * Whether the signed-in person gets the changes of the team (the owner or
+   * an approver who turned them on) and how many are unread. Null when the
+   * server doesn't have the change feed yet.
+   */
+  changeFeedStatus(companyId: string): Promise<ChangeFeedStatus | null>;
+  /**
+   * The changes of the team, newest first, after or before a change (owner
+   * and approvers only). Null when the server doesn't have the feed yet.
+   */
+  changeFeed(
+    companyId: string,
+    page?: { after?: number; before?: number; limit?: number },
+  ): Promise<ChangeEvent[] | null>;
+  /** Marks the changes up to `upto` as read. */
+  markChangesRead(companyId: string, upto: number): Promise<void>;
+  /** The person's choice for the changes of the team; null as above. */
+  changeNotifications(companyId: string): Promise<ChangeNotificationSettings | null>;
+  /** Saves it (owner and approvers only); null when the server doesn't have the feed yet. */
+  setChangeNotifications(
+    companyId: string,
+    settings: {
+      enabled: boolean;
+      immediateKinds: ImmediateKind[];
+      digest: ChangeDigest;
+      appUrl: string;
+    },
+  ): Promise<ChangeNotificationSettings | null>;
 }
 
 /* -------------------------------------------------------------------------- */

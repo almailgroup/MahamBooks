@@ -244,6 +244,124 @@ const approvalRequired = () =>
       'almail:approval_required This change to an issued document needs approval. Send it for approval instead.',
   });
 
+/** A row of public.change_events, as notification_feed answers it. */
+interface ChangeRow {
+  company: string;
+  id: number;
+  at: string;
+  actor: string;
+  op: string;
+  tbl: string;
+  record_id: string;
+  kind: string;
+  important: boolean;
+  private: boolean;
+  count: number;
+  fold: string;
+  summary: Data;
+}
+
+/** The kind of change a record makes, as almailbooks.change_kind. */
+function changeKind(tbl: string, data: Data | null): string {
+  const people = [
+    'employees',
+    'payRuns',
+    'payrollSettings',
+    'peopleSettings',
+    'leaveRecords',
+    'staffLoans',
+    'finalSettlements',
+    'letterTemplates',
+    'employeeLetters',
+  ];
+  if (tbl === 'documents') return 'document';
+  if (tbl === 'payments') return data?.method === 'cheque' ? 'cheque' : 'payment';
+  if (tbl === 'securityCheques') return 'cheque';
+  if (tbl === 'approvals') return 'approval';
+  if (tbl === 'companies') return 'settings';
+  if (people.includes(tbl)) return 'people';
+  if (['complianceDocuments', 'renewals', 'complianceMarks', 'vehicles'].includes(tbl)) {
+    return 'compliance';
+  }
+  if (tbl === 'clients') return 'contact';
+  if (['products', 'warehouses', 'stockMovements', 'stockEntries', 'landedCosts'].includes(tbl)) {
+    return 'item';
+  }
+  if (tbl === 'expenses') return 'expense';
+  if (tbl === 'attachments') return 'file';
+  return 'accounting';
+}
+
+/**
+ * What a change did, as almailbooks.change_details, for what these tests
+ * look at: documents, cheques and approval requests; everything else is an
+ * ordinary change. Payroll and people records say only what happened.
+ */
+function changeDetails(
+  tbl: string,
+  old: Data | null,
+  data: Data | null,
+  isPrivate: boolean,
+  client: Data | null,
+): { important: boolean; summary: Data } | null {
+  const row = (data ?? old)!;
+  let what = !old ? 'added' : !data ? 'deleted' : 'updated';
+  if (isPrivate) return { important: false, summary: { what } };
+  if (tbl === 'documents') {
+    if (old && data) {
+      const was = stage(old.status);
+      const now = stage(data.status);
+      what =
+        now === 'void' && was !== 'void'
+          ? 'voided'
+          : was === 'void' && now !== 'void'
+            ? 'restored'
+            : was === 'draft' && now === 'issued'
+              ? 'issued'
+              : was === 'issued' && now === 'issued' && content(old) !== content(data)
+                ? 'edited'
+                : 'updated';
+    }
+    const covered = row.type === 'invoice' || row.type === 'credit';
+    const totals = (row.totals ?? {}) as Data;
+    return {
+      important:
+        covered &&
+        (['voided', 'restored', 'edited'].includes(what) ||
+          (what === 'deleted' && stage(old?.status) !== 'draft')),
+      summary: Object.fromEntries(
+        Object.entries({
+          what,
+          type: row.type,
+          number: row.number,
+          status: row.status,
+          total: typeof totals.total === 'number' ? totals.total : null,
+          currency: row.currency,
+          client: client?.name ?? null,
+          clientAr: client?.nameAr ?? null,
+        }).filter(([, v]) => v !== null && v !== undefined),
+      ),
+    };
+  }
+  if (tbl === 'approvals') {
+    if (!old) what = 'requested';
+    else if (data && data.status !== old.status) what = String(data.status);
+    return {
+      important: ['requested', 'approved', 'rejected'].includes(what),
+      summary: { what, request: row.kind, number: row.subjectNumber, status: row.status },
+    };
+  }
+  if (tbl === 'companies' && old && data) {
+    const strip = (r: Data) => {
+      const copy = { ...r };
+      for (const key of ['numbering', 'updatedAt']) delete copy[key];
+      return canonical(copy);
+    };
+    if (strip(old) === strip(data)) return null;
+  }
+  return { important: false, summary: { what } };
+}
+
 export class FakeSupabase {
   users = new Map<string, FakeUser>();
   companies = new Map<
@@ -263,6 +381,15 @@ export class FakeSupabase {
   /** Email alerts by "company user", and the emails asked for from the app. */
   emailAlerts = new Map<string, { enabled: boolean; topics: string[]; appUrl: string }>();
   alertEmails: { company: string; to: string }[] = [];
+  /** The change feed: the changes, each person's choice and how far they read, by "company user". */
+  changes: ChangeRow[] = [];
+  changeSettings = new Map<
+    string,
+    { enabled: boolean; immediateKinds: string[]; digest: string; appUrl: string }
+  >();
+  changeReads = new Map<string, number>();
+  private changeSeq = 0;
+  private pushSeq = 0;
   private rev = 0;
   private tokens = new Map<string, string>();
   private counter = 0;
@@ -576,6 +703,96 @@ export class FakeSupabase {
     return { ...data, ...fixed, decidedBy: user, decidedAt: now };
   }
 
+  private approver(company: string, user: string): boolean {
+    const role = this.companies.get(company)?.members.get(user);
+    return (
+      role === 'owner' ||
+      ((role === 'admin' || role === 'accountant') &&
+        Boolean(this.access.get(`${company} ${user}`)?.canApprove))
+    );
+  }
+
+  /** As almailbooks.records_change_event, once someone of the company asked for the feed. */
+  private recordChange(
+    company: string,
+    user: string,
+    push: number,
+    tbl: string,
+    id: string,
+    old: Data | null,
+    data: Data | null,
+  ) {
+    const on = [...this.changeSettings].some(
+      ([key, settings]) => key.startsWith(`${company} `) && settings.enabled,
+    );
+    if (!on || tbl === 'activities' || (old && data && canonical(old) === canonical(data))) return;
+    const row = (data ?? old)!;
+    const people = ['employees', 'payRuns', 'payrollSettings', 'peopleSettings', 'leaveRecords'];
+    const isPrivate =
+      people.includes(tbl) ||
+      row._private === true ||
+      (tbl === 'complianceDocuments' &&
+        typeof row.employeeId === 'string' &&
+        row.employeeId !== '');
+    const clientId = typeof row.clientId === 'string' ? row.clientId : '';
+    const client = clientId
+      ? (this.records.get(`${company}/clients/${clientId}`)?.data ?? null)
+      : null;
+    const details = changeDetails(tbl, old, data, isPrivate, client);
+    if (!details) return;
+    const kind = changeKind(tbl, row);
+    const op = !old ? 'insert' : !data ? 'delete' : 'update';
+    const fold = details.important
+      ? `one:${this.changeSeq + 1}`
+      : ['tx', push, user, tbl, tbl === 'documents' ? row.type : '', kind, isPrivate].join(':');
+    const folded = this.changes.find((c) => c.company === company && c.fold === fold);
+    if (folded) {
+      folded.count += 1;
+      folded.op = folded.op === op ? op : 'mixed';
+      folded.record_id = id;
+      folded.summary = details.summary;
+      return;
+    }
+    this.changeSeq += 1;
+    this.changes.push({
+      company,
+      id: this.changeSeq,
+      at: new Date().toISOString(),
+      actor: user,
+      op,
+      tbl,
+      record_id: id,
+      kind,
+      important: details.important,
+      private: isPrivate,
+      count: 1,
+      fold,
+      summary: details.summary,
+    });
+  }
+
+  private changeSettingsRow(company: string, user: string) {
+    const saved = this.changeSettings.get(`${company} ${user}`);
+    return [
+      {
+        enabled: saved?.enabled ?? false,
+        immediate_kinds: saved?.immediateKinds ?? [
+          'document',
+          'cheque',
+          'approval',
+          'member',
+          'settings',
+          'people',
+        ],
+        digest: saved?.digest ?? 'daily',
+        last_sent_at: null,
+        last_error: '',
+        last_error_at: null,
+        function_ready: true,
+      },
+    ];
+  }
+
   private rpc(fn: string, b: Record<string, unknown>, me: FakeUser): unknown {
     const company = String(b.p_company ?? '');
     const entry = this.companies.get(company);
@@ -632,7 +849,18 @@ export class FakeSupabase {
           if (guarded instanceof Refusal) return guarded;
           stored.push(guarded);
         }
+        this.pushSeq += 1;
         return changes.map((change, i) => {
+          const before = this.records.get(`${company}/${change.tbl}/${change.id}`);
+          this.recordChange(
+            company,
+            me.id,
+            this.pushSeq,
+            change.tbl,
+            change.id,
+            before && !before.deleted ? before.data : null,
+            change.deleted ? null : stored[i],
+          );
           this.rev += 1;
           this.records.set(`${company}/${change.tbl}/${change.id}`, {
             company,
@@ -667,7 +895,89 @@ export class FakeSupabase {
       case 'company_record_ids':
         return [];
       case 'server_features':
-        return ['tables_v16', 'super_admin', 'approvals', 'cheque_approvals'];
+        return ['tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed'];
+      // The change feed (20261123000000_change_feed.sql).
+      case 'notification_status': {
+        if (!this.approver(company, me.id)) return [{ enabled: false, unread: 0, latest: 0 }];
+        const key = `${company} ${me.id}`;
+        const visible = this.changes.filter((c) => c.company === company && c.actor !== me.id);
+        const read = this.changeReads.get(key) ?? 0;
+        return [
+          {
+            enabled: Boolean(this.changeSettings.get(key)?.enabled),
+            unread: Math.min(100, visible.filter((c) => c.id > read).length),
+            latest: Math.max(0, ...visible.map((c) => c.id)),
+          },
+        ];
+      }
+      case 'notification_feed': {
+        if (!this.approver(company, me.id)) {
+          return refuse('almail:permission Only the owner and approvers see the changes.');
+        }
+        const read = this.changeReads.get(`${company} ${me.id}`) ?? 0;
+        const after = Number(b.p_after ?? 0);
+        const before = b.p_before == null ? Infinity : Number(b.p_before);
+        const name = (id: string) => {
+          const user = [...this.users.values()].find((u) => u.id === id);
+          return user ? user.fullName || user.email : '';
+        };
+        return this.changes
+          .filter((c) => c.company === company && c.actor !== me.id)
+          .filter((c) => c.id > after && c.id < before)
+          .sort((x, y) => y.id - x.id)
+          .slice(0, Number(b.p_limit ?? 50))
+          .map((c) => ({
+            id: c.id,
+            at: c.at,
+            actor: c.actor,
+            actor_name: name(c.actor),
+            subject_name: c.kind === 'member' ? name(String(c.summary.user ?? '')) : '',
+            kind: c.kind,
+            op: c.op,
+            tbl: c.tbl,
+            record_id: c.record_id,
+            count: c.count,
+            important: c.important,
+            private: c.private,
+            summary: c.summary,
+            unread: c.id > read,
+          }));
+      }
+      case 'mark_notifications_read': {
+        if (!this.approver(company, me.id)) return refuse('almail:permission');
+        const key = `${company} ${me.id}`;
+        const newest = Math.max(
+          0,
+          ...this.changes.filter((c) => c.company === company).map((c) => c.id),
+        );
+        this.changeReads.set(
+          key,
+          Math.max(this.changeReads.get(key) ?? 0, Math.min(Number(b.p_upto ?? 0), newest)),
+        );
+        return undefined;
+      }
+      case 'change_notification_settings':
+      case 'set_change_notifications': {
+        if (!this.approver(company, me.id)) return refuse('almail:permission');
+        const key = `${company} ${me.id}`;
+        if (fn === 'set_change_notifications') {
+          const was = this.changeSettings.get(key)?.enabled ?? false;
+          this.changeSettings.set(key, {
+            enabled: Boolean(b.p_enabled),
+            immediateKinds: (b.p_immediate_kinds as string[]) ?? [],
+            digest: String(b.p_digest ?? 'daily'),
+            appUrl: String(b.p_app_url ?? ''),
+          });
+          if (b.p_enabled && !was) {
+            const newest = Math.max(
+              0,
+              ...this.changes.filter((c) => c.company === company).map((c) => c.id),
+            );
+            this.changeReads.set(key, Math.max(this.changeReads.get(key) ?? 0, newest));
+          }
+        }
+        return this.changeSettingsRow(company, me.id);
+      }
       case 'my_permissions': {
         const access = this.access.get(`${company} ${me.id}`);
         return [

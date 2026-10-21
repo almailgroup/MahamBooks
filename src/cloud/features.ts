@@ -27,7 +27,13 @@ export type ServerFeature =
    * The same file: cheques an approver confirms (Settings → Approvals →
    * Cheques); recorded by anyone else, they wait as requests.
    */
-  | 'cheque_approvals';
+  | 'cheque_approvals'
+  /**
+   * 20261123000000_change_feed.sql: the changes of the team for the owner and
+   * approvers (the bell, Updates, and Settings → Email alerts → Changes by
+   * your team). Only ever for companies kept in the cloud.
+   */
+  | 'change_feed';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

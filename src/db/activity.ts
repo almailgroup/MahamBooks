@@ -1,4 +1,5 @@
 import { db } from './db';
+import { activityAuthor } from './author';
 import type { Activity, ActivityEntity, ID, ISODate } from './types';
 import { newId } from '@/lib/ids';
 import { currentLanguage, interpolate, t, type Vars } from '@/i18n';
@@ -42,10 +43,13 @@ export async function logActivity(
     confidential?: boolean;
   } = {},
 ): Promise<void> {
+  const author = activityAuthor(companyId);
   const activity: Activity = {
     id: newId(),
     companyId,
     at: new Date().toISOString(),
+    // Who did it, in a company kept in the cloud (D8).
+    ...(author ? { by: author.id, ...(author.name ? { byName: author.name } : {}) } : {}),
     entity,
     entityId,
     clientId: refs.clientId ?? null,
@@ -98,6 +102,17 @@ export function activityText(activity: Activity, format?: ActivityFormat): strin
     }
   }
   return t(activity.messageKey, vars);
+}
+
+/** Who made the change, when known (D8); empty for older entries and local companies. */
+export function activityBy(activity: Pick<Activity, 'by' | 'byName'>): string {
+  return typeof activity.byName === 'string' ? activity.byName.trim() : '';
+}
+
+/** The line under an entry: when it happened, and by whom when that is known. */
+export function activityByline(activity: Pick<Activity, 'by' | 'byName'>, when: string): string {
+  const name = activityBy(activity);
+  return name ? t('{when} · by {name}', { when, name }) : when;
 }
 
 export async function recentActivity(companyId: ID, limit = 20): Promise<Activity[]> {

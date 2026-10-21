@@ -199,6 +199,29 @@ export function isApprover(
 }
 
 /**
+ * Gets the changes of the team (the bell and its emails): the owner and the
+ * approvers, as notification_feed of 20261123000000_change_feed.sql.
+ */
+export function getsChangeFeed(
+  role: MemberRole | null | undefined,
+  canApprove: boolean | undefined,
+): boolean {
+  return isApprover(role, canApprove);
+}
+
+/**
+ * Whether a change of the feed is shown to someone who gets the feed: never
+ * their own, and one about payroll or people data only to owners, admins
+ * and accountants (as every approver is), as notification_feed.
+ */
+export function seesChange(
+  change: { actor: string | null; private: boolean },
+  viewer: { userId: string; role: MemberRole | null | undefined },
+): boolean {
+  return change.actor !== viewer.userId && (!change.private || canSeePeople(viewer.role));
+}
+
+/**
  * The roles `me` may invite someone as, or give a member. With the owner's
  * rule on (`ownerOnly`), admins give staff and viewer only, as the server
  * does (create_invite, set_member_role).

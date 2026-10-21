@@ -49,6 +49,17 @@ has to be added to the app or to Vercel.
    approval or confirmation until the owner turns it on. If you ran an earlier
    copy of this script, run it again: it is safe, and the cheque switches
    appear only once it has run.
+10. Then the sixth script,
+    [`supabase/migrations/20261123000000_change_feed.sql`](../supabase/migrations/20261123000000_change_feed.sql)
+    (a new query, paste, **Run**), after the fifth. It adds **Changes by your
+    team** in **Settings → Email alerts** and the bell (see "Changes by your
+    team" below). It stops with "Run 20261116000000_super_admin_approvals.sql
+    first" if the fifth script hasn't run, and then changes nothing. Running it
+    changes nothing by itself either: nothing is recorded until the owner (or
+    a member allowed to approve) turns it on. The emails also need the email
+    alerts script (step 7) and the email-alerts function
+    ([`docs/email-alerts.md`](email-alerts.md)). If the fifth script is ever
+    run again, run this one again after it.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -215,8 +226,8 @@ In **Settings → Team**, the owner (badge **Owner (Super Admin)**, المالك
   first.
 
 If the owner's account is ever deleted, the longest-standing admin (or else
-accountant) becomes the owner, as before; the change is now recorded for the
-change notifications of a later release.
+accountant) becomes the owner, as before; the change is recorded, and shows
+under **Changes by your team** once the sixth script has run.
 
 ## Approvals
 
@@ -295,6 +306,44 @@ on, update every device and let each one sync: a cheque an older version
 records is refused by the cloud and waits in **Settings → Cloud and sync**,
 with **Send for confirmation instead**. The paper cheque should not leave the
 office before it is confirmed: the app can't see paper.
+
+## Changes by your team
+
+**Settings → Email alerts → Changes by your team** (الإعدادات ← تنبيهات البريد
+← تغييرات الفريق), after the sixth script (step 1.10). It is there for the
+owner (the Super Admin) and the admins or accountants with **Can approve**
+(Settings → Team); nobody else sees it. Each of them turns their own on:
+
+- **Tell me about changes by my team** (أبلغني بتغييرات فريقي). Off at first.
+  Until someone of the company turns it on, the cloud records nothing.
+- **Email at once** (بالبريد فوراً): important changes, within about 5
+  minutes: an issued invoice or credit note changed, voided, restored or
+  deleted; cheques recorded, changed, returned, cancelled or deleted, and
+  security cheques; approval requests and each decision; someone joining or
+  leaving, a role or permissions changing; the numbering, the lock date or
+  the approval rules changing; pay runs added, approved, paid or deleted.
+  Each kind can be turned off.
+- **Everything else in a morning summary** (كل ما عدا ذلك في ملخص صباحي), at
+  8:00 Kuwait time, on days the team changed something. Off, only the
+  changes above are emailed.
+- At most **one email every 15 minutes and 20 a day** per person and
+  company; what comes meanwhile goes in the next email. The emails share
+  Resend's daily allowance (100 a day on the free plan) with the morning
+  alerts: with three recipients that is up to 60, so a paid plan is
+  advisable once the team is busy.
+
+The **bell** (المستجدات, Updates) at the top, next to the app grid, counts
+the unread changes and lists the latest; **See all updates** opens the
+Updates page (by day, filters, **Mark all as read**, a link to each record).
+A change shows there as soon as the device that made it has synced. Nobody
+sees their own changes. Changes to payroll and people data say only what
+happened ("Approved the pay run for 2026-10"), never a name, a Civil ID or
+an amount, and only owners, admins and accountants ever see them. Changes
+are kept 180 days.
+
+Each entry of a record's activity now also says who made it ("· by …"), in
+companies kept in the cloud; entries from before, and from older versions of
+the app, name nobody.
 
 ## Problems
 

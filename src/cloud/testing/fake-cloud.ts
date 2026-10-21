@@ -1,6 +1,8 @@
 import {
   AlertEmailError,
   CloudError,
+  type ChangeEvent,
+  type ChangeNotificationSettings,
   type CloudApi,
   type CloudCompany,
   type CompanyOp,
@@ -21,6 +23,7 @@ import {
   canWriteRecord,
   chequeChangeNeedsApprover,
   documentChangeNeedsApproval,
+  getsChangeFeed,
   grantableRoles,
   guardApprovalWrite,
   isApprover,
@@ -30,10 +33,12 @@ import {
   readPermissions,
   rulesKeepRecord,
   sameData,
+  seesChange,
   staffCompanyChangeOk,
   type MemberPermissions,
   type MemberRole,
 } from '../roles';
+import { changeDetails, changeKind, IMMEDIATE_KINDS, isImmediateKind } from '../change-feed';
 import { mergeNumbering } from '../numbering';
 import { rebaseCompany } from '../company-patch';
 import { periodKey } from '@/lib/numbering';
@@ -61,6 +66,29 @@ interface Marker {
   rev: number;
   deletedAt: number;
   private: boolean;
+}
+
+/** A row of public.change_events. */
+interface Change {
+  company: string;
+  id: number;
+  at: string;
+  actor: string | null;
+  op: string;
+  tbl: string;
+  recordId: string;
+  kind: string;
+  important: boolean;
+  private: boolean;
+  count: number;
+  foldKey: string;
+  summary: Record<string, unknown>;
+}
+
+/** A row of public.notification_settings. */
+interface ChangeSettings extends Omit<ChangeNotificationSettings, 'functionReady'> {
+  appUrl: string;
+  emailedUpto: number;
 }
 
 const fail = (code: CloudError['code'], detail: string = code) =>
@@ -110,6 +138,17 @@ export class FakeCloud {
   /** Email alerts by "company user"; the emails asked for, by the same key. */
   emailAlerts = new Map<string, EmailAlertSettings & { appUrl: string }>();
   alertEmails: string[] = [];
+  /**
+   * The change feed (20261123000000_change_feed.sql, once `features` has
+   * 'change_feed'): the changes, each person's choice and how far they read,
+   * by "company user".
+   */
+  changes: Change[] = [];
+  changeSettings = new Map<string, ChangeSettings>();
+  changeReads = new Map<string, number>();
+  private changeSeq = 0;
+  private pushSeq = 0;
+  private pushTx = 0;
 
   private key(company: string, tbl: string, id: string) {
     return `${company}/${tbl}/${id}`;
@@ -245,6 +284,103 @@ export class FakeCloud {
     for (const watcher of this.watchers.get(company) ?? []) watcher();
   }
 
+  /** Someone of the company asked for its changes (almailbooks.records_change_event's gate). */
+  private feedOn(company: string): boolean {
+    if (!this.features.includes('change_feed')) return false;
+    return [...this.changeSettings].some(
+      ([key, settings]) => key.startsWith(`${company} `) && settings.enabled,
+    );
+  }
+
+  private addChange(change: Omit<Change, 'id' | 'at' | 'count'>) {
+    const folded = this.changes.find(
+      (c) => c.company === change.company && c.foldKey === change.foldKey,
+    );
+    if (folded) {
+      folded.count += 1;
+      folded.op = folded.op === change.op ? folded.op : 'mixed';
+      folded.recordId = change.recordId;
+      folded.summary = change.summary;
+      return;
+    }
+    this.changes.push({ ...change, id: ++this.changeSeq, at: this.now(), count: 1 });
+  }
+
+  /** Mirrors almailbooks.records_change_event: a change of a record, as stored. */
+  private recordChange(
+    company: string,
+    user: string,
+    tbl: string,
+    id: string,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+  ) {
+    if (!this.feedOn(company) || tbl === 'activities') return;
+    if (before && after && sameData(before, after)) return;
+    const data = (after ?? before)!;
+    const lookup = this.lookup(company);
+    const isPrivate =
+      isPrivateRecord(tbl, data, lookup) ||
+      Boolean(before && after && isPrivateRecord(tbl, before, lookup));
+    let kind: string = changeKind(tbl, data);
+    if (tbl === 'payments' && kind === 'payment' && before?.method === 'cheque') kind = 'cheque';
+    const contact =
+      typeof data.clientId === 'string' && data.clientId
+        ? this.record(company, 'clients', data.clientId)
+        : null;
+    const details = changeDetails(tbl, before, after, isPrivate, contact);
+    if (!details) return;
+    const type = tbl === 'documents' ? String(data.type ?? '') : '';
+    this.addChange({
+      company,
+      actor: user,
+      op: !before ? 'insert' : !after ? 'delete' : 'update',
+      tbl,
+      recordId: id,
+      kind,
+      important: details.important,
+      private: isPrivate,
+      foldKey: details.important
+        ? `one:${this.changeSeq + 1}`
+        : ['tx', this.pushTx, user, tbl, type, kind, isPrivate].join(':'),
+      summary: details.summary,
+    });
+  }
+
+  /** Mirrors almailbooks.company_members_audit, once the feed exists. */
+  private recordTeamChange(
+    company: string,
+    user: string,
+    target: string,
+    reason: string,
+    role: MemberRole | null,
+    before: MemberRole | null,
+  ) {
+    if (!this.features.includes('change_feed')) return;
+    this.addChange({
+      company,
+      actor: user,
+      op: reason === 'left' ? 'delete' : 'update',
+      tbl: 'company_members',
+      recordId: target,
+      kind: 'member',
+      important: true,
+      private: false,
+      foldKey: `member:${this.changeSeq + 1}`,
+      summary: Object.fromEntries(
+        Object.entries({ reason, user: target, role, before }).filter(([, v]) => v !== null),
+      ),
+    });
+  }
+
+  /** The changes `user` is shown, newest first (notification_feed). */
+  private visibleChanges(company: string, user: string): Change[] {
+    const role = this.role(company, user);
+    return this.changes
+      .filter((c) => c.company === company && seesChange(c, { userId: user, role }))
+      .sort((a, b) => b.id - a.id);
+  }
+
   client(user: string): CloudApi {
     const guard = (method: string) => {
       this.calls.push(`${user} ${method}`);
@@ -303,6 +439,9 @@ export class FakeCloud {
         const records = new Map(this.records);
         const markers = new Map(this.markers);
         const rev = this.rev;
+        const feed = structuredClone(this.changes);
+        const changeSeq = this.changeSeq;
+        this.pushTx = ++this.pushSeq;
         try {
           const results = changes.map((change) => this.applyChange(company, user, role, change));
           if (results.length) this.notify(company);
@@ -311,6 +450,8 @@ export class FakeCloud {
           this.records = records;
           this.markers = markers;
           this.rev = rev;
+          this.changes = feed;
+          this.changeSeq = changeSeq;
           throw error;
         }
       },
@@ -451,6 +592,8 @@ export class FakeCloud {
         if (sameData(data, old.data)) return { rev: old.rev, conflicts };
         const rev = ++this.rev;
         this.records.set(key, { ...old, data, rev });
+        this.pushTx = ++this.pushSeq;
+        this.recordChange(company, user, 'companies', company, old.data, data);
         this.notify(company);
         return { rev, conflicts };
       },
@@ -561,6 +704,7 @@ export class FakeCloud {
           throw fail('permission');
         }
         this.addMember(company, target, role);
+        if (role !== current) this.recordTeamChange(company, user, target, 'role', role, current);
       },
       removeMember: async (company, target) => {
         guard('removeMember');
@@ -573,13 +717,20 @@ export class FakeCloud {
         }
         this.members.get(company)?.delete(target);
         this.access.delete(`${company} ${target}`);
+        this.changeSettings.delete(`${company} ${target}`);
+        this.changeReads.delete(`${company} ${target}`);
+        this.recordTeamChange(company, user, target, 'left', null, current);
       },
       transferOwnership: async (company, target) => {
         guard('transferOwnership');
         if (member(company) !== 'owner') throw fail('permission');
         if (!this.role(company, target) || target === user) throw fail('invalid');
+        const before = this.role(company, target);
         this.addMember(company, user, 'admin');
         this.addMember(company, target, 'owner');
+        this.recordTeamChange(company, user, user, 'role', 'admin', 'owner');
+        this.recordTeamChange(company, user, target, 'ownership', 'owner', before);
+        this.stopChangesOfNonApprovers(company);
       },
 
       // Mirror the Super Admin's functions (20261116000000_super_admin_approvals.sql).
@@ -625,6 +776,8 @@ export class FakeCloud {
           throw fail('limit');
         }
         this.setAccess(company, target, readPermissions(permissions), canApprove);
+        this.recordTeamChange(company, user, target, 'permissions', role, null);
+        this.stopChangesOfNonApprovers(company);
       },
       setTeamRules: async (company, rules) => {
         guard('setTeamRules');
@@ -708,7 +861,122 @@ export class FakeCloud {
         saved.lastSentAt = new Date().toISOString();
         return { to: `${user}@example.com`, count: 0 };
       },
+
+      // Mirror the change feed's functions (20261123000000_change_feed.sql).
+      changeFeedStatus: async (company) => {
+        guard('changeFeedStatus');
+        if (this.legacy || !this.features.includes('change_feed')) return null;
+        member(company);
+        if (!this.approver(company, user)) return { enabled: false, unread: 0, latest: 0 };
+        const key = `${company} ${user}`;
+        const visible = this.visibleChanges(company, user);
+        const read = this.changeReads.get(key) ?? 0;
+        return {
+          enabled: Boolean(this.changeSettings.get(key)?.enabled),
+          unread: Math.min(100, visible.filter((c) => c.id > read).length),
+          latest: visible[0]?.id ?? 0,
+        };
+      },
+      changeFeed: async (company, page = {}): Promise<ChangeEvent[] | null> => {
+        guard('changeFeed');
+        if (this.legacy || !this.features.includes('change_feed')) return null;
+        member(company);
+        if (!this.approver(company, user)) throw fail('permission');
+        const read = this.changeReads.get(`${company} ${user}`) ?? 0;
+        const limit = Math.min(Math.max(page.limit ?? 50, 1), 200);
+        return this.visibleChanges(company, user)
+          .filter((c) => c.id > (page.after ?? 0) && (page.before == null || c.id < page.before))
+          .slice(0, limit)
+          .map((c) => ({
+            id: c.id,
+            at: c.at,
+            actor: c.actor,
+            actorName: c.actor ?? '',
+            subjectName: c.kind === 'member' ? String(c.summary.user ?? '') : '',
+            kind: c.kind,
+            op: c.op,
+            tbl: c.tbl,
+            recordId: c.recordId,
+            count: c.count,
+            important: c.important,
+            private: c.private,
+            summary: structuredClone(c.summary),
+            unread: c.id > read,
+          }));
+      },
+      markChangesRead: async (company, upto) => {
+        guard('markChangesRead');
+        member(company);
+        if (!this.approver(company, user)) throw fail('permission');
+        const key = `${company} ${user}`;
+        const newest = Math.max(
+          0,
+          ...this.changes.filter((c) => c.company === company).map((c) => c.id),
+        );
+        this.changeReads.set(
+          key,
+          Math.max(this.changeReads.get(key) ?? 0, Math.min(Math.max(upto, 0), newest)),
+        );
+      },
+      changeNotifications: async (company) => {
+        guard('changeNotifications');
+        if (this.legacy || !this.features.includes('change_feed')) return null;
+        member(company);
+        if (!this.approver(company, user)) throw fail('permission');
+        return this.changeSettingsOf(company, user);
+      },
+      setChangeNotifications: async (company, settings) => {
+        guard('setChangeNotifications');
+        if (this.legacy || !this.features.includes('change_feed')) return null;
+        member(company);
+        if (!this.approver(company, user)) throw fail('permission');
+        if (!settings.immediateKinds.every(isImmediateKind)) throw fail('invalid');
+        if (settings.digest !== 'daily' && settings.digest !== 'off') throw fail('invalid');
+        const key = `${company} ${user}`;
+        const before = this.changeSettings.get(key);
+        const newest = Math.max(
+          0,
+          ...this.changes.filter((c) => c.company === company).map((c) => c.id),
+        );
+        const turnedOn = settings.enabled && !before?.enabled;
+        this.changeSettings.set(key, {
+          enabled: settings.enabled,
+          immediateKinds: IMMEDIATE_KINDS.filter((k) => settings.immediateKinds.includes(k)),
+          digest: settings.digest,
+          appUrl: settings.appUrl || before?.appUrl || '',
+          lastSentAt: before?.lastSentAt ?? null,
+          lastError: settings.enabled ? (before?.lastError ?? '') : '',
+          lastErrorAt: settings.enabled ? (before?.lastErrorAt ?? null) : null,
+          emailedUpto: turnedOn ? newest : (before?.emailedUpto ?? newest),
+        });
+        if (turnedOn) this.changeReads.set(key, Math.max(this.changeReads.get(key) ?? 0, newest));
+        return this.changeSettingsOf(company, user);
+      },
     };
+  }
+
+  private changeSettingsOf(company: string, user: string): ChangeNotificationSettings {
+    const saved = this.changeSettings.get(`${company} ${user}`);
+    return {
+      enabled: saved?.enabled ?? false,
+      immediateKinds: saved?.immediateKinds ?? [...IMMEDIATE_KINDS],
+      digest: saved?.digest ?? 'daily',
+      lastSentAt: saved?.lastSentAt ?? null,
+      lastError: saved?.lastError ?? '',
+      lastErrorAt: saved?.lastErrorAt ?? null,
+      functionReady: true,
+    };
+  }
+
+  /** Mirrors almailbooks.notification_member_changed: only approvers keep getting the changes. */
+  private stopChangesOfNonApprovers(company: string) {
+    for (const [key, settings] of this.changeSettings) {
+      const [id, user] = key.split(' ');
+      if (id !== company || !settings.enabled) continue;
+      if (!getsChangeFeed(this.role(company, user), this.access.get(key)?.canApprove)) {
+        settings.enabled = false;
+      }
+    }
   }
 
   /** Mirrors almailbooks.records_guard: what is stored, or the refusal. */
@@ -781,6 +1049,8 @@ export class FakeCloud {
       ) {
         throw fail('permission');
       }
+      const isPrivate = isPrivateRecord(change.tbl, visibleOld.data, this.lookup(company));
+      this.recordChange(company, user, change.tbl, change.id, visibleOld.data, null);
       this.records.delete(key);
       const rev = ++this.rev;
       this.markers.set(key, {
@@ -789,7 +1059,7 @@ export class FakeCloud {
         id: change.id,
         rev,
         deletedAt: Date.now(),
-        private: isPrivateRecord(change.tbl, visibleOld.data, this.lookup(company)),
+        private: isPrivate,
       });
       return { tbl: change.tbl, id: change.id, rev, conflict: visibleOld.rev > base };
     }
@@ -818,6 +1088,7 @@ export class FakeCloud {
     const rev = ++this.rev;
     this.records.set(key, { company, tbl: change.tbl, id: change.id, data, rev });
     this.markers.delete(key);
+    this.recordChange(company, user, change.tbl, change.id, old?.data ?? null, data);
     const conflict =
       (old !== undefined && old.rev > base && !sameData(old.data, change.data)) ||
       (old === undefined && marker !== undefined && marker.rev > base);

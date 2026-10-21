@@ -629,16 +629,18 @@ describe('companies you own (owned_companies_overview)', () => {
 
 describe('the record of team changes', () => {
   it('does nothing until the change feed exists', async () => {
-    const t = await team();
-    await limit(t, t.admin, { books: 'view' }, true);
-    const [found] = await h.admin<{ table: string | null }>(
+    // As the server is before 20261123000000_change_feed.sql.
+    const db = await startDatabase(1, MIGRATIONS.indexOf(FILE) + 1);
+    const t = await team(db);
+    await limit(t, t.admin, { books: 'view' }, true, db);
+    const [found] = await db.admin<{ table: string | null }>(
       `select to_regclass('public.change_events')::text as table`,
     );
     expect(found.table).toBeNull();
-  });
+  }, 60_000);
 
   it('records joins, roles, limits, leaving and a new owner, and never stops a change', async () => {
-    const db = await startDatabase(1);
+    const db = await startDatabase(1, MIGRATIONS.indexOf(FILE) + 1);
     // A stand-in for the feed of the next release, with its columns.
     await db.admin(`
       create table public.change_events (

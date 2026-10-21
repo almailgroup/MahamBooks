@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
-import { activityText, recentActivity } from './activity';
+import { activityByline, activityText, recentActivity } from './activity';
+import { setActivityAuthor, setAuthorCompanies } from './author';
 import { createClient } from './defaults';
 import { createPayment, savePayment } from './payments';
 import { saveClient, setupCompany } from './records';
@@ -11,7 +12,10 @@ beforeEach(async () => {
   await db.delete();
   await db.open();
 });
-afterEach(() => setDictionaryForTests('en', {}));
+afterEach(() => {
+  setDictionaryForTests('en', {});
+  setActivityAuthor(null);
+});
 
 const AR = 'ar-KW-u-nu-latn';
 const arabic = {
@@ -63,5 +67,27 @@ describe('activity', () => {
     expect(activityText(added)).toBe('Client Gulf Pearl Hotel added');
     setDictionaryForTests('ar', arabic);
     expect(activityText(added)).toBe('تمت إضافة العميل فندق لؤلؤة الخليج');
+  });
+
+  it('names who made the change in a company kept in the cloud, and nobody otherwise', async () => {
+    const cloud = await setupCompany({ name: 'In the cloud', currency: 'KWD' });
+    const local = await setupCompany({ name: 'On this device', currency: 'KWD' });
+    setActivityAuthor({ id: 'account-1', name: 'Made-up Member' });
+    setAuthorCompanies([cloud.id]);
+    await saveClient(createClient(cloud.id, { name: 'Orbit' }));
+    await saveClient(createClient(local.id, { name: 'Orbit' }));
+    const [inCloud] = await recentActivity(cloud.id);
+    const [onDevice] = await recentActivity(local.id);
+    expect(inCloud).toMatchObject({ by: 'account-1', byName: 'Made-up Member' });
+    expect(onDevice.by).toBeUndefined();
+    expect(onDevice.byName).toBeUndefined();
+    expect(activityByline(inCloud, '1 Oct')).toBe('1 Oct · by Made-up Member');
+    expect(activityByline(onDevice, '1 Oct')).toBe('1 Oct');
+
+    // Signed out: nobody again.
+    setActivityAuthor(null);
+    await saveClient(createClient(cloud.id, { name: 'Later' }));
+    const latest = (await recentActivity(cloud.id)).find((a) => a.message.includes('Later'))!;
+    expect(latest.by).toBeUndefined();
   });
 });

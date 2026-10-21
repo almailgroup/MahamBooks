@@ -72,6 +72,7 @@ beforeEach(async () => {
   };
   // Each test starts with nobody wanting email.
   await h.admin('update public.email_alerts set enabled = false');
+  await h.admin('update public.notification_settings set enabled = false');
 });
 
 afterEach(async () => {
@@ -478,5 +479,283 @@ describe('"Send it now" from the app', () => {
       body: { error: 'send_failed', message: 'Domain not verified.' },
     });
     expect((await row(c.id, c.owner)).last_error).toBe('Domain not verified.');
+  });
+});
+
+describe('changes by the team ("notify")', () => {
+  async function notify(secretValue?: string) {
+    const response = await handleAlertsRequest(
+      new Request(FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-alerts-secret': secretValue ?? (await secret()),
+        },
+        body: JSON.stringify({ action: 'notify' }),
+      }),
+      deps(),
+    );
+    return { status: response.status, body: await response.json() };
+  }
+
+  const changesOn = (
+    user: string,
+    companyId: string,
+    options: { kinds?: string[]; digest?: 'daily' | 'off' } = {},
+  ) =>
+    h.rpc(user, 'set_change_notifications', {
+      p_company: companyId,
+      p_enabled: true,
+      p_immediate_kinds: options.kinds ?? [
+        'document',
+        'cheque',
+        'approval',
+        'member',
+        'settings',
+        'people',
+      ],
+      p_digest: options.digest ?? 'daily',
+      p_app_url: 'https://books.example.com/',
+    });
+
+  const push = (user: string, companyId: string, changes: unknown[]) =>
+    h.rpc(user, 'push_records', { p_company: companyId, p_changes: JSON.stringify(changes) });
+
+  /** The sample company's overdue invoice, voided. */
+  const voidInvoice = (companyId: string, id = 'inv-late') => {
+    const doc = sampleData().documents.find((d) => d.id === id)!;
+    return { tbl: 'documents', id, data: { ...doc, companyId, status: 'void' } };
+  };
+  const newClient = (companyId: string, id: string) => ({
+    tbl: 'clients',
+    id,
+    data: { id, companyId, name: `Made-up Client ${id}` },
+  });
+
+  const state = async (companyId: string, user: string) =>
+    (
+      await h.admin<{
+        emailed_upto: number;
+        sent_count: number;
+        sent_on: string | null;
+        digest_on: string | null;
+        last_error: string;
+        send_key: string | null;
+      }>(
+        `select emailed_upto::float8 as emailed_upto, sent_count, sent_on::text as sent_on,
+                digest_on::text as digest_on, last_error, send_key
+         from public.notification_settings where company_id = $1 and user_id = $2`,
+        [companyId, user],
+      )
+    )[0];
+
+  const newest = async (companyId: string) =>
+    (
+      await h.admin<{ id: number }>(
+        'select max(id)::float8 as id from public.change_events where company_id = $1',
+        [companyId],
+      )
+    )[0].id;
+
+  beforeEach(() => {
+    // Tuesday 6 October 2026, 10:07 in Kuwait.
+    clock = new Date('2026-10-06T07:07:00Z');
+  });
+
+  it('runs for the schedule only, with its secret', async () => {
+    expect((await notify('wrong')).status).toBe(401);
+    expect((await notify('')).status).toBe(401);
+    expect((await notify()).body).toMatchObject({ ok: true, sent: 0 });
+  });
+
+  it('emails an important change at once, naming who made it, never the reader’s own', async () => {
+    const c = await company();
+    await changesOn(c.owner, c.id);
+    await push(c.owner, c.id, [newClient(c.id, 'by-the-owner')]);
+    await push(c.staff, c.id, [voidInvoice(c.id)]);
+    expect((await notify()).body).toMatchObject({ ok: true, sent: 1, failed: 0 });
+    const [email] = sent;
+    expect(email.body.to).toEqual([c.ownerEmail]);
+    expect(email.body.subject).toBe('Acme Trading: 1 important change by your team');
+    expect(email.body.text).toContain('Staff (1)');
+    expect(email.body.text).toContain('Voided invoice INV-LATE · Gulf Hotel');
+    expect(email.body.text).not.toContain('by-the-owner');
+    expect(email.body.html).toContain('href="https://books.example.com/#/notifications"');
+    expect(email.headers['idempotency-key']).toMatch(/^changes\/2026-10-06\/[0-9a-f-]{36}$/);
+    expect(await state(c.id, c.owner)).toMatchObject({
+      emailed_upto: await newest(c.id),
+      sent_count: 1,
+      sent_on: '2026-10-06',
+      send_key: null,
+      last_error: '',
+    });
+    // Nothing new: nothing to do, the next run included.
+    clock = new Date('2026-10-06T07:30:00Z');
+    expect((await notify()).body).toMatchObject({ checked: 0, sent: 0 });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('keeps ordinary changes for the 8:00 summary, once a day', async () => {
+    const c = await company();
+    // 7:30 in Kuwait.
+    clock = new Date('2026-10-06T04:30:00Z');
+    await changesOn(c.owner, c.id);
+    await push(c.staff, c.id, [newClient(c.id, 'early-1'), newClient(c.id, 'early-2')]);
+    expect((await notify()).body).toMatchObject({ checked: 1, sent: 0, skipped: 1 });
+    clock = new Date('2026-10-06T05:02:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    expect(sent[0].body.subject).toBe('Acme Trading: 2 changes by your team');
+    expect(sent[0].body.text).toContain('Good morning.');
+    expect(sent[0].body.text).toContain('- 2 changes to customers and vendors');
+    expect((await state(c.id, c.owner)).digest_on).toBe('2026-10-06');
+    // Later the same day: tomorrow's summary.
+    await push(c.staff, c.id, [newClient(c.id, 'later')]);
+    clock = new Date('2026-10-06T09:00:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 0 });
+    clock = new Date('2026-10-07T05:05:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    expect(sent[1].body.subject).toBe('Acme Trading: 1 change by your team');
+  });
+
+  it('sends at most one email every 15 minutes and 20 a day', async () => {
+    const c = await company();
+    await changesOn(c.owner, c.id);
+    await push(c.staff, c.id, [voidInvoice(c.id, 'inv-late')]);
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    clock = new Date('2026-10-06T07:12:00Z');
+    await push(c.staff, c.id, [voidInvoice(c.id, 'inv-partial')]);
+    expect((await notify()).body).toMatchObject({ sent: 0, skipped: 1 });
+    clock = new Date('2026-10-06T07:23:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    expect(sent[1].body.text).toContain('INV-PARTIAL');
+    expect(sent[1].body.text).not.toContain('INV-LATE');
+
+    // The day's twenty are gone: the next waits for tomorrow.
+    await h.admin('update public.notification_settings set sent_count = 20 where company_id = $1', [
+      c.id,
+    ]);
+    await push(c.staff, c.id, [voidInvoice(c.id, 'inv-today')]);
+    clock = new Date('2026-10-06T09:00:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 0, skipped: 1 });
+    // 00:30 in Kuwait the next day.
+    clock = new Date('2026-10-06T21:30:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    expect((await state(c.id, c.owner)).sent_count).toBe(1);
+  });
+
+  it('emails at once only the kinds chosen, and lets the rest go with the summary off', async () => {
+    const c = await company();
+    await changesOn(c.owner, c.id, { kinds: ['cheque'], digest: 'off' });
+    await push(c.staff, c.id, [voidInvoice(c.id), newClient(c.id, 'quiet')]);
+    expect((await notify()).body).toMatchObject({ sent: 0 });
+    expect(sent).toEqual([]);
+    // Nothing waits any more: it stays in the bell only.
+    expect((await state(c.id, c.owner)).emailed_upto).toBe(await newest(c.id));
+  });
+
+  it('writes to each approver in their language, payroll without names or amounts', async () => {
+    const c = await company();
+    await h.rpc(c.owner, 'set_member_permissions', {
+      p_company: c.id,
+      p_user: c.admin,
+      p_permissions: '{}',
+      p_can_approve: true,
+    });
+    await changesOn(c.admin, c.id);
+    await h.admin(`update public.profiles set language = 'ar' where id = $1`, [c.admin]);
+    await push(c.owner, c.id, [
+      {
+        tbl: 'payRuns',
+        id: 'run-1',
+        data: { id: 'run-1', companyId: c.id, period: '2026-09', status: 'paid', lines: [] },
+      },
+      {
+        tbl: 'employees',
+        id: 'emp-new',
+        data: { id: 'emp-new', companyId: c.id, name: 'Made-up Newcomer', civilId: '299999999999' },
+      },
+    ]);
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    const [email] = sent;
+    expect(email.body.to).toEqual([c.adminEmail]);
+    expect(email.body.subject).toBe('أكمي للتجارة: تغيير مهم واحد من فريقك');
+    expect(email.body.text).toContain('مسير رواتب');
+    expect(email.body.text).toContain('2026-09');
+    for (const secret of ['Made-up Newcomer', '299999999999']) {
+      expect(email.body.text).not.toContain(secret);
+      expect(email.body.html).not.toContain(secret);
+    }
+  });
+
+  it('never emails who stopped being an approver, or twice while a run is at it', async () => {
+    const c = await company();
+    await h.rpc(c.owner, 'set_member_permissions', {
+      p_company: c.id,
+      p_user: c.admin,
+      p_permissions: '{}',
+      p_can_approve: true,
+    });
+    await changesOn(c.admin, c.id);
+    await changesOn(c.owner, c.id);
+    await h.rpc(c.owner, 'set_member_permissions', {
+      p_company: c.id,
+      p_user: c.admin,
+      p_permissions: '{}',
+      p_can_approve: false,
+    });
+    // Another run is working on the owner's.
+    await h.admin(
+      `update public.notification_settings set claimed_until = now() + interval '5 minutes'
+       where company_id = $1 and user_id = $2`,
+      [c.id, c.owner],
+    );
+    await push(c.staff, c.id, [voidInvoice(c.id)]);
+    expect((await notify()).body).toMatchObject({ checked: 0, sent: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  it('sends again under the same key when the answer was lost, and a new one after a refusal', async () => {
+    const c = await company();
+    await changesOn(c.owner, c.id);
+    await push(c.staff, c.id, [voidInvoice(c.id)]);
+    resendAnswer = () => {
+      throw new TypeError('fetch failed');
+    };
+    expect((await notify()).body).toMatchObject({ sent: 0, failed: 1 });
+    expect((await state(c.id, c.owner)).send_key).not.toBeNull();
+    // Meanwhile more changes come; the same email goes again first, as it was.
+    await push(c.staff, c.id, [voidInvoice(c.id, 'inv-partial')]);
+    resendAnswer = () =>
+      Response.json({ name: 'validation_error', message: 'Domain not verified.' }, { status: 403 });
+    clock = new Date('2026-10-06T07:12:00Z');
+    expect((await notify()).body).toMatchObject({ failed: 1 });
+    expect(sent[1].headers['idempotency-key']).toBe(sent[0].headers['idempotency-key']);
+    expect(sent[1].body.text).toBe(sent[0].body.text);
+    expect(await state(c.id, c.owner)).toMatchObject({
+      send_key: null,
+      last_error: 'Domain not verified.',
+    });
+    expect(
+      (
+        await h.rpc<{ last_error: string }>(c.owner, 'change_notification_settings', {
+          p_company: c.id,
+        })
+      )[0].last_error,
+    ).toBe('Domain not verified.');
+    resendAnswer = () => Response.json({ id: 'email-3' });
+    clock = new Date('2026-10-06T07:17:00Z');
+    expect((await notify()).body).toMatchObject({ sent: 1 });
+    expect(sent[2].headers['idempotency-key']).not.toBe(sent[1].headers['idempotency-key']);
+    expect(sent[2].body.text).toContain('INV-PARTIAL');
+    expect(await state(c.id, c.owner)).toMatchObject({ last_error: '', send_key: null });
+  });
+
+  it('skips accounts without a confirmed address', async () => {
+    const c = await company();
+    await changesOn(c.owner, c.id);
+    await push(c.staff, c.id, [voidInvoice(c.id)]);
+    await h.admin('update auth.users set email_confirmed_at = null where id = $1', [c.owner]);
+    expect((await notify()).body).toMatchObject({ sent: 0, skipped: 1 });
+    expect((await state(c.id, c.owner)).last_error).toContain('no confirmed email');
   });
 });

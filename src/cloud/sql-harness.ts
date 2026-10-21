@@ -21,6 +21,7 @@ export const MIGRATIONS = [
   join(__dirname, '../../supabase/migrations/20261007000000_email_alerts.sql'),
   join(__dirname, '../../supabase/migrations/20261102000000_tables_v16.sql'),
   join(__dirname, '../../supabase/migrations/20261116000000_super_admin_approvals.sql'),
+  join(__dirname, '../../supabase/migrations/20261123000000_change_feed.sql'),
 ];
 
 const SUPABASE_STUB = `

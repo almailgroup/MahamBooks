@@ -37,7 +37,7 @@ import {
 } from '@/db/documents';
 import { requestApproval } from '@/db/approvals';
 import { progressOf, type PartTarget } from '@/db/orders';
-import { activityText } from '@/db/activity';
+import { activityByline, activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
 import type { DocumentStatus, DocumentType, InvoiceDocument } from '@/db/types';
 import {
@@ -850,7 +850,9 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                     <li key={a.id} className="relative">
                       <span className="bg-primary-500 border-surface absolute -start-[21px] top-1.5 size-2.5 rounded-full border-2" />
                       <p className="text-sm text-slate-700">{activityText(a, fmt)}</p>
-                      <p className="text-xs text-slate-500">{fmt.dateTime(a.at)}</p>
+                      <p className="text-xs text-slate-500">
+                        {activityByline(a, fmt.dateTime(a.at))}
+                      </p>
                     </li>
                   ))}
                 </ol>
