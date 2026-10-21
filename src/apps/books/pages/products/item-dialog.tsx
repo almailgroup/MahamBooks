@@ -1,22 +1,29 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Boxes, Package, Wrench } from 'lucide-react';
+import { Boxes, Package, Printer, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { saveItem, type OpeningStockInput } from '@/db/inventory';
+import { saveItem, suggestItemCode, type OpeningStockInput } from '@/db/inventory';
+import { addProductImages, type NewProductImage } from '@/db/product-images';
 import { isVendor } from '@/db/purchases';
 import type { Product, ProductKind, TaxRate } from '@/db/types';
+import { useCompany } from '@/app/company';
 import { today } from '@/lib/dates';
+import { listedUnit, matchUnit } from '@/lib/units';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { localName } from '@/i18n/names';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Field, Input, NumberInput, Select, Textarea } from '@/components/ui/form';
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { KIND_LABELS, PRODUCT_KINDS } from '@/apps/books/features/inventory/labels';
 import type { InventoryData } from '@/apps/books/features/inventory/use-inventory';
 import { DateField } from '@/components/ui/date-field';
+import { UnitPicker } from '@/apps/books/features/inventory/unit-picker';
+import { ItemQr } from '@/apps/books/features/inventory/item-qr';
+import { ProductImageEditor } from '@/apps/books/features/inventory/product-image';
+import { useRoleView } from '@/features/cloud/role-gates';
 
 const KIND_ICONS: Record<ProductKind, typeof Package> = {
   service: Wrench,
@@ -36,7 +43,15 @@ export function ItemDialog({
   inventory: InventoryData;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState(product);
+  const company = useCompany();
+  const units = Boolean(company.items?.units);
+  // An item saved before units came from the list (or whose unit an older
+  // version typed over): its unit picked when it is one of the list's.
+  const [draft, setDraft] = useState(() =>
+    units && !listedUnit(company, product)
+      ? { ...product, unitId: matchUnit(product.unit, company) ?? undefined }
+      : product,
+  );
   const [opening, setOpening] = useState<OpeningStockInput>({
     warehouseId: inventory.defaultWarehouse?.id ?? '',
     quantity: 0,
@@ -45,6 +60,9 @@ export function ItemDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // A new item's pictures, stored once it is (a stored item's are saved at once).
+  const [pictures, setPictures] = useState<NewProductImage[]>([]);
+  const { readOnly } = useRoleView();
   const set = (patch: Partial<Product>) => setDraft((d) => ({ ...d, ...patch }));
   const isNew = !product.name;
   const kind = draft.kind ?? 'service';
@@ -54,6 +72,14 @@ export function ItemDialog({
     !isNew && wasKind === 'stock' && inventory.movements.some((m) => m.productId === product.id);
   const startsTracking = !isNew && wasKind !== 'stock' && kind === 'stock';
   const warehouses = inventory.warehouses.filter((w) => !w.archived);
+  const autoCode = isNew && Boolean(company.items?.autoSku);
+  const nextCode = useLiveQuery(
+    () => (autoCode ? suggestItemCode(company) : Promise.resolve('')),
+    [autoCode, company],
+  );
+  const sku = draft.sku.trim();
+  // Labels already printed hold the SKU in their QR code.
+  const relabel = !isNew && product.sku.trim() !== '' && sku !== product.sku.trim();
 
   const data = useLiveQuery(async () => {
     const [accounts, contacts] = await Promise.all([
@@ -83,8 +109,14 @@ export function ItemDialog({
         isNew && kind === 'stock' && opening.quantity > 0
           ? { ...opening, unitCost: draft.costPrice ?? 0 }
           : null;
-      await saveItem({ ...draft, kind }, { opening: openingStock });
+      const saved = await saveItem({ ...draft, kind }, { opening: openingStock });
       toast.success(t('{name} saved', { name: draft.name.trim() }));
+      if (isNew && pictures.length > 0) {
+        // The item is saved either way; its pictures can be added again.
+        await addProductImages(saved.id, pictures).catch((e: unknown) =>
+          toast.error(e instanceof Error ? e.message : t('Could not save the picture.')),
+        );
+      }
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('Could not save.'));
@@ -170,17 +202,44 @@ export function ItemDialog({
                 />
               )}
             </Field>
-            <Field label={t('SKU / code')} optional>
+            <Field
+              label={t('SKU / code')}
+              optional
+              hint={autoCode && !sku ? t('Left blank, the item gets the next code.') : undefined}
+            >
               {(id) => (
                 <Input
                   id={id}
                   dir="ltr"
                   value={draft.sku}
                   onChange={(e) => set({ sku: e.target.value })}
+                  placeholder={autoCode ? nextCode : undefined}
                 />
               )}
             </Field>
           </div>
+          {sku ? (
+            <div className="flex items-center gap-4 rounded-lg border border-slate-200 p-3">
+              <ItemQr sku={sku} />
+              <div className="min-w-0 flex-1 space-y-2">
+                <p className="text-sm text-slate-600">
+                  {t('The QR code of the SKU, for labels: a scanner types it into item search.')}
+                </p>
+                {relabel ? (
+                  <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {t(
+                      'Labels printed with {sku} will no longer find this item. Print new ones after saving.',
+                      { sku: product.sku.trim() },
+                    )}
+                  </p>
+                ) : !isNew && sku === product.sku.trim() ? (
+                  <ButtonLink to={`/products/labels?ids=${product.id}`} variant="outline" size="sm">
+                    <Printer /> {t('Print label')}
+                  </ButtonLink>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           <Field
             label={t('Arabic name')}
             optional
@@ -224,6 +283,15 @@ export function ItemDialog({
               )}
             </Field>
           </div>
+          {company.items?.images ? (
+            <ProductImageEditor
+              product={product}
+              saved={!isNew}
+              pending={pictures}
+              onPending={setPictures}
+              readOnly={readOnly.readOnly}
+            />
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label={t('Selling price')} hint={t('Up to 6 decimals, e.g. 0.537 per piece.')}>
               {(id) => (
@@ -254,14 +322,25 @@ export function ItemDialog({
               </Field>
             ) : null}
             <Field label={t('Unit')} optional>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={draft.unit}
-                  onChange={(e) => set({ unit: e.target.value })}
-                  placeholder={t('pcs, box, kg, hrs…')}
-                />
-              )}
+              {(id) =>
+                units ? (
+                  <UnitPicker
+                    id={id}
+                    company={company}
+                    unit={draft.unit}
+                    unitId={draft.unitId}
+                    onChange={set}
+                  />
+                ) : (
+                  <Input
+                    id={id}
+                    value={draft.unit}
+                    // Typed by hand: no longer the list's unit.
+                    onChange={(e) => set({ unit: e.target.value, unitId: undefined })}
+                    placeholder={t('pcs, box, kg, hrs…')}
+                  />
+                )
+              }
             </Field>
           </div>
 

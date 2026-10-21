@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { Document, Page } from '@react-pdf/renderer';
 import type { Style } from '@react-pdf/types';
 import type { RenderModel, RenderTotal } from '../model';
@@ -66,11 +66,18 @@ export function DocShell({
   model,
   theme,
   pageStyle,
+  logoRow = true,
   children,
 }: {
   model: RenderModel;
   theme: TemplateTheme;
   pageStyle?: Style;
+  /**
+   * Prints the logo's own line (when the design puts it there) above the
+   * template's header. Templates whose header is a band of colour print
+   * `LogoRow` inside the band themselves.
+   */
+  logoRow?: boolean;
   children: ReactNode;
 }) {
   const style = sx(
@@ -97,7 +104,11 @@ export function DocShell({
     >
       <Page size={model.pageSize} style={style}>
         <DirectionProvider dir={model.dir} font={style.fontFamily}>
-          {children}
+          <LogoScale.Provider value={model.logo.scale}>
+            {logoRow ? <LogoRow model={model} /> : null}
+            {children}
+          </LogoScale.Provider>
+          <DraftWatermark model={model} theme={theme} />
         </DirectionProvider>
       </Page>
     </Document>
@@ -108,27 +119,37 @@ export function DocShell({
 /* Logo and images                                                            */
 /* -------------------------------------------------------------------------- */
 
+/** The logo size of the document's design (see RenderModel.logo), set by DocShell. */
+const LogoScale = createContext(1);
+
+/**
+ * The logo, at the size the template gives it times the design's logo size.
+ * `maxScale` keeps it inside a header that has no room for more.
+ */
 export function Logo({
   src,
   width,
   height,
   align = 'left',
+  maxScale,
   style,
 }: {
   src: string | null;
   width: number;
   height: number;
   align?: 'left' | 'center' | 'right';
+  maxScale?: number;
   style?: Style;
 }) {
+  const scale = Math.min(useContext(LogoScale), maxScale ?? Infinity);
   if (!src) return null;
   return (
     <Image
       src={src}
       style={sx(
         {
-          width,
-          height,
+          width: width * scale,
+          height: height * scale,
           objectFit: 'contain',
           objectPositionX: align === 'left' ? 0 : align === 'right' ? '100%' : '50%',
           objectPositionY: '50%',
@@ -136,6 +157,51 @@ export function Logo({
         style,
       )}
     />
+  );
+}
+
+/** The logo on a line of its own, at the medium size. */
+const LOGO_ROW = { width: 170, height: 50, gap: 14 };
+
+/** How far the logo's own line moves the rest of the first page down. */
+export function logoRowHeight(model: RenderModel): number {
+  return model.logo.row ? LOGO_ROW.height * model.logo.scale + LOGO_ROW.gap : 0;
+}
+
+/**
+ * The logo on a line of its own above the header, at the start, centre or
+ * end (mirrored in Arabic documents). `chip` puts it on a card, for a header
+ * of a dark colour.
+ */
+export function LogoRow({
+  model,
+  chip,
+  style,
+}: {
+  model: RenderModel;
+  chip?: Style;
+  style?: Style;
+}) {
+  const row = model.logo.row;
+  if (!row) return null;
+  const align = row.align === 'center' ? 'center' : row.align === 'end' ? 'right' : 'left';
+  const image = (
+    <Logo src={row.src} width={LOGO_ROW.width} height={LOGO_ROW.height} align={align} />
+  );
+  return (
+    <View
+      style={sx(
+        {
+          flexDirection: 'row',
+          justifyContent:
+            row.align === 'center' ? 'center' : row.align === 'end' ? 'flex-end' : 'flex-start',
+          marginBottom: LOGO_ROW.gap,
+        },
+        style,
+      )}
+    >
+      {chip ? <View style={chip}>{image}</View> : image}
+    </View>
   );
 }
 
@@ -291,11 +357,18 @@ export interface ItemsTableStyles {
   /** Color of vertical lines between columns (null = none). */
   columnLines?: string | null;
   widths?: Partial<Record<ColumnKey, number>>;
+  /** The quote's introduction above the table. */
+  intro?: Style;
 }
 
-type ColumnKey = 'condition' | 'qty' | 'unit' | 'serial' | 'price' | 'discount' | 'tax' | 'amount';
+type ColumnKey =
+  'sku' | 'condition' | 'qty' | 'unit' | 'serial' | 'price' | 'discount' | 'tax' | 'amount';
+
+/** Side of an item's picture in the items table. */
+const ITEM_IMAGE = 30;
 
 const MIN_WIDTHS: Record<ColumnKey, number> = {
+  sku: 44,
   condition: 44,
   qty: 44,
   unit: 40,
@@ -306,6 +379,7 @@ const MIN_WIDTHS: Record<ColumnKey, number> = {
   amount: 70,
 };
 const MAX_WIDTHS: Record<ColumnKey, number> = {
+  sku: 96,
   condition: 90,
   qty: 96,
   unit: 80,
@@ -317,6 +391,7 @@ const MAX_WIDTHS: Record<ColumnKey, number> = {
 };
 
 const COLUMN_LABELS: Record<ColumnKey, LabelKey> = {
+  sku: 'sku',
   condition: 'condition',
   qty: 'quantity',
   unit: 'unit',
@@ -330,6 +405,8 @@ const COLUMN_LABELS: Record<ColumnKey, LabelKey> = {
 /** What a cell shows; delivery notes give the unit a column of its own. */
 function cellValue(model: RenderModel, item: RenderModel['items'][number], key: ColumnKey): string {
   switch (key) {
+    case 'sku':
+      return item.sku;
     case 'condition':
       return item.condition;
     case 'qty':
@@ -392,6 +469,11 @@ export function ItemsTable({
   const divider = styles.columnLines
     ? { borderLeftWidth: 0.75, borderLeftColor: styles.columnLines }
     : undefined;
+  // The picture and the SKU come before the description.
+  const dividerAfter = styles.columnLines
+    ? { borderRightWidth: 0.75, borderRightColor: styles.columnLines }
+    : undefined;
+  const imageWidth = ITEM_IMAGE + px * 2;
 
   const cols: ColumnKey[] = columns.prices
     ? [
@@ -409,7 +491,8 @@ export function ItemsTable({
         ...(columns.serial ? (['serial'] as const) : []),
       ];
   /** Text columns read from the start; numbers line up at the end. */
-  const textColumn = (key: ColumnKey) => key === 'condition' || key === 'unit' || key === 'serial';
+  const textColumn = (key: ColumnKey) =>
+    key === 'sku' || key === 'condition' || key === 'unit' || key === 'serial';
 
   const headerText = sx(
     { fontSize: fontSize - 1, fontWeight: 600, color: theme.muted },
@@ -430,123 +513,161 @@ export function ItemsTable({
   }
 
   return (
-    <View style={sx({ width: '100%' }, styles.container)}>
-      <View
-        fixed
-        style={sx(
-          { flexDirection: 'row', alignItems: 'center', paddingVertical: py - 1 },
-          styles.header,
-        )}
-      >
-        <View style={{ flex: 1, paddingHorizontal: px }}>
-          <Label
-            text={model.labels.description}
-            secondary={en(model, 'description')}
-            style={headerText}
-            stack
-          />
-        </View>
-        {cols.map((key) => (
-          <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
+    <>
+      {model.intro ? (
+        <Text
+          style={sx(
+            { fontSize, color: theme.body, lineHeight: 1.5, marginBottom: 12 },
+            styles.intro,
+          )}
+        >
+          {model.intro}
+        </Text>
+      ) : null}
+      <View style={sx({ width: '100%' }, styles.container)}>
+        <View
+          fixed
+          style={sx(
+            { flexDirection: 'row', alignItems: 'center', paddingVertical: py - 1 },
+            styles.header,
+          )}
+        >
+          {columns.images ? <View style={sx({ width: imageWidth }, dividerAfter)} /> : null}
+          {columns.sku ? (
+            <View style={sx({ width: w.sku, paddingHorizontal: px }, dividerAfter)}>
+              <Label
+                text={model.labels.sku}
+                secondary={en(model, 'sku')}
+                style={sx(headerText, { textAlign: 'left' })}
+                stack
+              />
+            </View>
+          ) : null}
+          <View style={{ flex: 1, paddingHorizontal: px }}>
             <Label
-              text={model.labels[COLUMN_LABELS[key]]}
-              secondary={en(model, COLUMN_LABELS[key])}
-              style={sx(headerText, { textAlign: textColumn(key) ? 'left' : 'right' })}
+              text={model.labels.description}
+              secondary={en(model, 'description')}
+              style={headerText}
               stack
             />
           </View>
-        ))}
-      </View>
+          {cols.map((key) => (
+            <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
+              <Label
+                text={model.labels[COLUMN_LABELS[key]]}
+                secondary={en(model, COLUMN_LABELS[key])}
+                style={sx(headerText, { textAlign: textColumn(key) ? 'left' : 'right' })}
+                stack
+              />
+            </View>
+          ))}
+        </View>
 
-      {itemRows.map((item, i) => {
-        const isLast = i === itemRows.length - 1;
-        if (item.kind === 'heading') {
+        {itemRows.map((item, i) => {
+          const isLast = i === itemRows.length - 1;
+          if (item.kind === 'heading') {
+            return (
+              <View
+                key={i}
+                wrap={false}
+                minPresenceAhead={30}
+                style={sx(
+                  { paddingHorizontal: px, paddingTop: py + 4, paddingBottom: py - 2 },
+                  styles.headingRow,
+                )}
+              >
+                <Text
+                  style={sx(
+                    { fontSize: fontSize + 0.5, fontWeight: 700, color: theme.ink },
+                    styles.headingText,
+                  )}
+                >
+                  {item.title}
+                </Text>
+                {item.titleSecondary ? (
+                  <Text style={sx(detailStyle, { marginTop: 1 })}>{item.titleSecondary}</Text>
+                ) : null}
+                {item.detail ? (
+                  <Text
+                    style={sx(
+                      { fontSize: fontSize - 1, color: theme.muted, marginTop: 1 },
+                      styles.detail,
+                    )}
+                  >
+                    {item.detail}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          }
+          const zebra =
+            styles.zebra && stripe[i] % 2 === 1 ? { backgroundColor: styles.zebra } : undefined;
           return (
             <View
               key={i}
               wrap={false}
-              minPresenceAhead={30}
               style={sx(
-                { paddingHorizontal: px, paddingTop: py + 4, paddingBottom: py - 2 },
-                styles.headingRow,
+                { flexDirection: 'row', paddingVertical: py },
+                styles.row,
+                zebra,
+                isLast ? styles.lastRow : undefined,
               )}
             >
-              <Text
-                style={sx(
-                  { fontSize: fontSize + 0.5, fontWeight: 700, color: theme.ink },
-                  styles.headingText,
-                )}
-              >
-                {item.title}
-              </Text>
-              {item.titleSecondary ? (
-                <Text style={sx(detailStyle, { marginTop: 1 })}>{item.titleSecondary}</Text>
+              {columns.images ? (
+                <View style={sx({ width: imageWidth, paddingHorizontal: px }, dividerAfter)}>
+                  {item.image ? (
+                    <Image
+                      src={item.image}
+                      style={{ width: ITEM_IMAGE, height: ITEM_IMAGE, objectFit: 'contain' }}
+                    />
+                  ) : null}
+                </View>
               ) : null}
-              {item.detail ? (
-                <Text
-                  style={sx(
-                    { fontSize: fontSize - 1, color: theme.muted, marginTop: 1 },
-                    styles.detail,
-                  )}
-                >
-                  {item.detail}
+              {columns.sku ? (
+                <View style={sx({ width: w.sku, paddingHorizontal: px }, dividerAfter)}>
+                  <Text style={sx(cell, { textAlign: 'left' })}>{item.sku}</Text>
+                </View>
+              ) : null}
+              <View style={{ flex: 1, paddingHorizontal: px }}>
+                <Text style={sx({ fontSize, fontWeight: 600, color: theme.ink }, styles.title)}>
+                  {item.title}
                 </Text>
-              ) : null}
+                {item.titleSecondary ? (
+                  <Text
+                    style={sx(
+                      { fontSize: fontSize - 0.5, color: theme.body, marginTop: 1 },
+                      styles.title,
+                      { fontWeight: 400 },
+                    )}
+                  >
+                    {item.titleSecondary}
+                  </Text>
+                ) : null}
+                {item.detail ? <Text style={detailStyle}>{item.detail}</Text> : null}
+                {item.serial && !columns.serial ? (
+                  <Text style={detailStyle}>{item.serial}</Text>
+                ) : null}
+              </View>
+              {cols.map((key) => (
+                <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
+                  <Text
+                    style={
+                      key === 'amount'
+                        ? sx(cell, { fontWeight: 600, color: theme.ink }, styles.amount)
+                        : textColumn(key)
+                          ? sx(cell, { textAlign: 'left' })
+                          : cell
+                    }
+                  >
+                    {cellValue(model, item, key)}
+                  </Text>
+                </View>
+              ))}
             </View>
           );
-        }
-        const zebra =
-          styles.zebra && stripe[i] % 2 === 1 ? { backgroundColor: styles.zebra } : undefined;
-        return (
-          <View
-            key={i}
-            wrap={false}
-            style={sx(
-              { flexDirection: 'row', paddingVertical: py },
-              styles.row,
-              zebra,
-              isLast ? styles.lastRow : undefined,
-            )}
-          >
-            <View style={{ flex: 1, paddingHorizontal: px }}>
-              <Text style={sx({ fontSize, fontWeight: 600, color: theme.ink }, styles.title)}>
-                {item.title}
-              </Text>
-              {item.titleSecondary ? (
-                <Text
-                  style={sx(
-                    { fontSize: fontSize - 0.5, color: theme.body, marginTop: 1 },
-                    styles.title,
-                    { fontWeight: 400 },
-                  )}
-                >
-                  {item.titleSecondary}
-                </Text>
-              ) : null}
-              {item.detail ? <Text style={detailStyle}>{item.detail}</Text> : null}
-              {item.serial && !columns.serial ? (
-                <Text style={detailStyle}>{item.serial}</Text>
-              ) : null}
-            </View>
-            {cols.map((key) => (
-              <View key={key} style={sx({ width: w[key], paddingHorizontal: px }, divider)}>
-                <Text
-                  style={
-                    key === 'amount'
-                      ? sx(cell, { fontWeight: 600, color: theme.ink }, styles.amount)
-                      : textColumn(key)
-                        ? sx(cell, { textAlign: 'left' })
-                        : cell
-                  }
-                >
-                  {cellValue(model, item, key)}
-                </Text>
-              </View>
-            ))}
-          </View>
-        );
-      })}
-    </View>
+        })}
+      </View>
+    </>
   );
 }
 
@@ -809,27 +930,75 @@ export function Stamp({
     fontFamily: theme.fonts.heading,
     textAlign: 'center',
   };
+  const placed = sx(
+    {
+      position: 'absolute',
+      transform: 'rotate(-10deg)',
+      borderWidth: 2.2,
+      borderColor: color,
+      borderRadius: 6,
+      paddingVertical: 3,
+      paddingHorizontal: 12,
+      opacity: 0.8,
+    },
+    style,
+  );
+  // The logo's own line moves what the stamp sits on down.
+  if (typeof placed.top === 'number') placed.top += logoRowHeight(model);
   return (
-    <View
-      style={sx(
-        {
-          position: 'absolute',
-          transform: 'rotate(-10deg)',
-          borderWidth: 2.2,
-          borderColor: color,
-          borderRadius: 6,
-          paddingVertical: 3,
-          paddingHorizontal: 12,
-          opacity: 0.8,
-        },
-        style,
-      )}
-    >
+    <View style={placed}>
       <Text style={text}>{model.stamp.text}</Text>
       {model.stamp.secondary ? (
         <Text style={sx(text, { fontSize: size * 0.45, letterSpacing: 1.5, marginTop: -1 })}>
           {model.stamp.secondary}
         </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * "Draft" across the middle of every page of a draft (with the English under
+ * it in bilingual documents). Drawn last and faint, so no template's colours
+ * hide it and the document stays readable.
+ */
+export function DraftWatermark({ model, theme }: { model: RenderModel; theme: TemplateTheme }) {
+  if (model.watermark !== 'draft') return null;
+  const words = model.labels.draftStamp;
+  const english = model.secondary?.draftStamp;
+  // Smaller for longer words (a company's own wording), to stay on the page.
+  const sized = (value: string, size: number): Style => ({
+    fontSize: Math.max(size / 4, Math.min(size, (size * 8) / Math.max(1, value.length))),
+  });
+  const text: Style = {
+    color: '#475569',
+    fontFamily: theme.fonts.heading,
+    fontWeight: 700,
+    lineHeight: 1.3,
+    letterSpacing: 6,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  };
+  // A band across the middle of the page, high enough for the words (text
+  // that doesn't fit its box is left out), turned about its centre.
+  const height = 300;
+  return (
+    <View
+      fixed
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: (theme.pageHeight - height) / 2,
+        width: theme.pageWidth,
+        height,
+        justifyContent: 'center',
+        transform: 'rotate(-30deg)',
+        opacity: 0.1,
+      }}
+    >
+      <Text style={sx(text, sized(words, 96))}>{words}</Text>
+      {english ? (
+        <Text style={sx(text, sized(english, 40), { letterSpacing: 4 })}>{english}</Text>
       ) : null}
     </View>
   );
@@ -1109,7 +1278,10 @@ export function SignatureBlock({
   style?: Style;
 }) {
   const s = model.signatures;
-  if (!s) return null;
+  const acceptance = model.acceptance ? (
+    <AcceptanceBox model={model} theme={theme} labelStyle={labelStyle} lineColor={lineColor} />
+  ) : null;
+  if (!s) return acceptance;
   if (model.receipt) {
     return (
       <DeliverySignatures
@@ -1145,10 +1317,78 @@ export function SignatureBlock({
     </View>
   );
   return (
-    <View wrap={false} style={sx({ flexDirection: 'row', marginTop: 18 }, style)}>
-      {box('signature', s.signature, false)}
-      {box('stamp', s.stamp, !s.receivedBy)}
-      {s.receivedBy ? box('receivedBy', null, true) : null}
+    <>
+      <View wrap={false} style={sx({ flexDirection: 'row', marginTop: 18 }, style)}>
+        {box('signature', s.signature, false)}
+        {box('stamp', s.stamp, !s.receivedBy)}
+        {s.receivedBy ? box('receivedBy', null, true) : null}
+      </View>
+      {acceptance}
+    </>
+  );
+}
+
+/**
+ * Quotes and proformas: a box for the customer to accept the offer
+ * (قبول العميل), with their name, the date, their signature and stamp.
+ */
+function AcceptanceBox({
+  model,
+  theme,
+  labelStyle,
+  lineColor,
+}: {
+  model: RenderModel;
+  theme: TemplateTheme;
+  labelStyle?: Style;
+  lineColor?: string;
+}) {
+  const line = lineColor ?? theme.faint;
+  const caption = sx({ fontSize: 7.5, color: theme.muted }, labelStyle, { marginBottom: 0 });
+  const heading = sx(caption, { fontSize: 8.5, fontWeight: 700, color: theme.ink });
+  const statement = sx({ fontSize: 7.5, color: theme.body, lineHeight: 1.4 });
+  const field = (key: LabelKey, last: boolean) => (
+    <View
+      style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', paddingRight: last ? 0 : 22 }}
+    >
+      <View style={{ paddingRight: 6 }}>
+        <Label text={model.labels[key]} secondary={en(model, key)} style={caption} stack />
+      </View>
+      <View style={{ flex: 1, minHeight: 12, borderBottomWidth: 0.75, borderBottomColor: line }} />
+    </View>
+  );
+  const box = (key: LabelKey, last: boolean) => (
+    <View style={{ flex: 1, paddingRight: last ? 0 : 22 }}>
+      <View style={{ height: 34 }} />
+      <View style={{ borderTopWidth: 0.75, borderTopColor: line, paddingTop: 4 }}>
+        <Label text={model.labels[key]} secondary={en(model, key)} style={caption} />
+      </View>
+    </View>
+  );
+  return (
+    <View
+      wrap={false}
+      style={{ marginTop: 16, borderWidth: 0.75, borderColor: line, borderRadius: 4, padding: 10 }}
+    >
+      <Label
+        text={model.labels.customerAcceptance}
+        secondary={en(model, 'customerAcceptance')}
+        style={heading}
+      />
+      <Text style={sx(statement, { marginTop: 3 })}>{model.labels.acceptanceStatement}</Text>
+      {model.secondary ? (
+        <Text style={sx(statement, { color: theme.muted })}>
+          {model.secondary.acceptanceStatement}
+        </Text>
+      ) : null}
+      <View style={{ flexDirection: 'row', marginTop: 12 }}>
+        {field('receiverName', false)}
+        {field('date', true)}
+      </View>
+      <View style={{ flexDirection: 'row', marginTop: 4 }}>
+        {box('receiverSignature', false)}
+        {box('stamp', true)}
+      </View>
     </View>
   );
 }

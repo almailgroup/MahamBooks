@@ -1,20 +1,30 @@
 import { useMemo, useRef, useState } from 'react';
-import { FileUp } from 'lucide-react';
+import { CheckCircle2, FileUp, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { importStatement } from '@/db/banking';
-import type { Account } from '@/db/types';
+import type { Account, StatementFormat } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import {
+  checkBalances,
   csvStatement,
   DATE_FORMATS,
   detectDateFormats,
-  guessMapping,
-  isOfx,
-  parseCsvRows,
-  parseOfx,
   type CsvMapping,
   type StatementLine,
 } from '@/lib/banking/statement';
+import {
+  guessLayout,
+  rememberedFormat,
+  statementLayout,
+  statementTable,
+} from '@/lib/banking/layout';
+import {
+  applyPreset,
+  presetOf,
+  STATEMENT_PRESETS,
+  type StatementPreset,
+} from '@/lib/banking/presets';
+import { readStatementFile } from './read-statement';
 import { cn } from '@/lib/cn';
 import { t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
@@ -23,22 +33,24 @@ import { Field, Select, Switch } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 
 type Loaded =
-  | { kind: 'csv'; name: string; rows: string[][] }
+  | { kind: 'table'; file: StatementFormat['kind']; name: string; rows: string[][] }
   | { kind: 'ofx'; name: string; lines: StatementLine[] };
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
-/** A statement's text: UTF-8, or Windows-1256, which older Arabic exports use. */
-async function readText(file: File): Promise<string> {
-  const bytes = await file.arrayBuffer();
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return new TextDecoder('windows-1256').decode(bytes);
-  }
-}
+/** Rows offered as the start of the table. */
+const START_ROWS = 50;
 
-/** Imports a CSV or OFX statement into one bank, cash or card account. */
+/** A row of the file in a few words, for choosing where the table starts. */
+const sample = (row: string[]) => {
+  const text = row
+    .filter((v) => v.trim() !== '')
+    .slice(0, 4)
+    .join(' · ');
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+};
+
+/** Imports an Excel, CSV or OFX statement into one bank, cash or card account. */
 export function ImportStatementDialog({
   accounts,
   initialAccountId,
@@ -53,53 +65,88 @@ export function ImportStatementDialog({
   const input = useRef<HTMLInputElement>(null);
   const [accountId, setAccountId] = useState(initialAccountId);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [start, setStart] = useState(0);
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
+  // The layout came from the account; and whether to remember it there.
+  const [remembered, setRemembered] = useState(false);
+  const [remember, setRemember] = useState(false);
   const [saving, setSaving] = useState(false);
   const preferDayFirst = !fmt.locale.endsWith('US');
+  const account = accounts.find((a) => a.id === accountId);
+
+  /** Reads the table with the account's remembered layout, or with a guess. */
+  const layOut = (rows: string[][], owner: Account | undefined) => {
+    const layout = statementLayout(rows, owner?.statementFormat, preferDayFirst);
+    setStart(layout.start);
+    setMapping(layout.mapping);
+    setRemembered(layout.remembered);
+    setRemember(Boolean(owner?.statementFormat));
+  };
 
   const read = async (file: File | undefined) => {
     if (!file) return;
     if (file.size > MAX_BYTES) return toast.error(t('Choose a file smaller than 5 MB.'));
-    const text = await readText(file);
-    if (isOfx(text)) {
-      const { lines } = parseOfx(text);
-      if (!lines.length) return toast.error(t('No transactions were found in this file.'));
-      setLoaded({ kind: 'ofx', name: file.name, lines });
+    let content;
+    try {
+      content = await readStatementFile(await file.arrayBuffer());
+    } catch (error) {
+      return toast.error(
+        error instanceof Error ? error.message : t('Could not import the statement.'),
+      );
+    }
+    if (content.kind === 'ofx') {
+      if (!content.lines.length) return toast.error(t('No transactions were found in this file.'));
+      setLoaded({ kind: 'ofx', name: file.name, lines: content.lines });
       setMapping(null);
       return;
     }
-    const rows = parseCsvRows(text);
-    if (rows.length < 1) return toast.error(t('This file has no rows.'));
-    setLoaded({ kind: 'csv', name: file.name, rows });
-    setMapping(guessMapping(rows, preferDayFirst));
+    if (content.rows.length < 1) return toast.error(t('This file has no rows.'));
+    setLoaded({ kind: 'table', file: content.kind, name: file.name, rows: content.rows });
+    layOut(content.rows, account);
   };
+
+  const chooseAccount = (id: string) => {
+    setAccountId(id);
+    if (loaded?.kind === 'table') {
+      layOut(
+        loaded.rows,
+        accounts.find((a) => a.id === id),
+      );
+    }
+  };
+
+  const rows = loaded?.kind === 'table' ? loaded.rows : null;
+  const table = useMemo(() => (rows ? statementTable(rows, start) : []), [rows, start]);
+  // Totals and notes after the last line.
+  const footer = rows ? rows.length - start - table.length : 0;
 
   const parsed = useMemo(() => {
     if (!loaded) return null;
     if (loaded.kind === 'ofx') return { lines: loaded.lines, skipped: 0 };
-    return mapping ? csvStatement(loaded.rows, mapping) : null;
-  }, [loaded, mapping]);
+    return mapping ? csvStatement(table, mapping) : null;
+  }, [loaded, table, mapping]);
+  const balances = useMemo(() => (parsed ? checkBalances(parsed.lines) : null), [parsed]);
 
   const columns = useMemo(() => {
-    if (loaded?.kind !== 'csv') return [];
-    const width = Math.max(...loaded.rows.slice(0, 20).map((r) => r.length));
-    const first = loaded.rows[0] ?? [];
+    if (!rows) return [];
+    const width = Math.max(...table.slice(0, 20).map((r) => r.length));
+    const first = table[0] ?? [];
     return Array.from({ length: width }, (_, i) => ({
       value: i,
       label: mapping?.header
         ? first[i] || t('Column {number}', { number: i + 1 })
         : t('Column {number} ({sample})', { number: i + 1, sample: first[i] ?? '' }),
     }));
-  }, [loaded, mapping?.header]);
+  }, [rows, table, mapping?.header]);
 
   const dateFormats = useMemo(() => {
-    if (loaded?.kind !== 'csv' || !mapping) return [];
-    const body = mapping.header ? loaded.rows.slice(1) : loaded.rows;
+    if (!rows || !mapping) return [];
+    const body = mapping.header ? table.slice(1) : table;
     return detectDateFormats(
       body.map((r) => r[mapping.date] ?? ''),
       preferDayFirst,
     );
-  }, [loaded, mapping, preferDayFirst]);
+  }, [rows, table, mapping, preferDayFirst]);
 
   const set = (patch: Partial<CsvMapping>) => setMapping((m) => (m ? { ...m, ...patch } : m));
   const columnSelect = (
@@ -126,8 +173,22 @@ export function ImportStatementDialog({
     </Field>
   );
 
+  const startAt = (row: number) => {
+    if (!rows) return;
+    const layout = guessLayout(rows, row, preferDayFirst);
+    setStart(layout.start);
+    setMapping(layout.mapping);
+    setRemembered(false);
+  };
+
   const save = async () => {
     if (!parsed?.lines.length) return toast.error(t('There is nothing to import.'));
+    // Remember the layout, forget the one the account had, or (OFX) leave it.
+    let format: StatementFormat | null | undefined;
+    if (loaded?.kind === 'table' && mapping) {
+      if (remember) format = rememberedFormat(loaded.file, loaded.rows, start, mapping);
+      else if (account?.statementFormat) format = null;
+    }
     setSaving(true);
     try {
       const { added, duplicates } = await importStatement(
@@ -135,6 +196,7 @@ export function ImportStatementDialog({
         accountId,
         parsed.lines,
         loaded?.name ?? '',
+        format,
       );
       toast.success(
         duplicates
@@ -153,14 +215,16 @@ export function ImportStatementDialog({
     }
   };
 
-  const split = mapping !== null && mapping.amount === null;
+  const preset = mapping ? presetOf(mapping) : 'signed';
+  // The rows above the table and a few of it, as they are in the file.
+  const shown = rows ? rows.slice(0, Math.min(START_ROWS, Math.max(12, start + 4))) : [];
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         title={t('Import a bank statement')}
         description={t(
-          'Download a statement from your online banking as CSV or OFX, then choose it here.',
+          'Download a statement from your online banking as Excel, CSV or OFX, then choose it here.',
         )}
         size="xl"
       >
@@ -168,7 +232,7 @@ export function ImportStatementDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('Account')}>
               {(id) => (
-                <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                <Select id={id} value={accountId} onChange={(e) => chooseAccount(e.target.value)}>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.code} {localName(a)}
@@ -183,7 +247,7 @@ export function ImportStatementDialog({
                   <input
                     ref={input}
                     type="file"
-                    accept=".csv,.txt,.ofx,.qfx,text/csv,application/x-ofx"
+                    accept=".xlsx,.xls,.csv,.txt,.htm,.html,.xml,.ofx,.qfx,text/csv,application/x-ofx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                     className="sr-only"
                     tabIndex={-1}
                     aria-label={t('Statement file')}
@@ -193,15 +257,63 @@ export function ImportStatementDialog({
                     <FileUp /> {t('Choose file')}
                   </Button>
                   <span className="truncate text-sm text-slate-500">
-                    {loaded?.name ?? t('CSV, OFX or QFX')}
+                    {loaded?.name ?? t('Excel, CSV, OFX or QFX')}
                   </span>
                 </div>
               )}
             </Field>
           </div>
 
-          {loaded?.kind === 'csv' && mapping ? (
+          {rows && mapping ? (
             <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Field
+                  label={t('The table starts at row')}
+                  hint={t('Rows above it, such as the account name and the period, are left out.')}
+                >
+                  {(id) => (
+                    <Select
+                      id={id}
+                      value={String(start)}
+                      onChange={(e) => startAt(Number(e.target.value))}
+                    >
+                      {rows.slice(0, START_ROWS).map((row, i) => (
+                        <option key={i} value={i}>
+                          {t('Row {number}: {sample}', { number: i + 1, sample: sample(row) })}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+                <div
+                  className="max-h-40 overflow-auto rounded-lg border border-slate-200 sm:col-span-2"
+                  role="group"
+                  aria-label={t('The file as it is')}
+                >
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {shown.map((row, i) => (
+                        <tr
+                          key={i}
+                          onClick={() => startAt(i)}
+                          className={cn(
+                            'cursor-pointer border-t border-slate-100 first:border-t-0 hover:bg-slate-50',
+                            i < start && 'text-slate-400',
+                            i === start && 'bg-primary-50 font-medium text-slate-900',
+                          )}
+                        >
+                          <td className="tabular w-8 px-2 py-1 text-end text-slate-400">{i + 1}</td>
+                          {row.slice(0, 8).map((cell, c) => (
+                            <td key={c} className="max-w-32 truncate px-2 py-1">
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
               <Switch
                 checked={mapping.header}
                 onChange={(header) => set({ header })}
@@ -237,27 +349,20 @@ export function ImportStatementDialog({
                   {(id) => (
                     <Select
                       id={id}
-                      value={split ? 'split' : 'single'}
+                      value={preset}
                       onChange={(e) =>
-                        e.target.value === 'split'
-                          ? set({
-                              amount: null,
-                              moneyIn: mapping.moneyIn ?? mapping.amount ?? 0,
-                              moneyOut: mapping.moneyOut ?? mapping.amount ?? 0,
-                            })
-                          : set({
-                              amount: mapping.amount ?? mapping.moneyIn ?? 0,
-                              moneyIn: null,
-                              moneyOut: null,
-                            })
+                        setMapping(applyPreset(table, mapping, e.target.value as StatementPreset))
                       }
                     >
-                      <option value="single">{t('One column (minus for money out)')}</option>
-                      <option value="split">{t('Money in and money out columns')}</option>
+                      {STATEMENT_PRESETS.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {t(p.label)}
+                        </option>
+                      ))}
                     </Select>
                   )}
                 </Field>
-                {split ? (
+                {preset === 'debit-credit' ? (
                   <>
                     {columnSelect(t('Money in'), mapping.moneyIn, (moneyIn) => set({ moneyIn }))}
                     {columnSelect(t('Money out'), mapping.moneyOut, (moneyOut) =>
@@ -267,11 +372,25 @@ export function ImportStatementDialog({
                 ) : (
                   columnSelect(t('Amount'), mapping.amount, (amount) => set({ amount }))
                 )}
+                {preset === 'amount-type'
+                  ? columnSelect(
+                      t('Debit or credit'),
+                      mapping.debitCredit ?? null,
+                      (debitCredit) => set({ debitCredit }),
+                      true,
+                    )
+                  : null}
                 {columnSelect(t('Balance'), mapping.balance, (balance) => set({ balance }), true)}
                 {columnSelect(
                   t('Reference'),
                   mapping.reference,
                   (reference) => set({ reference }),
+                  true,
+                )}
+                {columnSelect(
+                  t('Value date'),
+                  mapping.valueDate ?? null,
+                  (valueDate) => set({ valueDate }),
                   true,
                 )}
               </div>
@@ -280,6 +399,16 @@ export function ImportStatementDialog({
                 onChange={(invert) => set({ invert })}
                 label={t('Flip the signs')}
                 description={t('For card statements that show spending as positive amounts.')}
+              />
+              <Switch
+                checked={remember}
+                onChange={setRemember}
+                label={t('Remember this layout for this account')}
+                description={
+                  remembered
+                    ? t('Read with the layout remembered for this account.')
+                    : t('Its next statements are then read the same way.')
+                }
               />
             </div>
           ) : null}
@@ -295,7 +424,34 @@ export function ImportStatementDialog({
                       '{count} rows without a date or amount left out',
                     )}`
                   : ''}
+                {footer
+                  ? ` · ${tp(
+                      footer,
+                      '{count} row of totals or notes after the lines left out',
+                      '{count} rows of totals or notes after the lines left out',
+                    )}`
+                  : ''}
               </p>
+              {balances === 'agrees' ? (
+                <p className="mb-2 flex items-center gap-1.5 text-xs text-emerald-700">
+                  <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
+                  {t('The amounts add up to the balances in the file.')}
+                </p>
+              ) : balances ? (
+                <p
+                  role="alert"
+                  className="mb-2 flex items-start gap-1.5 text-xs font-medium text-amber-700"
+                >
+                  <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                  {balances === 'flipped'
+                    ? t(
+                        'The balances go the other way: money in and money out look swapped. Check the amount columns, or flip the signs.',
+                      )
+                    : t(
+                        'The amounts don’t add up to the balances in the file. Check the amount columns before importing.',
+                      )}
+                </p>
+              ) : null}
               <div className="max-h-56 overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-slate-50 text-start text-slate-500">
@@ -313,6 +469,11 @@ export function ImportStatementDialog({
                       <tr key={i} className="border-t border-slate-100">
                         <td className="hidden px-3 py-1.5 whitespace-nowrap sm:table-cell">
                           {fmt.date(l.date)}
+                          {l.valueDate && l.valueDate !== l.date ? (
+                            <span className="block text-slate-500">
+                              {t('Value date {date}', { date: fmt.date(l.valueDate) })}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-3 py-1.5">
                           <span className="block max-w-40 truncate sm:max-w-80">

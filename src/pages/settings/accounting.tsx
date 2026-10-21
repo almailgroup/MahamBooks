@@ -18,6 +18,12 @@ import { Field, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 import { isolate } from '@/apps/books/features/reports/report-language';
 import { DateField } from '@/components/ui/date-field';
+import { useRoleView } from '@/features/cloud/role-gates';
+import {
+  canChooseDashboardLayout,
+  dashboardLayout,
+  withDashboardLayout,
+} from '@/features/company/dashboard';
 
 /** Quarter ends for each stagger (the month a quarter starts in). */
 const STAGGERS = [
@@ -73,7 +79,10 @@ const LEVY_FIELDS: { key: keyof LevyRates; label: string; hint: string }[] = [
 
 export default function AccountingSettings() {
   const fmt = useFormat();
-  const { draft, update, dirty, saving, save, reset } = useCompanyDraft();
+  const { draft, setDraft, update, dirty, saving, save, reset } = useCompanyDraft();
+  const { role, known, readOnly } = useRoleView();
+  // The layout is everyone's dashboard: owners and admins choose it.
+  const layoutLocked = !known || readOnly.readOnly || !canChooseDashboardLayout(role);
   const settings = accountingSettings(draft);
   const setSettings = (patch: Partial<typeof settings>) =>
     update({ accounting: { ...settings, ...patch } });
@@ -150,6 +159,29 @@ export default function AccountingSettings() {
             to: isolate(fmt.date(fiscalYearEnd(now, settings.fiscalYearEnd))),
           })}
         </p>
+      </SettingsSection>
+
+      <SettingsSection
+        id="dashboard"
+        title={t('Books dashboard')}
+        description={t(
+          'How the dashboard of Maham Books is laid out for everyone in this company.',
+        )}
+      >
+        <Switch
+          checked={dashboardLayout(draft) === 'overview'}
+          disabled={layoutLocked}
+          onChange={(on) => setDraft((d) => withDashboardLayout(d, on ? 'overview' : 'classic'))}
+          label={t('Overview layout')}
+          description={t(
+            'Adds receivables next to payables, cash flow, income and expense, top expenses, bank and card accounts and a watchlist above today’s cards. Each person picks the period, the accounts they watch and the cards they hide.',
+          )}
+        />
+        {layoutLocked ? (
+          <p className="text-sm text-slate-500">
+            {t('Owners and admins choose the dashboard layout.')}
+          </p>
+        ) : null}
       </SettingsSection>
 
       <SettingsSection

@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/overlay';
 import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { generatePdf, useLivePdf } from '@/components/pdf/use-pdf';
+import { documentTemplate } from '@/pdf/template-resolve';
 import { downloadBlob, pdfFileName, printBlob } from '@/pdf/client';
 import {
   ApplyCreditDialog,
@@ -108,7 +109,7 @@ function usePurchaseOrderPdf(
     printed,
     company,
     vendor ?? null,
-    doc?.templateId ?? company.branding.templateId,
+    doc ? documentTemplate(doc, company) : company.branding.templateId,
     { delay: 0 },
   );
   const fileName = useMemo(
@@ -118,8 +119,13 @@ function usePurchaseOrderPdf(
         : 'document.pdf',
     [doc, vendor],
   );
+  // The preview's PDF, unless it is still being redrawn after a change.
   const getPdf = async () =>
-    pdf.blob ?? (doc ? (await generatePdf(doc, company, vendor ?? null)).blob : null);
+    pdf.blob && !pdf.loading
+      ? pdf.blob
+      : doc
+        ? (await generatePdf(doc, company, vendor ?? null)).blob
+        : null;
   return { pdf, fileName, getPdf };
 }
 

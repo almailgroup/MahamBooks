@@ -19,6 +19,8 @@ import type {
   TaxRate,
 } from '@/db/types';
 import { isRtlLanguage } from '@/pdf/labels';
+import { useCompany } from '@/app/company';
+import { matchUnit } from '@/lib/units';
 import { t } from '@/i18n';
 import { taxLineOf, type CalcLineResult } from '@/lib/calc';
 import { cn } from '@/lib/cn';
@@ -115,6 +117,7 @@ export function LineItemsEditor({
   stockUse?: StockUse;
 }) {
   const inventory = useInventory();
+  const company = useCompany();
   const showArabic =
     language === undefined || isRtlLanguage(language) || items.some((i) => i.nameAr?.trim());
   /** Lines selling goods can carry their condition and serial number. */
@@ -157,6 +160,10 @@ export function LineItemsEditor({
           : product.description,
       unitPrice: product.unitPrice,
       unit: product.unit,
+      // Arabic documents print the unit's Arabic name.
+      unitId: product.unitId,
+      // Printed in the SKU column when the design shows one.
+      sku: product.sku.trim() || undefined,
       taxes: showTaxes ? (product.taxRateIds.length ? taxes : items[index].taxes) : [],
     });
   };
@@ -322,7 +329,7 @@ export function LineItemsEditor({
                 <ItemNameInput
                   ariaLabel={t('Item {number} name', { number: index + 1 })}
                   value={item.name}
-                  onChange={(name) => update(index, { name, productId: null })}
+                  onChange={(name) => update(index, { name, productId: null, sku: undefined })}
                   products={products}
                   onPick={(p) => pickProduct(index, p)}
                   formatPrice={formatPrice}
@@ -353,7 +360,15 @@ export function LineItemsEditor({
             <Input
               aria-label={t('Item {number} unit', { number: index + 1 })}
               value={item.unit}
-              onChange={(e) => update(index, { unit: e.target.value })}
+              onChange={(e) =>
+                update(index, {
+                  unit: e.target.value,
+                  // A unit typed over is the list's only when it names one of them.
+                  unitId: company.items?.units
+                    ? (matchUnit(e.target.value, company) ?? undefined)
+                    : undefined,
+                })
+              }
               placeholder={t('pcs, hrs…')}
               className={prices ? 'text-end' : undefined}
             />

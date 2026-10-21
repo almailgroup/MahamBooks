@@ -1,15 +1,27 @@
 import { toast } from 'sonner';
-import type { CompanyBankAccount, PaymentSettings } from '@/db/types';
+import { LayoutTemplate } from 'lucide-react';
+import type { Company, CompanyBankAccount, PaymentSettings } from '@/db/types';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
 import { t } from '@/i18n';
+import { ButtonLink } from '@/components/ui/button';
 import { Field, Input, Switch } from '@/components/ui/form';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { BankAccountFields, ibanProblem } from '@/features/company/bank-fields';
 import { bankAccountOf, withBankAccount } from '@/features/company/bank';
 import { printedBankDetails } from '@/pdf/model';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
+/** The company with cheque printing on or off; off leaves the setting out, as before. */
+function withChequePrinting(company: Company, on: boolean): Company {
+  const { chequePrinting: _old, ...rest } = company;
+  return on ? { ...rest, chequePrinting: true } : rest;
+}
+
 export default function PaymentSettingsPage() {
   const { draft, setDraft, dirty, saving, save, reset } = useCompanyDraft();
+  const { role, readOnly } = useRoleView();
+  // Part of the company record: staff and viewers only look at it.
+  const locked = readOnly.readOnly || role === 'staff';
   const p = draft.payment;
   const account = bankAccountOf(draft);
   const profile = kuwaitProfile(draft);
@@ -101,6 +113,36 @@ export default function PaymentSettingsPage() {
           label={t('Print a QR code')}
           description={t('Customers can scan it with their phone to open the payment link.')}
         />
+      </SettingsSection>
+
+      <SettingsSection
+        id="cheques"
+        title={t('Cheque printing')}
+        description={t(
+          'Print cheques issued to vendors straight onto Burgan Bank and KFH cheque leaves. Every print is recorded on the cheque; nothing is posted.',
+        )}
+        actions={
+          draft.chequePrinting ? (
+            <ButtonLink variant="outline" size="sm" to="/cheques/layouts">
+              <LayoutTemplate /> {t('Cheque layouts')}
+            </ButtonLink>
+          ) : null
+        }
+      >
+        <Switch
+          checked={Boolean(draft.chequePrinting)}
+          disabled={locked}
+          onChange={(on) => setDraft((d) => withChequePrinting(d, on))}
+          label={t('Print cheques issued')}
+          description={t(
+            'Adds Print cheque to cheques issued, on the payment and in the cheque register. Check the layout with a test print on plain paper first.',
+          )}
+        />
+        {locked ? (
+          <p className="text-sm text-slate-500">
+            {t('Owners, admins and accountants turn cheque printing on or off.')}
+          </p>
+        ) : null}
       </SettingsSection>
       <SaveBar dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />
     </div>

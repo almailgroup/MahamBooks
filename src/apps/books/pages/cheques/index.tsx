@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Banknote,
   CircleDollarSign,
+  LayoutTemplate,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -269,6 +270,11 @@ export default function ChequeRegisterPage() {
         description={t('Post-dated cheques received and issued, and security cheques you hold.')}
         actions={
           <>
+            {tab === 'issued' && company.chequePrinting ? (
+              <ButtonLink variant="outline" to="/cheques/layouts">
+                <LayoutTemplate /> {t('Cheque layouts')}
+              </ButtonLink>
+            ) : null}
             <ButtonLink
               variant="outline"
               to={`/cheques/print?tab=${tab}&filter=${filter}${tab === 'security' && showAllSecurity ? '&all=1' : ''}`}
@@ -457,6 +463,11 @@ export default function ChequeRegisterPage() {
                                 {p.cheque.replacedById ? (
                                   <span className="mt-0.5 block text-xs text-slate-500">
                                     {t('Replaced')}
+                                  </span>
+                                ) : null}
+                                {p.cheque.printedAt ? (
+                                  <span className="mt-0.5 block text-xs text-slate-500">
+                                    {t('Printed')}
                                   </span>
                                 ) : null}
                               </td>

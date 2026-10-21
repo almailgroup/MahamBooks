@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertCircle,
@@ -9,6 +10,7 @@ import {
   CalendarClock,
   CircleCheck,
   Clock,
+  Eye,
   FileText,
   HandCoins,
   Landmark,
@@ -20,62 +22,83 @@ import {
 } from 'lucide-react';
 import { db } from '@/db/db';
 import { activityText } from '@/db/activity';
-import type { Activity, Client, InvoiceDocument, Payment } from '@/db/types';
+import type { Account, Activity, Client, ID, InvoiceDocument } from '@/db/types';
+import { saveCompany } from '@/db/records';
+import { accountingSettings } from '@/db/chart-setup';
 import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
-import { displayStatus } from '@/lib/status';
 import { addDaysISO, daysBetween, toISODate, today } from '@/lib/dates';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { agingReport, AGING_BUCKETS } from '@/lib/reports';
-import { bankName, chequePayments, isOpenCheque, paymentMinor } from '@/lib/cheques';
+import { bankName } from '@/lib/cheques';
 import { stockLevels } from '@/lib/inventory/costing';
 import { isStockItem } from '@/lib/inventory/sources';
-import { isMoneyAccount } from '@/lib/accounting/account-types';
-import { isPosted } from '@/lib/accounting/ledger';
-import { vatDueDate, vatPeriodOf } from '@/lib/accounting/vat';
 import { formatPeriod, payDateFor, payRunTotals, periodOf } from '@/lib/hr/payroll';
 import { isCurrent } from '@/lib/hr/employees';
 import { ITEM_STATUS_LABELS, type ComplianceItem } from '@/lib/compliance';
-import { isCustomer } from '@/db/purchases';
-import { vatSettings } from '@/db/chart-setup';
 import { useLedger } from '@/apps/books/features/accounting/use-ledger';
+import {
+  agingSummary,
+  CHEQUE_DAYS,
+  cashAccounts,
+  COMPLIANCE_DAYS,
+  DASHBOARD_PERIODS,
+  dashboardFigures,
+  dashboardRange,
+  isDashboardPeriod,
+  ledgerFigures,
+  overviewCards,
+  payablesSummary,
+  type AgingSummary,
+  type ChequeRow,
+  type DashboardFigures,
+  type DashboardPeriod,
+  type DashboardRange,
+  type LedgerFigures,
+  type OverviewCard,
+} from '@/apps/books/features/dashboard/model';
+import { useDashboardPrefs } from '@/apps/books/features/dashboard/prefs';
+import {
+  AGING_COLORS,
+  CardLink,
+  compactNumber,
+  SERIES_1,
+  SERIES_2,
+} from '@/apps/books/features/dashboard/cards/shared';
+import {
+  PayablesCard,
+  ReceivablesSummaryCard,
+} from '@/apps/books/features/dashboard/cards/aging-card';
+import { CashFlowCard } from '@/apps/books/features/dashboard/cards/cash-flow-card';
+import { IncomeExpenseCard } from '@/apps/books/features/dashboard/cards/income-expense-card';
+import { TopExpensesCard } from '@/apps/books/features/dashboard/cards/top-expenses-card';
+import { BankAccountsCard } from '@/apps/books/features/dashboard/cards/bank-accounts-card';
+import { WatchlistCard } from '@/apps/books/features/dashboard/cards/watchlist-card';
 import { useComplianceCalendar } from '@/features/renewals/hooks';
 import { daysText, entryTitle } from '@/features/renewals/display';
 import { usePayRuns, usePayrollSettings } from '@/features/payroll/hooks';
 import { useEmployees } from '@/features/people/hooks';
 import { useTaxesEnabled } from '@/features/company/taxes';
-import { PayrollNotIncluded } from '@/features/cloud/role-gates';
+import {
+  canChooseDashboardLayout,
+  dashboardLayout,
+  withDashboardLayout,
+  type DashboardLayout,
+} from '@/features/company/dashboard';
+import { PayrollNotIncluded, useRoleView } from '@/features/cloud/role-gates';
 import { useAppAccess } from '@/suite/current-app';
-import { ButtonLink } from '@/components/ui/button';
-import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
+import { Button, ButtonLink } from '@/components/ui/button';
+import { Badge, Card, CardBody, CardHeader, Segmented, Spinner } from '@/components/ui/misc';
+import { Select } from '@/components/ui/form';
 import { MoneyText } from '@/components/ui/money-text';
 import { ColumnChart } from '@/components/charts/column-chart';
 import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
-import { currentLanguage, t, tp } from '@/i18n';
+import { currentLanguage, msg, t, tp } from '@/i18n';
 
-// Validated categorical slots 1 and 2 (dataviz reference palette); each
-// theme sets the step for its surface (src/lib/themes.ts).
-const SERIES_INVOICED = 'var(--color-chart-1)';
-const SERIES_COLLECTED = 'var(--color-chart-2)';
-
-// Aging buckets are ordered: one hue in the theme's accent, lighter to darker
-// as invoices get older on light themes, brighter on dark ones (validated
-// ordinal ramp: monotone lightness, visible steps, nearest end ≥ 2:1).
-const AGING_COLORS = ['bg-aging-1', 'bg-aging-2', 'bg-aging-3', 'bg-aging-4', 'bg-aging-5'];
-
-/** Days ahead the dashboard looks for cheques, deadlines and documents. */
-const CHEQUE_DAYS = 14;
-const COMPLIANCE_DAYS = 30;
-
-function monthKeys(count: number, from: string): string[] {
-  const [y, m] = from.split('-').map(Number);
-  const keys: string[] = [];
-  for (let i = count - 1; i >= 0; i--) {
-    const d = new Date(y, m - 1 - i, 1);
-    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  return keys;
-}
+const LAYOUTS: { value: DashboardLayout; label: string }[] = [
+  { value: 'classic', label: msg('Classic') },
+  { value: 'overview', label: msg('Overview') },
+];
 
 function useDismissed(key: string): [boolean, () => void] {
   const [dismissed, setDismissed] = useState(() => {
@@ -98,8 +121,6 @@ function useDismissed(key: string): [boolean, () => void] {
   ];
 }
 
-type ChequeRow = Payment & { cheque: NonNullable<Payment['cheque']>; minor: number };
-
 export default function DashboardPage() {
   const company = useCompany();
   const fmt = useFormat();
@@ -111,7 +132,12 @@ export default function DashboardPage() {
   const payrollSettings = usePayrollSettings();
   const employees = useEmployees();
   const seesPeople = useAppAccess().people !== 'none';
+  const roles = useRoleView();
   const precision = currencyPrecision(company.currency);
+  const layout = dashboardLayout(company);
+  const overview = layout === 'overview';
+  const [prefs, setPrefs] = useDashboardPrefs(company.id);
+  const yearEnd = accountingSettings(company).fiscalYearEnd;
 
   const docs = useLiveQuery(
     () => db.documents.where('companyId').equals(company.id).toArray(),
@@ -179,129 +205,77 @@ export default function DashboardPage() {
   );
   const [checklistDismissed, dismissChecklist] = useDismissed(`checklist-dismissed:${company.id}`);
 
+  // The overview's period: the last 12 months unless this person chose another.
+  const range = useMemo(
+    () => dashboardRange(prefs.period, now, { month: yearEnd.month, day: yearEnd.day }),
+    [prefs.period, now, yearEnd.month, yearEnd.day],
+  );
+  const monthsKey = overview ? range.months.map((m) => m.key).join() : undefined;
+
   const data = useMemo(() => {
     if (!docs || !payments || !clients || !expenses || !vatFiled) return null;
-    const clientsById = new Map<string, Client>(clients.map((c) => [c.id, c]));
-    const base = company.currency;
-    const invoices = docs.filter((d) => d.type === 'invoice');
-    const isOpen = (d: InvoiceDocument) =>
-      (d.status === 'sent' || d.status === 'partial') && d.totals.balance > 0;
-    const open = invoices.filter(isOpen);
-
-    // Who owes you: unpaid invoices in dinars by age; other currencies apart.
-    const aging = agingReport(docs, clients, base, now);
-    const otherCurrencies = new Map<string, number>();
-    for (const d of open) {
-      if (d.currency !== base)
-        otherCurrencies.set(d.currency, (otherCurrencies.get(d.currency) ?? 0) + d.totals.balance);
-    }
-    const overdue = open
-      .filter((d) => displayStatus(d, now) === 'overdue')
-      .map((d) => ({ doc: d, days: d.dueDate ? daysBetween(d.dueDate, now) : 0 }))
-      .sort((a, b) => b.days - a.days);
-
-    // What you owe this week: bills due in the next seven days or already late.
-    const weekEnd = addDaysISO(now, 6);
-    const openBills = docs.filter((d) => d.type === 'bill' && isOpen(d));
-    const billsDue = openBills.filter((d) => (d.dueDate ?? d.issueDate) <= weekEnd);
-    const billsOverdue = openBills
-      .filter((d) => displayStatus(d, now) === 'overdue')
-      .map((d) => ({ doc: d, days: d.dueDate ? daysBetween(d.dueDate, now) : 0 }))
-      .sort((a, b) => b.days - a.days);
-    const sumBase = (list: InvoiceDocument[]) =>
-      list.filter((d) => d.currency === base).reduce((s, d) => s + d.totals.balance, 0);
-
-    // Cheques: open ones dated in the next 14 days, or late.
-    const horizon = addDaysISO(now, CHEQUE_DAYS - 1);
-    const live = payments.filter((p) => !p.voided);
-    const dueCheques = (direction: 'in' | 'out'): ChequeRow[] =>
-      chequePayments(live, direction)
-        .filter((p) => isOpenCheque(p.cheque.status) && p.cheque.date <= horizon)
-        .filter((p) => p.cheque.status === 'held' || p.cheque.date >= now)
-        .map((p) => ({ ...p, minor: paymentMinor(p, base, precision) }))
-        .sort((a, b) => a.cheque.date.localeCompare(b.cheque.date));
-    const chequesIn = dueCheques('in');
-    const chequesOut = dueCheques('out');
-
-    // Invoiced against collected, last 12 months.
-    const issued = invoices.filter((d) => d.status !== 'draft' && d.status !== 'void');
-    const cash = live.filter(
-      (p) => p.direction !== 'out' && p.method !== 'credit_note' && p.currency === base,
-    );
-    const keys = monthKeys(12, now);
-    const invoicedByMonth = keys.map((k) =>
-      issued
-        .filter((d) => d.currency === base && d.issueDate.startsWith(k))
-        .reduce((s, d) => s + d.totals.total, 0),
-    );
-    const collectedByMonth = keys.map((k) =>
-      cash.filter((p) => p.date.startsWith(k)).reduce((s, p) => s + p.amount, 0),
-    );
-    const monthFormat = new Intl.DateTimeFormat(fmt.locale, { month: 'short' });
-    const labels = keys.map((k) => {
-      const [yy, mm] = k.split('-').map(Number);
-      const label = monthFormat.format(new Date(yy, mm - 1, 1));
-      return mm === 1 ? `${label} ’${String(yy).slice(2)}` : label;
-    });
-
-    const quotesWaiting = docs.filter(
-      (d) => d.type === 'quote' && displayStatus(d, now) === 'sent',
-    );
-
-    const vatDue = (() => {
-      if (!taxesOn) return null;
-      // The last ended VAT period, until it is marked as filed.
-      const vat = vatSettings(company);
-      if (!vat.registered) return null;
-      const period = vatPeriodOf(addDaysISO(vatPeriodOf(now, vat).start, -1), vat);
-      if (vatFiled.some((r) => r.periodStart === period.start)) return null;
-      const active =
-        docs.some((d) => isPosted(d) && d.issueDate <= period.end) ||
-        expenses.some((e) => e.date <= period.end);
-      if (!active) return null;
-      return { period, due: vatDueDate(period, vat.format) };
-    })();
-
-    return {
-      clientsById,
-      docTypes: new Map(docs.map((d) => [d.id, d.type])),
-      aging,
-      otherCurrencies: [...otherCurrencies.entries()],
-      overdue,
-      overdueTotal: overdue
-        .filter((o) => o.doc.currency === base)
-        .reduce((s, o) => s + o.doc.totals.balance, 0),
-      billsDue,
-      billsDueTotal: sumBase(billsDue),
-      billsOverdue,
-      billsOverdueTotal: sumBase(billsOverdue.map((b) => b.doc)),
-      chequesIn,
-      chequesOut,
-      chart: {
-        labels,
-        invoiced: invoicedByMonth,
-        collected: collectedByMonth,
-        empty: invoicedByMonth.every((v) => v === 0) && collectedByMonth.every((v) => v === 0),
+    return dashboardFigures(
+      {
+        docs,
+        payments,
+        clients,
+        expenses,
+        vatFiled,
+        company,
+        locale: fmt.locale,
+        now,
+        taxesOn,
+        precision,
       },
-      quotesWaiting,
-      vatDue,
-      hasClients: clients.some(isCustomer),
-      hasInvoices: invoices.length > 0,
-    };
-  }, [docs, payments, clients, expenses, vatFiled, company, fmt.locale, now, taxesOn, precision]);
+      monthsKey ? monthsKey.split(',') : undefined,
+    );
+  }, [
+    docs,
+    payments,
+    clients,
+    expenses,
+    vatFiled,
+    company,
+    fmt.locale,
+    now,
+    taxesOn,
+    precision,
+    monthsKey,
+  ]);
 
-  const cash = useMemo(() => {
-    if (!ledger) return null;
-    const balances = new Map<string, number>();
-    for (const line of ledger.lines) {
-      balances.set(line.accountId, (balances.get(line.accountId) ?? 0) + line.amount);
-    }
-    const accounts = ledger.accounts
-      .filter((a) => isMoneyAccount(a.type) && a.type === 'asset_cash' && !a.archived)
-      .map((a) => ({ account: a, minor: balances.get(a.id) ?? 0 }))
-      .sort((a, b) => b.minor - a.minor);
-    return { accounts, total: accounts.reduce((s, a) => s + a.minor, 0) };
-  }, [ledger]);
+  const lines = ledger?.lines;
+  const accounts = ledger?.accounts;
+  const cash = useMemo(
+    () => (lines && accounts ? cashAccounts({ lines, accounts }) : null),
+    [lines, accounts],
+  );
+
+  // Staff and viewers never get the cards that could show salaries, nor
+  // anyone before their role is known.
+  const peopleCardsHidden = roles.peopleHidden || !roles.known;
+  const cards = useMemo(
+    () => overviewCards(peopleCardsHidden, prefs.hidden),
+    [peopleCardsHidden, prefs.hidden],
+  );
+  // The ledger is rebuilt after every change: work the cards out again only
+  // when it, the period or the cards change.
+  const figures = useMemo(
+    () =>
+      overview && lines && accounts
+        ? ledgerFigures({ lines, accounts }, range, cards, prefs.watchlist, precision)
+        : null,
+    [overview, lines, accounts, range, cards, prefs.watchlist, precision],
+  );
+  const aging = useMemo(
+    () =>
+      overview && docs && clients
+        ? {
+            receivables: agingSummary(docs, clients, company.currency, now, 'invoice', precision),
+            payables: payablesSummary(docs, clients, company.currency, now, precision),
+          }
+        : null,
+    [overview, docs, clients, company.currency, now, precision],
+  );
 
   if (!data || !cash) return <Spinner className="py-24" label={t('Loading…')} />;
 
@@ -333,6 +307,101 @@ export default function DashboardPage() {
   const remaining = checklist.filter((c) => !c.done);
   const showChecklist = !checklistDismissed && remaining.length > 0;
 
+  const choosesLayout =
+    roles.known && canChooseDashboardLayout(roles.role) && !roles.readOnly.readOnly;
+  const chooseLayout = async (next: DashboardLayout) => {
+    if (next === layout) return;
+    try {
+      await saveCompany(withDashboardLayout(company, next));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Could not save settings.'));
+    }
+  };
+
+  const keyFigures = (
+    <section
+      aria-label={t('Key figures')}
+      className="order-1 grid grid-cols-2 gap-3 lg:order-none lg:grid-cols-4 lg:gap-4"
+    >
+      <Kpi
+        to="/banking"
+        icon={Landmark}
+        label={t('Cash and bank')}
+        amount={major(cash.total)}
+        hint={
+          cash.accounts.length === 0
+            ? t('No bank accounts yet')
+            : tp(cash.accounts.length, 'In {count} account', 'In {count} accounts')
+        }
+      />
+      <Kpi
+        to="/reports/aging"
+        icon={HandCoins}
+        label={t('Owed to you')}
+        amount={data.aging.total}
+        hint={
+          data.overdueTotal > 0 ? (
+            <span className="text-red-700">
+              {t('{amount} overdue', { amount: fmt.money(data.overdueTotal) })}
+            </span>
+          ) : data.aging.total > 0 ? (
+            t('Nothing overdue')
+          ) : (
+            t('No unpaid invoices')
+          )
+        }
+      />
+      <Kpi
+        to="/bills?status=unpaid"
+        icon={Receipt}
+        label={t('You owe this week')}
+        amount={data.billsDueTotal}
+        hint={
+          data.billsDue.length === 0 ? (
+            t('No bills due')
+          ) : data.billsOverdueTotal > 0 ? (
+            <span className="text-red-700">
+              {t('{amount} overdue', { amount: fmt.money(data.billsOverdueTotal) })}
+            </span>
+          ) : (
+            tp(data.billsDue.length, '{count} bill due', '{count} bills due')
+          )
+        }
+      />
+      <Kpi
+        to="/cheques"
+        icon={WalletCards}
+        label={t('Cheques due')}
+        amount={major(chequesInTotal)}
+        hint={
+          data.chequesIn.length + data.chequesOut.length === 0
+            ? tp(CHEQUE_DAYS, 'None in the next {count} day', 'None in the next {count} days')
+            : t('{amount} to pay out', { amount: fmt.money(major(chequesOutTotal)) })
+        }
+      />
+    </section>
+  );
+
+  const attention = (
+    <Card className="xl:order-none">
+      <CardHeader
+        title={t('Needs attention')}
+        actions={
+          data.overdue.length ? (
+            <CardLink to="/invoices?status=overdue">{t('Overdue invoices')}</CardLink>
+          ) : null
+        }
+      />
+      <AttentionList
+        data={data}
+        bankLines={bankToMatch?.length ?? 0}
+        bankTo={bankLink(bankToMatch)}
+      />
+    </Card>
+  );
+
+  const payrollAndStock = currentStaff > 0 || (lowStock?.tracked ?? 0) > 0;
+
   return (
     <div className="flex flex-col gap-5 lg:gap-6">
       <header className="flex items-end justify-between gap-4">
@@ -342,14 +411,26 @@ export default function DashboardPage() {
             <span dir="auto">{localName(company)}</span> · {fmt.date(now)}
           </p>
         </div>
-        {/* Phones create from the tab bar's + button. */}
-        <div className="hidden shrink-0 items-center gap-2 sm:flex">
-          <ButtonLink to="/quotes/new" variant="outline">
-            {t('New quote')}
-          </ButtonLink>
-          <ButtonLink to="/invoices/new">
-            <Plus /> {t('New invoice')}
-          </ButtonLink>
+        <div className="flex shrink-0 items-center gap-2">
+          {choosesLayout ? (
+            <div aria-label={t('Dashboard layout')} role="group">
+              <Segmented
+                size="sm"
+                value={layout}
+                onChange={(next) => void chooseLayout(next)}
+                options={LAYOUTS.map((l) => ({ value: l.value, label: t(l.label) }))}
+              />
+            </div>
+          ) : null}
+          {/* Phones create from the tab bar's + button. */}
+          <div className="hidden shrink-0 items-center gap-2 sm:flex">
+            <ButtonLink to="/quotes/new" variant="outline">
+              {t('New quote')}
+            </ButtonLink>
+            <ButtonLink to="/invoices/new">
+              <Plus /> {t('New invoice')}
+            </ButtonLink>
+          </div>
         </div>
       </header>
 
@@ -392,175 +473,244 @@ export default function DashboardPage() {
       ) : null}
 
       <PayrollNotIncluded className="order-1 lg:order-none" />
-      <section
-        aria-label={t('Key figures')}
-        className="order-1 grid grid-cols-2 gap-3 lg:order-none lg:grid-cols-4 lg:gap-4"
-      >
-        <Kpi
-          to="/banking"
-          icon={Landmark}
-          label={t('Cash and bank')}
-          amount={major(cash.total)}
-          hint={
-            cash.accounts.length === 0
-              ? t('No bank accounts yet')
-              : tp(cash.accounts.length, 'In {count} account', 'In {count} accounts')
-          }
-        />
-        <Kpi
-          to="/reports/aging"
-          icon={HandCoins}
-          label={t('Owed to you')}
-          amount={data.aging.total}
-          hint={
-            data.overdueTotal > 0 ? (
-              <span className="text-red-700">
-                {t('{amount} overdue', { amount: fmt.money(data.overdueTotal) })}
-              </span>
-            ) : data.aging.total > 0 ? (
-              t('Nothing overdue')
-            ) : (
-              t('No unpaid invoices')
-            )
-          }
-        />
-        <Kpi
-          to="/bills?status=unpaid"
-          icon={Receipt}
-          label={t('You owe this week')}
-          amount={data.billsDueTotal}
-          hint={
-            data.billsDue.length === 0 ? (
-              t('No bills due')
-            ) : data.billsOverdueTotal > 0 ? (
-              <span className="text-red-700">
-                {t('{amount} overdue', { amount: fmt.money(data.billsOverdueTotal) })}
-              </span>
-            ) : (
-              tp(data.billsDue.length, '{count} bill due', '{count} bills due')
-            )
-          }
-        />
-        <Kpi
-          to="/cheques"
-          icon={WalletCards}
-          label={t('Cheques due')}
-          amount={major(chequesInTotal)}
-          hint={
-            data.chequesIn.length + data.chequesOut.length === 0
-              ? tp(CHEQUE_DAYS, 'None in the next {count} day', 'None in the next {count} days')
-              : t('{amount} to pay out', { amount: fmt.money(major(chequesOutTotal)) })
-          }
-        />
-      </section>
+      {keyFigures}
 
-      <div className="order-3 grid grid-cols-1 gap-5 lg:gap-6 xl:grid-cols-3">
-        <ReceivablesCard
-          aging={data.aging}
-          otherCurrencies={data.otherCurrencies}
-          clientsById={data.clientsById}
+      {overview ? (
+        <Overview
+          range={range}
+          cards={cards}
+          hiddenCount={
+            prefs.hidden.filter((c) => overviewCards(peopleCardsHidden).includes(c)).length
+          }
+          figures={figures}
+          aging={aging}
+          accounts={accounts ?? []}
+          watchlist={prefs.watchlist}
+          onPeriod={(period) => setPrefs({ period })}
+          onWatchlist={(watchlist) => setPrefs({ watchlist })}
+          onHide={(card) => setPrefs({ hidden: [...prefs.hidden, card] })}
+          onShowAll={() => setPrefs({ hidden: [] })}
         />
-        <Card className="xl:order-none">
-          <CardHeader
-            title={t('Needs attention')}
-            actions={
-              data.overdue.length ? (
-                <CardLink to="/invoices?status=overdue">{t('Overdue invoices')}</CardLink>
-              ) : null
-            }
-          />
-          <AttentionList
-            data={data}
-            bankLines={bankToMatch?.length ?? 0}
-            bankTo={bankLink(bankToMatch)}
-          />
-        </Card>
-      </div>
+      ) : null}
 
-      <div
-        className={cn(
-          'order-3 grid grid-cols-1 gap-5 md:grid-cols-2 lg:gap-6',
-          // A third column only for payroll and stock, when the company has them.
-          (currentStaff > 0 || (lowStock?.tracked ?? 0) > 0) && 'xl:grid-cols-3',
-        )}
-      >
-        <ChequesCard incoming={data.chequesIn} outgoing={data.chequesOut} />
-        <ComplianceCard items={compliance} />
-        {currentStaff > 0 || (lowStock?.tracked ?? 0) > 0 ? (
-          <div className="flex min-w-0 flex-col gap-5 md:col-span-2 lg:gap-6 xl:col-span-1">
+      {overview ? (
+        <div className="order-3 grid grid-cols-1 gap-5 md:grid-cols-2 lg:gap-6 xl:grid-cols-3">
+          {attention}
+          <ChequesCard incoming={data.chequesIn} outgoing={data.chequesOut} />
+          <ComplianceCard items={compliance} />
+        </div>
+      ) : (
+        <div className="order-3 grid grid-cols-1 gap-5 lg:gap-6 xl:grid-cols-3">
+          <ReceivablesCard
+            aging={data.aging}
+            otherCurrencies={data.otherCurrencies}
+            clientsById={data.clientsById}
+          />
+          {attention}
+        </div>
+      )}
+
+      {overview ? (
+        payrollAndStock ? (
+          <div className="order-3 grid grid-cols-1 gap-5 md:grid-cols-2 lg:gap-6">
             <PayrollCard runs={runs} payDay={payrollSettings?.payDay} employees={currentStaff} />
             <LowStockCard data={lowStock} />
           </div>
-        ) : null}
-      </div>
+        ) : null
+      ) : (
+        <div
+          className={cn(
+            'order-3 grid grid-cols-1 gap-5 md:grid-cols-2 lg:gap-6',
+            // A third column only for payroll and stock, when the company has them.
+            payrollAndStock && 'xl:grid-cols-3',
+          )}
+        >
+          <ChequesCard incoming={data.chequesIn} outgoing={data.chequesOut} />
+          <ComplianceCard items={compliance} />
+          {payrollAndStock ? (
+            <div className="flex min-w-0 flex-col gap-5 md:col-span-2 lg:gap-6 xl:col-span-1">
+              <PayrollCard runs={runs} payDay={payrollSettings?.payDay} employees={currentStaff} />
+              <LowStockCard data={lowStock} />
+            </div>
+          ) : null}
+        </div>
+      )}
 
       <div className="order-3 grid grid-cols-1 gap-5 lg:gap-6 xl:grid-cols-3">
-        <Card className="min-w-0 xl:col-span-2">
-          <CardHeader
-            title={t('Invoiced vs collected')}
-            description={tp(
-              12,
-              'Last {count} month · {currency}',
-              'Last {count} months · {currency}',
-              {
-                currency: company.currency,
-              },
-            )}
-          />
-          <CardBody>
-            {data.chart.empty ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <span className="bg-primary-50 text-primary-600 flex size-11 items-center justify-center rounded-full">
-                  <FileText className="size-5" aria-hidden />
-                </span>
-                <p className="mt-3 text-sm font-medium text-slate-900">
-                  {tp(
-                    12,
-                    'No invoices in the last {count} month',
-                    'No invoices in the last {count} months',
-                  )}
-                </p>
-                <p className="mt-1 max-w-xs text-sm text-slate-500">
-                  {t('Your monthly sales and the payments you collect will show here.')}
-                </p>
-                <ButtonLink to="/invoices/new" size="sm" variant="outline" className="mt-4">
-                  <Plus /> {t('New invoice')}
-                </ButtonLink>
-              </div>
-            ) : (
-              <ColumnChart
-                title={t('Invoiced and collected per month')}
-                labels={data.chart.labels}
-                series={[
-                  {
-                    key: 'invoiced',
-                    label: t('Invoiced'),
-                    color: SERIES_INVOICED,
-                    values: data.chart.invoiced,
-                  },
-                  {
-                    key: 'collected',
-                    label: t('Collected'),
-                    color: SERIES_COLLECTED,
-                    values: data.chart.collected,
-                  },
-                ]}
-                formatValue={(v) => fmt.money(v)}
-                formatTick={(v) => compactNumber(v, fmt.locale)}
-              />
-            )}
-          </CardBody>
-        </Card>
+        <InvoicedCard
+          chart={data.chart}
+          description={
+            overview
+              ? periodDescription(range.period, company.currency)
+              : tp(12, 'Last {count} month · {currency}', 'Last {count} months · {currency}', {
+                  currency: company.currency,
+                })
+          }
+          empty={
+            overview
+              ? t('No invoices in this period')
+              : tp(
+                  12,
+                  'No invoices in the last {count} month',
+                  'No invoices in the last {count} months',
+                )
+          }
+        />
         <ActivityCard activity={activity} docTypes={data.docTypes} />
       </div>
     </div>
   );
 }
 
-/** Axis ticks: "12K" (the currency is named in the card's description). */
-function compactNumber(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(
-    value,
+/** "Last 12 months · KWD". */
+function periodDescription(period: DashboardPeriod, currency: string): string {
+  const label =
+    DASHBOARD_PERIODS.find((p) => p.value === period)?.label ?? DASHBOARD_PERIODS[0].label;
+  return t('{period} · {currency}', { period: t(label), currency });
+}
+
+/**
+ * The overview's own cards, between the key figures and today's cards: the
+ * period they cover, receivables next to payables, cash flow, income and
+ * expense, top expenses, bank and card accounts and the watchlist.
+ */
+function Overview({
+  range,
+  cards,
+  hiddenCount,
+  figures,
+  aging,
+  accounts,
+  watchlist,
+  onPeriod,
+  onWatchlist,
+  onHide,
+  onShowAll,
+}: {
+  range: DashboardRange;
+  cards: OverviewCard[];
+  hiddenCount: number;
+  figures: LedgerFigures | null;
+  aging: { receivables: AgingSummary; payables: AgingSummary } | null;
+  accounts: Account[];
+  watchlist: ID[];
+  onPeriod: (period: DashboardPeriod) => void;
+  onWatchlist: (watchlist: ID[]) => void;
+  onHide: (card: OverviewCard) => void;
+  onShowAll: () => void;
+}) {
+  const fmt = useFormat();
+  const company = useCompany();
+  if (!figures || !aging) return <Spinner className="order-3 py-12" label={t('Loading…')} />;
+  const shows = (card: OverviewCard) => cards.includes(card);
+  const hide = (card: OverviewCard) => () => onHide(card);
+  const period = periodDescription(range.period, company.currency);
+  const pair = (count: number) =>
+    cn('order-3 grid grid-cols-1 gap-5 lg:gap-6', count > 1 && 'md:grid-cols-2');
+
+  const sides = [shows('receivables'), shows('payables')].filter(Boolean).length;
+  const money = [shows('income-expense'), shows('top-expenses')].filter(Boolean).length;
+  const accountsRow = [shows('bank-accounts'), shows('watchlist')].filter(Boolean).length;
+
+  return (
+    <>
+      <div className="order-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label htmlFor="dashboard-period" className="text-sm font-medium text-slate-700">
+            {t('Period')}
+          </label>
+          <Select
+            id="dashboard-period"
+            value={range.period}
+            onChange={(e) => {
+              if (isDashboardPeriod(e.target.value)) onPeriod(e.target.value);
+            }}
+            className="w-auto"
+          >
+            {DASHBOARD_PERIODS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {t(p.label)}
+              </option>
+            ))}
+          </Select>
+          <span className="text-sm text-slate-500">
+            {t('{from} – {to}', { from: fmt.date(range.from), to: fmt.date(range.to) })}
+          </span>
+        </div>
+        {hiddenCount > 0 ? (
+          <Button variant="ghost" size="sm" onClick={onShowAll}>
+            <Eye /> {tp(hiddenCount, 'Show {count} hidden card', 'Show {count} hidden cards')}
+          </Button>
+        ) : null}
+      </div>
+
+      {sides ? (
+        <div className={pair(sides)}>
+          {shows('receivables') ? (
+            <ReceivablesSummaryCard summary={aging.receivables} onHide={hide('receivables')} />
+          ) : null}
+          {shows('payables') ? (
+            <PayablesCard summary={aging.payables} onHide={hide('payables')} />
+          ) : null}
+        </div>
+      ) : null}
+
+      {figures.cashFlow ? (
+        <div className="order-3">
+          <CashFlowCard
+            flow={figures.cashFlow}
+            range={range}
+            description={period}
+            onHide={hide('cash-flow')}
+          />
+        </div>
+      ) : null}
+
+      {money ? (
+        <div
+          className={cn('order-3 grid grid-cols-1 gap-5 lg:gap-6', money > 1 && 'xl:grid-cols-3')}
+        >
+          {figures.incomeExpense ? (
+            <div className={cn('min-w-0', money > 1 && 'xl:col-span-2')}>
+              <IncomeExpenseCard
+                figures={figures.incomeExpense}
+                description={t('{period} · accrual basis', { period })}
+                onHide={hide('income-expense')}
+              />
+            </div>
+          ) : null}
+          {figures.topExpenses ? (
+            <TopExpensesCard
+              figures={figures.topExpenses}
+              range={range}
+              description={period}
+              onHide={hide('top-expenses')}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {accountsRow ? (
+        <div className={pair(accountsRow)}>
+          {figures.bankAccounts ? (
+            <BankAccountsCard figures={figures.bankAccounts} onHide={hide('bank-accounts')} />
+          ) : null}
+          {figures.watchlist ? (
+            <WatchlistCard
+              rows={figures.watchlist}
+              accounts={accounts}
+              watched={watchlist}
+              range={range}
+              description={t('Balances on {date}; income and expenses for the period', {
+                date: fmt.date(range.to),
+              })}
+              onChange={onWatchlist}
+              onHide={hide('watchlist')}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -575,15 +725,57 @@ function bankLink(lines: { accountId: string }[] | undefined): string {
 /* Pieces                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function CardLink({ to, children }: { to: string; children: ReactNode }) {
+function InvoicedCard({
+  chart,
+  description,
+  empty,
+}: {
+  chart: DashboardFigures['chart'];
+  description: string;
+  empty: string;
+}) {
+  const fmt = useFormat();
   return (
-    <Link
-      to={to}
-      className="text-primary-700 -my-1 flex items-center gap-1 rounded-md py-1 text-sm font-medium hover:underline pointer-coarse:min-h-11"
-    >
-      {children}
-      <ArrowRight className="size-3.5" aria-hidden />
-    </Link>
+    <Card className="min-w-0 xl:col-span-2">
+      <CardHeader title={t('Invoiced vs collected')} description={description} />
+      <CardBody>
+        {chart.empty ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <span className="bg-primary-50 text-primary-600 flex size-11 items-center justify-center rounded-full">
+              <FileText className="size-5" aria-hidden />
+            </span>
+            <p className="mt-3 text-sm font-medium text-slate-900">{empty}</p>
+            <p className="mt-1 max-w-xs text-sm text-slate-500">
+              {t('Your monthly sales and the payments you collect will show here.')}
+            </p>
+            <ButtonLink to="/invoices/new" size="sm" variant="outline" className="mt-4">
+              <Plus /> {t('New invoice')}
+            </ButtonLink>
+          </div>
+        ) : (
+          <ColumnChart
+            title={t('Invoiced and collected per month')}
+            labels={chart.labels}
+            series={[
+              {
+                key: 'invoiced',
+                label: t('Invoiced'),
+                color: SERIES_1,
+                values: chart.invoiced,
+              },
+              {
+                key: 'collected',
+                label: t('Collected'),
+                color: SERIES_2,
+                values: chart.collected,
+              },
+            ]}
+            formatValue={(v) => fmt.money(v)}
+            formatTick={(v) => compactNumber(v, fmt.locale)}
+          />
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

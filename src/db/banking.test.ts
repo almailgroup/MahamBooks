@@ -12,7 +12,10 @@ import {
   saveTransfer,
 } from './banking';
 import { bookEntries, reconciliation, suggestMatches, matchKey } from '@/lib/banking/match';
-import type { StatementLine } from '@/lib/banking/statement';
+import { csvStatement, type StatementLine } from '@/lib/banking/statement';
+import { rememberedFormat, statementLayout, statementTable } from '@/lib/banking/layout';
+import { readStatementFile } from '@/apps/books/features/banking/read-statement';
+import { statementCsv, statementWorkbook } from '@/test/bank-statements';
 import type { Company } from './types';
 
 beforeEach(async () => {
@@ -72,6 +75,59 @@ describe('importing statements', () => {
       added: 1,
       duplicates: 3,
     });
+  });
+});
+
+describe('importing statements read from Excel and CSV', () => {
+  it('adds nothing new for the same statement in the other format', async () => {
+    const { company, bank } = await setup();
+    const csv = await readStatementFile(new TextEncoder().encode(statementCsv()));
+    const xlsx = await readStatementFile(statementWorkbook());
+    const read = (file: typeof csv) => {
+      if (file.kind === 'ofx') throw new Error('Not a table');
+      const layout = statementLayout(file.rows, undefined);
+      return csvStatement(statementTable(file.rows, layout.start), layout.mapping).lines;
+    };
+    expect(await importStatement(company.id, bank.id, read(csv), 'oct.csv')).toMatchObject({
+      added: 3,
+    });
+    expect(await importStatement(company.id, bank.id, read(xlsx), 'oct.xlsx')).toMatchObject({
+      added: 0,
+      duplicates: 3,
+    });
+    const stored = await db.bankTransactions.where('accountId').equals(bank.id).toArray();
+    expect(stored.map((t) => t.valueDate).sort()).toEqual([
+      '2026-10-01',
+      '2026-10-03',
+      '2026-10-05',
+    ]);
+  });
+
+  it('remembers the layout on the account, and forgets it when asked', async () => {
+    const { company, bank } = await setup();
+    const rows = (
+      (await readStatementFile(new TextEncoder().encode(statementCsv()))) as { rows: string[][] }
+    ).rows;
+    const layout = statementLayout(rows, undefined);
+    const format = rememberedFormat('csv', rows, layout.start, layout.mapping);
+    const lines = csvStatement(statementTable(rows, layout.start), layout.mapping).lines;
+    await importStatement(company.id, bank.id, lines, 'oct.csv', format);
+    const remembered = await db.accounts.get(bank.id);
+    expect(remembered?.statementFormat).toEqual(format);
+    // Read again with it: the same layout, found by its column names.
+    expect(statementLayout(rows, remembered?.statementFormat)).toMatchObject({
+      start: 5,
+      remembered: true,
+    });
+    // Left as it is when nothing is said (OFX), forgotten with null.
+    await importStatement(company.id, bank.id, lines, 'oct.ofx');
+    expect((await db.accounts.get(bank.id))?.statementFormat).toEqual(format);
+    await importStatement(company.id, bank.id, lines, 'oct.csv', null);
+    expect(await db.accounts.get(bank.id)).not.toHaveProperty('statementFormat');
+    // Lines without a value date store none.
+    await importStatement(company.id, bank.id, [line('2026-11-01', -1, 'Fee')], 'nov.csv');
+    const fee = await db.bankTransactions.filter((t) => t.description === 'Fee').first();
+    expect(fee).not.toHaveProperty('valueDate');
   });
 });
 

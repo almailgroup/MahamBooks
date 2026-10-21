@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { toCsv } from '@/lib/csv';
-import { countSheetRows, parseCountSheet, type CountItem } from './count';
+import { readXlsx } from '@/lib/xlsx';
+import { buildWorkbook } from '@/test/workbook';
+import { countSheetRows, parseCountSheet, readCountRows, type CountItem } from './count';
 
 const ITEMS: CountItem[] = [
   { id: 'paper', sku: 'PAP-A4', name: 'Printer paper A4', nameAr: 'ورق طابعة A4', unit: 'box' },
@@ -37,5 +39,27 @@ describe('stock count sheets', () => {
     expect(result.counted.get('toner')).toBe(2.5);
     expect(result.unmatched).toEqual(['Stapler']);
     expect(result.invalid).toEqual(['Toner cartridge']);
+  });
+
+  it('reads an Excel count sheet like the CSV one', async () => {
+    const header = ['SKU', 'Item', 'Unit', 'On record', 'Counted'];
+    const workbook = buildWorkbook([
+      header,
+      ['PAP-A4', 'Printer paper A4', 'box', 20, 18],
+      [null, 'Toner cartridge', 'pcs', 3, 2.5],
+    ]);
+    const fromExcel = readCountRows(await readXlsx(workbook), ITEMS);
+    const fromCsv = parseCountSheet(
+      toCsv(header, [
+        ['PAP-A4', 'Printer paper A4', 'box', 20, 18],
+        ['', 'Toner cartridge', 'pcs', 3, 2.5],
+      ]),
+      ITEMS,
+    );
+    expect([...fromExcel.counted]).toEqual([
+      ['paper', 18],
+      ['toner', 2.5],
+    ]);
+    expect(fromExcel).toEqual(fromCsv);
   });
 });

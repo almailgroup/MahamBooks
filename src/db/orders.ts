@@ -128,6 +128,7 @@ export async function createFromOrder(
     ...wording,
     privateNotes: source.privateNotes,
     templateId: target === 'bill' ? null : source.templateId,
+    ...(target !== 'bill' && source.accentColor ? { accentColor: source.accentColor } : {}),
     deliveryDate: target === 'delivery_note' ? fresh.deliveryDate : (source.deliveryDate ?? null),
     deliveryPlace: source.deliveryPlace ?? '',
     sourceId: source.id,

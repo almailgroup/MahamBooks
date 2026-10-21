@@ -13,6 +13,7 @@ const ClientList = lazy(() => import('./pages/clients/list'));
 const ClientDetail = lazy(() => import('./pages/clients/detail'));
 const ClientFormPage = lazy(() => import('./pages/clients/form'));
 const Products = lazy(() => import('./pages/products'));
+const ItemLabelsPrint = lazy(() => import('./pages/products/item-labels-print'));
 const Inventory = lazy(() => import('./pages/inventory/index'));
 const StockEntryForm = lazy(() => import('./pages/inventory/entry-form'));
 const StockEntryView = lazy(() => import('./pages/inventory/entry-view'));
@@ -26,6 +27,9 @@ const PaymentForm = lazy(() => import('./pages/payments/form'));
 const PaymentVoucher = lazy(() => import('./pages/payments/voucher'));
 const ChequeRegister = lazy(() => import('./pages/cheques/index'));
 const ChequeRegisterPrint = lazy(() => import('./pages/cheques/print'));
+const ChequePrint = lazy(() => import('./pages/cheques/cheque-print'));
+const ChequeLayouts = lazy(() => import('./pages/cheques/layouts'));
+const ChequeTestPrint = lazy(() => import('./pages/cheques/test-print'));
 const RecurringList = lazy(() => import('./pages/recurring/list'));
 const RecurringEditor = lazy(() => import('./pages/recurring/editor'));
 const Reports = lazy(() => import('./pages/reports/index'));
@@ -75,7 +79,10 @@ const paymentRoutes = (path: string, direction: 'in' | 'out') => [
   { path: `${path}/:id/edit`, element: <PaymentForm key={direction} direction={direction} /> },
 ];
 
-/** Print views: vouchers, the cheque register and the count sheet, without the navigation. */
+/**
+ * Print views: vouchers, cheques and the cheque register, the count sheet and
+ * item labels, without the navigation.
+ */
 export const booksPrintRoutes: RouteObject[] = [
   {
     path: 'payments/:id/voucher',
@@ -94,6 +101,14 @@ export const booksPrintRoutes: RouteObject[] = [
     ),
   },
   {
+    path: 'expenses/:id/voucher',
+    element: (
+      <Bare>
+        <PaymentVoucher key="expense" direction="out" source="expense" />
+      </Bare>
+    ),
+  },
+  {
     path: 'cheques/print',
     element: (
       <Bare>
@@ -102,10 +117,34 @@ export const booksPrintRoutes: RouteObject[] = [
     ),
   },
   {
+    path: 'payments-made/:id/cheque',
+    element: (
+      <Bare>
+        <ChequePrint />
+      </Bare>
+    ),
+  },
+  {
+    path: 'cheques/test-print',
+    element: (
+      <Bare>
+        <ChequeTestPrint />
+      </Bare>
+    ),
+  },
+  {
     path: 'inventory/count/print',
     element: (
       <Bare>
         <StockCountPrint />
+      </Bare>
+    ),
+  },
+  {
+    path: 'products/labels',
+    element: (
+      <Bare>
+        <ItemLabelsPrint />
       </Bare>
     ),
   },
@@ -125,6 +164,7 @@ export const booksRoutes: RouteObject[] = [
   { path: 'recurring/:id', element: <RecurringEditor /> },
   ...paymentRoutes('payments', 'in'),
   { path: 'cheques', element: <ChequeRegister /> },
+  { path: 'cheques/layouts', element: <ChequeLayouts /> },
   ...contactRoutes('clients', 'customer'),
   ...contactRoutes('vendors', 'vendor'),
   ...purchaseRoutes('bills', 'bill'),

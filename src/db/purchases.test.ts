@@ -138,6 +138,27 @@ describe('expenses', () => {
     expect(saved).toMatchObject({ number: 'EXP-2026-0001', amount: 12.35, currency: 'USD' });
   });
 
+  it('keep who was paid when it is not a vendor, trimmed', async () => {
+    const { company } = await setup();
+    const category = (await db.accounts
+      .where('[companyId+role]')
+      .equals([company.id, 'expense'])
+      .first())!;
+    const named = await saveExpense(
+      createExpense(company.id, { accountId: category.id, amount: 5, payee: '  Corner shop ' }),
+    );
+    expect((await db.expenses.get(named.id))?.payee).toBe('Corner shop');
+    // Nothing typed: no name kept, as before.
+    const blank = await saveExpense(
+      createExpense(company.id, { accountId: category.id, amount: 5, payee: '  ' }),
+    );
+    expect(await db.expenses.get(blank.id)).not.toHaveProperty('payee');
+    const plain = await saveExpense(
+      createExpense(company.id, { accountId: category.id, amount: 5 }),
+    );
+    expect(await db.expenses.get(plain.id)).not.toHaveProperty('payee');
+  });
+
   it('respect the lock date and delete their receipts with them', async () => {
     const { company, vendor } = await setup();
     const category = (await db.accounts

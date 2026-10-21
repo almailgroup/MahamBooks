@@ -4,6 +4,8 @@ import type {
   DocumentLanguage,
   InvoiceDocument,
   ISODate,
+  LogoPosition,
+  LogoSize,
   PageSize,
 } from '@/db/types';
 import { computeDocument, documentTaxExempt } from '@/lib/document-calc';
@@ -19,10 +21,13 @@ import { normalizeHex } from '@/lib/color';
 import { bankFromIban, formatHijri, formatIban, isValidIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { amountInWords } from '@/lib/words';
 import { isISODate, today } from '@/lib/dates';
+import { unitText } from '@/lib/units';
+import { issuedStatus } from '@/lib/status';
 import type { FontId } from './fonts';
 import { documentLabels, isRtlLanguage, type LabelKey, type Labels } from './labels';
 import { ltr } from './bidi';
 import { hasPrices, isPrintable, type PrintableDocumentType } from '@/lib/document-types';
+import { documentAccent, documentLayout } from './template-resolve';
 
 export interface RenderItem {
   kind: 'item' | 'heading';
@@ -46,6 +51,10 @@ export interface RenderItem {
   discount: string;
   tax: string;
   amount: string;
+  /** The SKU the line was picked with, when the layout prints SKUs; empty otherwise. */
+  sku: string;
+  /** Picture of the item (a data URL) when the layout prints them; null otherwise. */
+  image: string | null;
 }
 
 export type TotalKind =
@@ -140,6 +149,10 @@ export interface RenderModel {
     condition: boolean;
     unit: boolean;
     serial: boolean;
+    /** The layout prints SKUs and a line has one. */
+    sku: boolean;
+    /** The layout prints item pictures and an item has one. */
+    images: boolean;
   };
   totals: RenderTotal[];
   grandTotal: RenderTotal;
@@ -150,11 +163,27 @@ export interface RenderModel {
   stamp: { text: string; secondary?: string; tone: 'green' | 'red' | 'gray' } | null;
   /** Signature, company stamp and "received by" boxes; null when not printed. */
   signatures: { signature: string | null; stamp: string | null; receivedBy: boolean } | null;
+  /** "Draft" across every page of a draft, which prints without the signature and stamp. */
+  watermark: 'draft' | null;
   /**
    * Delivery notes: both sides sign and stamp, with who received the goods
    * (blank lines to fill in by hand until it is marked as delivered).
    */
   receipt: { name: string; civilId: string; date: string } | null;
+  /** Quotes: the introduction printed above the items; empty when there is none. */
+  intro: string;
+  /** Quotes and proformas: a box for the customer to accept, sign and date. */
+  acceptance: boolean;
+  /** The logo's size and place from the document's design (see DocumentLayout). */
+  logo: {
+    /** Against the size the template gives it (1 is as designed). */
+    scale: number;
+    /**
+     * The logo on a line of its own above the header. `company.logo` is
+     * then null, so the template prints its header as it does without one.
+     */
+    row: { src: string; align: LogoPosition } | null;
+  };
   notes: string;
   terms: string;
   footer: string;
@@ -193,7 +222,12 @@ export type RenderableDocument = Pick<
   | 'receiverName'
   | 'receiverCivilId'
 > &
-  Partial<Pick<InvoiceDocument, 'retentionPercent' | 'retentionReleases' | 'posting'>> & {
+  Partial<
+    Pick<
+      InvoiceDocument,
+      'retentionPercent' | 'retentionReleases' | 'posting' | 'accentColor' | 'intro'
+    >
+  > & {
     totals: Pick<InvoiceDocument['totals'], 'paid'>;
   };
 
@@ -243,13 +277,18 @@ const RECIPIENT_KEYS: Record<PrintableDocumentType, LabelKey> = {
 };
 
 export interface BuildModelOptions {
-  /** Data URL of the payment-link QR code, if any. */
+  /** Data URL of the QR code of `qrLinkOf`, if any. */
   qrCode?: string | null;
   /** Accent override (template gallery previews). */
   accent?: string;
   /** Language override (template gallery previews). */
   language?: DocumentLanguage;
+  /** Pictures of the items by product id, printed when the layout shows them. */
+  itemImages?: Record<string, string>;
 }
+
+/** How much larger or smaller each logo size prints than the template's own. */
+export const LOGO_SCALE: Record<LogoSize, number> = { small: 0.75, medium: 1, large: 1.35 };
 
 /** Numbers and dates in Arabic documents: Arabic words, Western digits. */
 export const ARABIC_LOCALE = 'ar-KW-u-nu-latn';
@@ -279,6 +318,16 @@ export function showsAmountInWords(company: Company): boolean {
   );
 }
 
+/**
+ * A draft prints as one: without the signature and stamp images, under a
+ * "Draft" watermark, so it can't pass for the issued document. A delivery
+ * note has no draft of that kind: it is printed to go with the goods, and
+ * marked as delivered once signed for.
+ */
+export function printsAsDraft(doc: Pick<InvoiceDocument, 'type' | 'status'>): boolean {
+  return doc.status === 'draft' && issuedStatus(doc.type) !== null;
+}
+
 /** The payment link printed on a document: its own (unless expired), else the company's. */
 export function paymentLinkOf(
   doc: Pick<InvoiceDocument, 'paymentLink'>,
@@ -288,6 +337,19 @@ export function paymentLinkOf(
   const own = doc.paymentLink;
   if (own && clean(own.url) && !(own.expiresAt && own.expiresAt < on)) return clean(own.url);
   return clean(company.payment.paymentLink);
+}
+
+/**
+ * What the QR code on a document opens. The pay page (`qrContent:
+ * 'pay_page'`) belongs to online payments; until a document has one, the QR
+ * opens the payment link, as it does by default.
+ */
+export function qrLinkOf(
+  doc: Pick<InvoiceDocument, 'paymentLink'>,
+  company: Company,
+  on: ISODate = today(),
+): string {
+  return paymentLinkOf(doc, company, on);
 }
 
 const IBAN_PATTERN = /\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){10,30}\b/g;
@@ -464,13 +526,18 @@ export function buildRenderModel(
     meta.push(row('deliveryPlace', clean(doc.deliveryPlace)));
   }
 
+  const layout = documentLayout(doc, company);
+  const images = layout.showItemImages ? (options.itemImages ?? {}) : {};
   const items: RenderItem[] = doc.items.map((item, i) => {
     const named = names(clean(item.name), item.nameAr, language);
     const description = clean(item.description);
+    const sku = layout.showSku ? clean(item.sku) : '';
     const base = {
       title: named.name || description,
       titleSecondary: named.nameSecondary,
       detail: named.name ? description : '',
+      sku: sku && rtl ? ltr(sku) : sku,
+      image: (item.productId && images[item.productId]) || null,
     };
     if (item.kind === 'heading') {
       return {
@@ -486,11 +553,15 @@ export function buildRenderModel(
         discount: '',
         tax: '',
         amount: '',
+        sku: '',
+        image: null,
       };
     }
     const line = result.lines[i];
     const quantity = formatQuantity(item.quantity, locale);
-    const unit = clean(item.unit);
+    // A unit picked from the list prints its Arabic name on Arabic and
+    // bilingual documents; one typed by hand prints as it was typed.
+    const unit = clean(unitText(company, item, language));
     const taxes = exempt ? [] : item.taxes.filter((t) => clean(t.name) !== '');
     const serial = clean(item.serialNumber);
     const condition = item.condition === 'new' || item.condition === 'used' ? item.condition : null;
@@ -644,13 +715,15 @@ export function buildRenderModel(
     else if (doc.status === 'cancelled') stamp = of('cancelledStamp', 'gray');
   }
 
-  const signatureImage = company.branding.signature ?? null;
-  const stampImage = company.branding.stamp ?? null;
+  const draft = printsAsDraft(doc);
+  const signatureImage = draft ? null : (company.branding.signature ?? null);
+  const stampImage = draft ? null : (company.branding.stamp ?? null);
   // Kuwaiti invoices carry the supplier's signature and stamp, so Arabic and
-  // bilingual documents always leave room for them.
+  // bilingual documents always leave room for them (a draft too, empty).
   // Delivery notes are always signed and stamped by both sides.
+  const signed = Boolean(company.branding.signature || company.branding.stamp);
   const signatures =
-    rtl || signatureImage || stampImage || note
+    rtl || signed || note
       ? {
           signature: signatureImage,
           stamp: stampImage,
@@ -668,6 +741,7 @@ export function buildRenderModel(
 
   const pay = company.payment;
   const link = paymentLinkOf(doc, company);
+  const qrLink = qrLinkOf(doc, company);
   // Payment instructions only make sense while something is still owed (or, on
   // a proforma, asked for in advance).
   const showPayment = (type === 'invoice' || type === 'proforma') && !isVoid && result.balance > 0;
@@ -684,7 +758,7 @@ export function buildRenderModel(
           details,
           instructions: clean(pay.instructions),
           link,
-          qr: pay.showQrCode && link ? (options.qrCode ?? null) : null,
+          qr: pay.showQrCode && qrLink ? (options.qrCode ?? null) : null,
         }
       : null;
 
@@ -723,6 +797,11 @@ export function buildRenderModel(
     company.nameAr,
     language,
   );
+  const position = layout.logoPosition;
+  const logoRow =
+    company.branding.logo && (position === 'start' || position === 'center' || position === 'end')
+      ? { src: company.branding.logo, align: position }
+      : null;
   const titleKey = TITLE_KEYS[type];
   const title = labels[titleKey];
   const titleSecondary = en(titleKey);
@@ -745,7 +824,7 @@ export function buildRenderModel(
     recipientLabelSecondary: en(RECIPIENT_KEYS[type]),
     company: {
       ...companyNames,
-      logo: company.branding.logo,
+      logo: logoRow ? null : company.branding.logo,
       addressLines: formatAddressLines(company.address, addressLocale),
       email: clean(company.email),
       phone: unbreakable(company.phone),
@@ -775,6 +854,8 @@ export function buildRenderModel(
       condition: items.some((i) => i.condition !== ''),
       unit: !priced && items.some((i) => i.unit !== ''),
       serial: !priced && items.some((i) => i.serialNo !== ''),
+      sku: items.some((i) => i.sku !== ''),
+      images: items.some((i) => i.image !== null),
     },
     totals,
     grandTotal,
@@ -783,14 +864,21 @@ export function buildRenderModel(
     amountInWords: [...new Set(words)],
     stamp,
     signatures,
+    watermark: draft ? 'draft' : null,
     receipt,
+    intro: clean(doc.intro),
+    acceptance: Boolean(layout.showAcceptance) && (type === 'quote' || type === 'proforma'),
+    logo: {
+      scale: LOGO_SCALE[layout.logoSize ?? 'medium'] ?? 1,
+      row: logoRow,
+    },
     notes: clean(doc.notes),
     terms: clean(doc.terms),
     footer: clean(doc.footer),
     payment: priced ? payment : null,
     currency,
     pageSize: company.defaults.pageSize,
-    accent: normalizeHex(options.accent ?? company.branding.accentColor),
+    accent: normalizeHex(options.accent ?? documentAccent(doc, company)),
     fontId: (company.branding.fontId as FontId | null) ?? null,
     documentTitle: `${titleSecondary || title} ${clean(doc.number)}`.trim(),
   };

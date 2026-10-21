@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CreditCard, Download, Plus, Search } from 'lucide-react';
+import { CreditCard, Download, Paperclip, Plus, Search } from 'lucide-react';
 import { db } from '@/db/db';
 import { paymentMethodLabel, unappliedAmount } from '@/db/payments';
 import type { Client, PaymentMethod } from '@/db/types';
@@ -42,6 +42,11 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
   const docs = useLiveQuery(
     () => db.documents.where('companyId').equals(company.id).toArray(),
     [company.id],
+  );
+  // Only the owners: the files themselves can be large.
+  const withFiles = useLiveQuery(
+    async () => new Set((await db.attachments.orderBy('ownerId').uniqueKeys()).map(String)),
+    [],
   );
 
   const rows = useMemo(() => {
@@ -260,6 +265,13 @@ export default function PaymentListPage({ direction = 'in' }: { direction?: Paym
                             : 'tabular px-5 py-3 text-end font-medium text-slate-900'
                         }
                       >
+                        {withFiles?.has(r.payment.id) ? (
+                          <Paperclip
+                            className="me-1.5 inline size-3.5 text-slate-400"
+                            role="img"
+                            aria-label={t('Files attached')}
+                          />
+                        ) : null}
                         {fmt.money(r.payment.amount, r.payment.currency)}
                         {r.payment.voided ? (
                           <PaymentStatusBadge payment={r.payment} className="ms-2 md:hidden" />

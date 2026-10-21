@@ -1,7 +1,16 @@
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CheckCircle2, ChevronDown, Eye, EyeOff, FileText, Save, Send } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  FileText,
+  RotateCcw,
+  Save,
+  Send,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import {
@@ -27,6 +36,8 @@ import { currencySymbol, formatUnitPrice } from '@/lib/format';
 import { hasPrices, postsToLedger } from '@/lib/document-types';
 import { cn } from '@/lib/cn';
 import { TEMPLATE_META } from '@/pdf/template-meta';
+import { documentAccent, documentTemplate, typeTemplate } from '@/pdf/template-resolve';
+import { normalizeHex } from '@/lib/color';
 import { t, tp } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
@@ -174,7 +185,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
     () => (doc ? { ...doc, number: doc.number || numberHint } : null),
     [doc, numberHint],
   );
-  const templateId = doc?.templateId ?? company.branding.templateId;
+  const templateId = doc ? documentTemplate(doc, company) : company.branding.templateId;
   const pdf = useLivePdf(
     showPreview || mobilePreview ? previewDoc : null,
     company,
@@ -287,7 +298,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const preview = <PdfPreview blob={pdf.blob} loading={pdf.loading} error={pdf.error} />;
 
   const defaultTemplate = t(
-    TEMPLATE_META.find((m) => m.id === company.branding.templateId)?.name ?? TEMPLATE_META[0].name,
+    TEMPLATE_META.find((m) => m.id === typeTemplate(company, type))?.name ?? TEMPLATE_META[0].name,
   );
   const templateSelect = (
     <Select
@@ -303,6 +314,48 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         </option>
       ))}
     </Select>
+  );
+  // This document's colour, over its type's (Templates) or the company's.
+  const accent = documentAccent(doc, company);
+  const accentPicker = (
+    <div className="flex shrink-0 items-center">
+      <label
+        className="relative size-8 cursor-pointer overflow-hidden rounded-lg border border-slate-300 shadow-xs"
+        style={{ backgroundColor: accent }}
+        title={t('Colour of this document')}
+      >
+        <input
+          type="color"
+          value={normalizeHex(accent)}
+          onChange={(e) => update({ accentColor: e.target.value })}
+          className="absolute inset-0 cursor-pointer opacity-0"
+          aria-label={t('Colour of this document')}
+        />
+      </label>
+      {doc.accentColor ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            setDoc((d) => {
+              if (!d) return d;
+              const { accentColor: _own, ...rest } = d;
+              return rest;
+            })
+          }
+          aria-label={t('Use the default colour')}
+          title={t('Use the default colour')}
+        >
+          <RotateCcw />
+        </Button>
+      ) : null}
+    </div>
+  );
+  const design = (
+    <div className="flex items-center gap-2">
+      <div className="w-48">{templateSelect}</div>
+      {accentPicker}
+    </div>
   );
 
   // Sales orders are confirmed rather than sent; delivery notes are marked as
@@ -625,6 +678,18 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
             <Card className={cn(!showPreview && 'lg:order-1')}>
               <CardHeader title={t('Notes & terms')} />
               <CardBody className="space-y-4">
+                {type === 'quote' ? (
+                  <Field label={t('Introduction')} hint={t('Printed above the items.')}>
+                    {(fid) => (
+                      <Textarea
+                        id={fid}
+                        value={doc.intro ?? ''}
+                        onChange={(e) => update({ intro: e.target.value })}
+                        rows={2}
+                      />
+                    )}
+                  </Field>
+                ) : null}
                 <Field label={t('Notes')} hint={t('Shown on the document.')}>
                   {(fid) => (
                     <Textarea
@@ -700,7 +765,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
             <div className="sticky top-20 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-medium text-slate-700">{t('Live preview')}</p>
-                <div className="w-48">{templateSelect}</div>
+                {design}
               </div>
               <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-xl bg-slate-200/60 p-4">
                 {preview}
@@ -713,7 +778,7 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
       <Dialog open={mobilePreview} onOpenChange={setMobilePreview}>
         <DialogContent title={t('Preview')} size="xl">
           <div className="space-y-3 bg-slate-100 p-4">
-            <div className="max-w-56">{templateSelect}</div>
+            {design}
             {preview}
           </div>
         </DialogContent>

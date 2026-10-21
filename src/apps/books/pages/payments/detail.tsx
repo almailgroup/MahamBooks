@@ -11,6 +11,7 @@ import {
   paymentMethodLabel,
   unappliedAmount,
 } from '@/db/payments';
+import { addAttachment, removeAttachment } from '@/db/purchases';
 import type { ChequeDetails, InvoiceDocument, Payment } from '@/db/types';
 import { DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/company';
 import { fillTemplate, mailtoLink } from '@/lib/email';
@@ -22,6 +23,7 @@ import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/overlay';
+import { useReadOnly } from '@/components/ui/read-only';
 import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import {
   PAYMENT_COPY,
@@ -34,6 +36,9 @@ import {
   ChequeActionsMenu,
   type ChequeAction,
 } from '@/apps/books/features/cheques/action-dialogs';
+import { AttachmentList } from '@/features/purchases/attachments';
+import { hasVoucher } from '@/pdf/voucher/model';
+import { printableAfterLeaf, printRefusal } from '@/lib/cheque-print';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -71,6 +76,8 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
     return (await db.payments.bulkGet(ids)).filter((p): p is Payment => Boolean(p));
   }, [payment?.cheque?.replacedById, payment?.cheque?.replacesId]);
   const accounts = useAccounts();
+  const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
+  const { readOnly } = useReadOnly();
 
   if (payment === undefined || client === undefined || !docs)
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -108,11 +115,28 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const replacedBy = linked?.find((p) => p.id === cheque?.replacedById);
   const replaces = linked?.find((p) => p.id === cheque?.replacesId);
   const language = currentLanguage();
+  // Cheques issued print onto the bank's leaf once printing is on; a printed
+  // one can be printed again after its leaf is marked spoiled.
+  const refusal = printRefusal(payment);
+  const printable =
+    Boolean(company.chequePrinting) &&
+    direction === 'out' &&
+    !readOnly &&
+    printableAfterLeaf(refusal);
 
   const remove = async () => {
+    const description = [
+      t(copy.deleteDescription),
+      files?.length ? t('Its attached files are deleted with it.') : '',
+      cheque?.printedAt
+        ? t('Cheque {number} was printed: destroy the printed leaf.', { number: cheque.number })
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     const ok = await confirm({
       title: t('Delete payment {number}?', { number: payment.number }),
-      description: t(copy.deleteDescription),
+      description,
       confirmLabel: t('Delete'),
       danger: true,
     });
@@ -188,7 +212,12 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
               label={t('Cheque')}
             />
           ) : null}
-          {payment.method !== 'credit_note' ? (
+          {printable ? (
+            <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/cheque`}>
+              <Printer /> {t('Print cheque')}
+            </ButtonLink>
+          ) : null}
+          {hasVoucher(payment) ? (
             <ButtonLink variant="outline" to={`${copy.base}/${payment.id}/voucher`}>
               <Printer /> {t('Print voucher')}
             </ButtonLink>
@@ -326,6 +355,26 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
                     value={<span dir="ltr">{cheque.drawerCivilId}</span>}
                   />
                 ) : null}
+                {cheque.printedAt ? (
+                  <Row
+                    label={t('Printed on')}
+                    value={
+                      cheque.crossed
+                        ? `${fmt.dateTime(cheque.printedAt)} · ${t('A/C payee only')}`
+                        : fmt.dateTime(cheque.printedAt)
+                    }
+                  />
+                ) : null}
+                {cheque.spoiledLeaves?.length ? (
+                  <Row
+                    label={t('Spoiled leaves')}
+                    value={
+                      <span dir="ltr">
+                        {cheque.spoiledLeaves.map((leaf) => leaf.number).join(', ')}
+                      </span>
+                    }
+                  />
+                ) : null}
                 {cheque.depositedOn ? (
                   <Row label={t('Deposited on')} value={fmt.date(cheque.depositedOn)} />
                 ) : null}
@@ -427,6 +476,23 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
           </Card>
         </div>
       </div>
+
+      <Card>
+        <CardHeader
+          title={t('Attachments')}
+          description={t('A scan of the cheque or the transfer receipt.')}
+        />
+        <CardBody>
+          <AttachmentList
+            files={files ?? []}
+            onAdd={(file) => addAttachment(company.id, payment.id, file)}
+            onRemove={(fileId) => removeAttachment(fileId)}
+            emptyText={t('No files attached.')}
+            camera
+            readOnly={readOnly}
+          />
+        </CardBody>
+      </Card>
 
       {cheque ? (
         <ChequeActionDialog

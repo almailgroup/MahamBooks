@@ -2,6 +2,7 @@ import { db } from './db';
 import { logActivity } from './activity';
 import { assertUnlocked } from './accounting';
 import { defaultNumbering, nowStamp } from './defaults';
+import { withoutImage } from './product-images';
 import type { Attachment, Client, Expense, ID } from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId } from '@/lib/ids';
@@ -68,6 +69,10 @@ export async function saveExpense(input: Expense): Promise<Expense> {
       number: input.number.trim(),
       updatedAt: nowStamp(),
     };
+    // Who was paid, when it isn't a vendor: kept only when there is a name.
+    const payee = input.payee?.trim();
+    if (payee) expense.payee = payee;
+    else delete expense.payee;
     if (!expense.number) {
       const rule = company.numbering.expense ?? defaultNumbering().expense;
       const taken = new Set(
@@ -139,11 +144,12 @@ export async function addAttachment(
 }
 
 /**
- * Removes a file. An employee's photo is one of their files: removing it
- * removes the photo too, so the employee never points at a file that's gone.
+ * Removes a file. An employee's photo and an item's pictures are their
+ * files: removing one removes the photo or picture too, so the employee or
+ * item never points at a file that's gone.
  */
 export async function removeAttachment(id: ID): Promise<void> {
-  await db.transaction('rw', [db.attachments, db.employees], async () => {
+  await db.transaction('rw', [db.attachments, db.employees, db.products], async () => {
     const attachment = await db.attachments.get(id);
     await db.attachments.delete(id);
     if (!attachment) return;
@@ -151,5 +157,7 @@ export async function removeAttachment(id: ID): Promise<void> {
     if (employee?.photoId === id) {
       await db.employees.put({ ...employee, photoId: null, updatedAt: nowStamp() });
     }
+    const product = await db.products.get(attachment.ownerId);
+    if (product?.imageIds?.includes(id)) await db.products.put(withoutImage(product, id));
   });
 }

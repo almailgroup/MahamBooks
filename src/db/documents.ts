@@ -161,6 +161,8 @@ export async function draftDocument(
     taxes: d.documentTaxes && priced ? taxes : [],
     notes: wording.notes,
     terms: wording.terms,
+    // Quotes start with the company's introduction, when it has one.
+    ...(type === 'quote' && d.quoteIntro?.trim() ? { intro: d.quoteIntro } : {}),
     // Bills are the vendor's documents: nothing of ours is printed on them.
     footer: type === 'bill' || type === 'vendor_credit' ? '' : d.footer,
     pricesIncludeTax: isPurchaseType(type) ? false : d.pricesIncludeTax,
@@ -523,9 +525,9 @@ async function assertAssetLinesKept(
  * Takes the credit notes (vendor credits) applied to a document that leaves
  * the books off it, or, for a credit, its own applications: the credit is
  * free to use again and the invoice (bill) is owed again. Returns the other
- * documents to recalculate. An application that posted an exchange
- * difference keeps its entry in a locked period, so it can't be taken off
- * there.
+ * documents to recalculate. An application taken off entirely is deleted
+ * with its files. An application that posted an exchange difference keeps
+ * its entry in a locked period, so it can't be taken off there.
  */
 async function takeOffCredits(doc: InvoiceDocument, company: Company): Promise<ID[]> {
   const credit = doc.type === 'credit' || doc.type === 'vendor_credit';
@@ -549,6 +551,7 @@ async function takeOffCredits(doc: InvoiceDocument, company: Company): Promise<I
     const rest = credit ? [] : application.allocations.filter((a) => a.documentId !== doc.id);
     if (rest.length === 0) {
       await db.payments.delete(application.id);
+      await db.attachments.where('ownerId').equals(application.id).delete();
       await logActivity(
         company.id,
         'payment',
@@ -693,6 +696,7 @@ export async function setDocumentStatus(
       db.accounts,
       db.products,
       db.assets,
+      db.attachments,
     ]),
     async () => {
       const doc = await db.documents.get(id);
@@ -856,6 +860,9 @@ export async function duplicateDocument(
     footer: source.footer,
     privateNotes: source.privateNotes,
     templateId: source.templateId,
+    ...(source.accentColor ? { accentColor: source.accentColor } : {}),
+    // A copy of a quote keeps its introduction; another type of document has none.
+    ...(type === source.type ? { intro: source.intro } : {}),
     // Credit notes don't print where the goods went.
     deliveryPlace:
       type === 'credit' || type === 'vendor_credit' ? '' : (source.deliveryPlace ?? ''),

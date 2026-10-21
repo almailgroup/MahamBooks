@@ -86,7 +86,6 @@ export default {
   'Select all shown': 'تحديد كل المعروضين',
   'Select {name}': 'تحديد {name}',
   'Clear selection': 'إلغاء التحديد',
-  '{count} selected': 'المحدد: {count}',
   'For the {count} employees selected.': {
     one: 'للموظف المحدد.',
     two: 'للموظفين المحددين.',

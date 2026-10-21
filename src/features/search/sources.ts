@@ -70,6 +70,8 @@ const SUB_PAGES: { label: string; to: string; keywords?: string; app?: AppId }[]
   { label: msg('Company profile'), to: '/settings/company', keywords: 'logo stamp address' },
   { label: msg('Payment details'), to: '/settings/payments', keywords: 'bank iban' },
   { label: msg('Numbering'), to: '/settings/numbering' },
+  { label: msg('Items and units'), to: '/settings/items', keywords: 'sku codes units' },
+  { label: msg('Cheque layouts'), to: '/cheques/layouts', keywords: 'print cheque burgan kfh' },
   { label: msg('Email templates'), to: '/settings/emails' },
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },
@@ -271,7 +273,8 @@ export async function recordEntries(
         amount: fmt.money(p.unitPrice),
         to: '/products',
         names: [p.name, ar(p)],
-        numbers: [p.sku],
+        // A scanner types the SKU (the label's QR code) or the barcode.
+        numbers: [p.sku, p.barcode],
         boost: p.archived ? -5 : 1,
       }),
     );

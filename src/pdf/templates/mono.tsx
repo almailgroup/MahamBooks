@@ -6,6 +6,7 @@ import {
   Label,
   Lines,
   Logo,
+  LogoRow,
   PageFooter,
   RunningHeader,
   Stamp,
@@ -24,6 +25,13 @@ import type { TemplateDefinition, TemplateProps } from './types';
 
 const NIGHT = '#0b1220';
 const GRID = '#e2e8f0';
+/** The white card the logo sits on in the dark header. */
+const LOGO_CHIP: Style = {
+  backgroundColor: '#ffffff',
+  borderRadius: 4,
+  paddingVertical: 6,
+  paddingHorizontal: 10,
+};
 
 function Mono({ model, theme }: TemplateProps) {
   const c = model.company;
@@ -40,7 +48,7 @@ function Mono({ model, theme }: TemplateProps) {
   const cell: Style = { flex: 1, padding: 10, borderRightWidth: 0.75, borderRightColor: GRID };
 
   return (
-    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: 0 }}>
+    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: 0 }} logoRow={false}>
       <View
         style={{
           backgroundColor: NIGHT,
@@ -48,94 +56,91 @@ function Mono({ model, theme }: TemplateProps) {
           paddingHorizontal: 40,
           paddingTop: 34,
           paddingBottom: 22,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
           marginBottom: 0,
         }}
       >
-        <View style={{ width: '55%' }}>
-          {c.logo ? (
-            <View
-              style={{
-                alignSelf: 'flex-start',
-                backgroundColor: '#ffffff',
-                borderRadius: 4,
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                marginBottom: 10,
-              }}
-            >
-              <Logo src={c.logo} width={130} height={36} />
-            </View>
-          ) : null}
-          <Text
-            style={{
-              fontFamily: mono,
-              fontSize: c.logo ? 9 : 14,
-              fontWeight: 600,
-              color: '#ffffff',
-            }}
-          >
-            {c.name}
-          </Text>
-          {c.nameSecondary ? (
+        <LogoRow model={model} chip={LOGO_CHIP} />
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'flex-end',
+          }}
+        >
+          <View style={{ width: '55%' }}>
+            {c.logo ? (
+              <View style={sx({ alignSelf: 'flex-start', marginBottom: 10 }, LOGO_CHIP)}>
+                <Logo src={c.logo} width={130} height={36} />
+              </View>
+            ) : null}
             <Text
               style={{
                 fontFamily: mono,
-                fontSize: c.logo ? 7.5 : 9,
-                color: '#cbd5e1',
-                marginTop: 1,
+                fontSize: c.logo ? 9 : 14,
+                fontWeight: 600,
+                color: '#ffffff',
               }}
             >
-              {c.nameSecondary}
+              {c.name}
             </Text>
-          ) : null}
-          <Text
-            style={{
-              fontFamily: mono,
-              fontSize: 7,
-              color: '#94a3b8',
-              marginTop: 3,
-              lineHeight: 1.5,
-            }}
-          >
-            {[joinAddress(model, c.addressLines), companyContactLines(model, false).join(' · ')]
-              .filter(Boolean)
-              .join('\n')}
-          </Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text
-            style={{
-              fontFamily: mono,
-              fontSize: 22,
-              fontWeight: 600,
-              color: theme.accentBright,
-              textTransform: 'uppercase',
-              letterSpacing: 1,
-            }}
-          >
-            {model.title}
-          </Text>
-          {model.titleSecondary ? (
+            {c.nameSecondary ? (
+              <Text
+                style={{
+                  fontFamily: mono,
+                  fontSize: c.logo ? 7.5 : 9,
+                  color: '#cbd5e1',
+                  marginTop: 1,
+                }}
+              >
+                {c.nameSecondary}
+              </Text>
+            ) : null}
             <Text
               style={{
                 fontFamily: mono,
-                fontSize: 9,
+                fontSize: 7,
                 color: '#94a3b8',
-                textTransform: 'uppercase',
-                letterSpacing: 1.5,
+                marginTop: 3,
+                lineHeight: 1.5,
               }}
             >
-              {model.titleSecondary}
+              {[joinAddress(model, c.addressLines), companyContactLines(model, false).join(' · ')]
+                .filter(Boolean)
+                .join('\n')}
             </Text>
-          ) : null}
-          {model.number ? (
-            <Text style={{ fontFamily: mono, fontSize: 10, color: '#ffffff', marginTop: 3 }}>
-              {model.number}
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text
+              style={{
+                fontFamily: mono,
+                fontSize: 22,
+                fontWeight: 600,
+                color: theme.accentBright,
+                textTransform: 'uppercase',
+                letterSpacing: 1,
+              }}
+            >
+              {model.title}
             </Text>
-          ) : null}
+            {model.titleSecondary ? (
+              <Text
+                style={{
+                  fontFamily: mono,
+                  fontSize: 9,
+                  color: '#94a3b8',
+                  textTransform: 'uppercase',
+                  letterSpacing: 1.5,
+                }}
+              >
+                {model.titleSecondary}
+              </Text>
+            ) : null}
+            {model.number ? (
+              <Text style={{ fontFamily: mono, fontSize: 10, color: '#ffffff', marginTop: 3 }}>
+                {model.number}
+              </Text>
+            ) : null}
+          </View>
         </View>
       </View>
       <View
@@ -239,7 +244,11 @@ function Mono({ model, theme }: TemplateProps) {
       </View>
 
       {/* Placed before the table so it always lands on the first page. */}
-      <Stamp model={model} theme={theme} style={{ top: isRtl(model) ? 134 : 150, right: 60 }} />
+      <Stamp
+        model={model}
+        theme={theme}
+        style={{ top: (isRtl(model) ? 134 : 150) + (model.logo.row ? 12 : 0), right: 60 }}
+      />
 
       <ItemsTable
         model={model}

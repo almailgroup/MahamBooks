@@ -101,6 +101,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['registerExtras', msg('Contracts, customers and vehicles')],
   ['documentPurposes', msg('Purposes of documents')],
   ['fileFinder', msg('Find files and papers')],
+  ['items', msg('Items and units')],
 ];
 
 /** The settings fields of the company record belong to, each once (English keys). */

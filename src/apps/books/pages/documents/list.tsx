@@ -8,6 +8,7 @@ import {
   FileMinus,
   FileText,
   PackageCheck,
+  Palette,
   Plus,
   Receipt,
   ReceiptText,
@@ -292,6 +293,11 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
         description={t(labels.description)}
         actions={
           <>
+            {type === 'quote' ? (
+              <ButtonLink to="/templates?type=quote" variant="outline">
+                <Palette /> {t('Quote design')}
+              </ButtonLink>
+            ) : null}
             {rows.length > 0 ? (
               <Button variant="outline" onClick={exportCsv}>
                 <Download /> {t('Export CSV')}

@@ -250,6 +250,70 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
       'description arabic',
       'الوصف بالعربيه',
     ]),
+    // Stock: nothing posts unless the quantity column is matched (see STOCK_COLUMNS).
+    col('type', msg('Item type'), ['item type', 'product type', 'نوع الصنف', 'نوع المنتج'], false, [
+      'type',
+      'kind',
+      'النوع',
+    ]),
+    col('cost', msg('Cost price'), [
+      'cost price',
+      'unit cost',
+      'cost',
+      'purchase price',
+      'purchase cost',
+      'buying price',
+      'average cost',
+      'سعر التكلفه',
+      'التكلفه',
+      'سعر الشراء',
+    ]),
+    col(
+      'quantity',
+      msg('Quantity'),
+      [
+        'quantity',
+        'opening stock',
+        'opening quantity',
+        'stock on hand',
+        'quantity on hand',
+        'qty on hand',
+        'الكميه',
+        'الكميه المتوفره',
+        'المخزون الافتتاحي',
+        'الكميه الافتتاحيه',
+      ],
+      false,
+      // "Stock value" and "قيمة المخزون" are not quantities.
+      ['qty', 'stock', 'المخزون'],
+    ),
+    col('warehouse', msg('Warehouse'), [
+      'warehouse',
+      'warehouse name',
+      'store',
+      'location',
+      'المستودع',
+      'المخزن',
+      'اسم المستودع',
+    ]),
+    col('reorderLevel', msg('Reorder level'), [
+      'reorder level',
+      'reorder point',
+      'minimum stock',
+      'min stock',
+      'حد اعاده الطلب',
+      'الحد الادني',
+    ]),
+    col('barcode', msg('Barcode'), [
+      'barcode',
+      'bar code',
+      'ean',
+      'upc',
+      'gtin',
+      'الباركود',
+      'باركود',
+      'الرمز الشريطي',
+    ]),
   ],
   opening: [
     col('code', msg('Account code'), [
@@ -633,6 +697,12 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
   ],
 };
 
+/**
+ * Product columns that bring stock into the books: matched only for owners,
+ * admins and accountants, who may post opening stock.
+ */
+export const STOCK_COLUMNS = ['quantity', 'warehouse'];
+
 /** Fields an employee's name can come from: one of them must be in the file. */
 const EMPLOYEE_NAME_FIELDS = ['name', 'firstName', 'middleName', 'lastName', 'nameAr'];
 
@@ -824,6 +894,7 @@ export const TEMPLATE_ROWS: Record<ImportKind, Record<string, string>[]> = {
       price: '85.000',
       description: 'Four visits a month',
       descriptionAr: 'أربع زيارات في الشهر',
+      type: 'service',
     },
     {
       name: 'A4 paper box',
@@ -833,6 +904,21 @@ export const TEMPLATE_ROWS: Record<ImportKind, Record<string, string>[]> = {
       price: '4.750',
       description: '5 reams of 500 sheets',
       descriptionAr: '5 رزم في كل رزمة 500 ورقة',
+      type: 'stock',
+      cost: '3.250',
+      quantity: '40',
+      warehouse: 'Main store',
+      reorderLevel: '10',
+      barcode: '2000000000015',
+    },
+    {
+      name: 'Delivery bags',
+      nameAr: 'أكياس التوصيل',
+      sku: 'BAG-01',
+      unit: 'pcs',
+      price: '0.100',
+      type: 'non-stock',
+      cost: '0.040',
     },
   ],
   opening: [

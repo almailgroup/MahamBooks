@@ -33,6 +33,7 @@ import {
   type PaymentAccountKey,
 } from '@/lib/payment-methods';
 import { isValidPaymentLink } from '@/lib/whatsapp';
+import { printedFaceChanged, spoilPrintedLeaf } from '@/lib/cheque-print';
 import { msg, t } from '@/i18n';
 
 export { PAYMENT_METHODS } from '@/lib/payment-methods';
@@ -153,6 +154,26 @@ function lifecycleOf(cheque: ChequeDetails): Partial<ChequeDetails> {
   return out;
 }
 
+/** The record of a cheque's prints; set by the cheque print page (db/cheque-print.ts), never by the form. */
+const CHEQUE_PRINT = [
+  'printedAt',
+  'printCount',
+  'printedLayoutId',
+  'printedText',
+  'crossed',
+  'spoiledLeaves',
+] as const satisfies readonly (keyof ChequeDetails)[];
+
+/** `details` with the print record of the stored cheque, whatever the form sent. */
+function withPrintRecord(details: ChequeDetails, stored: ChequeDetails | null | undefined) {
+  const out: Partial<ChequeDetails> = details;
+  for (const key of CHEQUE_PRINT) {
+    if (stored?.[key] !== undefined) (out as Record<string, unknown>)[key] = stored[key];
+    else delete out[key];
+  }
+  return details;
+}
+
 /** Same bank, whether written as a code ("NBOK") or a name. */
 function sameBank(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -229,6 +250,23 @@ async function checkCheque(
       }),
     );
   }
+  // A leaf recorded as spoiled was destroyed: its number is not used again.
+  if (out && number !== existing?.cheque?.number.trim()) {
+    const isSpoiled = (p: Payment) =>
+      p.direction === 'out' &&
+      Boolean(p.cheque && sameBank(p.cheque.bank, cheque.bank)) &&
+      (p.cheque?.spoiledLeaves ?? []).some((leaf) => leaf.number.trim() === number);
+    const spoiled =
+      (existing && isSpoiled(existing)) ||
+      (await db.payments
+        .where('companyId')
+        .equals(input.companyId)
+        .filter((p) => p.id !== input.id && isSpoiled(p))
+        .first());
+    if (spoiled) {
+      throw new PaymentError(t('Leaf {number} is spoiled: enter the next one.', { number }));
+    }
+  }
   const details: ChequeDetails = {
     ...cheque,
     number,
@@ -240,7 +278,7 @@ async function checkCheque(
   };
   if (civilId) details.drawerCivilId = civilId;
   else delete details.drawerCivilId;
-  return details;
+  return withPrintRecord(details, existing?.cheque);
 }
 
 /** Why nothing (more) can be applied to a document that is not in the books. */
@@ -370,7 +408,20 @@ export async function savePayment(input: Payment): Promise<Payment> {
         if (credit && !isPosted(credit) && !kept) throw notIssuedError(credit);
       }
 
-      const cheque = await checkCheque(input, existing);
+      let cheque = await checkCheque(input, existing);
+      // A printed cheque that changes no longer matches its leaf: the leaf is
+      // spoiled (destroyed) and the cheque is printed again.
+      const printed = existing?.cheque?.printedAt ? existing.cheque : null;
+      const spoiled =
+        printed !== null && printedFaceChanged(existing!, { ...input, amount, cheque });
+      if (printed && spoiled) {
+        if (!cheque) {
+          throw new PaymentError(
+            t('This cheque was printed. Cancel the cheque instead of paying another way.'),
+          );
+        }
+        cheque = spoilPrintedLeaf(printed, cheque, t('Changed after printing'), nowStamp());
+      }
       const accounts = await db.accounts.where('companyId').equals(company.id).toArray();
       const template = accountingSettings(company).template;
       const chequeAccounts = new Set(
@@ -494,15 +545,37 @@ export async function savePayment(input: Payment): Promise<Payment> {
             : { text: msg('Payment {number} of {amount} recorded'), vars, money },
         { clientId: payment.clientId || null, documentId: payment.documentIds[0] ?? null },
       );
+      if (printed && spoiled) {
+        await logActivity(
+          company.id,
+          'payment',
+          payment.id,
+          'cheque_leaf_spoiled',
+          {
+            text: msg('Cheque leaf {number} spoiled: payment {payment} changed after printing'),
+            vars: { number: printed.number, payment: payment.number },
+          },
+          { clientId: payment.clientId || null, documentId: payment.documentIds[0] ?? null },
+        );
+      }
       return payment;
     },
   );
 }
 
+/** Deletes a payment with its files (scans of the cheque or the transfer). */
 export async function deletePayment(id: ID): Promise<void> {
   await db.transaction(
     'rw',
-    [db.payments, db.documents, db.clients, db.companies, db.activities, db.securityCheques],
+    [
+      db.payments,
+      db.documents,
+      db.clients,
+      db.companies,
+      db.activities,
+      db.securityCheques,
+      db.attachments,
+    ],
     async () => {
       const payment = await db.payments.get(id);
       if (!payment) return;
@@ -517,6 +590,7 @@ export async function deletePayment(id: ID): Promise<void> {
       const company = await db.companies.get(payment.companyId);
       if (company) assertUnlocked(company, payment.date);
       await db.payments.delete(id);
+      await db.attachments.where('ownerId').equals(id).delete();
       // A replacement cheque that is deleted no longer replaces anything.
       const replaced = payment.cheque?.replacesId
         ? await db.payments.get(payment.cheque.replacesId)

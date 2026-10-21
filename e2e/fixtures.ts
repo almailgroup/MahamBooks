@@ -68,3 +68,35 @@ export async function chooseOption(
     .first()
     .click();
 }
+
+/** The words of a PDF, without spaces. */
+export async function pdfText(content: Buffer): Promise<string> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task = pdfjs.getDocument({ data: new Uint8Array(content), verbosity: 0 });
+  const doc = await task.promise;
+  const words: string[] = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const text = await (await doc.getPage(n)).getTextContent();
+    for (const item of text.items) if ('str' in item) words.push(item.str);
+  }
+  await task.destroy();
+  return words.join('').replace(/\s+/g, '');
+}
+
+/** Signs on the signature pad with the mouse. */
+export async function drawSignature(page: Page) {
+  await page.getByRole('button', { name: 'Draw signature' }).click();
+  const pad = page.getByRole('dialog', { name: 'Draw your signature' });
+  const canvas = pad.getByLabel('Signature pad');
+  // Once the dialog has opened: a press outside it would close it.
+  await canvas.hover();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + box.height * 0.7);
+  await page.mouse.down();
+  for (let step = 1; step <= 12; step++) {
+    await page.mouse.move(box.x + 40 + step * 25, box.y + box.height * (step % 2 ? 0.3 : 0.7));
+  }
+  await page.mouse.up();
+  await pad.getByRole('button', { name: 'Use this signature' }).click();
+  await expect(pad).toBeHidden();
+}

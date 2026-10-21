@@ -6,11 +6,15 @@ import { composeBankDetails } from '@/features/company/bank';
 import {
   buildRenderModel,
   documentLanguage,
+  LOGO_SCALE,
   paymentLinkOf,
   printedBankDetails,
+  printsAsDraft,
+  qrLinkOf,
   showsAmountInWords,
 } from './model';
 import { sampleClient, sampleCompany, sampleDocument, sampleGoods } from './sample';
+import { ltr } from './bidi';
 
 const company = sampleCompany();
 const client = sampleClient(company.id);
@@ -354,6 +358,87 @@ describe('buildRenderModel: Kuwaiti invoice details', () => {
   });
 });
 
+describe('buildRenderModel: drafts, signature and QR code', () => {
+  const SIGNATURE = 'data:image/png;base64,U0lH';
+  const STAMP = 'data:image/png;base64,U1RN';
+  const QR = 'data:image/png;base64,UVI=';
+  const signed: Company = {
+    ...company,
+    branding: { ...company.branding, signature: SIGNATURE, stamp: STAMP },
+  };
+
+  it('prints a draft without the signature and stamp, under a Draft watermark', () => {
+    const m = model('ar-en', { status: 'draft' }, { company: signed });
+    expect(m.signatures).toEqual({ signature: null, stamp: null, receivedBy: true });
+    expect(m.watermark).toBe('draft');
+    expect([m.labels.draftStamp, m.secondary?.draftStamp]).toEqual(['مسودة', 'Draft']);
+    // An English draft keeps the empty boxes, where the copy sent is signed.
+    expect(model('en', { status: 'draft' }, { company: signed }).signatures).toEqual({
+      signature: null,
+      stamp: null,
+      receivedBy: true,
+    });
+    for (const type of ['quote', 'credit', 'proforma', 'sales_order', 'purchase_order'] as const) {
+      expect(model('en', { type, status: 'draft' }, { company: signed }).watermark).toBe('draft');
+    }
+  });
+
+  it('keeps the signature and stamp on what is sent, and on delivery notes', () => {
+    for (const status of ['sent', 'partial', 'paid', 'void'] as const) {
+      const m = model('en', { status }, { company: signed });
+      expect(m.watermark).toBeNull();
+      expect(m.signatures).toMatchObject({ signature: SIGNATURE, stamp: STAMP });
+    }
+    // A delivery note goes out with the goods before it is marked as delivered.
+    const note = model('en', { type: 'delivery_note', status: 'draft' }, { company: signed });
+    expect(note.watermark).toBeNull();
+    expect(note.signatures).toMatchObject({ signature: SIGNATURE, stamp: STAMP });
+    expect(printsAsDraft({ type: 'delivery_note', status: 'draft' })).toBe(false);
+    expect(printsAsDraft({ type: 'invoice', status: 'draft' })).toBe(true);
+  });
+
+  it('prints no QR code when it is off, whatever it is set to open', () => {
+    for (const qrContent of [undefined, 'payment_link', 'pay_page'] as const) {
+      const c: Company = {
+        ...company,
+        payment: { ...company.payment, showQrCode: false },
+        defaults: { ...company.defaults, qrContent },
+      };
+      const m = buildRenderModel(sampleDocument(c, client), c, client, { qrCode: QR });
+      expect(m.payment?.link).toBe('https://pay.example.com/alwaha');
+      expect(m.payment?.qr).toBeNull();
+    }
+  });
+
+  it('opens the payment link from the QR code until there is a pay page', () => {
+    for (const qrContent of [undefined, 'payment_link', 'pay_page'] as const) {
+      const c: Company = { ...company, defaults: { ...company.defaults, qrContent } };
+      expect(qrLinkOf({ paymentLink: null }, c)).toBe('https://pay.example.com/alwaha');
+      const m = buildRenderModel(sampleDocument(c, client), c, client, { qrCode: QR });
+      expect(m.payment?.qr).toBe(QR);
+    }
+  });
+
+  it('prints as before when the new settings are missing', () => {
+    // As an older version saves the company: no ink, no original, no QR choice.
+    const before = model('ar-en', {}, { company: signed });
+    expect(before.signatures).toEqual({ signature: SIGNATURE, stamp: STAMP, receivedBy: true });
+    expect(before.watermark).toBeNull();
+    const chosen: Company = {
+      ...signed,
+      branding: { ...signed.branding, signatureInk: 'original', signatureOriginal: null },
+      defaults: { ...signed.defaults, qrContent: 'payment_link' },
+    };
+    expect(model('ar-en', {}, { company: chosen })).toEqual(before);
+    // The blue signature is the one printed, so older versions print it too.
+    const blue: Company = {
+      ...signed,
+      branding: { ...signed.branding, signatureInk: 'blue', signatureOriginal: STAMP },
+    };
+    expect(model('en', {}, { company: blue }).signatures?.signature).toBe(SIGNATURE);
+  });
+});
+
 describe('buildRenderModel: orders and delivery notes', () => {
   it('titles each document in Arabic with English beside it', () => {
     const titles = (['proforma', 'sales_order', 'purchase_order', 'delivery_note'] as const).map(
@@ -422,5 +507,142 @@ describe('buildRenderModel: orders and delivery notes', () => {
 
   it('refuses to print bills, which are the vendor’s documents', () => {
     expect(() => model('en', { type: 'bill' })).toThrow();
+  });
+});
+
+describe('buildRenderModel: designs per type and layout', () => {
+  const LOGO = 'data:image/png;base64,TE9HTw==';
+  const PICTURE = 'data:image/png;base64,UElD';
+  const withLogo: Company = { ...company, branding: { ...company.branding, logo: LOGO } };
+  const designed = (branding: Partial<Company['branding']>): Company => ({
+    ...withLogo,
+    branding: { ...withLogo.branding, ...branding },
+  });
+  const quote = (
+    c: Company,
+    overrides: Partial<InvoiceDocument> = {},
+    language: DocumentLanguage = 'en',
+  ) =>
+    buildRenderModel(sampleDocument(c, client, 'quote', overrides, language), c, client, {
+      language,
+    });
+
+  it('prints as before when no design or layout is set', () => {
+    for (const type of ['invoice', 'quote', 'credit'] as const) {
+      const m = buildRenderModel(sampleDocument(withLogo, client, type), withLogo, client);
+      expect(m.accent).toBe(withLogo.branding.accentColor);
+      expect(m.company.logo).toBe(LOGO);
+      expect(m.logo).toEqual({ scale: 1, row: null });
+      expect(m.intro).toBe('');
+      expect(m.acceptance).toBe(false);
+      expect(m.columns).toMatchObject({ sku: false, images: false });
+      expect(m.items.every((i) => i.sku === '' && i.image === null)).toBe(true);
+    }
+    // Settings at their defaults change nothing either.
+    const defaults = designed({ layout: { logoSize: 'medium', showSku: false }, byType: {} });
+    expect(quote(defaults)).toEqual(quote(withLogo));
+  });
+
+  it('takes the colour from the document, then its type, then the company', () => {
+    const c = designed({ byType: { quote: { accentColor: '#0f766e' } } });
+    expect(quote(c).accent).toBe('#0f766e');
+    expect(quote(c, { accentColor: '#be123c' }).accent).toBe('#be123c');
+    expect(buildRenderModel(sampleDocument(c, client), c, client).accent).toBe(
+      c.branding.accentColor,
+    );
+    // The template gallery's colour still wins.
+    const preview = buildRenderModel(sampleDocument(c, client, 'quote'), c, client, {
+      accent: '#111111',
+    });
+    expect(preview.accent).toBe('#111111');
+  });
+
+  it('prints an SKU column for lines that have one, when the layout shows it', () => {
+    const c = designed({ byType: { quote: { layout: { showSku: true } } } });
+    const m = quote(c);
+    expect(m.columns.sku).toBe(true);
+    expect(m.items.map((i) => i.sku)).toEqual(['DSG-101', 'PRT-A4-100', 'ENV-C5', 'DLV-KW', '']);
+    // Only quotes have it here; invoices keep the company's layout.
+    expect(buildRenderModel(sampleDocument(c, client), c, client).columns.sku).toBe(false);
+    // Lines without SKUs (documents from before) print no column.
+    const old = sampleDocument(c, client, 'quote');
+    const bare = { ...old, items: old.items.map(({ sku: _sku, ...line }) => line) };
+    expect(buildRenderModel(bare, c, client).columns.sku).toBe(false);
+    // In Arabic documents the code reads left to right.
+    expect(quote(c, {}, 'ar').items[0].sku).toBe(ltr('DSG-101'));
+  });
+
+  it('moves the logo to a line of its own and scales it', () => {
+    const c = designed({ layout: { logoPosition: 'center', logoSize: 'large' } });
+    const m = buildRenderModel(sampleDocument(c, client), c, client);
+    expect(m.logo).toEqual({ scale: LOGO_SCALE.large, row: { src: LOGO, align: 'center' } });
+    // The template then prints its header as it does without a logo.
+    expect(m.company.logo).toBeNull();
+    const small = designed({ layout: { logoSize: 'small' } });
+    expect(buildRenderModel(sampleDocument(small, client), small, client).logo).toEqual({
+      scale: LOGO_SCALE.small,
+      row: null,
+    });
+    // No logo, no line for it.
+    const none = designed({ logo: null, layout: { logoPosition: 'end' } });
+    expect(buildRenderModel(sampleDocument(none, client), none, client).logo.row).toBeNull();
+  });
+
+  it('prints the acceptance box on quotes and proformas only', () => {
+    const c = designed({ layout: { showAcceptance: true } });
+    expect(quote(c).acceptance).toBe(true);
+    const of = (type: 'invoice' | 'credit' | 'proforma') =>
+      buildRenderModel(sampleDocument(c, client, 'invoice', { type }), c, client).acceptance;
+    expect([of('proforma'), of('invoice'), of('credit')]).toEqual([true, false, false]);
+    expect(quote(c, {}, 'ar-en').labels.customerAcceptance).toBe('قبول العميل');
+  });
+
+  it('prints the quote’s introduction', () => {
+    expect(quote(withLogo, { intro: '  Further to your request:  ' }).intro).toBe(
+      'Further to your request:',
+    );
+  });
+
+  it('prints item pictures only when the layout shows them', () => {
+    const doc = sampleDocument(withLogo, client, 'quote');
+    const items = doc.items.map((item, i) => (i === 0 ? { ...item, productId: 'p1' } : item));
+    const pictures = { p1: PICTURE };
+    const off = buildRenderModel({ ...doc, items }, withLogo, client, { itemImages: pictures });
+    expect(off.columns.images).toBe(false);
+    const c = designed({ layout: { showItemImages: true } });
+    const on = buildRenderModel({ ...doc, items }, c, client, { itemImages: pictures });
+    expect(on.columns.images).toBe(true);
+    expect(on.items.map((i) => i.image)).toEqual([PICTURE, null, null, null, null]);
+  });
+});
+
+describe('buildRenderModel: units from the list', () => {
+  const goods = () => {
+    const [printer, folder, rolls] = sampleGoods();
+    return [
+      { ...printer, unit: 'pcs', unitId: 'pcs' },
+      // Typed by hand: no id.
+      { ...folder, unit: 'pcs' },
+      { ...rolls, unit: 'roll', unitId: 'u-roll' },
+    ];
+  };
+  const own: Company = {
+    ...company,
+    items: { units: true, customUnits: [{ id: 'u-roll', name: 'roll', nameAr: 'لفة' }] },
+  };
+
+  it('print the Arabic name on Arabic and bilingual documents', () => {
+    for (const language of ['ar', 'ar-en'] as const) {
+      const m = model(language, { items: goods() }, { company: own });
+      expect(m.items.map((i) => i.unit)).toEqual(['قطعة', 'pcs', 'لفة']);
+    }
+  });
+
+  it('print the unit as stored in English, and as before without an id', () => {
+    const m = model('en', { items: goods() }, { company: own });
+    expect(m.items.map((i) => i.unit)).toEqual(['pcs', 'pcs', 'roll']);
+    // An id the company no longer has (or an older copy of it): the text.
+    const plain = model('ar', { items: goods() });
+    expect(plain.items.map((i) => i.unit)).toEqual(['قطعة', 'pcs', 'roll']);
   });
 });

@@ -15,6 +15,8 @@ const ENTITIES: { key: NumberedEntity; label: string }[] = [
   { key: 'delivery_note', label: msg('Delivery notes') },
   { key: 'payment', label: msg('Payments received') },
   { key: 'client', label: msg('Clients and vendors') },
+  // Given only when Settings → Items and units gives new items a code.
+  { key: 'product', label: msg('Item codes (SKU)') },
   { key: 'purchase_order', label: msg('Purchase orders') },
   { key: 'bill', label: msg('Bills') },
   { key: 'vendor_credit', label: msg('Vendor credits') },

@@ -61,6 +61,8 @@ describe('the apps of Maham One', () => {
   it('keep CRM around the Books pages it lists when CRM was open', () => {
     expect(appForPath('/clients/1', 'crm')).toBe('crm');
     expect(appForPath('/quotes', 'crm')).toBe('crm');
+    // The quote design, opened from CRM's Quotes.
+    expect(appForPath('/templates?type=quote', 'crm')).toBe('crm');
     expect(appForPath('/clients/1', 'books')).toBe('books');
     expect(appForPath('/clients/1', null)).toBe('books');
     // Not a page CRM lists.

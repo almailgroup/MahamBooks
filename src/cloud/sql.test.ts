@@ -1150,6 +1150,40 @@ describe('files', () => {
     expect(await readable(t2.viewer, `${c}/att-new`)).toBe(true);
   });
 
+  it('of a payment are uploaded by staff, and only seen by viewers', async () => {
+    const t2 = await team();
+    const c = t2.company;
+    await push(t2.staff, c, [
+      { tbl: 'payments', id: 'pay-1', data: rec(c, 'pay-1', { method: 'cheque', amount: 120 }) },
+    ]);
+    // A scan of the cheque: the file first, then its record (can_use_file).
+    expect(await upload(t2.staff, `${c}/att-pay`)).toEqual([{ name: `${c}/att-pay` }]);
+    await push(t2.staff, c, [
+      { tbl: 'attachments', id: 'att-pay', data: rec(c, 'att-pay', { ownerId: 'pay-1' }) },
+    ]);
+    for (const user of [t2.owner, t2.accountant, t2.staff, t2.viewer]) {
+      expect(await readable(user, `${c}/att-pay`)).toBe(true);
+      expect(await visibleIds(user, c)).toContain('att-pay');
+    }
+    expect(await readable(t2.outsider, `${c}/att-pay`)).toBe(false);
+    // Viewers can't add a scan, replace one or remove one.
+    await expect(upload(t2.viewer, `${c}/att-pay-2`)).rejects.toThrow(/row-level security/);
+    await expect(upload(t2.viewer, `${c}/att-pay`)).rejects.toThrow(/row-level security/);
+    expect(await remove(t2.viewer, `${c}/att-pay`)).toEqual([]);
+    await expect(
+      push(t2.viewer, c, [
+        { tbl: 'attachments', id: 'att-pay-2', data: rec(c, 'att-pay-2', { ownerId: 'pay-1' }) },
+      ]),
+    ).rejects.toThrow(/row-level security|almail:permission/);
+    // Staff delete the payment with its scan: the records, then the file.
+    await push(t2.staff, c, [
+      { tbl: 'payments', id: 'pay-1', deleted: true },
+      { tbl: 'attachments', id: 'att-pay', deleted: true },
+    ]);
+    expect(await remove(t2.staff, `${c}/att-pay`)).toEqual([`${c}/att-pay`]);
+    expect(await exists(`${c}/att-pay`)).toBe(false);
+  });
+
   it('can be removed after their record is deleted, private ones only by those who saw them', async () => {
     const t2 = await team();
     const c = t2.company;
@@ -1354,6 +1388,40 @@ describe('document numbers taken in the cloud (reserve_number)', () => {
     await expect(reserve(t.viewer, c, '2027-01-02')).rejects.toThrow(/almail:permission/);
     await expect(reserve(t.owner, c, 'tomorrow')).rejects.toThrow(/almail:invalid/);
   });
+
+  it('give item codes (product) once the company has their rule, staff’s too', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c) }]);
+    const codes = async (user: string, min = 1) =>
+      (await reserve(user, c, '2026-10-05', min, 'product')).map((r) => Number(r.counter));
+    // No rule yet (codes are off, or switched on by an older copy): given on the device.
+    expect(await codes(t.staff)).toEqual([]);
+    // Staff giving the first code add its rule: a counter, which staff may change.
+    const sku = { pattern: 'SKU-{counter}', next: 2, padding: 5, reset: 'never', period: '' };
+    const [{ data }] = await pull(t.staff, c).then((rows) =>
+      rows.filter((r) => r.tbl === 'companies'),
+    );
+    await push(t.staff, c, [
+      {
+        tbl: 'companies',
+        id: c,
+        data: { ...data, numbering: { ...(data.numbering as object), product: sku } },
+      },
+    ]);
+    expect((await companyRow(c)).data).toMatchObject({ numbering: { product: { next: 2 } } });
+    // From then on the cloud gives them, to anyone who may add items.
+    expect(await codes(t.staff)).toEqual([2]);
+    expect(await codes(t.owner)).toEqual([3]);
+    expect(await codes(t.accountant, 10)).toEqual([10]);
+    expect(await codes(t.staff)).toEqual([11]);
+    expect((await companyRow(c)).data).toMatchObject({
+      numbering: { product: { next: 12, period: '' }, invoice: { next: 5 } },
+    });
+    await expect(reserve(t.viewer, c, '2026-10-05', 1, 'product')).rejects.toThrow(
+      /almail:permission/,
+    );
+  });
 });
 
 describe('deleting a company, files first (begin_delete_company)', () => {
@@ -1428,6 +1496,83 @@ describe('files still stored (stored_files)', () => {
     await expect(
       h.rpc(t.outsider, 'stored_files', { p_company: c, p_names: [`${c}/att-emp`] }),
     ).rejects.toThrow(/almail:not_member/);
+  });
+});
+
+describe('cheque printing', () => {
+  const layout = (c: string, id: string, extra: Record<string, unknown> = {}) =>
+    rec(c, id, {
+      bank: 'BRGN',
+      name: 'Burgan Bank',
+      version: 2,
+      size: { width: 178, height: 82 },
+      offset: { x: 0, y: 0 },
+      fields: { date: { x: 128, y: 8, width: 44, height: 7 } },
+      dateStyle: 'boxes',
+      wordsLanguage: 'ar',
+      figures: { prefix: '', guard: '**' },
+      calibrated: false,
+      archived: false,
+      ...extra,
+    });
+
+  it('lets accountants save cheque layouts, and staff and viewers only read them', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.accountant, c, [
+      { tbl: 'chequeLayouts', id: 'lay-acc', data: layout(c, 'lay-acc') },
+    ]);
+    for (const user of [t.staff, t.viewer]) {
+      expect(await visibleIds(user, c)).toContain('lay-acc');
+      await expect(
+        push(user, c, [
+          { tbl: 'chequeLayouts', id: 'lay-acc', data: layout(c, 'lay-acc', { version: 3 }) },
+        ]),
+      ).rejects.toThrow(/row-level security|almail:permission/);
+      await expect(
+        push(user, c, [{ tbl: 'chequeLayouts', id: 'lay-new', data: layout(c, 'lay-new') }]),
+      ).rejects.toThrow(/row-level security|almail:permission/);
+    }
+  });
+
+  it('lets staff record a print on a cheque issued, but not switch printing on', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c) }]);
+    const cheque = {
+      number: '100046',
+      bank: 'BRGN',
+      date: '2026-11-15',
+      drawer: 'Example Supplies Co.',
+      status: 'held',
+      printedAt: '2026-10-21T08:00:00.000Z',
+      printCount: 2,
+      printedLayoutId: 'preset-BRGN',
+      printedText: {
+        date: '15/11/2026',
+        payee: 'Example Supplies Co.',
+        words: ['x'],
+        figures: '**5.000**',
+        layoutVersion: 1,
+      },
+      spoiledLeaves: [{ number: '100045', at: '2026-10-21T07:55:00.000Z', reason: 'Paper jam' }],
+    };
+    const rows = await push(t.staff, c, [
+      {
+        tbl: 'payments',
+        id: 'pay-printed',
+        data: rec(c, 'pay-printed', { direction: 'out', method: 'cheque', amount: 5, cheque }),
+      },
+    ]);
+    expect(rows).toHaveLength(1);
+    await expect(
+      push(t.staff, c, [
+        { tbl: 'companies', id: c, data: companyRecord(c, { chequePrinting: true }) },
+      ]),
+    ).rejects.toThrow(/almail:permission/);
+    await push(t.accountant, c, [
+      { tbl: 'companies', id: c, data: companyRecord(c, { chequePrinting: true }) },
+    ]);
   });
 });
 

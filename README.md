@@ -84,7 +84,20 @@ and the compliance calendar (Maham Compliance).
   clear, return (with the bank's charge) and replace. Returned cheques are
   booked on the day they come back, so closed periods never change. Security
   (guarantee) cheques are kept on record.
-- Receipt and payment vouchers in Arabic and English.
+- Cheques issued print straight onto Burgan Bank and KFH leaves (طباعة الشيك),
+  once switched on in Settings → Payment details: the date, the payee, the
+  amount in Arabic (or English) words over the leaf's two lines and in
+  figures, and, when asked, "يصرف للمستفيد الأول / A/C payee only". Cheques →
+  Cheque layouts (نماذج الشيكات) sets each field in millimetres with a preview
+  at real size; a test print with rulers and 0.5 mm nudges is kept per
+  printer, on the device. Every print is recorded on the cheque; a misprinted
+  or reprinted leaf is recorded as spoiled (ورقة تالفة) and the cheque moves
+  to the next leaf. The built-in layouts are not yet measured on real leaves:
+  make a test print first.
+- Receipt and payment vouchers (سند قبض / سند صرف) in Arabic and English, for
+  payments and expenses, printed or saved as PDFs. The stamp and the blue
+  signature, and your own signature lines, are set in Settings → Invoice
+  defaults → Receipt and payment vouchers.
 - A warning when a cash payment goes over the cash limit for the company's
   activity (for example vehicle, gold and real estate sales).
 
@@ -95,6 +108,17 @@ and the compliance calendar (Maham Compliance).
 - Stock items, warehouses and transfers, weighted average cost, landed costs
   (customs duty, freight, clearing), cost of sales, stock count sheets and a
   low-stock report that leads to purchase orders.
+- Units from a list with Arabic names (قطعة, علبة, كرتون…) plus the company's
+  own, printed in Arabic on Arabic documents, and item codes given
+  automatically (SKU-00001, set in Settings → Numbering), both switched on in
+  Settings → Items and units. Each SKU has a QR code that any scanner types
+  into item search; Products prints labels (A4 sheets of 24 or 50 × 25 mm
+  thermal labels, with a test page and an offset kept on the device), the
+  product list and a price list.
+- Item pictures (switched on in Settings → Items and units): up to five per
+  item, kept whole, with a main one shown in Products and the line picker;
+  they can be viewed full size, turned, replaced or removed, sync with the
+  item, and print beside each line when a design in Templates shows them.
 
 ### People and payroll
 
@@ -124,11 +148,25 @@ and the compliance calendar (Maham Compliance).
   between your own accounts.
 - Reports: receivables and payables aging, statements, customer exposure,
   retentions, sales, purchases, payments, stock and more, with CSV export.
+- An overview dashboard, once the owner or an admin picks it on the dashboard
+  or in Settings → Accounting → Books dashboard: receivables next to payables
+  (not due yet and overdue), cash flow month by month, income and expense,
+  top expenses linked to their ledgers, bank and card accounts, and a
+  watchlist of up to eight accounts, above the usual cards. Each person picks
+  the period (the last 12 months to begin with) and the cards they hide, on
+  their device. Staff and viewers don't see income, expenses or the
+  watchlist.
 
 ### Everything else
 
 - 10 PDF templates with your logo, brand colour, stamp and signature, and a
-  live preview while you type.
+  live preview while you type. The signature can be drawn on the screen and
+  printed in blue ink (Settings → Company profile → Branding). Drafts print
+  with a DRAFT watermark instead of the stamp and signature.
+- Quotes and credit notes can have a design of their own (Templates →
+  Quotes): template, colour, logo size and place, an SKU column and a box for
+  the customer to accept. Quotes can start with an introduction (Settings →
+  Invoice defaults), and any document can have its own colour.
 - Several companies in one app.
 - **Accounts and teams**: keep a company in the cloud, use it on every device
   and invite your accountant and staff by a link on WhatsApp or email, each
@@ -139,7 +177,12 @@ and the compliance calendar (Maham Compliance).
   when papers expire, deadlines and cheques come due, bills are to pay or
   invoices become overdue, and a summary every Sunday (Settings → Email
   alerts; setup in [`docs/email-alerts.md`](docs/email-alerts.md)).
-- Import contacts, items, opening balances and open invoices from CSV.
+- Import contacts, items, opening balances and open invoices from CSV or
+  Excel (Settings → Import data, or Import on Products & services). Items can
+  bring their type, cost, barcode, reorder level and stock: with a quantity
+  column and your confirmation, stock items get their opening stock per
+  warehouse against opening balance equity, and items with stock history are
+  counted instead. Stock count sheets can be filled in on Excel too.
 - Works offline and installs like an app on phones and computers.
 - 20 themes, 10 light and 10 dark, chosen per device in **Settings →
   Appearance** or from the header, or following the device's light and dark

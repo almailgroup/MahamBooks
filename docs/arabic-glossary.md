@@ -44,6 +44,7 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Payment received             | دفعة مستلمة (plural: المقبوضات) |
 | Payment made                 | دفعة مسددة (plural: المدفوعات)  |
 | Recurring invoice            | فاتورة متكررة                   |
+| Customer acceptance (quote)  | قبول العميل                     |
 | Customer / Client            | عميل (plural: العملاء)          |
 | Vendor / Supplier            | مورد (plural: الموردون)         |
 | Contact                      | جهة اتصال                       |
@@ -97,29 +98,35 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 
 ## Money and banking
 
-| English                    | Arabic                       |
-| -------------------------- | ---------------------------- |
-| Kuwaiti dinar              | دينار كويتي                  |
-| Fils                       | فلس                          |
-| Cash                       | نقداً / النقدية              |
-| Cheque                     | شيك                          |
-| Post-dated cheque (PDC)    | شيك آجل (plural: شيكات آجلة) |
-| Bounced cheque             | شيك مرتجع                    |
-| Bank transfer              | تحويل بنكي                   |
-| KNET                       | كي نت                        |
-| Credit card                | بطاقة ائتمان                 |
-| Payment link               | رابط دفع                     |
-| Petty cash                 | العهدة النقدية               |
-| Bank account               | حساب بنكي                    |
-| Bank statement             | كشف الحساب البنكي            |
-| Statement line             | حركة كشف الحساب              |
-| Reconcile / Reconciliation | تسوية / التسوية البنكية      |
-| Match                      | مطابقة                       |
-| Transfer                   | تحويل                        |
-| Exchange rate              | سعر الصرف                    |
-| IBAN                       | رقم الآيبان (IBAN)           |
-| Opening balance            | الرصيد الافتتاحي             |
-| Closing balance            | الرصيد الختامي               |
+| English                         | Arabic                       |
+| ------------------------------- | ---------------------------- |
+| Kuwaiti dinar                   | دينار كويتي                  |
+| Fils                            | فلس                          |
+| Cash                            | نقداً / النقدية              |
+| Cheque                          | شيك                          |
+| Post-dated cheque (PDC)         | شيك آجل (plural: شيكات آجلة) |
+| Bounced cheque                  | شيك مرتجع                    |
+| Print cheque                    | طباعة الشيك                  |
+| Cheque layouts                  | نماذج الشيكات                |
+| Spoiled leaf (of a cheque book) | ورقة تالفة                   |
+| A/C payee only (crossed cheque) | يصرف للمستفيد الأول          |
+| Bank transfer                   | تحويل بنكي                   |
+| Receipt voucher                 | سند قبض                      |
+| Payment voucher                 | سند صرف                      |
+| KNET                            | كي نت                        |
+| Credit card                     | بطاقة ائتمان                 |
+| Payment link                    | رابط دفع                     |
+| Petty cash                      | العهدة النقدية               |
+| Bank account                    | حساب بنكي                    |
+| Bank statement                  | كشف الحساب البنكي            |
+| Statement line                  | حركة كشف الحساب              |
+| Reconcile / Reconciliation      | تسوية / التسوية البنكية      |
+| Match                           | مطابقة                       |
+| Transfer                        | تحويل                        |
+| Exchange rate                   | سعر الصرف                    |
+| IBAN                            | رقم الآيبان (IBAN)           |
+| Opening balance                 | الرصيد الافتتاحي             |
+| Closing balance                 | الرصيد الختامي               |
 
 ## Accounting
 
@@ -151,6 +158,11 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Profit and loss                    | الأرباح والخسائر           |
 | Balance sheet                      | الميزانية العمومية         |
 | Cash flow                          | التدفقات النقدية           |
+| Receivables                        | الذمم المدينة              |
+| Payables                           | الذمم الدائنة              |
+| Income and expense                 | الإيرادات والمصروفات       |
+| Top expenses                       | أعلى المصروفات             |
+| Watchlist                          | قائمة المتابعة             |
 | Financial year                     | السنة المالية              |
 | Lock date                          | تاريخ الإقفال              |
 | Aging                              | أعمار الديون               |
@@ -192,6 +204,8 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | W.L.L.                              | ذ.م.م               |
 | Signature                           | التوقيع             |
 | Stamp                               | الختم               |
+| Blue ink (of the signature)         | حبر أزرق            |
+| Draft watermark                     | علامة مائية «مسودة» |
 
 ## People and payroll
 
@@ -218,16 +232,25 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 
 ## Inventory
 
-| English          | Arabic          |
-| ---------------- | --------------- |
-| Inventory        | المخزون         |
-| Stock            | المخزون         |
-| Warehouse        | المستودع        |
-| Stock on hand    | الكمية المتوفرة |
-| Reorder level    | حد إعادة الطلب  |
-| Stock adjustment | تسوية المخزون   |
-| Barcode          | الباركود        |
-| SKU              | رمز الصنف       |
+| English          | Arabic            |
+| ---------------- | ----------------- |
+| Inventory        | المخزون           |
+| Stock            | المخزون           |
+| Warehouse        | المستودع          |
+| Stock on hand    | الكمية المتوفرة   |
+| Reorder level    | حد إعادة الطلب    |
+| Item type        | نوع الصنف         |
+| Opening stock    | المخزون الافتتاحي |
+| Cost price       | سعر التكلفة       |
+| Stock adjustment | تسوية المخزون     |
+| Barcode          | الباركود          |
+| SKU              | رمز الصنف         |
+| Item codes (SKU) | رموز الأصناف      |
+| Label            | ملصق              |
+| Print labels     | طباعة الملصقات    |
+| Price list       | قائمة الأسعار     |
+| Item picture     | صورة الصنف        |
+| Main picture     | صورة رئيسية       |
 
 ## App
 
@@ -237,6 +260,7 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Reports       | التقارير          |
 | Settings      | الإعدادات         |
 | Templates     | القوالب           |
+| Quote design  | تصميم عرض السعر   |
 | Sales         | المبيعات          |
 | Purchases     | المشتريات         |
 | Banking       | البنوك            |

@@ -1,4 +1,6 @@
 import type { DiscountType, TaxKind, TaxLine } from '@/lib/calc';
+import type { CsvMapping } from '@/lib/banking/statement';
+import type { PrintableDocumentType } from '@/lib/document-types';
 
 export type { DiscountType, TaxKind, TaxLine };
 
@@ -79,8 +81,16 @@ export type DocumentStatus =
 /** How much of a sales order has been delivered (signed delivery notes). */
 export type DeliveryStatus = 'not_delivered' | 'partially_delivered' | 'delivered';
 
+/** `product`: item codes (SKUs), given only when Company.items.autoSku is on. */
 export type NumberedEntity =
-  DocumentType | 'payment' | 'payment_made' | 'client' | 'journal' | 'expense' | 'employee';
+  | DocumentType
+  | 'payment'
+  | 'payment_made'
+  | 'client'
+  | 'journal'
+  | 'expense'
+  | 'employee'
+  | 'product';
 
 export type CounterReset = 'never' | 'yearly' | 'monthly';
 
@@ -138,7 +148,21 @@ export interface DocumentDefaults {
   showAmountInWords?: boolean;
   /** Print the Hijri (Umm al-Qura) date next to the issue date. */
   showHijriDate?: boolean;
+  /**
+   * What the QR code on unpaid invoices opens: the payment link, or the
+   * invoice's own pay page once online payments are set up. Missing is the
+   * payment link. Whether it prints at all is `PaymentSettings.showQrCode`.
+   */
+  qrContent?: QrContent;
+  /** A few lines new quotes start with, printed above the items. Missing means none. */
+  quoteIntro?: string;
 }
+
+/** What a printed QR code opens. */
+export type QrContent = 'payment_link' | 'pay_page';
+
+/** Ink of the printed signature: as uploaded, or recoloured to blue pen ink. */
+export type SignatureInk = 'original' | 'blue';
 
 export interface Branding {
   /** Hex color used as the accent in templates, e.g. "#4f46e5". */
@@ -155,6 +179,54 @@ export interface Branding {
   stamp?: string | null;
   /** Authorised signature image as a data URL. */
   signature?: string | null;
+  /**
+   * The signature's ink. With 'blue', `signature` holds the blue version,
+   * made once when it was uploaded (so every version prints it as it is),
+   * and `signatureOriginal` the upload. Missing is 'original'.
+   */
+  signatureInk?: SignatureInk;
+  /** The signature as uploaded (at most 600 px), kept while it prints in blue. */
+  signatureOriginal?: string | null;
+  /** Layout of the company's documents (Templates). Missing prints as before. */
+  layout?: DocumentLayout;
+  /**
+   * Types of document with a design of their own (quotes, credit notes).
+   * A type missing here, and what its design leaves out, use the template,
+   * colour and layout above.
+   */
+  byType?: Partial<Record<PrintableDocumentType, DocumentDesign>>;
+}
+
+/** How large the logo prints, against the size its template gives it. */
+export type LogoSize = 'small' | 'medium' | 'large';
+
+/**
+ * The logo on a line of its own above the header: at the start (left in
+ * English, right in Arabic), in the centre or at the end.
+ */
+export type LogoPosition = 'start' | 'center' | 'end';
+
+/** Layout choices of a document design; each one missing prints as before. */
+export interface DocumentLayout {
+  /** Missing is medium: the template's own size. */
+  logoSize?: LogoSize;
+  /** Missing is where the template puts the logo. */
+  logoPosition?: LogoPosition;
+  /** A column with the SKU of lines picked from an item that has one. */
+  showSku?: boolean;
+  /** A picture beside each item that has one. */
+  showItemImages?: boolean;
+  /** Quotes and proformas: a box for the customer to accept, sign and date. */
+  showAcceptance?: boolean;
+}
+
+/** A type of document's own design; what it leaves out follows the company's. */
+export interface DocumentDesign {
+  templateId?: string;
+  /** Hex colour, e.g. "#0f766e". */
+  accentColor?: string;
+  /** Replaces the company's layout as a whole. */
+  layout?: DocumentLayout;
 }
 
 export interface PaymentSettings {
@@ -249,9 +321,30 @@ export interface Account {
   role: AccountRole | null;
   /** Bank, cash and card accounts can hold the details printed on documents. */
   bank: BankDetails | null;
+  /** How this account's statements are laid out, when an import was asked to remember it. */
+  statementFormat?: StatementFormat;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * A bank account's statement layout, remembered from an import so the next
+ * statement is read the same way. Missing: the layout is guessed each time.
+ */
+export interface StatementFormat {
+  /** The file it was read from; 'html' also covers Excel 2003 XML. 'pdf' is not read yet. */
+  kind: 'csv' | 'xlsx' | 'html' | 'pdf';
+  /** The row of the file the table started at (0 is the first). */
+  headerRow: number;
+  mapping: CsvMapping;
+  /** The way amounts were shown (src/lib/banking/presets.ts). */
+  preset?: string;
+  /**
+   * The column names, to find the table again when there are more or fewer
+   * rows above it (the period, a second line of address).
+   */
+  columns?: string[];
 }
 
 export interface JournalLine {
@@ -340,6 +433,8 @@ export interface BankTransaction {
   amount: number;
   /** Running balance after the line, when the statement gives it. */
   balance: number | null;
+  /** The value date, when the statement gives one. */
+  valueDate?: ISODate;
   /** Identifies the line so a statement imported twice adds nothing. */
   fingerprint: string;
   importId: ID;
@@ -531,6 +626,21 @@ export interface Company {
    * cheques. Missing or false: neither, as before.
    */
   fileFinder?: boolean;
+  /** Receipt and payment vouchers; missing prints them as before. */
+  vouchers?: VoucherSettings;
+  /**
+   * Units from a list, automatic item codes and item pictures; missing types
+   * units and codes by hand and gives items no pictures, as before.
+   */
+  items?: ItemSettings;
+  /**
+   * Cheques issued can be printed onto the bank's leaves (Burgan Bank, KFH)
+   * from the payment and the cheque register, with the layouts in Cheques →
+   * Cheque layouts. Missing: cheques are written by hand, as before.
+   */
+  chequePrinting?: boolean;
+  /** How the Books dashboard is laid out; missing shows it as before. */
+  dashboard?: DashboardSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -542,6 +652,77 @@ export interface DocumentPurpose {
   nameAr: string;
   /** No longer offered for new documents; those that have it keep it. */
   archived?: boolean;
+}
+
+/**
+ * The Books dashboard. `overview` puts receivables next to payables, cash
+ * flow, income and expense, top expenses, bank and card accounts and a
+ * watchlist between the key figures and today's cards; missing (or
+ * `classic`) is the dashboard as before. The period, the watchlist and the
+ * hidden cards are each person's own and stay on the device.
+ */
+export interface DashboardSettings {
+  layout?: 'classic' | 'overview';
+}
+
+/**
+ * A unit of the company's own, besides the built-in ones (lib/units.ts). It
+ * is kept when archived, so lines that have it still print its Arabic name.
+ */
+export interface CustomUnit {
+  id: ID;
+  name: string;
+  nameAr: string;
+  archived?: boolean;
+}
+
+/**
+ * How items are set up. Only owners, admins and accountants change it (it is
+ * part of the company record). Missing settings keep units and codes typed by
+ * hand.
+ */
+export interface ItemSettings {
+  /** Units are picked from a list (built-in and the company's own) with Arabic names. */
+  units?: boolean;
+  /** A new item saved without an SKU gets the next item code (numbering.product). */
+  autoSku?: boolean;
+  /** The company's own units. */
+  customUnits?: CustomUnit[];
+  /**
+   * Items can have pictures (Product.imageIds), shown in Products and the
+   * line picker, and printed on documents whose design shows item pictures.
+   */
+  images?: boolean;
+}
+
+/** A signature line at the foot of a voucher, labelled in both languages. */
+export interface VoucherSignatureLine {
+  /** Printed under the line; empty prints no English. */
+  en: string;
+  /** Printed under the English; empty prints no Arabic. */
+  ar: string;
+}
+
+/**
+ * Receipt and payment vouchers (سند قبض / سند صرف). They keep the payment
+ * and expense numbers. Missing settings print vouchers as before: the three
+ * standard signature lines, no stamp or signature.
+ */
+export interface VoucherSettings {
+  /**
+   * Print the company stamp and signature (in blue ink when the signature
+   * is), and the company address. Never on a void voucher. Any member can
+   * print a voucher, so this is off until the owner turns it on.
+   */
+  images?: boolean;
+  /**
+   * Signature lines for money received (`in`) and paid (`out`). The stamp
+   * and signature print over the last line but one; the last is the other
+   * party's. Missing uses the standard lines.
+   */
+  lines?: { in: VoucherSignatureLine[]; out: VoucherSignatureLine[] };
+  /** Paper of the PDF: half a page (A5, landscape); missing is the documents' paper size. */
+  paper?: 'A5';
 }
 
 /** A link in the sidebar to another tool; it opens in a new tab. */
@@ -697,7 +878,13 @@ export interface Product {
   description: string;
   descriptionAr?: string;
   unitPrice: number;
+  /** The unit as printed on documents. */
   unit: string;
+  /**
+   * The unit picked from the list (lib/units.ts), when units come from one:
+   * Arabic documents print its Arabic name. Missing for units typed by hand.
+   */
+  unitId?: ID;
   taxRateIds: ID[];
   /** Income account for sales of this item; null uses the company's sales account. */
   incomeAccountId?: ID | null;
@@ -712,6 +899,11 @@ export interface Product {
   barcode?: string;
   /** Harmonized System code used by customs. */
   hsCode?: string;
+  /**
+   * Pictures of the item, the main one first: attachments owned by the item
+   * (db/product-images.ts), at most five. Missing for items without any.
+   */
+  imageIds?: ID[];
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -727,6 +919,8 @@ export interface LineItem {
   description: string;
   quantity: number;
   unit: string;
+  /** The item's unit from the list (Product.unitId): Arabic documents print its Arabic name. */
+  unitId?: ID;
   unitPrice: number;
   discount: number;
   discountType: DiscountType;
@@ -745,6 +939,8 @@ export interface LineItem {
   sourceLineId?: ID;
   /** Stock items: warehouse the goods leave from or arrive at; null uses the default one. */
   warehouseId?: ID | null;
+  /** The item's SKU when the line was picked from it (printed in the SKU column). */
+  sku?: string;
 }
 
 export type ItemCondition = 'new' | 'used';
@@ -801,6 +997,10 @@ export interface InvoiceDocument {
   privateNotes: string;
   /** Template override; null uses the company default. */
   templateId: string | null;
+  /** Brand colour of this document; missing uses its type's or the company's. */
+  accentColor?: string;
+  /** Quotes: a few lines printed above the items, e.g. "Further to your request…". */
+  intro?: string;
   /** Cached result of the calculation; recomputed on every save. */
   totals: DocumentTotals;
   sentAt: Timestamp | null;
@@ -925,6 +1125,46 @@ export interface ChequeDetails {
   replacedById?: ID | null;
   /** Payment whose cheque this one replaces. */
   replacesId?: ID | null;
+  /**
+   * When the cheque (issued) was printed onto its leaf and the print was
+   * confirmed. A printed cheque is not printed again: its leaf is marked
+   * spoiled first. Set by the cheque print page, never by the payment form.
+   */
+  printedAt?: Timestamp | null;
+  /** Leaves printed for this cheque, spoiled ones included. */
+  printCount?: number;
+  /** The layout it was printed with (a built-in one is "preset-<bank>"). */
+  printedLayoutId?: ID | null;
+  /** What was printed on the leaf, as printed. */
+  printedText?: ChequePrintedText | null;
+  /** Printed crossed: "A/C payee only" (يصرف للمستفيد الأول). */
+  crossed?: boolean;
+  /** Leaves spoiled for this cheque, oldest first: each was destroyed and the cheque moved to the next. */
+  spoiledLeaves?: SpoiledChequeLeaf[];
+}
+
+/** The text printed on a cheque leaf. */
+export interface ChequePrintedText {
+  date: string;
+  payee: string;
+  /** The amount in words, line by line. */
+  words: string[];
+  figures: string;
+  /** The crossing, when the cheque was crossed. */
+  crossing?: string;
+  /** The version of the layout it was printed with. */
+  layoutVersion: number;
+}
+
+/** A cheque leaf that was spoiled: printed wrongly, printed before a change, or printed again. */
+export interface SpoiledChequeLeaf {
+  /** The number of the leaf. */
+  number: string;
+  at: Timestamp;
+  /** Why, as written at the time. */
+  reason: string;
+  /** What was printed on it, when it was printed. */
+  printedText?: ChequePrintedText | null;
 }
 
 export interface PaymentAllocation {
@@ -1177,6 +1417,8 @@ export interface Expense {
   date: ISODate;
   /** Who was paid, when known. */
   vendorId: ID | null;
+  /** Who was paid when it isn't a vendor (a shop, a driver); printed on the voucher. */
+  payee?: string;
   /** Expense category (an expense or asset account). */
   accountId: ID;
   description: string;

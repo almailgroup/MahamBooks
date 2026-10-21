@@ -120,3 +120,78 @@ test('a returned cheque is replaced by a new post-dated one', async ({ page }) =
   await expect(returned).toContainText('Returned');
   await expect(returned).toContainText('Al Naseem Real Estate Co. K.S.C.C.');
 });
+
+test('a cheque issued prints onto its Burgan Bank leaf, once', async ({ page }) => {
+  // Printing a page opens the browser's print dialog: here it does nothing.
+  await page.evaluate(() => {
+    window.print = () => undefined;
+  });
+
+  // Off until the owner turns it on.
+  await page.goto('#/settings/payments');
+  await page.getByRole('switch', { name: 'Print cheques issued' }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Settings saved')).toBeVisible();
+
+  await page.goto('#/payments-made/new?method=cheque');
+  await chooseOption(page, page.getByLabel('Vendor', { exact: true }), {
+    placeholder: 'Search vendors…',
+    query: 'Sharq',
+    option: 'Sharq Computer Systems Co.',
+  });
+  await page.getByLabel('Amount paid').fill('1250.75');
+  await page.getByLabel('Cheque number').fill('100045');
+  await page.getByLabel('Bank', { exact: true }).selectOption('BRGN');
+  await expect(page.getByLabel('Pay to')).toHaveValue('Sharq Computer Systems Co.');
+  await page.getByRole('button', { name: 'Save payment' }).click();
+  await expect(page).toHaveURL(/#\/payments-made\/[0-9a-f-]{36}$/);
+
+  await page.getByRole('link', { name: 'Print cheque' }).click();
+  await expect(page.getByRole('heading', { name: 'Print cheque 100045' })).toBeVisible();
+  await expect(page.getByText(/not been checked against a real leaf/)).toBeVisible();
+  const leaf = page.getByRole('region', { name: 'Cheque 100045' });
+  await expect(leaf.locator('[data-field="payee"]')).toHaveText('Sharq Computer Systems Co.');
+  await expect(leaf.locator('[data-field="figures"]')).toHaveText('**1,250.750**');
+  const words = await leaf.locator('[data-field^="words"]').allTextContents();
+  expect(words.filter(Boolean).join(' ')).toBe(
+    'فقط ألف ومائتان وخمسون دينارًا كويتيًا وسبعمائة وخمسون فلسًا لا غير',
+  );
+  await expect(leaf.locator('[data-field="date"]')).toHaveText(/^\d{8}$/);
+  await page.getByLabel('Cross the cheque: A/C payee only').check();
+  await expect(leaf.getByText('A/C Payee Only', { exact: true })).toBeVisible();
+
+  // The first leaf jams: it is recorded as spoiled and the cheque moves on.
+  await page.getByRole('button', { name: 'Print cheque', exact: true }).click();
+  const asked = page.getByRole('dialog', { name: 'Did the cheque print correctly?' });
+  await asked.getByRole('button', { name: 'No, the leaf is spoiled' }).click();
+  const spoiled = page.getByRole('dialog', { name: 'Spoiled leaf' });
+  await expect(spoiled.getByLabel('Number of the next leaf')).toHaveValue('100046');
+  await spoiled.getByLabel('Reason').fill('Paper jam');
+  await spoiled.getByRole('button', { name: 'Record the spoiled leaf' }).click();
+  await expect(spoiled).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Print cheque 100046' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Print cheque', exact: true }).click();
+  await asked.getByRole('button', { name: 'Yes, record the print' }).click();
+  await expect(page).toHaveURL(/#\/payments-made\/[0-9a-f-]{36}$/);
+  await expect(page.getByText('Printed on')).toBeVisible();
+  await expect(page.getByText(/A\/C payee only/)).toBeVisible();
+  await expect(page.getByText('Spoiled leaves')).toBeVisible();
+  await expect(page.getByText('100045', { exact: true })).toBeVisible();
+
+  // A second print needs the printed leaf spoiled first.
+  await page.getByRole('link', { name: 'Print cheque' }).click();
+  await expect(page.getByText(/Printed on .* on leaf 100046\./)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Print cheque', exact: true })).toBeDisabled();
+
+  // The register says so, and has the layouts.
+  await page.goto('#/cheques?tab=issued');
+  await expect(page.getByRole('row', { name: /100046/ })).toContainText('Printed');
+  await page.getByRole('link', { name: 'Cheque layouts' }).click();
+  await expect(page.getByRole('heading', { name: 'Cheque layouts' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible();
+  await page.getByLabel('Amount in figures: from the left (mm)').fill('137');
+  await page.getByRole('button', { name: 'Save layout' }).click();
+  await expect(page.getByText('Cheque layout saved')).toBeVisible();
+  await expect(page.getByText('This company’s layout prints cheques on this bank.')).toBeVisible();
+});

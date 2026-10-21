@@ -131,6 +131,7 @@ export function useDraftAttachments(ownerId: ID) {
 /**
  * Thumbnails of receipts and scanned bills, with an "Attach file" button.
  * With `camera`, phones also get a "Take photo" button that opens the camera.
+ * With `readOnly`, the files only open: nothing is added or removed.
  */
 export function AttachmentList({
   files,
@@ -138,12 +139,14 @@ export function AttachmentList({
   onRemove,
   emptyText,
   camera = false,
+  readOnly = false,
 }: {
   files: AttachedFile[];
   onAdd: (file: AttachedFile) => void | Promise<unknown>;
   onRemove: (id: ID) => void | Promise<unknown>;
   emptyText?: string;
   camera?: boolean;
+  readOnly?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const photo = useRef<HTMLInputElement>(null);
@@ -191,64 +194,70 @@ export function AttachmentList({
                   </span>
                 </span>
               </button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Remove {name}', { name: f.name })}
-                onClick={() => void onRemove(f.id)}
-              >
-                <X />
-              </Button>
+              {readOnly ? null : (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Remove {name}', { name: f.name })}
+                  onClick={() => void onRemove(f.id)}
+                >
+                  <X />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       ) : emptyText ? (
         <p className="text-sm text-slate-500">{emptyText}</p>
       ) : null}
-      {camera ? (
-        <input
-          ref={photo}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          tabIndex={-1}
-          aria-label={t('Take a photo')}
-          onChange={(e) => void pick(e.currentTarget)}
-        />
-      ) : null}
-      <input
-        ref={input}
-        type="file"
-        accept="image/*,application/pdf"
-        className="sr-only"
-        tabIndex={-1}
-        aria-label={t('Attach a file')}
-        onChange={(e) => void pick(e.currentTarget)}
-      />
-      <div className="flex flex-wrap gap-2">
-        {camera ? (
-          // Only where there is a camera to open: phones and tablets.
-          <Button
-            variant={firstPhoto ? 'primary' : 'outline'}
-            size={firstPhoto ? 'md' : 'sm'}
-            className="hidden flex-1 sm:flex-none pointer-coarse:inline-flex"
-            loading={busy}
-            onClick={() => photo.current?.click()}
-          >
-            <Camera /> {t('Take photo')}
-          </Button>
-        ) : null}
-        <Button
-          variant="outline"
-          size={firstPhoto ? 'md' : 'sm'}
-          className={cn(camera && 'max-sm:flex-1')}
-          loading={busy}
-          onClick={() => input.current?.click()}
-        >
-          <Paperclip /> {camera ? t('Choose file') : t('Attach file')}
-        </Button>
-      </div>
+      {readOnly ? null : (
+        <>
+          {camera ? (
+            <input
+              ref={photo}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="sr-only"
+              tabIndex={-1}
+              aria-label={t('Take a photo')}
+              onChange={(e) => void pick(e.currentTarget)}
+            />
+          ) : null}
+          <input
+            ref={input}
+            type="file"
+            accept="image/*,application/pdf"
+            className="sr-only"
+            tabIndex={-1}
+            aria-label={t('Attach a file')}
+            onChange={(e) => void pick(e.currentTarget)}
+          />
+          <div className="flex flex-wrap gap-2">
+            {camera ? (
+              // Only where there is a camera to open: phones and tablets.
+              <Button
+                variant={firstPhoto ? 'primary' : 'outline'}
+                size={firstPhoto ? 'md' : 'sm'}
+                className="hidden flex-1 sm:flex-none pointer-coarse:inline-flex"
+                loading={busy}
+                onClick={() => photo.current?.click()}
+              >
+                <Camera /> {t('Take photo')}
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              size={firstPhoto ? 'md' : 'sm'}
+              className={cn(camera && 'max-sm:flex-1')}
+              loading={busy}
+              onClick={() => input.current?.click()}
+            >
+              <Paperclip /> {camera ? t('Choose file') : t('Attach file')}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

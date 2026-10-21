@@ -11,9 +11,13 @@ import {
   Package,
   Pencil,
   Plus,
+  Printer,
+  QrCode,
   Search,
   SlidersHorizontal,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
@@ -24,9 +28,10 @@ import { useCompany, useFormat } from '@/app/company';
 import { downloadCsv } from '@/lib/csv';
 import { today } from '@/lib/dates';
 import { fromMinor, toMinor } from '@/lib/money';
-import { t } from '@/i18n';
+import { unitText } from '@/lib/units';
+import { currentLanguage, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Badge,
   Card,
@@ -51,7 +56,10 @@ import {
   useInventory,
   useUnitAmount,
 } from '@/apps/books/features/inventory/use-inventory';
+import { usePrint } from '@/apps/books/features/reports/report-toolbar';
+import { ProductThumb, useProductThumbs } from '@/apps/books/features/inventory/product-image';
 import { ItemDialog } from './item-dialog';
+import { ItemListPrint, type ItemListKind } from './item-list-print';
 
 type KindFilter = 'all' | ProductKind | 'low';
 
@@ -64,7 +72,8 @@ export default function ProductsPage() {
   const navigate = useNavigate();
   const unitAmount = useUnitAmount();
   const [params, setParams] = useSearchParams();
-  const [query, setQuery] = useState('');
+  // Settings → Cloud links an SKU that two items share here.
+  const [query, setQuery] = useState(() => params.get('q') ?? '');
   const [view, setView] = useState<'active' | 'archived'>('active');
   const [kindFilter, setKindFilter] = useState<KindFilter>(() =>
     params.get('filter') === 'low' ? 'low' : 'all',
@@ -78,6 +87,8 @@ export default function ProductsPage() {
     });
   });
 
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const { print, portal } = usePrint();
   const inventory = useInventory();
   const taxRates = useLiveQuery(
     () => db.taxRates.where('companyId').equals(company.id).toArray(),
@@ -106,6 +117,22 @@ export default function ProductsPage() {
       )
       .sort((a, b) => localName(a).localeCompare(localName(b)));
   }, [products, inventory, query, view, kindFilter]);
+
+  // Items sharing an SKU (another device gave the same code offline): shown
+  // once codes are given, so one of them can be changed.
+  const sameSku = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const p of products ?? []) {
+      const key = p.sku.trim().toLowerCase();
+      if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    return (p: Product) =>
+      Boolean(company.items?.autoSku) && (seen.get(p.sku.trim().toLowerCase()) ?? 0) > 1;
+  }, [products, company.items?.autoSku]);
+
+  // Items have pictures once the owner turns them on (Settings → Items and units).
+  const pictures = Boolean(company.items?.images);
+  const thumbs = useProductThumbs(filtered, pictures);
 
   if (!products || !inventory || !taxRates) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -160,6 +187,34 @@ export default function ProductsPage() {
     }
   };
 
+  const language = currentLanguage();
+  const unitOf = (p: Product) => unitText(company, p, language);
+  const shown = new Set(filtered.map((p) => p.id));
+  const picked = [...selected].filter((id) => shown.has(id));
+  const toggle = (id: string, on: boolean) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const labelsFor = (ids: string[]) =>
+    navigate(ids.length ? `/products/labels?ids=${ids.join(',')}` : '/products/labels');
+  const printList = (kind: ItemListKind) =>
+    print(
+      <ItemListPrint
+        company={company}
+        kind={kind}
+        products={filtered}
+        onHand={(p) =>
+          productKind(p) === 'stock' ? (inventory.levels.get(p.id)?.quantity ?? 0) : null
+        }
+        formatPrice={unitAmount}
+        formatDate={fmt.date}
+        formatQuantity={fmt.quantity}
+      />,
+    );
+
   const exportCsv = () =>
     downloadCsv(
       `products-${today()}`,
@@ -211,10 +266,33 @@ export default function ProductsPage() {
         actions={
           <>
             {products.length > 0 ? (
+              <DropdownMenu>
+                <DropdownTrigger asChild>
+                  <Button variant="outline">
+                    <Printer /> {t('Print')}
+                  </Button>
+                </DropdownTrigger>
+                <DropdownContent>
+                  <DropdownItem icon={<Printer />} onSelect={() => printList('items')}>
+                    {t('Product list')}
+                  </DropdownItem>
+                  <DropdownItem icon={<Printer />} onSelect={() => printList('prices')}>
+                    {t('Price list')}
+                  </DropdownItem>
+                  <DropdownItem icon={<QrCode />} onSelect={() => labelsFor([])}>
+                    {t('Print labels')}
+                  </DropdownItem>
+                </DropdownContent>
+              </DropdownMenu>
+            ) : null}
+            {products.length > 0 ? (
               <Button variant="outline" onClick={exportCsv}>
                 <Download /> {t('Export CSV')}
               </Button>
             ) : null}
+            <ButtonLink to="/settings/import?kind=products" variant="outline">
+              <Upload /> {t('Import')}
+            </ButtonLink>
             <Button onClick={() => openNew()}>
               <Plus /> {t('New item')}
             </Button>
@@ -263,6 +341,9 @@ export default function ProductsPage() {
                 <Button variant="outline" onClick={() => openNew('stock')}>
                   <Boxes /> {t('New stock item')}
                 </Button>
+                <ButtonLink to="/settings/import?kind=products" variant="outline">
+                  <Upload /> {t('Import from a spreadsheet')}
+                </ButtonLink>
               </div>
             }
           />
@@ -307,6 +388,25 @@ export default function ProductsPage() {
               </div>
             </div>
           </div>
+          {picked.length > 0 ? (
+            <div
+              role="region"
+              aria-label={t('Selected items')}
+              className="bg-primary-50/60 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2"
+            >
+              <p className="text-sm font-medium text-slate-700">
+                {tp(picked.length, '{count} selected', '{count} selected')}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => labelsFor(picked)}>
+                  <QrCode /> {t('Print labels')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                  <X /> {t('Clear selection')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {filtered.length === 0 ? (
             <p className="px-6 py-12 text-center text-sm text-slate-500">{t('Nothing matches.')}</p>
           ) : (
@@ -314,6 +414,15 @@ export default function ProductsPage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-slate-100 bg-slate-50/60 text-xs text-slate-500">
                   <tr>
+                    <th className="w-10 py-2.5 ps-4">
+                      <input
+                        type="checkbox"
+                        aria-label={t('Select all')}
+                        className="accent-primary-600 size-4 align-middle"
+                        checked={picked.length === filtered.length}
+                        onChange={(e) => setSelected(e.target.checked ? new Set(shown) : new Set())}
+                      />
+                    </th>
                     <th className="w-full px-4 py-2.5 text-start font-medium">{t('Item')}</th>
                     <th className="hidden px-3 py-2.5 text-start font-medium md:table-cell">
                       {t('Type')}
@@ -339,38 +448,55 @@ export default function ProductsPage() {
                     const isLow = kind === 'stock' && isLowStock(p, level);
                     const quantity =
                       kind === 'stock'
-                        ? `${fmt.quantity(level?.quantity ?? 0)}${p.unit ? ` ${p.unit}` : ''}`
+                        ? `${fmt.quantity(level?.quantity ?? 0)}${unitOf(p) ? ` ${unitOf(p)}` : ''}`
                         : null;
                     return (
                       <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="py-2.5 ps-4 align-top">
+                          <input
+                            type="checkbox"
+                            aria-label={t('Select {name}', { name: localName(p) })}
+                            className="accent-primary-600 mt-0.5 size-4"
+                            checked={selected.has(p.id)}
+                            onChange={(e) => toggle(p.id, e.target.checked)}
+                          />
+                        </td>
                         <td className="max-w-0 px-4 py-2.5">
                           <button
                             type="button"
                             onClick={() => setEditing(p)}
-                            className="block w-full min-w-0 text-start"
+                            className="flex w-full min-w-0 items-center gap-3 text-start"
                           >
-                            <span className="block truncate font-medium text-slate-900">
-                              {localName(p)}
-                            </span>
-                            <span className="block truncate text-xs text-slate-500">
-                              {[
-                                p.sku,
-                                localName(p) === p.name ? p.nameAr : p.name,
-                                p.description,
-                                rateLabel(p),
-                              ]
-                                .filter(Boolean)
-                                .join(' · ') || t(KIND_LABELS[kind].label)}
-                            </span>
-                            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 sm:hidden">
-                              <span className="tabular">
-                                {unitAmount(p.unitPrice)}
-                                {p.unit ? ` / ${p.unit}` : ''}
+                            {pictures ? <ProductThumb src={thumbs.get(p.id)} /> : null}
+                            <span className="block min-w-0 flex-1">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate font-medium text-slate-900">
+                                  {localName(p)}
+                                </span>
+                                {sameSku(p) ? (
+                                  <Badge tone="amber">{t('Same SKU as another item')}</Badge>
+                                ) : null}
                               </span>
-                              {quantity ? (
-                                <span>{t('{quantity} on hand', { quantity })}</span>
-                              ) : null}
-                              {isLow ? <Badge tone="red">{t('Low stock')}</Badge> : null}
+                              <span className="block truncate text-xs text-slate-500">
+                                {[
+                                  p.sku,
+                                  localName(p) === p.name ? p.nameAr : p.name,
+                                  p.description,
+                                  rateLabel(p),
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ') || t(KIND_LABELS[kind].label)}
+                              </span>
+                              <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 sm:hidden">
+                                <span className="tabular">
+                                  {unitAmount(p.unitPrice)}
+                                  {unitOf(p) ? ` / ${unitOf(p)}` : ''}
+                                </span>
+                                {quantity ? (
+                                  <span>{t('{quantity} on hand', { quantity })}</span>
+                                ) : null}
+                                {isLow ? <Badge tone="red">{t('Low stock')}</Badge> : null}
+                              </span>
                             </span>
                           </button>
                         </td>
@@ -379,7 +505,9 @@ export default function ProductsPage() {
                         </td>
                         <td className="tabular hidden px-3 py-2.5 text-end whitespace-nowrap text-slate-900 sm:table-cell">
                           {unitAmount(p.unitPrice)}
-                          {p.unit ? <span className="text-slate-500"> / {p.unit}</span> : null}
+                          {unitOf(p) ? (
+                            <span className="text-slate-500"> / {unitOf(p)}</span>
+                          ) : null}
                         </td>
                         <td className="tabular hidden px-3 py-2.5 text-end whitespace-nowrap sm:table-cell">
                           {quantity ? (
@@ -419,6 +547,11 @@ export default function ProductsPage() {
                               <DropdownItem icon={<Pencil />} onSelect={() => setEditing(p)}>
                                 {t('Edit')}
                               </DropdownItem>
+                              {p.sku.trim() ? (
+                                <DropdownItem icon={<QrCode />} onSelect={() => labelsFor([p.id])}>
+                                  {t('Print label')}
+                                </DropdownItem>
+                              ) : null}
                               {kind === 'stock' && !p.archived ? (
                                 <>
                                   <DropdownItem
@@ -466,6 +599,7 @@ export default function ProductsPage() {
         </Card>
       )}
 
+      {portal}
       {editing ? (
         <ItemDialog
           key={editing.id}

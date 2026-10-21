@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -9,6 +9,7 @@ import {
   FileUp,
   IdCard,
   Package,
+  PackageCheck,
   Scale,
   Users,
   X,
@@ -27,6 +28,7 @@ import {
   type RowIssue,
 } from '@/db/import';
 import type { EmployeeImportProgress } from '@/db/import-employees';
+import { prepareInventory } from '@/db/inventory';
 import {
   BILL_TEMPLATE_ROWS,
   DATE_COLUMNS,
@@ -34,10 +36,12 @@ import {
   IMPORT_COLUMNS,
   missingColumns,
   readImportFile,
+  STOCK_COLUMNS,
   TEMPLATE_ROWS,
   type ColumnMapping,
   type ImportKind,
 } from '@/features/company/import-columns';
+import { canEditAccounting } from '@/cloud/roles';
 import { detectDateFormats, type DateFormat as CsvDateFormat } from '@/lib/banking/statement';
 import { downloadCsv } from '@/lib/csv';
 import { fromMinor, currencyPrecision } from '@/lib/money';
@@ -46,9 +50,11 @@ import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { msg, t, tp } from '@/i18n';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Field, Select } from '@/components/ui/form';
+import { Checkbox, Field, Select } from '@/components/ui/form';
 import { Badge, Segmented } from '@/components/ui/misc';
 import { Disclosure } from '@/components/ui/disclosure';
+import { useConfirm } from '@/components/ui/overlay';
+import { localName } from '@/i18n/names';
 import { SettingsSection } from './shared';
 import { DateField } from '@/components/ui/date-field';
 import { useRoleView } from '@/features/cloud/role-gates';
@@ -67,7 +73,7 @@ const KINDS: { value: ImportKind; title: string; text: string; icon: ReactNode }
   {
     value: 'products',
     title: msg('Products and services'),
-    text: msg('Names in English and Arabic, codes, units and prices.'),
+    text: msg('Names in English and Arabic, codes, units, prices and opening stock.'),
     icon: <Package />,
   },
   {
@@ -129,6 +135,10 @@ function importLabel(kind: ImportKind, documentType: 'invoice' | 'bill', count: 
 
 function doneText(result: ImportResult, documentType: 'invoice' | 'bill'): string {
   const n = result.added;
+  if (result.kind === 'products' && n === 0) {
+    if (result.updated) return tp(result.updated, '{count} item updated', '{count} items updated');
+    if (result.stockEntries?.length) return t('Stock recorded');
+  }
   if (result.kind === 'employees') {
     if (n === 0 && result.updated) {
       return tp(result.updated, '{count} employee updated', '{count} employees updated');
@@ -180,6 +190,7 @@ function rowSummary(
   row: PlannedRow,
   money: (amount: number) => string,
   date: (value: string) => string,
+  warehouseName: (id: string) => string,
 ) {
   const { cells, record } = row;
   switch (kind) {
@@ -191,12 +202,24 @@ function rowSummary(
         amount: balance ? money(balance) : record ? '' : cells.openingBalance,
       };
     }
-    case 'products':
+    case 'products': {
+      const stock = record?.kind === 'products' ? record.value.stock : null;
       return {
         title: cells.name || cells.nameAr,
-        details: [cells.name ? cells.nameAr : '', cells.sku, cells.unit],
+        details: [
+          cells.name ? cells.nameAr : '',
+          cells.sku,
+          cells.unit,
+          stock
+            ? t('{quantity} in {warehouse}', {
+                quantity: stock.quantity,
+                warehouse: warehouseName(stock.warehouseId),
+              })
+            : cells.quantity,
+        ],
         amount: cells.price,
       };
+    }
     case 'opening': {
       const line = record?.kind === 'opening' ? record.value : null;
       return {
@@ -231,6 +254,7 @@ export default function ImportSettings() {
   const company = useCompany();
   const fmt = useFormat();
   const roles = useRoleView();
+  const confirm = useConfirm();
   const input = useRef<HTMLInputElement>(null);
   const [params] = useSearchParams();
   const [kind, setKind] = useState<ImportKind>(() => {
@@ -250,8 +274,17 @@ export default function ImportSettings() {
   const [allColumns, setAllColumns] = useState(false);
   const [updateExisting, setUpdateExisting] = useState(false);
   const [progress, setProgress] = useState<EmployeeImportProgress | null>(null);
-  const context = useLiveQuery(() => loadImportContext(company.id), [company.id]);
+  const [warehouseId, setWarehouseId] = useState('');
+  const context = useLiveQuery(() => loadImportContext(company.id, kind), [company.id, kind]);
   const precision = currencyPrecision(company.currency);
+  // Opening stock posts to the books: only owners, admins and accountants bring quantities.
+  const stockAllowed = canEditAccounting(roles.role) && !roles.readOnly.readOnly;
+  // Stock goes to the main store unless the file or the choice below says otherwise.
+  useEffect(() => {
+    if (kind === 'products' && !roles.readOnly.readOnly) {
+      void prepareInventory(company.id).catch(() => undefined);
+    }
+  }, [kind, company.id, roles.readOnly.readOnly]);
   // Payroll and people data: only owners, admins and accountants import employees.
   const employeesBlocked =
     roles.peopleHidden || roles.readOnly.readOnly
@@ -267,18 +300,33 @@ export default function ImportSettings() {
       fileName: file?.name ?? '',
       formatDate: fmt.date,
       updateExisting,
+      ...(warehouseId ? { warehouseId } : {}),
     }),
-    [contactType, documentType, asOf, dateFormat, file, fmt, updateExisting],
+    [contactType, documentType, asOf, dateFormat, file, fmt, updateExisting, warehouseId],
+  );
+
+  // Staff and viewers: the stock columns are never read.
+  const used: ColumnMapping | null = useMemo(
+    () =>
+      mapping && kind === 'products' && !stockAllowed
+        ? { ...mapping, ...Object.fromEntries(STOCK_COLUMNS.map((k) => [k, null])) }
+        : mapping,
+    [mapping, kind, stockAllowed],
   );
 
   const plan: ImportPlan | null = useMemo(
-    () =>
-      file && mapping && context ? planImport(kind, file.rows, mapping, options, context) : null,
-    [file, mapping, context, kind, options],
+    () => (file && used && context ? planImport(kind, file.rows, used, options, context) : null),
+    [file, used, context, kind, options],
   );
 
   const headers = file?.rows[0] ?? [];
-  const columns = IMPORT_COLUMNS[kind];
+  const columns = IMPORT_COLUMNS[kind].filter(
+    (c) => kind !== 'products' || stockAllowed || !STOCK_COLUMNS.includes(c.key),
+  );
+  const warehouses = (context?.warehouses ?? []).filter((w) => !w.archived);
+  const mainWarehouse = warehouses.find((w) => w.isDefault) ?? warehouses[0];
+  const warehouseName = (id: string) =>
+    localName(warehouses.find((w) => w.id === id) ?? mainWarehouse) || t('Main store');
   const missing = mapping ? missingColumns(kind, mapping) : [];
   const isMissing = (key: string) => missing.some((c) => c.key === key);
   // Columns the file has (or must have) first; the rest on request.
@@ -364,14 +412,54 @@ export default function ImportSettings() {
     );
   };
 
+  // Stock already in the opening balances would be counted twice.
+  const stockInBooks = kind === 'products' ? (context?.stock?.inBooks ?? 0) : 0;
+  const stockInBooksText = t(
+    'Your opening balances already put {amount} on the inventory account. Stock imported here adds to it, so it would be counted twice.',
+    { amount: fmt.money(fromMinor(stockInBooks, precision)) },
+  );
   const run = async () => {
-    if (!file || !mapping || !plan) return;
+    if (!file || !used || !plan) return;
+    if (kind === 'products' && plan.stock && (plan.stock.opening || plan.stock.differences)) {
+      // Stock reaches the books only when the person says so.
+      const stock = plan.stock;
+      const ok = await confirm({
+        title: t('Post the stock in this file?'),
+        description: (
+          <span className="block space-y-2">
+            {stock.opening ? (
+              <span className="block">
+                {t('Opening stock worth {amount} goes to opening balance equity, dated {date}.', {
+                  amount: fmt.money(fromMinor(stock.value, precision)),
+                  date: fmt.date(options.asOf),
+                })}
+              </span>
+            ) : null}
+            {stock.differences ? (
+              <span className="block">
+                {tp(
+                  stock.differences,
+                  '{count} item with stock history is counted: the difference posts as a stock adjustment.',
+                  '{count} items with stock history are counted: the differences post as a stock adjustment.',
+                )}
+              </span>
+            ) : null}
+            {stockInBooks && stock.opening ? (
+              <span className="block font-medium text-amber-800">{stockInBooksText}</span>
+            ) : null}
+          </span>
+        ),
+        confirmLabel: t('Import and post stock'),
+        danger: Boolean(stockInBooks && stock.opening),
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       const done =
         kind === 'employees'
-          ? await importEmployees(company.id, file.rows, mapping, options, setProgress)
-          : await commitImport(company.id, kind, file.rows, mapping, options);
+          ? await importEmployees(company.id, file.rows, used, options, setProgress)
+          : await commitImport(company.id, kind, file.rows, used, options);
       setResult(done);
       setFile(null);
       setMapping(null);
@@ -387,7 +475,10 @@ export default function ImportSettings() {
   const visible = (plan?.rows ?? []).filter((r) =>
     filter === 'ready' ? r.status === 'ready' : filter === 'problems' ? r.status !== 'ready' : true,
   );
-  const blocked = !plan || plan.ready === 0 || (kind === 'opening' && plan.errors > 0);
+  // Opening balances and files with stock: all or nothing.
+  const wholeFile = kind === 'opening' || Boolean(plan?.stock);
+  const blocked = !plan || plan.ready === 0 || (wholeFile && plan.errors > 0);
+  const stockFile = kind === 'products' && Boolean(plan?.stock);
   const viewLink =
     kind === 'employees'
       ? '/employees'
@@ -408,9 +499,13 @@ export default function ImportSettings() {
     (kind === 'documents' ||
       (kind === 'employees' && textDates(file.rows, mapping, kind).length > 0)),
   );
-  // Settings shown above the file for some kinds; none for products and spreadsheet employees.
+  // Settings shown above the file for some kinds; for products only when the file has stock.
   const hasFileOptions =
-    kind === 'contacts' || kind === 'opening' || kind === 'documents' || showDateFormat;
+    kind === 'contacts' ||
+    kind === 'opening' ||
+    kind === 'documents' ||
+    showDateFormat ||
+    stockFile;
   const residencyColumn =
     kind === 'employees' && mapping?.residencyExpiry != null
       ? headers[mapping.residencyExpiry]
@@ -568,6 +663,36 @@ export default function ImportSettings() {
               )}
             </Field>
           ) : null}
+          {stockFile ? (
+            <>
+              <Field
+                label={t('Stock as at')}
+                hint={t(
+                  'Opening stock and counts are dated this day: usually the last day of last month.',
+                )}
+              >
+                {(id) => (
+                  <DateField id={id} value={asOf} max={today()} onChange={(iso) => setAsOf(iso)} />
+                )}
+              </Field>
+              <Field label={t('Warehouse')} hint={t('For rows that name no warehouse.')}>
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={warehouseId || mainWarehouse?.id || ''}
+                    onChange={(e) => setWarehouseId(e.target.value)}
+                  >
+                    {warehouses.length === 0 ? <option value="">{t('Main store')}</option> : null}
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {localName(w)}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </>
+          ) : null}
           {showDateFormat ? (
             <Field label={t('Dates in the file look like')}>
               {(id) => (
@@ -600,6 +725,20 @@ export default function ImportSettings() {
             {t(
               'Each document is booked against opening balance equity, so sales and costs from before are not counted twice. Record payments on them as usual.',
             )}
+          </p>
+        ) : null}
+        {kind === 'products' ? (
+          <p className="text-sm text-slate-500">
+            {stockAllowed
+              ? t(
+                  'With a quantity column, stock items get their opening stock at the cost price, booked against opening balance equity. Items with stock history are counted instead. Nothing is posted until you confirm.',
+                )
+              : t('Only owners, admins and accountants bring in stock quantities.')}
+          </p>
+        ) : null}
+        {stockFile && stockInBooks && plan?.stock?.opening ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {stockInBooksText} {t('Keep stock out of the opening balances and import it here.')}
           </p>
         ) : null}
 
@@ -737,6 +876,14 @@ export default function ImportSettings() {
                 result.kind === 'employees' && result.added && result.updated
                   ? tp(result.updated, '{count} employee updated', '{count} employees updated')
                   : '',
+                result.kind === 'products' && result.added && result.updated
+                  ? tp(result.updated, '{count} item updated', '{count} items updated')
+                  : '',
+                result.kind === 'products' && result.stockEntries?.length
+                  ? t('Stock entries {numbers}', {
+                      numbers: result.stockEntries.map((e) => e.number).join(', '),
+                    })
+                  : '',
                 result.kind === 'employees' && result.documents
                   ? tp(
                       result.documents,
@@ -755,6 +902,11 @@ export default function ImportSettings() {
             ) : null}
             <div className="mt-2 flex flex-wrap justify-center gap-2">
               <ButtonLink to={viewLink}>{t('View them')}</ButtonLink>
+              {result.kind === 'products' && result.stockEntries?.length ? (
+                <ButtonLink to="/inventory?tab=history" variant="outline">
+                  <PackageCheck /> {t('View the stock entries')}
+                </ButtonLink>
+              ) : null}
               <Button variant="outline" onClick={clear}>
                 {t('Import another file')}
               </Button>
@@ -794,6 +946,65 @@ export default function ImportSettings() {
               </span>
             ) : null}
           </div>
+
+          {kind === 'products' && plan.existing ? (
+            <Checkbox
+              label={t('Update existing items')}
+              description={t(
+                'Items already here (same SKU, or same name when the file has no SKU) get the prices and details in the file.',
+              )}
+              checked={updateExisting}
+              onChange={(e) => setUpdateExisting(e.target.checked)}
+            />
+          ) : null}
+
+          {kind === 'products' && plan.itemCodes ? (
+            <p className="text-sm text-slate-600">
+              {tp(
+                plan.itemCodes,
+                '{count} new item without an SKU gets the next item code.',
+                '{count} new items without an SKU get the next item codes.',
+              )}
+            </p>
+          ) : null}
+
+          {plan.stock && (plan.stock.opening || plan.stock.counted) ? (
+            <dl className="grid gap-3 rounded-lg bg-slate-50 p-4 text-sm ring-1 ring-slate-200/70 sm:grid-cols-3">
+              {plan.stock.opening ? (
+                <>
+                  <div>
+                    <dt className="text-slate-500">{t('Opening stock')}</dt>
+                    <dd className="tabular font-semibold text-slate-900">
+                      {fmt.money(fromMinor(plan.stock.value, precision))}
+                    </dd>
+                    <dd className="text-xs text-slate-500">
+                      {tp(plan.stock.opening, '{count} item', '{count} items')} ·{' '}
+                      {tp(plan.stock.warehouses, '{count} warehouse', '{count} warehouses')}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">{t('To opening balance equity')}</dt>
+                    <dd className="tabular font-semibold text-slate-900">
+                      {`${t('Credit')} ${fmt.money(fromMinor(plan.stock.value, precision))}`}
+                    </dd>
+                    <dd className="text-xs text-slate-500">{fmt.date(options.asOf)}</dd>
+                  </div>
+                </>
+              ) : null}
+              {plan.stock.counted ? (
+                <div>
+                  <dt className="text-slate-500">{t('Counted')}</dt>
+                  <dd className="tabular font-semibold text-slate-900">
+                    {tp(plan.stock.counted, '{count} item', '{count} items')}
+                  </dd>
+                  <dd className="text-xs text-slate-500">
+                    {tp(plan.stock.differences, '{count} difference', '{count} differences')} ·{' '}
+                    {t('Stock adjustment')}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
 
           {kind === 'opening' && plan.ready ? (
             <dl className="grid gap-3 rounded-lg bg-slate-50 p-4 text-sm ring-1 ring-slate-200/70 sm:grid-cols-3">
@@ -841,6 +1052,7 @@ export default function ImportSettings() {
                     row,
                     (n) => fmt.money(n),
                     (value) => formatDate(value, 'd MMM yyyy', fmt.locale),
+                    warehouseName,
                   );
                   return (
                     <li key={row.line} className="flex gap-3 px-3 py-2.5 sm:px-4">
@@ -896,7 +1108,9 @@ export default function ImportSettings() {
             <p className="text-sm text-slate-500">
               {kind === 'opening' && plan.errors
                 ? t('Opening balances are imported only when every row is right.')
-                : t('Everything is added in one step, or nothing if something goes wrong.')}
+                : stockFile && plan.errors
+                  ? t('Files with stock are imported only when every row is right.')
+                  : t('Everything is added in one step, or nothing if something goes wrong.')}
             </p>
             <Button onClick={() => void run()} loading={busy} disabled={blocked}>
               {importLabel(kind, documentType, plan.ready)}

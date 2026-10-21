@@ -15,6 +15,7 @@ import {
   Layers,
   Link2,
   Mail,
+  Package,
   Palette,
   Percent,
   Wallet,
@@ -26,6 +27,7 @@ import { PageHeader, Spinner } from '@/components/ui/misc';
 const CompanySettings = lazy(() => import('./company'));
 const DocumentSettings = lazy(() => import('./documents'));
 const NumberingSettings = lazy(() => import('./numbering'));
+const ItemSettings = lazy(() => import('./items'));
 const TaxSettings = lazy(() => import('./taxes'));
 const AccountingSettings = lazy(() => import('./accounting'));
 const PaymentSettingsPage = lazy(() => import('./payments'));
@@ -64,6 +66,7 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
     items: [
       { path: 'documents', label: msg('Invoice defaults'), icon: <FileCog /> },
       { path: 'numbering', label: msg('Numbering'), icon: <Hash /> },
+      { path: 'items', label: msg('Items and units'), icon: <Package /> },
       { path: 'emails', label: msg('Email templates'), icon: <Mail /> },
       { path: 'labels', label: msg('Language & wording'), icon: <Languages /> },
     ],
@@ -155,6 +158,7 @@ export default function SettingsPage() {
               <Route path="company" element={<CompanySettings />} />
               <Route path="documents" element={<DocumentSettings />} />
               <Route path="numbering" element={<NumberingSettings />} />
+              <Route path="items" element={<ItemSettings />} />
               <Route path="taxes" element={<TaxSettings />} />
               <Route path="accounting" element={<AccountingSettings />} />
               <Route path="payments" element={<PaymentSettingsPage />} />

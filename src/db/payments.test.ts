@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import { createClient } from './defaults';
-import { draftDocument, saveDocument } from './documents';
-import { loadLedger } from './accounting';
+import { deleteDocument, draftDocument, saveDocument, setDocumentStatus } from './documents';
+import { LockedPeriodError, loadLedger } from './accounting';
+import { addAttachment } from './purchases';
 import { saveClient, setupCompany } from './records';
-import { createPayment, newCheque, PaymentError, savePayment, setPaymentLink } from './payments';
+import {
+  createPayment,
+  deletePayment,
+  newCheque,
+  PaymentError,
+  savePayment,
+  setPaymentLink,
+} from './payments';
 import type { Company, InvoiceDocument, Payment } from './types';
 
 beforeEach(async () => {
@@ -200,5 +208,80 @@ describe('payment links', () => {
     });
     await setPaymentLink(doc.id, null);
     expect((await db.documents.get(doc.id))?.paymentLink).toBeNull();
+  });
+});
+
+describe('payment files', () => {
+  const scan = { name: 'cheque.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,AAAA' };
+  const files = (ownerId: string) => db.attachments.where('ownerId').equals(ownerId).count();
+
+  it('are deleted with the payment', async () => {
+    const c = await company('KW', 'KWD');
+    const doc = await invoice(c, 25);
+    const payment = await pay(c, doc, {});
+    await addAttachment(c.id, payment.id, scan);
+    await addAttachment(c.id, payment.id, { ...scan, name: 'transfer.pdf' });
+    // Another payment's scan stays.
+    const other = await pay(c, await invoice(c, 10), {});
+    await addAttachment(c.id, other.id, scan);
+    expect(await files(payment.id)).toBe(2);
+    await deletePayment(payment.id);
+    expect(await db.payments.get(payment.id)).toBeUndefined();
+    expect(await files(payment.id)).toBe(0);
+    expect(await files(other.id)).toBe(1);
+  });
+
+  it('stay with a void or locked payment, which cannot be deleted', async () => {
+    const c = await company('KW', 'KWD');
+    const voided = await pay(c, await invoice(c, 25), {});
+    await addAttachment(c.id, voided.id, scan);
+    await db.payments.update(voided.id, { voided: true, voidReason: 'Returned' });
+    await expect(deletePayment(voided.id)).rejects.toThrow(PaymentError);
+    expect(await files(voided.id)).toBe(1);
+
+    const locked = await pay(c, await invoice(c, 15), {});
+    await addAttachment(c.id, locked.id, scan);
+    await db.companies.update(c.id, {
+      accounting: { ...c.accounting!, lockDate: '2026-10-31' },
+    });
+    await expect(deletePayment(locked.id)).rejects.toThrow(LockedPeriodError);
+    expect(await db.payments.get(locked.id)).toBeDefined();
+    expect(await files(locked.id)).toBe(1);
+  });
+
+  it('of a credit note taken off a document go with it', async () => {
+    const c = await company('KW', 'KWD');
+    const client = await saveClient(createClient(c.id, { name: 'Sample Trading' }));
+    const issue = async (type: 'invoice' | 'credit', unitPrice: number) => {
+      const draft = await draftDocument(c, type, client);
+      draft.items[0] = { ...draft.items[0], name: 'Work', quantity: 1, unitPrice, taxes: [] };
+      return saveDocument({ ...draft, status: 'sent', issueDate: '2026-10-01' });
+    };
+    const apply = async (doc: InvoiceDocument, credit: InvoiceDocument) => {
+      const application = await savePayment(
+        createPayment(c.id, {
+          clientId: client.id,
+          date: '2026-10-02',
+          amount: 5,
+          currency: 'KWD',
+          method: 'credit_note',
+          creditId: credit.id,
+          allocations: [{ documentId: doc.id, amount: 5 }],
+        }),
+      );
+      await addAttachment(c.id, application.id, scan);
+      return application;
+    };
+    // The invoice is voided: the application is deleted, and so is its file.
+    const voided = await apply(await issue('invoice', 20), await issue('credit', 5));
+    await setDocumentStatus(voided.allocations[0].documentId, 'void');
+    expect(await db.payments.get(voided.id)).toBeUndefined();
+    expect(await files(voided.id)).toBe(0);
+    // The credit note is deleted.
+    const credit = await issue('credit', 5);
+    const deleted = await apply(await issue('invoice', 20), credit);
+    await deleteDocument(credit.id);
+    expect(await db.payments.get(deleted.id)).toBeUndefined();
+    expect(await files(deleted.id)).toBe(0);
   });
 });
