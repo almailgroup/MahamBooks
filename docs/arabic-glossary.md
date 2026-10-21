@@ -158,6 +158,11 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Profit and loss                    | الأرباح والخسائر           |
 | Balance sheet                      | الميزانية العمومية         |
 | Cash flow                          | التدفقات النقدية           |
+| Receivables                        | الذمم المدينة              |
+| Payables                           | الذمم الدائنة              |
+| Income and expense                 | الإيرادات والمصروفات       |
+| Top expenses                       | أعلى المصروفات             |
+| Watchlist                          | قائمة المتابعة             |
 | Financial year                     | السنة المالية              |
 | Lock date                          | تاريخ الإقفال              |
 | Aging                              | أعمار الديون               |

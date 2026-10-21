@@ -609,8 +609,21 @@ export interface Company {
    * Cheque layouts. Missing: cheques are written by hand, as before.
    */
   chequePrinting?: boolean;
+  /** How the Books dashboard is laid out; missing shows it as before. */
+  dashboard?: DashboardSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * The Books dashboard. `overview` puts receivables next to payables, cash
+ * flow, income and expense, top expenses, bank and card accounts and a
+ * watchlist between the key figures and today's cards; missing (or
+ * `classic`) is the dashboard as before. The period, the watchlist and the
+ * hidden cards are each person's own and stay on the device.
+ */
+export interface DashboardSettings {
+  layout?: 'classic' | 'overview';
 }
 
 /**

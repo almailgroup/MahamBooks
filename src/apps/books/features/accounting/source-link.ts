@@ -1,4 +1,5 @@
 import type { LedgerLine, LedgerSource } from '@/lib/accounting/ledger';
+import type { DateRange } from '@/lib/accounting/statements';
 import { msg } from '@/i18n';
 
 const SOURCE_ROUTES: Record<LedgerSource, string> = {
@@ -29,4 +30,14 @@ export function sourceLink(line: Pick<LedgerLine, 'source' | 'sourceId'>): strin
   // Expenses open in a dialog on their list; payments made redirect from /payments.
   if (line.source === 'expense') return `/expenses?open=${line.sourceId}`;
   return `${SOURCE_ROUTES[line.source]}/${line.sourceId}`;
+}
+
+/** The general ledger of one account, over `range` when given. */
+export function ledgerLink(accountId: string, range?: DateRange) {
+  const params = new URLSearchParams({ account: accountId });
+  if (range) {
+    params.set('from', range.from);
+    params.set('to', range.to);
+  }
+  return `/reports/general-ledger?${params.toString()}`;
 }

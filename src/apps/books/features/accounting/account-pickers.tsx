@@ -36,6 +36,22 @@ export function categoryOptions(accounts: Account[], keep: (ID | null | undefine
     });
 }
 
+/** Any account in use, to pick one to keep an eye on; accounts in `skip` are left out. */
+export function accountOptions(accounts: Account[], skip: readonly ID[] = []): ComboOption[] {
+  return accounts
+    .filter((a) => !a.archived && !skip.includes(a.id))
+    .sort(byCode)
+    .map((a): ComboOption => {
+      const type = ACCOUNT_TYPES[a.type]?.label ?? '';
+      return {
+        value: a.id,
+        label: `${a.code} ${localName(a)}`,
+        detail: type ? t(type) : undefined,
+        keywords: [a.name, a.nameAr ?? '', type, type ? t(type) : ''].join(' '),
+      };
+    });
+}
+
 /**
  * Where money went in or came out. Payments received go to bank or cash;
  * payments made can also come from a card; expenses can also be paid by the

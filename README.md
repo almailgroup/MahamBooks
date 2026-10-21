@@ -148,6 +148,14 @@ and the compliance calendar (Maham Compliance).
   between your own accounts.
 - Reports: receivables and payables aging, statements, customer exposure,
   retentions, sales, purchases, payments, stock and more, with CSV export.
+- An overview dashboard, once the owner or an admin picks it on the dashboard
+  or in Settings → Accounting → Books dashboard: receivables next to payables
+  (not due yet and overdue), cash flow month by month, income and expense,
+  top expenses linked to their ledgers, bank and card accounts, and a
+  watchlist of up to eight accounts, above the usual cards. Each person picks
+  the period (the last 12 months to begin with) and the cards they hide, on
+  their device. Staff and viewers don't see income, expenses or the
+  watchlist.
 
 ### Everything else
 

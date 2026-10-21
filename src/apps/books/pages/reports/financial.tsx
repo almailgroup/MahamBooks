@@ -7,7 +7,7 @@ import type { Account, ISODate } from '@/db/types';
 import { accountingSettings } from '@/db/chart-setup';
 import { useCompany } from '@/app/company';
 import { useLedger } from '@/apps/books/features/accounting/use-ledger';
-import { sourceLink } from '@/apps/books/features/accounting/source-link';
+import { ledgerLink, sourceLink } from '@/apps/books/features/accounting/source-link';
 import {
   buildStatement,
   modelToCsv,
@@ -222,14 +222,7 @@ export function useStatementData(): StatementData | undefined {
   );
 }
 
-export function ledgerLink(accountId: string, range?: DateRange) {
-  const params = new URLSearchParams({ account: accountId });
-  if (range) {
-    params.set('from', range.from);
-    params.set('to', range.to);
-  }
-  return `/reports/general-ledger?${params.toString()}`;
-}
+export { ledgerLink };
 
 function Toolbar({ children, actions }: { children: ReactNode; actions: ReactNode }) {
   return (
