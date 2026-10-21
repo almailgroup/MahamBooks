@@ -532,7 +532,7 @@ describe('item codes (SKU)', () => {
   });
 
   it('refuses an SKU another item has, new or changed, but not one kept', async () => {
-    const company = await coding(false);
+    const company = await coding();
     const gloves = await item(company, 'Gloves', { sku: 'GL-01' });
     await expect(item(company, 'Gloves XL', { sku: ' gl-01' })).rejects.toThrow(InventoryError);
     const helmet = await item(company, 'Helmet', { sku: 'HM-01' });
@@ -542,6 +542,27 @@ describe('item codes (SKU)', () => {
     await expect(saveItem({ ...gloves, unitPrice: 2 })).resolves.toMatchObject({ sku: 'GL-01' });
     await expect(saveItem({ ...helmet, sku: 'GL-01', name: 'Hard hat' })).resolves.toMatchObject({
       sku: 'GL-01',
+    });
+  });
+
+  it('names the archived item that has the SKU', async () => {
+    const company = await coding();
+    const old = await item(company, 'Gloves (old supplier)', { sku: 'OLD-1' });
+    await saveItem({ ...old, archived: true });
+    await expect(item(company, 'Gloves', { sku: 'old-1' })).rejects.toThrow(
+      'The archived item Gloves (old supplier) already has the SKU old-1.',
+    );
+  });
+
+  it('lets items share an SKU, as before, while the company gives no codes', async () => {
+    const company = await coding(false);
+    const old = await item(company, 'Gloves (old supplier)', { sku: 'OLD-1' });
+    await saveItem({ ...old, archived: true });
+    await expect(item(company, 'Gloves', { sku: 'OLD-1' })).resolves.toMatchObject({
+      sku: 'OLD-1',
+    });
+    await expect(item(company, 'Gloves XL', { sku: 'old-1' })).resolves.toMatchObject({
+      sku: 'old-1',
     });
   });
 

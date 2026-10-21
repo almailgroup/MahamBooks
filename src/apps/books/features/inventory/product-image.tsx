@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Expand, ImagePlus, Package, RefreshCw, RotateCw, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import {
   addProductImages,
+  itemImageIds,
   MAX_PRODUCT_IMAGES,
-  productImageIds,
   removeProductImage,
   replaceProductImage,
   setMainProductImage,
@@ -81,55 +81,93 @@ export function ProductThumb({
   );
 }
 
-const NO_THUMBS = new Map<ID, string>();
+/** Small copies of pictures made on this device, by attachment id (a changed picture has a new id). */
+const made = new Map<ID, string>();
+
+/** Pictures turned into thumbnails at once: a long list never stalls the page. */
+const AT_ONCE = 3;
+let making = 0;
+const waiting: (() => void)[] = [];
+
+function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      making++;
+      work()
+        .then(resolve, reject)
+        .finally(() => {
+          making--;
+          waiting.shift()?.();
+        });
+    };
+    if (making < AT_ONCE) start();
+    else waiting.push(start);
+  });
+}
 
 /**
- * Small copies of the main pictures of these items, by item id. Only with
- * `enabled` (the company's items have pictures); a picture still in the
- * cloud comes in after the next sync.
+ * The main picture of an item in a list, as a small copy. Its file is read
+ * only once the row is on screen (or close to it) and only until the copy is
+ * made, which then serves every list for as long as the app is open. A
+ * picture still in the cloud comes in after the next sync.
  */
-export function useProductThumbs(
-  products: Product[] | undefined,
-  enabled: boolean,
-): Map<ID, string> {
-  const mains = useMemo(
-    () =>
-      enabled
-        ? (products ?? []).flatMap((p) =>
-            p.imageIds?.[0] ? [{ productId: p.id, imageId: p.imageIds[0] }] : [],
-          )
-        : [],
-    [products, enabled],
-  );
-  const key = mains.map((m) => m.imageId).join(',');
-  const files = useLiveQuery(async () => {
-    if (!mains.length) return NO_THUMBS;
-    const list = await db.attachments.bulkGet(mains.map((m) => m.imageId));
-    return new Map(list.flatMap((a) => (a?.dataUrl ? [[a.id, a.dataUrl] as const] : [])));
-  }, [key]);
-  // The last ones made: kept while the next are made, so nothing flickers.
-  const [thumbs, setThumbs] = useState(NO_THUMBS);
+export function ItemPicture({
+  imageId,
+  size = 'sm',
+}: {
+  /** The item's main picture (`imageIds[0]`). */
+  imageId: ID | undefined;
+  size?: keyof typeof SIZES;
+}) {
+  const box = useRef<HTMLSpanElement>(null);
+  const [near, setNear] = useState(false);
+  const [, update] = useReducer((n: number) => n + 1, 0);
+  const src = imageId ? made.get(imageId) : undefined;
+
   useEffect(() => {
-    if (!files?.size) return;
+    if (near || !imageId || made.has(imageId)) return;
+    const element = box.current;
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [near, imageId]);
+
+  // The full file, only while its copy is still to be made (then let go).
+  const file = useLiveQuery(
+    async () =>
+      near && imageId && !src ? ((await db.attachments.get(imageId))?.dataUrl ?? '') : '',
+    [near, imageId, src],
+  );
+
+  useEffect(() => {
+    if (!imageId || !file) return;
     let live = true;
-    void Promise.all(
-      mains.flatMap(({ productId, imageId }) => {
-        const src = files.get(imageId);
-        return src
-          ? [imageThumbnail(imageId, src, THUMB_PX).then((thumb) => [productId, thumb] as const)]
-          : [];
-      }),
-    ).then((list) => {
-      if (live) setThumbs(new Map(list));
+    void inTurn(() => imageThumbnail(imageId, file, THUMB_PX)).then((thumb) => {
+      made.set(imageId, thumb);
+      if (live) update();
     });
     return () => {
       live = false;
     };
-    // `files` follows `key`, which names the pictures; the list of items
-    // itself changes identity often.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files]);
-  return files?.size ? thumbs : NO_THUMBS;
+  }, [imageId, file]);
+
+  return (
+    <span ref={box} className="inline-flex shrink-0">
+      <ProductThumb src={src} size={size} />
+    </span>
+  );
 }
 
 /** A picture in the editor: stored on the item, or waiting for a new item to be saved. */
@@ -152,6 +190,7 @@ export function ProductImageEditor({
   saved,
   pending,
   onPending,
+  onBusy,
   readOnly = false,
 }: {
   product: Product;
@@ -160,6 +199,8 @@ export function ProductImageEditor({
   /** A new item's pictures, saved with it. */
   pending: NewProductImage[];
   onPending: (images: NewProductImage[]) => void;
+  /** While pictures are being read or saved: a new item waits for them. */
+  onBusy?: (busy: boolean) => void;
   readOnly?: boolean;
 }) {
   const confirm = useConfirm();
@@ -170,7 +211,8 @@ export function ProductImageEditor({
 
   const stored = useLiveQuery(async () => {
     if (!saved) return null;
-    const ids = productImageIds(await db.products.get(product.id));
+    const item = await db.products.get(product.id);
+    const ids = item ? await itemImageIds(item) : [];
     const files = await db.attachments.bulkGet(ids);
     return ids.map((id, i): Slot => ({
       id,
@@ -191,12 +233,14 @@ export function ProductImageEditor({
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
+    onBusy?.(true);
     try {
       await work();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not save the picture.'));
     } finally {
       setBusy(false);
+      onBusy?.(false);
     }
   };
 

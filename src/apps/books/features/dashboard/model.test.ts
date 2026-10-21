@@ -307,6 +307,39 @@ const LINES = [
 const LEDGER = { lines: LINES, accounts: ACCOUNTS };
 const minor = (major: number) => Math.round(major * 1000);
 
+describe('invoiced against collected over a period', () => {
+  it('cuts the first and last months of a financial year ending mid-month', () => {
+    const june = { month: 6, day: 15 };
+    const range = dashboardRange('this-year', NOW, june);
+    expect(range.months[0]).toEqual({ key: '2026-06', from: '2026-06-16', to: '2026-06-30' });
+    const input = {
+      docs: [
+        // Last year's: 5 June is before the year starts on 16 June.
+        doc('invoice', 'sent', '2026-06-05', '2026-07-05', 700, 700),
+        doc('invoice', 'sent', '2026-06-20', '2026-07-20', 300, 300),
+      ],
+      payments: [payment('2026-06-10', 50), payment('2026-06-16', 40)],
+      clients: CLIENTS,
+      expenses: [],
+      vatFiled: [],
+      company,
+      locale: 'en-KW',
+      now: NOW,
+      taxesOn: false,
+      precision: P,
+    };
+    const thisYear = dashboardFigures(input, range.months);
+    expect(thisYear.chart.invoiced).toEqual([300, 0, 0, 0, 0]);
+    expect(thisYear.chart.collected).toEqual([40, 0, 0, 0, 0]);
+    const lastYear = dashboardFigures(input, dashboardRange('last-year', NOW, june).months);
+    expect(lastYear.chart.invoiced.at(-1)).toBe(700);
+    expect(lastYear.chart.collected.at(-1)).toBe(50);
+    // Whole months, as the classic dashboard has them, are as before.
+    const whole = dashboardFigures(input, ['2026-06']);
+    expect(whole.chart.invoiced).toEqual([1000]);
+  });
+});
+
 describe('the period', () => {
   it('is the last 12 months by default, to today', () => {
     const range = dashboardRange('last-12-months', NOW, DEC);
@@ -384,6 +417,17 @@ describe('cash flow by month', () => {
     expect(april).toMatchObject({ incoming: 0, outgoing: 0 });
     const july = monthlyCashFlow(LEDGER, range, P).months.find((m) => m.key === '2026-07')!;
     expect(july).toMatchObject({ incoming: 0, outgoing: 292.25 });
+  });
+
+  it('counts the accounts in use, as the cash tile and the bank card do', () => {
+    // Archived with money still in it (the chart lets you).
+    const accounts = ACCOUNTS.map((a) => (a.id === 'petty' ? { ...a, archived: true } : a));
+    const books = { lines: LINES, accounts };
+    const range = dashboardRange('last-12-months', NOW, DEC);
+    const flow = monthlyCashFlow(books, range, P);
+    expect(minor(flow.closing)).toBe(cashAccounts(books).total);
+    expect(flow.closing).toBe(moneyAccountRows(books, P).cash);
+    expect(flow.closing).toBe(14_751.75);
   });
 
   it('ties for a year ending in March too', () => {

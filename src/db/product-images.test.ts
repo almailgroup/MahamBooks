@@ -4,6 +4,7 @@ import { createProduct } from './defaults';
 import { deleteItem, saveItem } from './inventory';
 import {
   addProductImages,
+  itemImageIds,
   MAX_PRODUCT_IMAGES,
   mainProductImages,
   ProductImageError,
@@ -155,5 +156,30 @@ describe('item pictures', () => {
     });
     await removeAttachment(note.id);
     expect('imageIds' in (await db.products.get(p.id))!).toBe(false);
+  });
+
+  it('come back when they dropped out of the item’s list', async () => {
+    const p = await item();
+    const withTwo = await addProductImages(p.id, [picture('front'), picture('side')]);
+    const [front, side] = withTwo.imageIds!;
+    await db.attachments.update(front, { createdAt: '2026-10-01T08:00:00.000Z' });
+    await db.attachments.update(side, { createdAt: '2026-10-01T09:00:00.000Z' });
+    // An older build (or another device) saved the item without the list.
+    const { imageIds: _gone, ...stale } = withTwo;
+    await db.products.put(stale);
+    expect(await itemImageIds((await db.products.get(p.id))!)).toEqual([front, side]);
+
+    // The next change of its pictures puts them back on the list.
+    const added = await addProductImages(p.id, [picture('back')]);
+    expect(added.imageIds).toHaveLength(3);
+    expect(added.imageIds!.slice(0, 2)).toEqual([front, side]);
+
+    await db.products.put({ ...added, imageIds: [added.imageIds![2]] });
+    const main = await setMainProductImage(p.id, side);
+    expect(main.imageIds).toEqual([side, added.imageIds![2], front]);
+
+    await db.products.put({ ...main, imageIds: [side] });
+    expect((await removeProductImage(p.id, front)).imageIds).toEqual([side]);
+    expect(await db.attachments.get(front)).toBeUndefined();
   });
 });

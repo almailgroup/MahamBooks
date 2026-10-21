@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { createProduct } from '@/db/defaults';
 import { deleteItem, productKind, saveItem } from '@/db/inventory';
+import { sharedItemCodes } from '@/cloud/problems';
 import type { Product, ProductKind } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { downloadCsv } from '@/lib/csv';
@@ -57,7 +58,7 @@ import {
   useUnitAmount,
 } from '@/apps/books/features/inventory/use-inventory';
 import { usePrint } from '@/apps/books/features/reports/report-toolbar';
-import { ProductThumb, useProductThumbs } from '@/apps/books/features/inventory/product-image';
+import { ItemPicture } from '@/apps/books/features/inventory/product-image';
 import { ItemDialog } from './item-dialog';
 import { ItemListPrint, type ItemListKind } from './item-list-print';
 
@@ -118,21 +119,15 @@ export default function ProductsPage() {
       .sort((a, b) => localName(a).localeCompare(localName(b)));
   }, [products, inventory, query, view, kindFilter]);
 
-  // Items sharing an SKU (another device gave the same code offline): shown
-  // once codes are given, so one of them can be changed.
+  // Items sharing a code the company gives (another device gave the same
+  // code offline): shown once codes are given, so one of them can be changed.
   const sameSku = useMemo(() => {
-    const seen = new Map<string, number>();
-    for (const p of products ?? []) {
-      const key = p.sku.trim().toLowerCase();
-      if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
-    }
-    return (p: Product) =>
-      Boolean(company.items?.autoSku) && (seen.get(p.sku.trim().toLowerCase()) ?? 0) > 1;
-  }, [products, company.items?.autoSku]);
+    const shared = new Set(sharedItemCodes(company, products ?? []).flat());
+    return (p: Product) => shared.has(p);
+  }, [products, company]);
 
   // Items have pictures once the owner turns them on (Settings → Items and units).
   const pictures = Boolean(company.items?.images);
-  const thumbs = useProductThumbs(filtered, pictures);
 
   if (!products || !inventory || !taxRates) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -467,7 +462,7 @@ export default function ProductsPage() {
                             onClick={() => setEditing(p)}
                             className="flex w-full min-w-0 items-center gap-3 text-start"
                           >
-                            {pictures ? <ProductThumb src={thumbs.get(p.id)} /> : null}
+                            {pictures ? <ItemPicture imageId={p.imageIds?.[0]} /> : null}
                             <span className="block min-w-0 flex-1">
                               <span className="flex min-w-0 items-center gap-2">
                                 <span className="truncate font-medium text-slate-900">

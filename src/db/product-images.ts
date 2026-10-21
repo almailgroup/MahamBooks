@@ -30,8 +30,25 @@ export function productImageIds(product: Pick<Product, 'imageIds'> | null | unde
   return product?.imageIds ?? [];
 }
 
+/**
+ * An item's pictures, the main one first, and after them its picture files
+ * that dropped out of its list (another device, or an older build, saved the
+ * item over it), oldest first: the person sees them again and can keep or
+ * remove them. Each change of the pictures puts them back on the list.
+ */
+export async function itemImageIds(product: Product): Promise<ID[]> {
+  const listed = productImageIds(product);
+  const strays = (await db.attachments.where('ownerId').equals(product.id).toArray())
+    .filter((file) => !listed.includes(file.id) && file.type.startsWith('image/'))
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
+    .map((file) => file.id);
+  return [...listed, ...strays];
+}
+
 /** The item with these pictures; with none, the field is left out, as on items that never had one. */
-function withImages(product: Product, ids: ID[]): Product {
+function withImages(product: Product, all: ID[]): Product {
+  // Past the limit (files that came back), the rest stay as files of the item.
+  const ids = all.slice(0, MAX_PRODUCT_IMAGES);
   const { imageIds: _old, ...rest } = product;
   return { ...rest, ...(ids.length ? { imageIds: ids } : {}), updatedAt: nowStamp() };
 }
@@ -73,8 +90,8 @@ async function itemOf(productId: ID): Promise<Product> {
   return product;
 }
 
-function position(product: Product, imageId: ID): number {
-  const at = productImageIds(product).indexOf(imageId);
+function position(ids: ID[], imageId: ID): number {
+  const at = ids.indexOf(imageId);
   if (at < 0) throw new ProductImageError(t('This picture is no longer on the item.'));
   return at;
 }
@@ -91,7 +108,7 @@ export async function addProductImages(productId: ID, images: NewProductImage[])
   return db.transaction('rw', TABLES(), async () => {
     const product = await itemOf(productId);
     if (images.length === 0) return product;
-    const ids = productImageIds(product);
+    const ids = await itemImageIds(product);
     if (ids.length + images.length > MAX_PRODUCT_IMAGES) {
       throw new ProductImageError(
         t('An item can have up to {count} pictures.', { count: MAX_PRODUCT_IMAGES }),
@@ -125,7 +142,8 @@ export async function replaceProductImage(
 ): Promise<Product> {
   return db.transaction('rw', TABLES(), async () => {
     const product = await itemOf(productId);
-    const at = position(product, imageId);
+    const ids = await itemImageIds(product);
+    const at = position(ids, imageId);
     const old = await db.attachments.get(imageId);
     const file = imageFile(product, {
       name: image.name ?? old?.name ?? '',
@@ -133,7 +151,6 @@ export async function replaceProductImage(
     });
     await db.attachments.add(file);
     await db.attachments.delete(imageId);
-    const ids = [...productImageIds(product)];
     ids[at] = file.id;
     const updated = withImages(product, ids);
     await db.products.put(updated);
@@ -150,8 +167,12 @@ export async function removeProductImage(productId: ID, imageId: ID): Promise<Pr
     const product = await itemOf(productId);
     const file = await db.attachments.get(imageId);
     if (file?.ownerId === product.id) await db.attachments.delete(imageId);
-    if (!productImageIds(product).includes(imageId)) return product;
-    const updated = withoutImage(product, imageId);
+    const ids = await itemImageIds(product);
+    if (!ids.includes(imageId)) return product;
+    const updated = withImages(
+      product,
+      ids.filter((id) => id !== imageId),
+    );
     await db.products.put(updated);
     await log(product, 'image_removed', msg('Picture removed from item {name}'));
     return updated;
@@ -162,10 +183,10 @@ export async function removeProductImage(productId: ID, imageId: ID): Promise<Pr
 export async function setMainProductImage(productId: ID, imageId: ID): Promise<Product> {
   return db.transaction('rw', TABLES(), async () => {
     const product = await itemOf(productId);
-    const at = position(product, imageId);
+    const ids = await itemImageIds(product);
+    const at = position(ids, imageId);
     if (at === 0) return product;
-    const ids = productImageIds(product).filter((id) => id !== imageId);
-    const updated = withImages(product, [imageId, ...ids]);
+    const updated = withImages(product, [imageId, ...ids.filter((id) => id !== imageId)]);
     await db.products.put(updated);
     await log(product, 'image_main', msg('Main picture of item {name} changed'));
     return updated;

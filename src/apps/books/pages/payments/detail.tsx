@@ -39,6 +39,7 @@ import {
 import { AttachmentList } from '@/features/purchases/attachments';
 import { hasVoucher } from '@/pdf/voucher/model';
 import { printableAfterLeaf, printRefusal } from '@/lib/cheque-print';
+import { useHasChequeLayout } from '@/apps/books/features/cheques/use-cheque-layout';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -78,6 +79,7 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const accounts = useAccounts();
   const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
   const { readOnly } = useReadOnly();
+  const hasLayout = useHasChequeLayout(payment?.cheque?.bank);
 
   if (payment === undefined || client === undefined || !docs)
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -122,15 +124,13 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
     Boolean(company.chequePrinting) &&
     direction === 'out' &&
     !readOnly &&
+    hasLayout &&
     printableAfterLeaf(refusal);
 
   const remove = async () => {
     const description = [
       t(copy.deleteDescription),
       files?.length ? t('Its attached files are deleted with it.') : '',
-      cheque?.printedAt
-        ? t('Cheque {number} was printed: destroy the printed leaf.', { number: cheque.number })
-        : '',
     ]
       .filter(Boolean)
       .join(' ');

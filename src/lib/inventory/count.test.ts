@@ -62,4 +62,19 @@ describe('stock count sheets', () => {
     ]);
     expect(fromExcel).toEqual(fromCsv);
   });
+
+  it('leaves out items whose counted cell was left blank in Excel', async () => {
+    // Excel writes no cell for a blank at the end of a row.
+    const workbook = buildWorkbook([
+      ['SKU', 'Item', 'Unit', 'On record', 'Counted'],
+      ['PAP-A4', 'Printer paper A4', 'box', 20, 18],
+      [null, 'Toner cartridge', 'pcs', 3],
+    ]);
+    const rows = await readXlsx(workbook);
+    expect(rows[2].length).toBeLessThan(5);
+    const result = readCountRows(rows, ITEMS);
+    expect([...result.counted]).toEqual([['paper', 18]]);
+    expect(result.invalid).toEqual([]);
+    expect(result.unmatched).toEqual([]);
+  });
 });

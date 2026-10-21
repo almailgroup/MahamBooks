@@ -57,6 +57,8 @@ export default {
     'يُعِدّ المالكون والمسؤولون والمحاسبون الأصناف، ويمكنك الاطلاع عليها.',
   'Item codes given to {count} items': 'أُعطيت رموز لـ {count} من الأصناف',
   'Another item already has the SKU {sku}.': 'رمز الصنف {sku} مستخدم لصنف آخر.',
+  'The archived item {name} already has the SKU {sku}.':
+    'رمز الصنف {sku} مستخدم للصنف المؤرشف {name}.',
   'Left blank, the item gets the next code.': 'إذا تُرك فارغًا يأخذ الصنف الرمز التالي.',
   'The QR code of the SKU, for labels: a scanner types it into item search.':
     'رمز QR لرمز الصنف، للملصقات: يكتبه الماسح الضوئي في بحث الأصناف.',

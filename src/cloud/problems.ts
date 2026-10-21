@@ -1,5 +1,7 @@
 import { db } from '@/db/db';
-import type { InvoiceDocument, Product } from '@/db/types';
+import { defaultNumbering } from '@/db/defaults';
+import type { Company, InvoiceDocument, Product } from '@/db/types';
+import { writtenBy } from '@/lib/numbering';
 import type { FileTask } from './types';
 
 /**
@@ -31,20 +33,34 @@ export async function numberProblems(companyId: string): Promise<InvoiceDocument
 }
 
 /**
- * Items of a company that gives item codes and that share an SKU with
- * another item, grouped by SKU: codes given on two devices at once without
- * the cloud. Nothing is changed by itself: labels may have been printed.
+ * Items of a company that gives item codes and that share a code it gives
+ * (such as SKU-00004) with another item, grouped by SKU: codes given on two
+ * devices at once without the cloud. SKUs typed in another way, which
+ * items could always share, and groups of archived items only are left out.
+ * Nothing is changed by itself: labels may have been printed.
  */
+export function sharedItemCodes(
+  company: Pick<Company, 'items' | 'numbering'> | null | undefined,
+  products: Product[],
+): Product[][] {
+  if (!company?.items?.autoSku) return [];
+  // As db/inventory reads them: the rule item codes are given with, and
+  // SKUs compared trimmed and in lower case.
+  const rule = company.numbering.product ?? defaultNumbering().product;
+  const groups = new Map<string, Product[]>();
+  for (const product of products) {
+    const key = product.sku.trim().toLowerCase();
+    if (!key || !writtenBy(rule, key)) continue;
+    groups.set(key, [...(groups.get(key) ?? []), product]);
+  }
+  return [...groups.values()].filter((group) => group.length > 1 && group.some((p) => !p.archived));
+}
+
+/** sharedItemCodes of the company stored on this device. */
 export async function skuProblems(companyId: string): Promise<Product[][]> {
   const company = await db.companies.get(companyId);
   if (!company?.items?.autoSku) return [];
-  const groups = new Map<string, Product[]>();
-  for (const product of await db.products.where('companyId').equals(companyId).toArray()) {
-    const key = product.sku.trim().toLowerCase();
-    if (!key) continue;
-    groups.set(key, [...(groups.get(key) ?? []), product]);
-  }
-  return [...groups.values()].filter((group) => group.length > 1);
+  return sharedItemCodes(company, await db.products.where('companyId').equals(companyId).toArray());
 }
 
 /** Removals of the company's files that kept failing: their records are deleted, the files not. */

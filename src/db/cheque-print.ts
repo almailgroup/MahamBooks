@@ -30,8 +30,14 @@ export class ChequePrintError extends Error {}
 
 type ChequePayment = Payment & { cheque: ChequeDetails };
 
-/** Layouts are kept with the company's records, which a cloud company's server must know. */
+/**
+ * Layouts change only once the company prints cheques (D1), and are kept
+ * with the company's records, which a cloud company's server must know.
+ */
 async function assertLayoutsAllowed(companyId: ID) {
+  if (!(await db.companies.get(companyId))?.chequePrinting) {
+    throw new ChequePrintError(t('Cheque printing is off for this company.'));
+  }
   if (!(await companyHasFeature(companyId, 'tables_v16'))) {
     throw new ChequePrintError(
       t('Saving cheque layouts needs the latest database script. Ask the owner to run it.'),
@@ -42,7 +48,8 @@ async function assertLayoutsAllowed(companyId: ID) {
 /**
  * Saves a company's layout of a bank. A built-in layout is saved as the
  * company's own (it then replaces the built-in one); its version goes up
- * when its measurements change, so a print says which version it used.
+ * when its measurements change, so a print says which version it used, and
+ * it is no longer marked as checked against a real leaf.
  */
 export async function saveChequeLayout(input: ChequeLayout): Promise<ChequeLayout> {
   await assertLayoutsAllowed(input.companyId);
@@ -56,15 +63,17 @@ export async function saveChequeLayout(input: ChequeLayout): Promise<ChequeLayou
     }
     const base = existing ?? presetLayout(input.bank, input.companyId);
     const stamp = nowStamp();
+    const moved = base !== null && !sameMeasurements(base, input);
     const layout: ChequeLayout = {
       ...input,
+      // Checked against a real leaf with the old measurements, not the new
+      // ones (unless the check is what this change records).
+      calibrated: moved ? input.calibrated && !base.calibrated : input.calibrated,
       id: fromPreset ? newId() : input.id,
       bank: input.bank.trim().toUpperCase(),
       name: input.name.trim(),
       ...(input.nameAr?.trim() ? { nameAr: input.nameAr.trim() } : {}),
-      version: base
-        ? (existing?.version ?? base.version) + (sameMeasurements(base, input) ? 0 : 1)
-        : 1,
+      version: base ? (existing?.version ?? base.version) + (moved ? 1 : 0) : 1,
       archived: false,
       createdAt: existing?.createdAt ?? stamp,
       updatedAt: stamp,
@@ -116,6 +125,25 @@ const refs = (payment: Payment) => ({
   clientId: payment.clientId || null,
   documentId: payment.documentIds[0] ?? null,
 });
+
+/**
+ * Logs that the cheque was sent to the printer, before anyone says whether
+ * it printed: a leaf that printed but was never recorded still leaves a trace.
+ */
+export async function recordChequePrintAttempt(paymentId: ID): Promise<void> {
+  const payment = await loadIssued(paymentId);
+  await logActivity(
+    payment.companyId,
+    'payment',
+    payment.id,
+    'cheque_print_sent',
+    {
+      text: msg('Cheque {number} on payment {payment} sent to the printer'),
+      vars: { number: payment.cheque.number, payment: payment.number },
+    },
+    refs(payment),
+  );
+}
 
 /** Records that the cheque printed correctly on its leaf. */
 export async function recordChequePrinted(

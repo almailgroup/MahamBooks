@@ -37,6 +37,11 @@ export default {
     'تضع أرصدتك الافتتاحية {amount} في حساب المخزون مسبقًا. المخزون المستورد هنا يُضاف إليه، فيُحتسب مرتين.',
   'Keep stock out of the opening balances and import it here.':
     'أبقِ المخزون خارج الأرصدة الافتتاحية واستورده هنا.',
+  'Opening stock already put {amount} on the inventory account. The inventory in this file adds to it, so it would be counted twice.':
+    'وضع المخزون الافتتاحي {amount} في حساب المخزون مسبقًا. المخزون الوارد في هذا الملف يُضاف إليه، فيُحتسب مرتين.',
+  'Leave the inventory account out of this file: the opening stock is already imported.':
+    'اترك حساب المخزون خارج هذا الملف: المخزون الافتتاحي مستورد مسبقًا.',
+  'Import the opening balances?': 'استيراد الأرصدة الافتتاحية؟',
   'Post the stock in this file?': 'ترحيل المخزون الوارد في هذا الملف؟',
   'Opening stock worth {amount} goes to opening balance equity, dated {date}.':
     'يُرحّل مخزون افتتاحي بقيمة {amount} مقابل الأرصدة الافتتاحية بتاريخ {date}.',

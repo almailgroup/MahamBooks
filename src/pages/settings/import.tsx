@@ -418,8 +418,24 @@ export default function ImportSettings() {
     'Your opening balances already put {amount} on the inventory account. Stock imported here adds to it, so it would be counted twice.',
     { amount: fmt.money(fromMinor(stockInBooks, precision)) },
   );
+  // The other way round: opening balances on the inventory account after the stock came in.
+  const stockTwiceText = plan?.openingStock
+    ? t(
+        'Opening stock already put {amount} on the inventory account. The inventory in this file adds to it, so it would be counted twice.',
+        { amount: fmt.money(fromMinor(plan.openingStock, precision)) },
+      )
+    : '';
   const run = async () => {
     if (!file || !used || !plan) return;
+    if (kind === 'opening' && plan.openingStock) {
+      const ok = await confirm({
+        title: t('Import the opening balances?'),
+        description: stockTwiceText,
+        confirmLabel: t('Import'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
     if (kind === 'products' && plan.stock && (plan.stock.opening || plan.stock.differences)) {
       // Stock reaches the books only when the person says so.
       const stock = plan.stock;
@@ -717,6 +733,14 @@ export default function ImportSettings() {
             {t(
               'Opening balances were already imported as at {date}. Importing again adds to them.',
               { date: fmt.date(company.openingBalances.date) },
+            )}
+          </p>
+        ) : null}
+        {kind === 'opening' && plan?.openingStock ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {stockTwiceText}{' '}
+            {t(
+              'Leave the inventory account out of this file: the opening stock is already imported.',
             )}
           </p>
         ) : null}

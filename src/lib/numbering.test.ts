@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { NumberingRule } from '@/db/types';
-import { allocateNumber, currentCounter, formatNumber, previewNumber } from './numbering';
+import {
+  allocateNumber,
+  currentCounter,
+  formatNumber,
+  previewNumber,
+  writtenBy,
+} from './numbering';
 
 const rule = (overrides: Partial<NumberingRule> = {}): NumberingRule => ({
   pattern: 'INV-{year}-{counter}',
@@ -63,5 +69,17 @@ describe('numbering', () => {
     const r = rule({ next: 12 });
     expect(previewNumber(r, '2026-02-01')).toBe('INV-2026-0012');
     expect(r.next).toBe(12);
+  });
+
+  it('knows the numbers a rule writes', () => {
+    const sku = { pattern: 'SKU-{counter}', padding: 5 };
+    expect(writtenBy(sku, 'SKU-00004')).toBe(true);
+    expect(writtenBy(sku, ' sku-123456 ')).toBe(true);
+    expect(writtenBy(sku, 'SKU-04')).toBe(false);
+    expect(writtenBy(sku, 'GL-01')).toBe(false);
+    expect(writtenBy(sku, 'SKU-00004-B')).toBe(false);
+    const dated = { pattern: 'P.{yy}{month}-{counter}', padding: 3 };
+    expect(writtenBy(dated, 'P.2610-007')).toBe(true);
+    expect(writtenBy(dated, 'PX2610-007')).toBe(false);
   });
 });

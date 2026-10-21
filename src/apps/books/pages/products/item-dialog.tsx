@@ -62,6 +62,8 @@ export function ItemDialog({
   const [error, setError] = useState('');
   // A new item's pictures, stored once it is (a stored item's are saved at once).
   const [pictures, setPictures] = useState<NewProductImage[]>([]);
+  // Pictures still being read: saving now would leave them out.
+  const [readingPictures, setReadingPictures] = useState(false);
   const { readOnly } = useRoleView();
   const set = (patch: Partial<Product>) => setDraft((d) => ({ ...d, ...patch }));
   const isNew = !product.name;
@@ -289,6 +291,7 @@ export function ItemDialog({
               saved={!isNew}
               pending={pictures}
               onPending={setPictures}
+              onBusy={setReadingPictures}
               readOnly={readOnly.readOnly}
             />
           ) : null}
@@ -516,7 +519,7 @@ export function ItemDialog({
           <Button variant="outline" onClick={onClose}>
             {t('Cancel')}
           </Button>
-          <Button onClick={save} loading={saving}>
+          <Button onClick={save} loading={saving} disabled={readingPictures}>
             {t('Save')}
           </Button>
         </DialogFooter>

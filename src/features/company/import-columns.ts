@@ -279,7 +279,6 @@ export const IMPORT_COLUMNS: Record<ImportKind, ImportColumn[]> = {
         'quantity on hand',
         'qty on hand',
         'الكميه',
-        'الكميه المتوفره',
         'المخزون الافتتاحي',
         'الكميه الافتتاحيه',
       ],
@@ -775,6 +774,9 @@ export function normalizeHeader(text: string): string {
 
 export type ColumnMapping = Record<string, number | null>;
 
+/** The "On hand" heading of the Products export, in English and Arabic (as normalised). */
+const EXPORTED_ON_HAND = ['on hand', 'الكميه المتوفره'];
+
 /**
  * Which file column holds each of the fields. Exact names win over partial
  * ones, longer names over shorter ones; a column is used once.
@@ -827,6 +829,13 @@ export function guessColumns(
   rows: string[][] = [],
 ): ColumnMapping {
   const mapping = matchColumns(IMPORT_COLUMNS[kind], headers);
+  if (kind === 'products' && mapping.quantity != null) {
+    // The "On hand" of the Products page's own export is the stock on record
+    // today, in all warehouses: re-importing it (to change prices) must not
+    // post stock unless the column is matched by hand.
+    const quantity = normalizeHeader(headers[mapping.quantity] ?? '');
+    if (EXPORTED_ON_HAND.includes(quantity)) mapping.quantity = null;
+  }
   const used = new Set(Object.values(mapping).filter((i): i is number => i != null));
   if (kind === 'employees') {
     const body = rows.slice(1);

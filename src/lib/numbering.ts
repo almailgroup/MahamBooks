@@ -47,6 +47,33 @@ export function formatNumber(
 }
 
 /**
+ * Whether `text` is a number `rule` writes, for any counter and date (letters
+ * in any case): a code given by the app rather than typed in another way.
+ */
+export function writtenBy(rule: Pick<NumberingRule, 'pattern' | 'padding'>, text: string): boolean {
+  let pattern = rule.pattern.trim() || '{counter}';
+  if (!/\{counter\}/i.test(pattern)) pattern = `${pattern}{counter}`;
+  const width = Math.max(1, Math.min(12, rule.padding));
+  const tokens: Record<string, string> = {
+    counter: `\\d{${width},}`,
+    year: '\\d{4}',
+    yy: '\\d{2}',
+    month: '\\d{2}',
+    day: '\\d{2}',
+    client: '.*',
+  };
+  const source = pattern
+    .split(/(\{\w+\})/)
+    .map((part) => {
+      const token = /^\{(\w+)\}$/.exec(part)?.[1]?.toLowerCase();
+      if (token && tokens[token]) return tokens[token];
+      return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('');
+  return new RegExp(`^${source}$`, 'i').test(text.trim());
+}
+
+/**
  * Picks the next free number for a document dated `date`. Numbers already in
  * use (e.g. typed in manually) are skipped. Returns the number and the rule
  * to store back on the company.

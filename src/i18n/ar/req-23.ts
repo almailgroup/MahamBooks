@@ -85,8 +85,6 @@ export default {
   Printed: 'مطبوع',
   'Printed on': 'تاريخ الطباعة',
   'A/C payee only': 'يصرف للمستفيد الأول',
-  'Cheque {number} was printed: destroy the printed leaf.':
-    'طُبع الشيك {number}: أتلِف الورقة المطبوعة.',
   'This cheque was printed on {date}. Saving another amount, payee, number, bank or date marks the printed leaf spoiled: destroy it and print the cheque again.':
     'طُبع هذا الشيك في {date}. حفظ مبلغ أو مستفيد أو رقم أو بنك أو تاريخ مختلف يسجّل الورقة المطبوعة كورقة تالفة: أتلِفها واطبع الشيك من جديد.',
 
@@ -104,10 +102,16 @@ export default {
     'طُبع هذا الشيك. لطباعته مرة أخرى، سجّل ورقته كورقة تالفة أولًا.',
   'This cheque was printed. Cancel the cheque instead of paying another way.':
     'طُبع هذا الشيك. ألغِ الشيك بدلًا من تغيير طريقة الدفع.',
+  'Leaves of this cheque were printed. Cancel the cheque instead of deleting it.':
+    'طُبعت أوراق من هذا الشيك. ألغِ الشيك بدلًا من حذفه.',
   'Cheque printing is off for this company.': 'طباعة الشيكات متوقفة في هذه الشركة.',
 
   // Activity
   'Cheque {number} on payment {payment} printed': 'طُبع الشيك {number} في الدفعة {payment}',
+  'Cheque {number} on payment {payment} sent to the printer':
+    'أُرسل الشيك {number} في الدفعة {payment} إلى الطابعة',
+  'This cheque can’t be printed now. The page on screen says why.':
+    'لا يمكن طباعة هذا الشيك الآن، والسبب مذكور في الصفحة على الشاشة.',
   'Cheque leaf {number} spoiled; payment {payment} is now on leaf {next}':
     'ورقة الشيك {number} تالفة، والدفعة {payment} الآن على الورقة {next}',
   'Cheque leaf {number} spoiled: payment {payment} changed after printing':

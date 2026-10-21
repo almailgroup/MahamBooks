@@ -85,6 +85,26 @@ describe('item codes in the cloud', () => {
     ).toBe(5);
   });
 
+  it('given to many items at once take the block past a code typed inside it', async () => {
+    const company = await coding();
+    await db.products.bulkPut([
+      ...['Rope', 'Bag', 'Tape'].map((name, i) =>
+        createProduct(company.id, { name, createdAt: `2026-0${i + 1}-01T00:00:00Z` }),
+      ),
+      createProduct(company.id, { name: 'Vest', sku: 'SKU-00002' }),
+    ]);
+    setCounterReserver(cloudCounterReserver(ctx.api, OWNER));
+    expect(await assignItemCodes(company.id)).toBe(3);
+    const codes = (await db.products.where('companyId').equals(company.id).sortBy('createdAt'))
+      .filter((p) => p.name !== 'Vest')
+      .map((p) => p.sku);
+    expect(codes).toEqual(['SKU-00001', 'SKU-00003', 'SKU-00004']);
+    // Another device that hasn't these items yet gets the next free code.
+    expect(
+      (await server.client(OWNER).reserveNumber(company.id, 'product', today(), 1))?.counter,
+    ).toBe(5);
+  });
+
   it('are given by staff too: their counter goes up to the cloud', async () => {
     const company = await coding();
     server.addMember(company.id, STAFF, 'staff');
@@ -120,6 +140,21 @@ describe('item codes in the cloud', () => {
     await expect(saveItem({ ...mine, unitPrice: 2 })).resolves.toBeDefined();
     await saveItem({ ...(await db.products.get(mine.id))!, sku: 'SKU-00900' });
     expect(await skuProblems(company.id)).toEqual([]);
+  });
+
+  it('are no problem when typed by hand, or when only archived items share them', async () => {
+    const company = await coding();
+    await db.products.bulkPut([
+      // Typed long before the company gave codes.
+      createProduct(company.id, { name: 'Gloves S', sku: 'GL-01' }),
+      createProduct(company.id, { name: 'Gloves M', sku: 'gl-01' }),
+      createProduct(company.id, { name: 'Old rope', sku: 'SKU-00007', archived: true }),
+      createProduct(company.id, { name: 'Old bag', sku: 'SKU-00007', archived: true }),
+    ]);
+    expect(await skuProblems(company.id)).toEqual([]);
+    const tape = createProduct(company.id, { name: 'Tape', sku: 'sku-00007' });
+    await db.products.put(tape);
+    expect((await skuProblems(company.id)).map((g) => g.length)).toEqual([3]);
   });
 
   it('are no problem while the company gives no codes', async () => {

@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db, setMeta } from './db';
 import { createClient } from './defaults';
 import { saveClient, saveCompany, setupCompany } from './records';
-import { cancelCheque } from './cheques';
-import { createPayment, newCheque, PaymentError, savePayment } from './payments';
+import { cancelCheque, clearCheque } from './cheques';
+import { createPayment, deletePayment, newCheque, PaymentError, savePayment } from './payments';
 import {
   archiveChequeLayout,
   ChequePrintError,
   deviceChequeOffset,
+  recordChequePrintAttempt,
   recordChequePrinted,
   recordSpoiledLeaf,
   saveChequeLayout,
@@ -79,6 +80,19 @@ async function inCloud(c: Company, features: string[]) {
 }
 
 describe('printing a cheque issued', () => {
+  it('logs each time the cheque is sent to the printer', async () => {
+    const c = await company();
+    const payment = await issued(c);
+    await recordChequePrintAttempt(payment.id);
+    await recordChequePrintAttempt(payment.id);
+    const log = await db.activities.where('entityId').equals(payment.id).toArray();
+    const sent = log.filter((a) => a.action === 'cheque_print_sent');
+    expect(sent.map((a) => a.message)).toEqual([
+      'Cheque 100045 on payment ' + payment.number + ' sent to the printer',
+      'Cheque 100045 on payment ' + payment.number + ' sent to the printer',
+    ]);
+  });
+
   it('records the print with what was printed, and counts it', async () => {
     const c = await company();
     const payment = await issued(c);
@@ -223,6 +237,34 @@ describe('a printed cheque changed in the form', () => {
     expect(log.map((a) => a.action)).toContain('cheque_leaf_spoiled');
   });
 
+  it('can’t be deleted once a leaf was printed: it is cancelled instead', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    await expect(deletePayment(printed.id)).rejects.toThrow(/Cancel the cheque/);
+    const spoiled = await recordSpoiledLeaf(printed.id, { reason: 'Jam', nextNumber: '100046' });
+    await expect(deletePayment(spoiled.id)).rejects.toThrow(PaymentError);
+    const cancelled = await cancelCheque(spoiled.id, { date: '2026-10-21', reason: '' });
+    expect(cancelled.cheque?.spoiledLeaves?.map((l) => l.number)).toEqual(['100045']);
+    expect(await db.payments.get(printed.id)).toBeDefined();
+  });
+
+  it('keeps its print once the bank has paid it', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    const cleared = await clearCheque(printed.id, { date: '2026-11-16' });
+    expect(cleared.cheque?.status).toBe('cleared');
+    // A typo in Pay to fixed afterwards.
+    const saved = await savePayment({
+      ...cleared,
+      cheque: { ...cleared.cheque!, drawer: 'Example Supplies Company' },
+    });
+    expect(saved.cheque?.status).toBe('cleared');
+    expect(saved.cheque?.printedAt).toBe(printed.cheque?.printedAt);
+    expect(saved.cheque?.spoiledLeaves).toBeUndefined();
+    const log = await db.activities.where('entityId').equals(printed.id).toArray();
+    expect(log.map((a) => a.action)).not.toContain('cheque_leaf_spoiled');
+  });
+
   it('left on its spoiled leaf, moves to the next one before it prints', async () => {
     const c = await company();
     const printed = await print(await issued(c));
@@ -311,13 +353,36 @@ describe('cheque layouts', () => {
 
     const renamed = await saveChequeLayout({ ...saved, name: 'KFH, measured', calibrated: true });
     expect(renamed.version).toBe(2);
+    expect(renamed.calibrated).toBe(true);
     const moved = await saveChequeLayout({ ...renamed, offset: { x: 1, y: 0 } });
     expect(moved.version).toBe(3);
+    // Measured again: to be checked against a real leaf again.
+    expect(moved.calibrated).toBe(false);
+    const checked = await saveChequeLayout({
+      ...moved,
+      offset: { x: 1.5, y: 0 },
+      calibrated: true,
+    });
+    expect(checked).toMatchObject({ version: 4, calibrated: true });
 
     await archiveChequeLayout(moved.id);
     expect(layoutFor('KFHO', await db.chequeLayouts.toArray(), c.id)?.id).toBe('preset-KFHO');
     const log = (await db.activities.toArray()).filter((a) => a.entity === 'cheque');
-    expect(log.map((a) => a.action).sort()).toEqual(['archived', 'created', 'updated', 'updated']);
+    expect(log.map((a) => a.action).sort()).toEqual([
+      'archived',
+      'created',
+      'updated',
+      'updated',
+      'updated',
+    ]);
+  });
+
+  it('stay as they are while the company doesn’t print cheques', async () => {
+    const off = await company(false);
+    await expect(saveChequeLayout(presetLayout('BRGN', off.id)!)).rejects.toThrow(
+      /Cheque printing is off/,
+    );
+    expect(await db.chequeLayouts.count()).toBe(0);
   });
 
   it('refuse fields outside the leaf', async () => {

@@ -56,7 +56,14 @@ const SHORTCUTS: { key: string; label: string; to: string; keywords?: string; ap
 ];
 
 /** Reports and settings pages, so they can be reached in two keystrokes. */
-const SUB_PAGES: { label: string; to: string; keywords?: string; app?: AppId }[] = [
+const SUB_PAGES: {
+  label: string;
+  to: string;
+  keywords?: string;
+  app?: AppId;
+  /** Offered only once the company prints cheques (D1). */
+  chequePrinting?: boolean;
+}[] = [
   { label: msg('Balance sheet'), to: '/reports/balance-sheet' },
   { label: msg('Profit and loss'), to: '/reports/profit-and-loss', keywords: 'income statement' },
   { label: msg('Cash flow'), to: '/reports/cash-flow' },
@@ -71,7 +78,12 @@ const SUB_PAGES: { label: string; to: string; keywords?: string; app?: AppId }[]
   { label: msg('Payment details'), to: '/settings/payments', keywords: 'bank iban' },
   { label: msg('Numbering'), to: '/settings/numbering' },
   { label: msg('Items and units'), to: '/settings/items', keywords: 'sku codes units' },
-  { label: msg('Cheque layouts'), to: '/cheques/layouts', keywords: 'print cheque burgan kfh' },
+  {
+    label: msg('Cheque layouts'),
+    to: '/cheques/layouts',
+    keywords: 'print cheque burgan kfh',
+    chequePrinting: true,
+  },
   { label: msg('Email templates'), to: '/settings/emails' },
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },
@@ -102,12 +114,14 @@ export function staticEntries(
     create = true,
     registerExtras = false,
     fileFinder = false,
+    chequePrinting = false,
   }: {
     access?: AccessMap;
     current?: AppId;
     create?: boolean;
     registerExtras?: boolean;
     fileFinder?: boolean;
+    chequePrinting?: boolean;
   } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
@@ -162,6 +176,7 @@ export function staticEntries(
   }
   for (const sub of SUB_PAGES) {
     if (sub.app && !canOpen(access[sub.app])) continue;
+    if (sub.chequePrinting && !chequePrinting) continue;
     page(sub.to, sub.label, 10, sub.keywords);
   }
 

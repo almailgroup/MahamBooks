@@ -79,7 +79,9 @@ export default function ChequeLayoutsPage() {
   const asked = (params.get('bank') ?? '').toUpperCase();
   const bank = banks.includes(asked) ? asked : banks[0];
   const layout = layoutFor(bank, saved, company.id)!;
-  const locked = readOnly || !canEditAccounting(role);
+  const mayEdit = !readOnly && canEditAccounting(role);
+  // Layouts are looked at, not changed, until the company prints cheques (D1).
+  const locked = !mayEdit || !company.chequePrinting;
   const language = currentLanguage();
 
   return (
@@ -108,7 +110,7 @@ export default function ChequeLayoutsPage() {
           })}
         </Note>
       ) : null}
-      {locked ? (
+      {!mayEdit ? (
         <Note tone="info">
           {t('Owners, admins and accountants change cheque layouts. You can look at them.')}
         </Note>

@@ -197,6 +197,7 @@ function PaletteBody({
         create: !readOnly,
         registerExtras: extras,
         fileFinder: finder,
+        chequePrinting: Boolean(company.chequePrinting),
       }),
       makeEntry({
         key: 'action:sync-status',
@@ -254,7 +255,19 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, extras, finder, language, dark, access, app.id, readOnly, syncText, syncing]);
+  }, [
+    taxesOn,
+    extras,
+    finder,
+    company.chequePrinting,
+    language,
+    dark,
+    access,
+    app.id,
+    readOnly,
+    syncText,
+    syncing,
+  ]);
   const found = useLiveQuery(
     // Files of people data aren't even listed for those who don't see them.
     () => recordEntries(company, fmt, { people: !hidePeople }),

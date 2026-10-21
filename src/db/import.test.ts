@@ -503,6 +503,45 @@ describe('importing stock items', () => {
     expect(byCode.get('5300')).toBe(10_000);
   });
 
+  it('gives opening stock to an item whose only stock history comes after the stock date', async () => {
+    const { company, main } = await stockCompany();
+    const toner = await saveItem(
+      createProduct(company.id, { name: 'Toner', sku: 'TON-1', kind: 'stock', costPrice: 2 }),
+      { opening: { warehouseId: main.id, quantity: 10, unitCost: 3, date: '2026-10-05' } },
+    );
+    const csv = ['SKU,Name,Cost,Quantity', 'TON-1,Toner,3.250,40'].join('\n');
+    const { result } = await plan(company, 'products', csv);
+    expect(result.rows[0].issues.map((i) => i.text)).toEqual([
+      'Already in your items: only its stock is taken.',
+    ]);
+    expect(result.stock).toMatchObject({ value: 130_000, opening: 1, counted: 0 });
+
+    const done = await run(company, 'products', csv);
+    expect(done.stockEntries?.map((e) => e.kind)).toEqual(['opening']);
+    const entry = (await db.stockEntries.get(done.stockEntries![0].id))!;
+    expect(entry).toMatchObject({ date: '2026-09-30' });
+    expect(entry.lines.map((l) => [l.productId, l.quantity, l.unitCost])).toEqual([
+      [toner.id, 40, 3.25],
+    ]);
+    const byCode = await balances(company);
+    // 40 × 3.250 against opening balance equity, then the 10 × 3.000 of October.
+    expect(byCode.get(inventoryCode)).toBe(160_000);
+    expect(byCode.get('3900')).toBe(-160_000);
+    expect(byCode.get('5300') ?? 0).toBe(0);
+    expect((await levels(company)).get(toner.id)?.quantity).toBe(50);
+  });
+
+  it('warns when opening balances put stock on the inventory account a second time', async () => {
+    const { company } = await stockCompany();
+    await run(company, 'products', 'Name,Type,Cost,Quantity\nA4 paper box,stock,3.250,40');
+    const trial = ['Code,Account,Debit,Credit', '1200,Inventory,130.000,', '3000,Capital,,130.000'];
+    const { result } = await plan(company, 'opening', trial.join('\n'));
+    expect(result.openingStock).toBe(130_000);
+    // Without the inventory account, nothing is counted twice.
+    const cash = ['Code,Account,Debit,Credit', '1000,Cash,50.000,', '3000,Capital,,50.000'];
+    expect((await plan(company, 'opening', cash.join('\n'))).result.openingStock).toBeUndefined();
+  });
+
   it('imports nothing when a row of a file with stock is wrong', async () => {
     const { company } = await stockCompany();
     await saveItem(createProduct(company.id, { name: 'Repairs', sku: 'REP-1' }));
@@ -556,6 +595,76 @@ describe('importing stock items', () => {
       asOf: '2026-10-01',
     });
     expect(done.stockEntries).toHaveLength(1);
+  });
+
+  it('posts no stock from the Products export, in English or Arabic, unless matched by hand', async () => {
+    const english = [
+      'SKU',
+      'Name',
+      'Arabic name',
+      'Type',
+      'Description',
+      'Selling price',
+      'Cost price',
+      'Unit',
+      'On hand',
+      'Stock value',
+      'Reorder level',
+      'Barcode',
+      'HS code',
+      'Taxes',
+      'Archived',
+    ];
+    const arabic = [
+      'رمز الصنف',
+      'الاسم',
+      'الاسم بالعربية',
+      'النوع',
+      'الوصف',
+      'سعر البيع',
+      'سعر التكلفة',
+      'الوحدة',
+      'الكمية المتوفرة',
+      'قيمة المخزون',
+      'حد إعادة الطلب',
+      'الباركود',
+      'رمز النظام المنسق',
+      'الضرائب',
+      'مؤرشف',
+    ];
+    for (const header of [english, arabic]) {
+      const mapping = guessColumns('products', header);
+      expect(mapping.quantity, header[8]).toBeNull();
+      expect(mapping).toMatchObject({ sku: 0, price: 5, cost: 6 });
+    }
+    const { company, main } = await stockCompany();
+    const toner = await saveItem(
+      createProduct(company.id, { name: 'Toner', sku: 'TON-1', kind: 'stock', costPrice: 2 }),
+      { opening: { warehouseId: main.id, quantity: 20, unitCost: 2, date: '2026-09-01' } },
+    );
+    const row = [
+      'TON-1',
+      'Toner',
+      '',
+      'Stock item',
+      '',
+      '4.500',
+      '2',
+      'pcs',
+      '15',
+      '30',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ];
+    const csv = [arabic, row].map((r) => r.join(',')).join('\n');
+    const done = await run(company, 'products', csv, { ...OPTIONS, updateExisting: true });
+    expect(done).toMatchObject({ updated: 1 });
+    expect(done.stockEntries ?? []).toEqual([]);
+    expect((await db.products.get(toner.id))?.unitPrice).toBe(4.5);
+    expect((await levels(company)).get(toner.id)?.quantity).toBe(20);
   });
 
   it('reads Arabic column names and types, and Excel files like CSV', async () => {

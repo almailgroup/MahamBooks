@@ -5,7 +5,7 @@ import type { Product } from '@/db/types';
 import { useCompany } from '@/app/company';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
-import { ProductThumb, useProductThumbs } from '@/apps/books/features/inventory/product-image';
+import { ItemPicture } from '@/apps/books/features/inventory/product-image';
 
 /**
  * Text input for an item name that suggests matching products while typing.
@@ -60,7 +60,6 @@ export function ItemNameInput({
   const show = open && matches.length > 0;
   // With item pictures on, each suggestion shows its item's main picture.
   const pictures = Boolean(useCompany().items?.images);
-  const thumbs = useProductThumbs(show ? matches : undefined, pictures);
 
   const pick = (product: Product) => {
     onPick(product);
@@ -125,7 +124,7 @@ export function ItemNameInput({
               )}
             >
               {pictures ? (
-                <ProductThumb src={thumbs.get(p.id)} size="xs" />
+                <ItemPicture imageId={p.imageIds?.[0]} size="xs" />
               ) : (
                 <Package className="size-4 shrink-0 text-slate-400" />
               )}

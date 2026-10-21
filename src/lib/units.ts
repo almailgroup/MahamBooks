@@ -77,11 +77,22 @@ export function customUnits(company: Pick<Company, 'items'> | null | undefined):
   return company?.items?.customUnits ?? [];
 }
 
+/**
+ * A company unit as listed. One given only an Arabic name prints that name
+ * on English documents too, and is stored on items and lines with it: a
+ * unit is never stored as an empty text.
+ */
+function ownUnit(unit: CustomUnit): ItemUnit {
+  return unit.name.trim() ? unit : { ...unit, name: unit.nameAr.trim() };
+}
+
 /** Units to pick from: the built-in ones, then the company's own that aren't archived. */
 export function unitChoices(company: Pick<Company, 'items'> | null | undefined): ItemUnit[] {
   return [
     ...BUILT_IN_UNITS.map(({ id, name, nameAr }) => ({ id, name, nameAr })),
-    ...customUnits(company).filter((u) => !u.archived),
+    ...customUnits(company)
+      .filter((u) => !u.archived)
+      .map(ownUnit),
   ];
 }
 
@@ -93,7 +104,8 @@ export function findUnit(
   if (!id) return null;
   const builtIn = BUILT_IN_UNITS.find((u) => u.id === id);
   if (builtIn) return { id: builtIn.id, name: builtIn.name, nameAr: builtIn.nameAr };
-  return customUnits(company).find((u) => u.id === id) ?? null;
+  const own = customUnits(company).find((u) => u.id === id);
+  return own ? ownUnit(own) : null;
 }
 
 /**

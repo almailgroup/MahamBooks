@@ -122,9 +122,9 @@ test('a returned cheque is replaced by a new post-dated one', async ({ page }) =
 });
 
 test('a cheque issued prints onto its Burgan Bank leaf, once', async ({ page }) => {
-  // Printing a page opens the browser's print dialog: here it does nothing.
+  // Printing a page opens the browser's print dialog: here it only says it printed.
   await page.evaluate(() => {
-    window.print = () => undefined;
+    window.print = () => void window.dispatchEvent(new Event('afterprint'));
   });
 
   // Off until the owner turns it on.
@@ -171,7 +171,8 @@ test('a cheque issued prints onto its Burgan Bank leaf, once', async ({ page }) 
   await expect(spoiled).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Print cheque 100046' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Print cheque', exact: true }).click();
+  // Printed with the browser's own Print command: asked about all the same.
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   await asked.getByRole('button', { name: 'Yes, record the print' }).click();
   await expect(page).toHaveURL(/#\/payments-made\/[0-9a-f-]{36}$/);
   await expect(page.getByText('Printed on')).toBeVisible();
@@ -183,6 +184,12 @@ test('a cheque issued prints onto its Burgan Bank leaf, once', async ({ page }) 
   await page.getByRole('link', { name: 'Print cheque' }).click();
   await expect(page.getByText(/Printed on .* on leaf 100046\./)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Print cheque', exact: true })).toBeDisabled();
+  // Nor does the browser's Print command put it on a leaf.
+  await page.emulateMedia({ media: 'print' });
+  await expect(page.getByRole('region', { name: 'Cheque 100046' })).toBeHidden();
+  await expect(page.getByText('This cheque can’t be printed now.', { exact: false })).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
+  await expect(page.getByRole('region', { name: 'Cheque 100046' })).toBeVisible();
 
   // The register says so, and has the layouts.
   await page.goto('#/cheques?tab=issued');

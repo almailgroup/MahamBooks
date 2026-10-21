@@ -43,6 +43,7 @@ import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import { BankAccountSelect, ChequeFields } from '@/apps/books/features/payments/fields';
 import { PAYMENT_COPY, paymentDirection } from '@/apps/books/features/payments/direction';
 import { DateField } from '@/components/ui/date-field';
+import { useHasChequeLayout } from './use-cheque-layout';
 
 export type ChequeAction = 'deposit' | 'clear' | 'return' | 'cancel' | 'replace';
 
@@ -110,8 +111,13 @@ export function ChequeActionsMenu({
   const actions = chequeActions(payment);
   // Cheques issued that can be printed (or printed again on a new leaf).
   const refusal = printRefusal(payment);
+  const hasLayout = useHasChequeLayout(payment.cheque.bank);
   const printable =
-    showPaymentLink && Boolean(company.chequePrinting) && !readOnly && printableAfterLeaf(refusal);
+    showPaymentLink &&
+    Boolean(company.chequePrinting) &&
+    !readOnly &&
+    hasLayout &&
+    printableAfterLeaf(refusal);
   return (
     <DropdownMenu>
       <DropdownTrigger asChild>

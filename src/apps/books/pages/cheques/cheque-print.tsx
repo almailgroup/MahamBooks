@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AlertTriangle, ArrowLeft, Info, Printer, Ruler } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { deviceChequeOffset, recordChequePrinted, recordSpoiledLeaf } from '@/db/cheque-print';
+import {
+  deviceChequeOffset,
+  recordChequePrintAttempt,
+  recordChequePrinted,
+  recordSpoiledLeaf,
+} from '@/db/cheque-print';
 import type { ChequeDetails, ChequeLayout, Client, Payment } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { layoutFor } from '@/lib/cheque-layouts';
@@ -149,10 +154,34 @@ function PrintView({
     !fit.fits ||
     !device;
 
+  // Every print is logged and asked about, from the button or from the
+  // browser's own Print command.
+  const fromButton = useRef(false);
+  const sent = () =>
+    void recordChequePrintAttempt(payment.id).catch((error: unknown) =>
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.')),
+    );
   const print = () => {
+    fromButton.current = true;
+    sent();
     window.print();
     setAsking('result');
   };
+  useEffect(() => {
+    if (blocked) return;
+    const printed = () => {
+      if (fromButton.current) {
+        fromButton.current = false;
+        return;
+      }
+      sent();
+      setAsking((asked) => asked ?? 'result');
+    };
+    window.addEventListener('afterprint', printed);
+    return () => window.removeEventListener('afterprint', printed);
+    // `sent` only names the payment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, payment.id]);
 
   const recordPrint = async () => {
     try {
@@ -300,7 +329,18 @@ function PrintView({
         </div>
       </div>
 
-      <div className="overflow-x-auto px-4 print:overflow-visible print:px-0">
+      {blocked ? (
+        // Nothing reaches a leaf that can't be printed, even from the browser's Print command.
+        <p className="hidden p-8 text-sm print:block">
+          {t('This cheque can’t be printed now. The page on screen says why.')}
+        </p>
+      ) : null}
+      <div
+        className={cn(
+          'overflow-x-auto px-4 print:overflow-visible print:px-0',
+          blocked && 'print:hidden',
+        )}
+      >
         <ChequeLeaf
           layout={layout}
           face={face}

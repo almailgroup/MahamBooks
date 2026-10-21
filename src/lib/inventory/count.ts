@@ -39,8 +39,10 @@ export function countSheetRows(
 
 /**
  * Reads counted quantities from a sheet. The first cell is the SKU, the
- * second the item's name, the last the quantity counted; a heading row and
- * rows left blank are skipped.
+ * second the item's name, the last column the quantity counted; a heading
+ * row and rows left blank are skipped, and so are items whose counted cell
+ * is blank. Excel leaves out a row's empty cells at the end, so the last
+ * column is the sheet's (its heading's), not the row's.
  */
 export function parseCountSheet(text: string, items: CountItem[]): CountImport {
   return readCountRows(parseCsvRows(text), items);
@@ -55,10 +57,11 @@ export function readCountRows(rows: string[][], items: CountItem[]): CountImport
     if (i.nameAr?.trim()) byName.set(key(i.nameAr), i.id);
   }
   const result: CountImport = { counted: new Map(), unmatched: [], invalid: [] };
+  const last = rows.reduce((width, row) => Math.max(width, row.length), 0) - 1;
   rows.forEach((row, index) => {
     const cells = row.map((c) => c.trim());
     if (cells.length < 2 || cells.every((c) => !c)) return;
-    const quantity = parseQuantity(cells[cells.length - 1]);
+    const quantity = parseQuantity(cells[last] ?? '');
     const label = cells[1] || cells[0];
     if (quantity === null) return;
     if (Number.isNaN(quantity)) {

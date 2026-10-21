@@ -77,4 +77,18 @@ describe('units', () => {
     expect(unitText(null, { unit: 'carton', unitId: 'box' }, 'ar')).toBe('carton');
     expect(unitText(null, { unit: 'pcs' }, 'ar')).toBe('pcs');
   });
+
+  it('store and print a company unit given only an Arabic name by that name', () => {
+    const own = company([{ id: 'u-bag', name: '', nameAr: ' كيس ' }]);
+    const bag = findUnit(own, 'u-bag')!;
+    // What the unit picker stores on the item: never an empty unit.
+    expect(bag.name).toBe('كيس');
+    expect(unitChoices(own).find((u) => u.id === 'u-bag')?.name).toBe('كيس');
+    const item = { unit: bag.name, unitId: bag.id };
+    expect(unitText(own, item, 'ar')).toBe('كيس');
+    expect(unitText(own, item, 'ar-en')).toBe('كيس');
+    expect(unitText(own, item, 'en')).toBe('كيس');
+    expect(listedUnit(own, item)?.id).toBe('u-bag');
+    expect(matchUnit('كيس', own)).toBe('u-bag');
+  });
 });

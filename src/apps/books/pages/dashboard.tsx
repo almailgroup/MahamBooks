@@ -210,7 +210,6 @@ export default function DashboardPage() {
     () => dashboardRange(prefs.period, now, { month: yearEnd.month, day: yearEnd.day }),
     [prefs.period, now, yearEnd.month, yearEnd.day],
   );
-  const monthsKey = overview ? range.months.map((m) => m.key).join() : undefined;
 
   const data = useMemo(() => {
     if (!docs || !payments || !clients || !expenses || !vatFiled) return null;
@@ -227,7 +226,7 @@ export default function DashboardPage() {
         taxesOn,
         precision,
       },
-      monthsKey ? monthsKey.split(',') : undefined,
+      overview ? range.months : undefined,
     );
   }, [
     docs,
@@ -240,7 +239,8 @@ export default function DashboardPage() {
     now,
     taxesOn,
     precision,
-    monthsKey,
+    overview,
+    range,
   ]);
 
   const lines = ledger?.lines;

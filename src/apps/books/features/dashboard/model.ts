@@ -75,7 +75,8 @@ export interface DashboardInput {
 /**
  * What the key figures and today's cards show: who owes the company, bills
  * due this week, cheques due, invoiced against collected and what needs
- * attention. `months` are the months of the chart (the last 12 by default).
+ * attention. `months` are the months of the chart (the last 12 by default),
+ * whole months or, from a period, cut to its dates.
  */
 export function dashboardFigures(
   {
@@ -90,8 +91,12 @@ export function dashboardFigures(
     taxesOn,
     precision,
   }: DashboardInput,
-  months: string[] = monthKeys(12, now),
+  months: string[] | MonthSpan[] = monthKeys(12, now),
 ) {
+  const spans: MonthSpan[] = months.map((m) =>
+    typeof m === 'string' ? { key: m, from: `${m}-01`, to: `${m}-31` } : m,
+  );
+  const within = (date: ISODate, span: MonthSpan) => date >= span.from && date <= span.to;
   const clientsById = new Map<string, Client>(clients.map((c) => [c.id, c]));
   const base = company.currency;
   const invoices = docs.filter((d) => d.type === 'invoice');
@@ -139,15 +144,18 @@ export function dashboardFigures(
   const cash = live.filter(
     (p) => p.direction !== 'out' && p.method !== 'credit_note' && p.currency === base,
   );
-  const invoicedByMonth = months.map((k) =>
+  const invoicedByMonth = spans.map((m) =>
     issued
-      .filter((d) => d.currency === base && d.issueDate.startsWith(k))
+      .filter((d) => d.currency === base && within(d.issueDate, m))
       .reduce((s, d) => s + d.totals.total, 0),
   );
-  const collectedByMonth = months.map((k) =>
-    cash.filter((p) => p.date.startsWith(k)).reduce((s, p) => s + p.amount, 0),
+  const collectedByMonth = spans.map((m) =>
+    cash.filter((p) => within(p.date, m)).reduce((s, p) => s + p.amount, 0),
   );
-  const labels = monthLabels(months, locale);
+  const labels = monthLabels(
+    spans.map((m) => m.key),
+    locale,
+  );
 
   const quotesWaiting = docs.filter((d) => d.type === 'quote' && displayStatus(d, now) === 'sent');
 
@@ -359,12 +367,19 @@ export interface CashFlowMonth {
 }
 
 /**
- * Money into and out of the bank and cash accounts, month by month (the
- * accounts the statement of cash flows counts). A transfer between two of
- * them is neither: what goes in and out is the net of each entry on a day.
+ * Money into and out of the bank and cash accounts in use, month by month
+ * (those of the Cash and bank figure, so the last closing of a period that
+ * runs to today is what they hold, entries dated later aside). A transfer
+ * between two of them is neither: what goes in and out is the net of each
+ * entry on a day.
  */
 export function monthlyCashFlow(ledger: Books, range: DashboardRange, precision: number) {
-  const cash = new Set(ledger.accounts.filter((a) => a.type === 'asset_cash').map((a) => a.id));
+  // The accounts of the Cash and bank figure (cashAccounts): those in use.
+  const cash = new Set(
+    ledger.accounts
+      .filter((a) => isMoneyAccount(a.type) && a.type === 'asset_cash' && !a.archived)
+      .map((a) => a.id),
+  );
   let opening = 0;
   const entries = new Map<string, { date: ISODate; amount: number }>();
   for (const l of ledger.lines) {

@@ -46,6 +46,7 @@ import {
   type ReservedCounter,
 } from '@/lib/numbering';
 import { msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 
 /**
  * Inventory: warehouses, stock items, and the stock movements derived from
@@ -561,9 +562,10 @@ async function reserveItemCounter(
  * starts moving stock on its issued documents (none may be in a locked
  * period); a stock item with history stays one. A new stock item can get its
  * opening stock at the same time. A new item without an SKU gets the next
- * item code when the company gives codes (items.autoSku). An SKU another item
- * has is refused when it is new or changed; an item saved again with the SKU
- * it had is never refused (another device may have given it too).
+ * item code when the company gives codes (items.autoSku); such a company
+ * also refuses an SKU another item has, archived ones included, when it is
+ * new or changed. An item saved again with the SKU it had is never refused
+ * (another device may have given it too).
  */
 export async function saveItem(
   input: Product,
@@ -597,7 +599,26 @@ export async function saveItem(
     }
     let sku = input.sku.trim();
     const taken = await takenSkus(company.id, input.id);
-    if (sku && taken.has(skuKey(sku)) && !(existing && skuKey(existing.sku) === skuKey(sku))) {
+    // Once the company gives codes (D1: items could always share an SKU before).
+    if (
+      company.items?.autoSku &&
+      sku &&
+      taken.has(skuKey(sku)) &&
+      !(existing && skuKey(existing.sku) === skuKey(sku))
+    ) {
+      const other = await db.products
+        .where('companyId')
+        .equals(company.id)
+        .filter((p) => p.id !== input.id && skuKey(p.sku) === skuKey(sku))
+        .toArray();
+      if (other.length > 0 && other.every((p) => p.archived)) {
+        throw new InventoryError(
+          t('The archived item {name} already has the SKU {sku}.', {
+            name: localName(other[0]),
+            sku,
+          }),
+        );
+      }
       throw new InventoryError(t('Another item already has the SKU {sku}.', { sku }));
     }
     if (!sku && !existing && company.items?.autoSku) {
@@ -737,17 +758,23 @@ function uncodedItems(products: Product[]): Product[] {
     );
 }
 
+/** The first counter of a block of item codes taken on the server, and the last. */
+export interface ReservedItemCodes extends ReservedCounter {
+  last: number;
+}
+
 /**
  * For codes given to many items at once in a company kept in the cloud: the
  * first counter of the block, taken on the server, which then moves its
- * counter past the whole block so no other device gives one of them. Null
- * to number on this device. The block is the items without a code, or
- * `count` codes (new items of an import).
+ * counter past the whole block so no other device gives one of them. The
+ * block runs to the last code the items get, past the codes other items
+ * already have. Null to number on this device. The block is the items
+ * without a code, or `count` codes (new items of an import).
  */
 export async function reserveItemCodes(
   companyId: ID,
   count?: number,
-): Promise<ReservedCounter | null> {
+): Promise<ReservedItemCodes | null> {
   if (!canReserveCounters() || Dexie.currentTransaction) return null;
   const company = await db.companies.get(companyId);
   if (!company) return null;
@@ -763,10 +790,33 @@ export async function reserveItemCodes(
     date,
     min: local.rule.next - 1,
   });
-  if (first && count > 1) {
-    await reserveCounter({ companyId, kind: 'product', date, min: first.counter + count - 1 });
+  if (!first) return null;
+  const block = nextItemCodes(company, taken, count, first).rule;
+  let last = block.period === first.period ? block.next - 1 : first.counter;
+  if (last > first.counter) {
+    last = (await reserveCounter({ companyId, kind: 'product', date, min: last }))?.counter ?? last;
   }
-  return first;
+  return { ...first, last };
+}
+
+/**
+ * After codes were given from a block taken on the server: when they went
+ * past it (codes in a file took some of it), the server's counter is moved
+ * past the last one too.
+ */
+export async function coverItemCodes(
+  companyId: ID,
+  reserved: ReservedItemCodes | null,
+): Promise<void> {
+  if (!reserved) return;
+  const company = await db.companies.get(companyId);
+  if (!company) return;
+  const rule = itemCodeRule(company);
+  if (rule.period !== reserved.period) return;
+  const last = rule.next - 1;
+  if (last > reserved.last) {
+    await reserveCounter({ companyId, kind: 'product', date: today(), min: last });
+  }
 }
 
 /**
@@ -775,7 +825,7 @@ export async function reserveItemCodes(
  */
 export async function assignItemCodes(companyId: ID): Promise<number> {
   const reserved = await reserveItemCodes(companyId);
-  return db.transaction('rw', [db.companies, db.products, db.activities], async () => {
+  const count = await db.transaction('rw', [db.companies, db.products, db.activities], async () => {
     const company = await db.companies.get(companyId);
     if (!company) throw new InventoryError(t('Company not found'));
     const products = await db.products.where('companyId').equals(companyId).toArray();
@@ -794,6 +844,8 @@ export async function assignItemCodes(companyId: ID): Promise<number> {
     });
     return missing.length;
   });
+  await coverItemCodes(companyId, reserved);
+  return count;
 }
 
 /**

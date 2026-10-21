@@ -23,7 +23,9 @@ import {
   nextItemCodes,
   productKind,
   recost,
+  coverItemCodes,
   reserveItemCodes,
+  type ReservedItemCodes,
   skuKey,
   type StockEntryInput,
 } from './inventory';
@@ -66,7 +68,7 @@ import {
 import { countryOptions, emptyAddress } from '@/lib/geo';
 import { findArea, findGovernorate, isValidCivilId, normalizeKuwaitPhone } from '@/lib/kuwait';
 import { currencyPrecision, dec, fromMinor, normalizeDigits, round, toMinor } from '@/lib/money';
-import { allocateNumber, canReserveCounters, type ReservedCounter } from '@/lib/numbering';
+import { allocateNumber, canReserveCounters } from '@/lib/numbering';
 import { stockLevels } from '@/lib/inventory/costing';
 import { stockAccounts } from '@/lib/inventory/sources';
 import { findUnit, matchUnit } from '@/lib/units';
@@ -92,10 +94,10 @@ import { localName } from '@/i18n/names';
  * are right per customer and vendor without counting old sales twice.
  *
  * Products can bring their stock: with the quantity column matched, new stock
- * items (and items without stock history) get opening stock at the file's
- * cost, one opening entry per warehouse against Opening balance equity, and
- * items with stock history are counted, the differences posted as one count
- * adjustment per warehouse. Such a file is imported only when every row is
+ * items (and items without stock history on or before the stock date) get
+ * opening stock at the file's cost, one opening entry per warehouse against
+ * Opening balance equity, and items with stock history by then are counted,
+ * the differences posted as one count adjustment per warehouse. Such a file is imported only when every row is
  * right.
  */
 
@@ -134,12 +136,21 @@ export interface ImportContext {
   /** Products: the warehouses and the stock on record (loaded for products only). */
   warehouses?: Warehouse[];
   stock?: ImportStock;
+  /**
+   * Opening balances: what opening stock entries already put on the
+   * inventory account, in minor units (loaded for opening balances, or when
+   * no kind is given).
+   */
+  openingStock?: number;
 }
 
 /** What is in stock already, for products files that bring quantities. */
 export interface ImportStock {
-  /** Items with stock history (movements or stock entries): their quantities are counts. */
-  history: Set<ID>;
+  /**
+   * Items with stock history (movements or stock entries), with the date it
+   * starts: history on or before the stock date makes the quantity a count.
+   */
+  history: Map<ID, ISODate>;
   movements: Pick<StockMovement, 'productId' | 'warehouseId' | 'date' | 'quantity' | 'value'>[];
   /** What the opening balances already put on the inventory account, in minor units (debit positive). */
   inBooks: number;
@@ -247,6 +258,12 @@ export interface ImportPlan {
   itemCodes?: number;
   /** Products: rows naming items already here (updated with updateExisting, else skipped). */
   existing?: number;
+  /**
+   * Opening balances that debit the inventory account while opening stock
+   * entries already did: what those entries put there, in minor units. The
+   * stock would be counted twice.
+   */
+  openingStock?: number;
 }
 
 export interface ImportResult {
@@ -590,6 +607,18 @@ export function planImport(
       plan.rows.push({ line: i + 2, status, issues, cells, record });
     });
     plan.totals.difference = plan.totals.debit - plan.totals.credit;
+    // Stock imported with the items is in the books already.
+    const inventory = stockAccounts(
+      ctx.accounts,
+      accountingSettings(ctx.company).template,
+    ).inventory;
+    const onInventory = plan.rows.some(
+      (r) =>
+        r.record?.kind === 'opening' &&
+        r.record.value.accountId === inventory?.id &&
+        r.record.value.debit > 0,
+    );
+    if (onInventory && ctx.openingStock) plan.openingStock = ctx.openingStock;
   }
 
   if (kind === 'documents') {
@@ -774,7 +803,12 @@ function planProducts(
     precision,
     options.asOf,
   );
-  const history = ctx.stock?.history ?? new Set<ID>();
+  // History after the stock date doesn't count: the file brings the stock it started from.
+  const history = ctx.stock?.history ?? new Map<ID, ISODate>();
+  const countedAt = (id: ID) => {
+    const first = history.get(id);
+    return first !== undefined && first <= options.asOf;
+  };
 
   // Items already here, by SKU and by name (null: more than one has it).
   const bySku = new Map<string, Product>();
@@ -1006,7 +1040,7 @@ function planProducts(
       } else if (stocked.has(`${product.id}|${warehouseId}`)) {
         error(t('{name} already has a quantity for this warehouse on another row.', { name }));
       }
-      const counted = source !== 'new' && history.has(product.id);
+      const counted = source !== 'new' && countedAt(product.id);
       const onRecord = counted ? (levels.get(product.id)?.byWarehouse.get(warehouseId) ?? 0) : 0;
       const unitCost = cost ?? product.costPrice ?? 0;
       stock = { warehouseId, quantity, unitCost, as: counted ? 'count' : 'opening', onRecord };
@@ -1114,9 +1148,30 @@ function openingDocument(
   });
 }
 
+/** What the company's posted opening stock entries put on the inventory account, in minor units. */
+async function openingStockValue(companyId: ID): Promise<number> {
+  const company = await db.companies.get(companyId);
+  if (!company) return 0;
+  const precision = currencyPrecision(company.currency);
+  const entries = await db.stockEntries
+    .where('companyId')
+    .equals(companyId)
+    .filter((e) => e.kind === 'opening' && e.status === 'posted')
+    .primaryKeys();
+  if (entries.length === 0) return 0;
+  const ids = new Set(entries);
+  const movements = await db.stockMovements
+    .where('companyId')
+    .equals(companyId)
+    .filter((m) => ids.has(m.sourceId))
+    .toArray();
+  return movements.reduce((sum, m) => sum + toMinor(m.value, precision), 0);
+}
+
 /**
  * Everything a plan needs to know about the company's existing records; the
- * stock only for products (or when no kind is given).
+ * stock only for products (or when no kind is given), the opening stock for
+ * opening balances.
  */
 export async function loadImportContext(companyId: ID, kind?: ImportKind): Promise<ImportContext> {
   const company = await db.companies.get(companyId);
@@ -1129,6 +1184,7 @@ export async function loadImportContext(companyId: ID, kind?: ImportKind): Promi
     db.employees.where('companyId').equals(companyId).toArray(),
   ]);
   const ctx: ImportContext = { company, clients, products, accounts, documents, employees };
+  if (!kind || kind === 'opening') ctx.openingStock = await openingStockValue(companyId);
   if (kind && kind !== 'products') return ctx;
   const [warehouses, movements, entries, journals] = await Promise.all([
     db.warehouses.where('companyId').equals(companyId).toArray(),
@@ -1136,8 +1192,13 @@ export async function loadImportContext(companyId: ID, kind?: ImportKind): Promi
     db.stockEntries.where('companyId').equals(companyId).toArray(),
     db.journals.bulkGet(company.openingBalances?.journalIds ?? []),
   ]);
-  const history = new Set<ID>(movements.map((m) => m.productId));
-  for (const entry of entries) for (const line of entry.lines) history.add(line.productId);
+  const history = new Map<ID, ISODate>();
+  const since = (productId: ID, date: ISODate) => {
+    const first = history.get(productId);
+    if (!first || date < first) history.set(productId, date);
+  };
+  for (const m of movements) since(m.productId, m.date);
+  for (const entry of entries) for (const line of entry.lines) since(line.productId, entry.date);
   // Stock already in the opening balances would be counted twice.
   const precision = currencyPrecision(company.currency);
   const inventory = stockAccounts(accounts, accountingSettings(company).template).inventory;
@@ -1204,7 +1265,7 @@ async function reserveImportCodes(
   rows: string[][],
   mapping: ColumnMapping,
   options: ImportOptions,
-): Promise<ReservedCounter | null> {
+): Promise<ReservedItemCodes | null> {
   if (!canReserveCounters()) return null;
   const ctx = await loadImportContext(companyId, 'products');
   if (!ctx.company.items?.autoSku) return null;
@@ -1310,7 +1371,7 @@ export async function commitImport(
   if (kind === 'employees') return importEmployees(companyId, rows, mapping, options);
   const reserved =
     kind === 'products' ? await reserveImportCodes(companyId, rows, mapping, options) : null;
-  return db.transaction(
+  const imported = await db.transaction(
     'rw',
     [
       db.companies,
@@ -1583,4 +1644,6 @@ export async function commitImport(
       return result;
     },
   );
+  await coverItemCodes(companyId, reserved);
+  return imported;
 }

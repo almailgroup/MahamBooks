@@ -21,6 +21,11 @@ const keys = (...args: Parameters<typeof staticEntries>) =>
   staticEntries(...args).map((e) => e.key);
 
 describe('the pages and actions search finds', () => {
+  it('offer cheque layouts only once the company prints cheques', () => {
+    expect(keys(true)).not.toContain('page:/cheques/layouts');
+    expect(keys(true, { chequePrinting: true })).toContain('page:/cheques/layouts');
+  });
+
   it('cover every app for the owner, each page once', () => {
     const all = keys(true);
     expect(all.filter((k, i) => all.indexOf(k) !== i)).toEqual([]);

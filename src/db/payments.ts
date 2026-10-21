@@ -125,7 +125,9 @@ export function canEditPayment(payment: Pick<Payment, 'voided'>): boolean {
 
 /** Whether the payment can be deleted (void payments and cleared cheques stay on record). */
 export function canDeletePayment(payment: Pick<Payment, 'voided' | 'cheque'>): boolean {
-  return !payment.voided && !isChequeSettled(payment);
+  // A cheque with printed leaves is cancelled instead, so its leaves stay on record.
+  const printed = Boolean(payment.cheque?.printedAt || payment.cheque?.spoiledLeaves?.length);
+  return !payment.voided && !isChequeSettled(payment) && !printed;
 }
 
 export class PaymentError extends Error {}
@@ -410,8 +412,11 @@ export async function savePayment(input: Payment): Promise<Payment> {
 
       let cheque = await checkCheque(input, existing);
       // A printed cheque that changes no longer matches its leaf: the leaf is
-      // spoiled (destroyed) and the cheque is printed again.
-      const printed = existing?.cheque?.printedAt ? existing.cheque : null;
+      // spoiled (destroyed) and the cheque is printed again. Only while the
+      // leaf is still in hand: once presented, cleared or returned, the bank
+      // has had it, and its print stays on record.
+      const printed =
+        existing?.cheque?.printedAt && existing.cheque.status === 'held' ? existing.cheque : null;
       const spoiled =
         printed !== null && printedFaceChanged(existing!, { ...input, amount, cheque });
       if (printed && spoiled) {
@@ -585,6 +590,12 @@ export async function deletePayment(id: ID): Promise<void> {
       if (isChequeSettled(payment)) {
         throw new PaymentError(
           t('This cheque has its own entries now. Mark it returned instead of deleting it.'),
+        );
+      }
+      // Its printed and spoiled leaves are on record so their numbers are never used again.
+      if (payment.cheque?.printedAt || payment.cheque?.spoiledLeaves?.length) {
+        throw new PaymentError(
+          t('Leaves of this cheque were printed. Cancel the cheque instead of deleting it.'),
         );
       }
       const company = await db.companies.get(payment.companyId);
