@@ -8,42 +8,44 @@ Production has real data and is in daily use, so every change here is additive a
 
 ## At a glance
 
-None of the 30 is fully built. 25 are partly built, 4 are not built, and 1 conflicts with how invoice numbering must work and needs a decision (#8).
+**Update, 21 October 2026:** Phases 0, 1 and 2 are built, reviewed and released: 18 of the 30 requirements (#4 and #5 in part). How to switch each one on is in [the release notes](release-notes-phases-0-2.md).
+
+When this plan was written, none of the 30 was fully built: 25 were partly built, 4 were not built, and 1 conflicted with how invoice numbering must work (#8).
 
 Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. The phases are described under [Phases](#phases).
 
-| #   | Requirement                                                                                       | Status           | Size | Phase                      |
-| --- | ------------------------------------------------------------------------------------------------- | ---------------- | ---- | -------------------------- |
-| 1   | [Employee search across all companies](#1-employee-search-across-all-companies)                   | Partly built     | M    | 2                          |
-| 2   | [Company Type field](#2-company-type-field)                                                       | Partly built     | S    | 2                          |
-| 3   | [Separate Sales, HR, Finance and Inventory apps](#3-separate-sales-hr-finance-and-inventory-apps) | Partly built     | XL   | 5                          |
-| 4   | [Document finder and AI assistant](#4-document-finder-and-ai-assistant)                           | Partly built     | XL   | 2 (finder), 8 (AI)         |
-| 5   | [Deema, Taly and Tahseel in the sidebar](#5-integrations-in-the-sidebar-deema-taly-tahseel)       | Partly built     | M    | 2 (links), 6 (integration) |
-| 6   | [Super Admin](#6-super-admin-with-full-control-of-roles-and-permissions)                          | Partly built     | L    | 3                          |
-| 7   | [Change notifications to the Super Admin](#7-change-notifications-to-the-super-admin)             | Partly built     | L    | 3                          |
-| 8   | [Invoice approval and Void invoices](#8-invoice-approval-and-void-invoices)                       | Needs a decision | XL   | 3                          |
-| 9   | [Cheque confirmation](#9-cheque-confirmation-by-the-super-admin)                                  | Partly built     | L    | 3                          |
-| 10  | [Salary approval](#10-salary-approval-by-the-super-admin)                                         | Partly built     | XL   | 4                          |
-| 11  | [Leave requests from the Maham App](#11-leave-requests-from-the-maham-app)                        | Not built        | XL   | 7                          |
-| 12  | [Departments and a Stateless option](#12-departments-and-a-stateless-option)                      | Partly built     | L    | 2                          |
-| 13  | [Driving licences for drivers](#13-driving-licences-for-drivers)                                  | Partly built     | M    | 2                          |
-| 14  | [Default leave policy of 30 days](#14-default-leave-policy-of-30-days)                            | Partly built     | M    | 2                          |
-| 15  | [Custom leave reasons](#15-custom-leave-reasons-with-automatic-pay-and-balance-effects)           | Partly built     | XL   | 4                          |
-| 16  | [Messages to guards in the Maham App](#16-messages-to-guards-in-the-maham-app)                    | Not built        | L    | 7                          |
-| 17  | [Company documents, contracts and vehicles](#17-company-documents-contracts-and-vehicles)         | Partly built     | L    | 2                          |
-| 18  | [Expiry alerts](#18-expiry-alerts-with-lead-times-and-re-upload-reminders)                        | Partly built     | L    | 4                          |
-| 19  | [Employee letter templates](#19-employee-letter-templates)                                        | Not built        | XL   | 4                          |
-| 20  | [Zoho-style dashboard](#20-zoho-style-books-dashboard)                                            | Partly built     | L    | 1                          |
-| 21  | [Scanned attachments on payments](#21-scanned-attachments-on-payments)                            | Partly built     | M    | 1                          |
-| 22  | [Invoice QR, signature and stamp](#22-invoice-qr-signature-and-stamp-signature-in-blue)           | Partly built     | M    | 1                          |
-| 23  | [Burgan Bank and KFH cheque printing](#23-burgan-bank-and-kfh-cheque-printing)                    | Partly built     | L    | 1                          |
-| 24  | [Receipt and payment vouchers](#24-receipt-and-payment-vouchers-سند-قبض--سند-صرف)                 | Partly built     | M    | 1                          |
-| 25  | [Import bank statements](#25-import-bank-statements)                                              | Partly built     | L    | 1                          |
-| 26  | [Pay-by-link from the invoice QR](#26-pay-by-link-from-the-invoice-qr)                            | Partly built     | XL   | 6                          |
-| 27  | [Quote design](#27-quote-design-layout-colour-and-logo)                                           | Partly built     | M    | 1                          |
-| 28  | [Units, SKU and QR codes, labels](#28-item-units-sku-and-qr-codes-labels-and-printing)            | Partly built     | L    | 1                          |
-| 29  | [Product images](#29-product-images)                                                              | Not built        | M    | 1                          |
-| 30  | [Excel stock import](#30-bulk-import-of-stock-items-from-excel-or-csv)                            | Partly built     | M    | 1                          |
+| #   | Requirement                                                                                       | Status                                | Size | Phase                      |
+| --- | ------------------------------------------------------------------------------------------------- | ------------------------------------- | ---- | -------------------------- |
+| 1   | [Employee search across all companies](#1-employee-search-across-all-companies)                   | Built                                 | M    | 2                          |
+| 2   | [Company Type field](#2-company-type-field)                                                       | Built                                 | S    | 2                          |
+| 3   | [Separate Sales, HR, Finance and Inventory apps](#3-separate-sales-hr-finance-and-inventory-apps) | Partly built                          | XL   | 5                          |
+| 4   | [Document finder and AI assistant](#4-document-finder-and-ai-assistant)                           | Built (finder); AI in Phase 8         | XL   | 2 (finder), 8 (AI)         |
+| 5   | [Deema, Taly and Tahseel in the sidebar](#5-integrations-in-the-sidebar-deema-taly-tahseel)       | Built (links); integration in Phase 6 | M    | 2 (links), 6 (integration) |
+| 6   | [Super Admin](#6-super-admin-with-full-control-of-roles-and-permissions)                          | Partly built                          | L    | 3                          |
+| 7   | [Change notifications to the Super Admin](#7-change-notifications-to-the-super-admin)             | Partly built                          | L    | 3                          |
+| 8   | [Invoice approval and Void invoices](#8-invoice-approval-and-void-invoices)                       | Needs a decision                      | XL   | 3                          |
+| 9   | [Cheque confirmation](#9-cheque-confirmation-by-the-super-admin)                                  | Partly built                          | L    | 3                          |
+| 10  | [Salary approval](#10-salary-approval-by-the-super-admin)                                         | Partly built                          | XL   | 4                          |
+| 11  | [Leave requests from the Maham App](#11-leave-requests-from-the-maham-app)                        | Not built                             | XL   | 7                          |
+| 12  | [Departments and a Stateless option](#12-departments-and-a-stateless-option)                      | Built                                 | L    | 2                          |
+| 13  | [Driving licences for drivers](#13-driving-licences-for-drivers)                                  | Built                                 | M    | 2                          |
+| 14  | [Default leave policy of 30 days](#14-default-leave-policy-of-30-days)                            | Built                                 | M    | 2                          |
+| 15  | [Custom leave reasons](#15-custom-leave-reasons-with-automatic-pay-and-balance-effects)           | Partly built                          | XL   | 4                          |
+| 16  | [Messages to guards in the Maham App](#16-messages-to-guards-in-the-maham-app)                    | Not built                             | L    | 7                          |
+| 17  | [Company documents, contracts and vehicles](#17-company-documents-contracts-and-vehicles)         | Built                                 | L    | 2                          |
+| 18  | [Expiry alerts](#18-expiry-alerts-with-lead-times-and-re-upload-reminders)                        | Partly built                          | L    | 4                          |
+| 19  | [Employee letter templates](#19-employee-letter-templates)                                        | Not built                             | XL   | 4                          |
+| 20  | [Zoho-style dashboard](#20-zoho-style-books-dashboard)                                            | Built                                 | L    | 1                          |
+| 21  | [Scanned attachments on payments](#21-scanned-attachments-on-payments)                            | Built                                 | M    | 1                          |
+| 22  | [Invoice QR, signature and stamp](#22-invoice-qr-signature-and-stamp-signature-in-blue)           | Built                                 | M    | 1                          |
+| 23  | [Burgan Bank and KFH cheque printing](#23-burgan-bank-and-kfh-cheque-printing)                    | Built                                 | L    | 1                          |
+| 24  | [Receipt and payment vouchers](#24-receipt-and-payment-vouchers-سند-قبض--سند-صرف)                 | Built                                 | M    | 1                          |
+| 25  | [Import bank statements](#25-import-bank-statements)                                              | Built                                 | L    | 1                          |
+| 26  | [Pay-by-link from the invoice QR](#26-pay-by-link-from-the-invoice-qr)                            | Partly built                          | XL   | 6                          |
+| 27  | [Quote design](#27-quote-design-layout-colour-and-logo)                                           | Built                                 | M    | 1                          |
+| 28  | [Units, SKU and QR codes, labels](#28-item-units-sku-and-qr-codes-labels-and-printing)            | Built                                 | L    | 1                          |
+| 29  | [Product images](#29-product-images)                                                              | Built                                 | M    | 1                          |
+| 30  | [Excel stock import](#30-bulk-import-of-stock-items-from-excel-or-csv)                            | Built                                 | M    | 1                          |
 
 **Rough effort:** about 150 working days for one developer across the eight phases. Phase 0 adds about two weeks. That figure excludes waiting for decisions, merchant contracts and SMS or bank sign-ups, and testing with the real company.
 
@@ -129,17 +131,17 @@ These are fixed for the whole plan. Sections refer to them by number (D1…D16) 
 
 ## Phases
 
-| Phase | Theme                                     | Requirements                                                               |
-| ----- | ----------------------------------------- | -------------------------------------------------------------------------- |
-| 0     | Groundwork, no visible change             | D2, D3, D4 (`tables_v16`)                                                  |
-| 1     | Books quick wins (local, no server work)  | #21, #22, #24, #25, #28, #29, #30, #23, #27, #20                           |
-| 2     | Company, People and Compliance quick wins | #2, #1, #5 (links), #12, #13, #14, #17, #4 part A (document finder, no AI) |
-| 3     | Super Admin control                       | #6, approvals service (D6), #8, #9, #7 (D7, D8)                            |
-| 4     | HR workflows and alerts                   | #15, #10, #18, #19                                                         |
-| 5     | Suite structure                           | #3 (Sales / HR / Finance / Inventory apps; staffing quotes)                |
-| 6     | Online payments                           | #26, #5 part B (Taly, Deema, Tahseel integrations)                         |
-| 7     | Maham App                                 | D9, D10, #11, #16                                                          |
-| 8     | AI assistant                              | #4 part B                                                                  |
+| Phase | Theme                                     | Requirements                                       |
+| ----- | ----------------------------------------- | -------------------------------------------------- |
+| 0     | Groundwork, no visible change             | D2, D3, D4 (`tables_v16`)                          |
+| 1     | Books quick wins (local, no server work)  | Built                                              |
+| 2     | Company, People and Compliance quick wins | Built                                              |
+| 3     | Super Admin control                       | #6, approvals service (D6), #8, #9, #7 (D7, D8)    |
+| 4     | HR workflows and alerts                   | Built (finder); AI in Phase 8                      |
+| 5     | Suite structure                           | Built (links); integration in Phase 6              |
+| 6     | Online payments                           | #26, #5 part B (Taly, Deema, Tahseel integrations) |
+| 7     | Maham App                                 | D9, D10, #11, #16                                  |
+| 8     | AI assistant                              | #4 part B                                          |
 
 ## The 30 requirements
 
@@ -2379,7 +2381,7 @@ Everything new on the server, collected from the sections above. All RPCs are `s
 | 0     | `tables_v16`            | none (table list and privacy rules only)                                                                                                                                                                                                                                                                                                                          | multi-entry build; `email-alerts` unchanged                                             |
 | 3     | `super_admin_approvals` | `my_permissions`, `team_permissions`, `set_member_permissions`, `owned_companies_overview` (#6); `approvals_overview` (#8)                                                                                                                                                                                                                                        | none                                                                                    |
 | 3     | `change_feed`           | `notification_feed`, `mark_notifications_read`, `change_notification_settings`, `set_change_notifications` (#7)                                                                                                                                                                                                                                                   | `email-alerts` gains `{action: 'notify'}`, run by a 5-minute cron (#7)                  |
-| 4     | `people_alerts`         | `email_alert_scope`, `set_email_alert_scope` (#18)                                                                                                                                                                                                                                                                                                                | `email-alerts` gains the payroll approval email (#10) and the new document stages (#18) |
+| 4     | `people_alerts`         | Built (finder); AI in Phase 8                                                                                                                                                                                                                                                                                                                                     | `email-alerts` gains the payroll approval email (#10) and the new document stages (#18) |
 | 6     | `payment_gateway`       | `create_pay_link`, `cancel_pay_link`, `set_gateway_account`, `gateway_account_status`; `pay_link_details` (_anonymous_, by unguessable token) (#26)                                                                                                                                                                                                               | `payment-links`: the pay page's API and the gateway webhooks (#26, #5 part B)           |
 | 7     | `employee_app`          | `create_employee_invite`, `revoke_employee_access`, `employee_app_access` (HR); `accept_employee_invite`, `my_employee_links`, `my_employee_profile`, `my_leave`, `submit_leave_request`, `withdraw_leave_request` (#11); `my_messages`, `mark_message_read`, `acknowledge_message`, `save_push_subscription`, `message_receipts`, `message_receipt_counts` (#16) | `employee-notify`: web push to the Maham App (#16)                                      |
 | 8     | `document_assistant`    | `search_company_records`, `assistant_settings`, `set_assistant_settings`, `assistant_usage_report` (#4)                                                                                                                                                                                                                                                           | `document-assistant`: `{action: 'ask'}` and `{action: 'read'}` (#4)                     |
