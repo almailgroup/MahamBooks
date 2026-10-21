@@ -64,7 +64,8 @@ export default function ExpensesPage() {
             e.number,
             e.description,
             e.reference,
-            e.payee,
+            // A name kept beside a vendor (an earlier save) isn't shown, so isn't searched.
+            vendor ? '' : e.payee,
             vendor?.name,
             vendor?.nameAr,
             category?.name,

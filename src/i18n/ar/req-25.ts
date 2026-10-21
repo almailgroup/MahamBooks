@@ -29,8 +29,9 @@ export default {
     other: 'استُبعد {count} صف من الإجماليات أو الملاحظات بعد الحركات',
   },
   'The amounts add up to the balances in the file.': 'تتطابق المبالغ مع الأرصدة الواردة في الملف.',
-  'The balances go the other way: money in and money out look swapped. Check the amount columns, or flip the signs.':
-    'تسير الأرصدة في الاتجاه المعاكس: يبدو أن المبالغ الواردة والصادرة مبدّلة. راجع أعمدة المبالغ أو اعكس الإشارات.',
+  'The balances go the other way: money in and money out look swapped. Check the amount columns and the way amounts are shown.':
+    'تسير الأرصدة في الاتجاه المعاكس: يبدو أن المبالغ الواردة والصادرة مبدّلة. راجع أعمدة المبالغ وطريقة عرض المبالغ.',
+  'Swap money in and money out': 'بدّل المبالغ الواردة والصادرة',
   'The amounts don’t add up to the balances in the file. Check the amount columns before importing.':
     'لا تتطابق المبالغ مع الأرصدة الواردة في الملف. راجع أعمدة المبالغ قبل الاستيراد.',
 } satisfies Dictionary;

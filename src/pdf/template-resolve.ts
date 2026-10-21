@@ -55,12 +55,16 @@ export function documentLayout(doc: Pick<InvoiceDocument, 'type'>, company: Owne
 /** The types of document the Templates page designs. */
 export type DesignedType = 'invoice' | 'quote' | 'credit';
 
-/** A design of its own for a type, starting as a copy of the company's. */
+/**
+ * A design of its own for a type, starting as a copy of the company's. The
+ * layout is always copied, even an empty one (as before), so later changes
+ * to the invoices' layout leave the type's alone.
+ */
 function companyDesign(branding: Branding): DocumentDesign {
   return {
     templateId: branding.templateId,
     accentColor: branding.accentColor,
-    ...(branding.layout ? { layout: { ...branding.layout } } : {}),
+    layout: { ...(branding.layout ?? {}) },
   };
 }
 

@@ -64,9 +64,14 @@ export function ImportStatementDialog({
   const fmt = useFormat();
   const input = useRef<HTMLInputElement>(null);
   const [accountId, setAccountId] = useState(initialAccountId);
+  // The account chosen now, for a file that finishes reading after a change.
+  const chosenAccount = useRef(initialAccountId);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [start, setStart] = useState(0);
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
+  // The way of showing amounts picked under Amounts: kept while its debit or
+  // credit column is still to be chosen (the mapping alone reads as one column).
+  const [chosenPreset, setChosenPreset] = useState<StatementPreset | null>(null);
   // The layout came from the account; and whether to remember it there.
   const [remembered, setRemembered] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -79,6 +84,7 @@ export function ImportStatementDialog({
     const layout = statementLayout(rows, owner?.statementFormat, preferDayFirst);
     setStart(layout.start);
     setMapping(layout.mapping);
+    setChosenPreset(null);
     setRemembered(layout.remembered);
     setRemember(Boolean(owner?.statementFormat));
   };
@@ -102,10 +108,15 @@ export function ImportStatementDialog({
     }
     if (content.rows.length < 1) return toast.error(t('This file has no rows.'));
     setLoaded({ kind: 'table', file: content.kind, name: file.name, rows: content.rows });
-    layOut(content.rows, account);
+    // The account chosen now: it may have been changed while the file was read.
+    layOut(
+      content.rows,
+      accounts.find((a) => a.id === chosenAccount.current),
+    );
   };
 
   const chooseAccount = (id: string) => {
+    chosenAccount.current = id;
     setAccountId(id);
     if (loaded?.kind === 'table') {
       layOut(
@@ -178,6 +189,7 @@ export function ImportStatementDialog({
     const layout = guessLayout(rows, row, preferDayFirst);
     setStart(layout.start);
     setMapping(layout.mapping);
+    setChosenPreset(null);
     setRemembered(false);
   };
 
@@ -215,7 +227,7 @@ export function ImportStatementDialog({
     }
   };
 
-  const preset = mapping ? presetOf(mapping) : 'signed';
+  const preset = chosenPreset ?? (mapping ? presetOf(mapping) : 'signed');
   // The rows above the table and a few of it, as they are in the file.
   const shown = rows ? rows.slice(0, Math.min(START_ROWS, Math.max(12, start + 4))) : [];
 
@@ -350,9 +362,11 @@ export function ImportStatementDialog({
                     <Select
                       id={id}
                       value={preset}
-                      onChange={(e) =>
-                        setMapping(applyPreset(table, mapping, e.target.value as StatementPreset))
-                      }
+                      onChange={(e) => {
+                        const value = e.target.value as StatementPreset;
+                        setMapping(applyPreset(table, mapping, value));
+                        setChosenPreset(value);
+                      }}
                     >
                       {STATEMENT_PRESETS.map((p) => (
                         <option key={p.value} value={p.value}>
@@ -443,13 +457,27 @@ export function ImportStatementDialog({
                   className="mb-2 flex items-start gap-1.5 text-xs font-medium text-amber-700"
                 >
                   <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-                  {balances === 'flipped'
-                    ? t(
-                        'The balances go the other way: money in and money out look swapped. Check the amount columns, or flip the signs.',
-                      )
-                    : t(
-                        'The amounts don’t add up to the balances in the file. Check the amount columns before importing.',
-                      )}
+                  <span>
+                    {balances === 'flipped'
+                      ? t(
+                          'The balances go the other way: money in and money out look swapped. Check the amount columns and the way amounts are shown.',
+                        )
+                      : t(
+                          'The amounts don’t add up to the balances in the file. Check the amount columns before importing.',
+                        )}
+                    {balances === 'flipped' && mapping && preset === 'debit-credit' ? (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className="ms-2"
+                        onClick={() =>
+                          set({ moneyIn: mapping.moneyOut, moneyOut: mapping.moneyIn })
+                        }
+                      >
+                        {t('Swap money in and money out')}
+                      </Button>
+                    ) : null}
+                  </span>
                 </p>
               ) : null}
               <div className="max-h-56 overflow-auto rounded-lg border border-slate-200">

@@ -52,6 +52,7 @@ import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { generatePdf, useLivePdf } from '@/components/pdf/use-pdf';
 import { documentTemplate } from '@/pdf/template-resolve';
 import { downloadBlob, pdfFileName, printBlob } from '@/pdf/client';
+import { printsAsDraft } from '@/pdf/model';
 import {
   ApplyCreditDialog,
   RecordPaymentDialog,
@@ -285,15 +286,31 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
     if (ok) await setStatus('cancelled');
   };
 
+  // A draft order prints as a draft: the signed copy comes with Mark as issued.
+  const draftNotice = () => {
+    if (printsAsDraft(doc)) {
+      toast(
+        t(
+          'Drafts print with a DRAFT watermark, without the signature and stamp. Mark it as issued for the copy to send.',
+        ),
+      );
+    }
+  };
   const download = () =>
     run('download', async () => {
       const blob = await printing.getPdf();
-      if (blob) downloadBlob(blob, printing.fileName);
+      if (blob) {
+        downloadBlob(blob, printing.fileName);
+        draftNotice();
+      }
     });
   const print = () =>
     run('print', async () => {
       const blob = await printing.getPdf();
-      if (blob) printBlob(blob);
+      if (blob) {
+        printBlob(blob);
+        draftNotice();
+      }
     });
 
   const primaryAction =

@@ -131,7 +131,9 @@ export function useDraftAttachments(ownerId: ID) {
 /**
  * Thumbnails of receipts and scanned bills, with an "Attach file" button.
  * With `camera`, phones also get a "Take photo" button that opens the camera.
- * With `readOnly`, the files only open: nothing is added or removed.
+ * With `readOnly`, the files only open: nothing is added or removed. With
+ * `compact` (a dialog whose own button saves, where a file is optional), the
+ * buttons stay small and plain, the camera too.
  */
 export function AttachmentList({
   files,
@@ -140,6 +142,7 @@ export function AttachmentList({
   emptyText,
   camera = false,
   readOnly = false,
+  compact = false,
 }: {
   files: AttachedFile[];
   onAdd: (file: AttachedFile) => void | Promise<unknown>;
@@ -147,6 +150,7 @@ export function AttachmentList({
   emptyText?: string;
   camera?: boolean;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const photo = useRef<HTMLInputElement>(null);
@@ -167,7 +171,7 @@ export function AttachmentList({
     }
   };
   // The camera is the quickest way to add a receipt on a phone.
-  const firstPhoto = camera && files.length === 0;
+  const firstPhoto = camera && !compact && files.length === 0;
 
   return (
     <div className="space-y-3">
@@ -239,7 +243,10 @@ export function AttachmentList({
               <Button
                 variant={firstPhoto ? 'primary' : 'outline'}
                 size={firstPhoto ? 'md' : 'sm'}
-                className="hidden flex-1 sm:flex-none pointer-coarse:inline-flex"
+                className={cn(
+                  'hidden pointer-coarse:inline-flex',
+                  !compact && 'flex-1 sm:flex-none',
+                )}
                 loading={busy}
                 onClick={() => photo.current?.click()}
               >
@@ -249,7 +256,7 @@ export function AttachmentList({
             <Button
               variant="outline"
               size={firstPhoto ? 'md' : 'sm'}
-              className={cn(camera && 'max-sm:flex-1')}
+              className={cn(camera && !compact && 'max-sm:flex-1')}
               loading={busy}
               onClick={() => input.current?.click()}
             >

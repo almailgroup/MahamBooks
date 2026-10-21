@@ -25,6 +25,17 @@ export function SignaturePad({
   const canvas = useRef<HTMLCanvasElement>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
   const [drawn, setDrawn] = useState(false);
+  // Each opening shows a new, empty pad (the dialog's canvas is new): nothing
+  // drawn on it yet, however the last one was closed.
+  const [shown, setShown] = useState(open);
+  if (shown !== open) {
+    setShown(open);
+    setDrawn(false);
+  }
+  const close = (next: boolean) => {
+    last.current = null;
+    onOpenChange(next);
+  };
 
   /** The canvas, sized to its box at the screen's resolution the first time it is used. */
   const surface = () => {
@@ -99,12 +110,12 @@ export function SignaturePad({
       .getContext('2d')
       ?.drawImage(s.el, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
     onDone(out.toDataURL('image/png'));
-    onOpenChange(false);
+    close(false);
     setDrawn(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent
         title={t('Draw your signature')}
         description={t('Sign in the box with your finger, a pen or the mouse.')}
@@ -125,7 +136,7 @@ export function SignaturePad({
           <Button variant="ghost" onClick={clear} disabled={!drawn}>
             <Eraser /> {t('Clear')}
           </Button>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => close(false)}>
             {t('Cancel')}
           </Button>
           <Button onClick={use} disabled={!drawn}>

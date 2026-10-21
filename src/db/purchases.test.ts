@@ -159,6 +159,25 @@ describe('expenses', () => {
     expect(await db.expenses.get(plain.id)).not.toHaveProperty('payee');
   });
 
+  it('keep no other name beside a vendor (typed, then a vendor chosen)', async () => {
+    const { company, vendor } = await setup();
+    const category = (await db.accounts
+      .where('[companyId+role]')
+      .equals([company.id, 'expense'])
+      .first())!;
+    const paid = await saveExpense(
+      createExpense(company.id, {
+        accountId: category.id,
+        amount: 5,
+        payee: 'Taxi driver',
+        vendorId: vendor.id,
+      }),
+    );
+    const stored = await db.expenses.get(paid.id);
+    expect(stored?.vendorId).toBe(vendor.id);
+    expect(stored).not.toHaveProperty('payee');
+  });
+
   it('respect the lock date and delete their receipts with them', async () => {
     const { company, vendor } = await setup();
     const category = (await db.accounts

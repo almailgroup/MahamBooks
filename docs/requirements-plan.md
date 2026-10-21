@@ -1737,6 +1737,7 @@ We will reuse the attachments component from bills on the payment form, the paym
 
 - If `commit` fails after `savePayment`, the payment is saved without its file. Bills behave the same way. Show a toast when it happens.
 - Viewers may see bank account numbers on scans. They can already see them on the payments.
+- An older build deletes a payment without its scans. The next device of this build (not a viewer's) that brings in the deletion deletes them, here and in the cloud. If no such device brings it in, the scans stay, with nothing left that shows them.
 
 **Decisions for the owner**
 

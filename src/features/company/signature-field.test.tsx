@@ -3,12 +3,19 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { Branding } from '@/db/types';
 import { SignatureField } from './signature-field';
 
+// A recolouring that takes a while (a large phone photo).
+const slow = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+
 // jsdom draws no pictures: the ink is applied by name, and read from a mark.
 vi.mock('@/lib/image', async (original) => ({
   ...(await original<typeof import('@/lib/image')>()),
-  inkImage: async (src: string, ink: string) => `${src}#${ink}`,
+  inkImage: async (src: string, ink: string) => {
+    if (slow.gate) await slow.gate;
+    return `${src}#${ink}`;
+  },
   normalizeImage: async (src: string, size = 800) => `${src}@${size}`,
   imageInk: async (src: string) => (src.endsWith('#blue') ? 'blue' : 'original'),
+  logoFromFile: async () => 'data:image/png;base64,TkVX',
 }));
 
 afterEach(cleanup);
@@ -82,6 +89,38 @@ describe('the signature field', () => {
         signatureInk: 'blue',
       }),
     );
+  });
+
+  it('keeps the ink as it is while an upload is put in it', async () => {
+    const onChange = renderField({
+      signature: `${SIGNED}#blue`,
+      signatureOriginal: SIGNED,
+      signatureInk: 'blue',
+    });
+    let done!: () => void;
+    slow.gate = new Promise((resolve) => (done = resolve));
+    const photo = new File(['photo'], 'signature.png', { type: 'image/png' });
+    fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [photo] },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Draw signature' })).toBeDisabled(),
+    );
+    // Original, tapped while the blue copy is being made, changes nothing.
+    fireEvent.click(screen.getByRole('tab', { name: 'Original' }));
+    expect(onChange).not.toHaveBeenCalled();
+    done();
+    slow.gate = null;
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          signatureInk: 'blue',
+          signature: expect.stringMatching(/#blue$/),
+        }),
+      ),
+    );
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Draw signature' })).toBeEnabled();
   });
 
   it('remembers the ink before there is a signature', () => {

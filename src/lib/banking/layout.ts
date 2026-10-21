@@ -106,6 +106,12 @@ function fitted(table: string[][], mapping: CsvMapping, preferDayFirst: boolean)
   return csvStatement(table, other).lines.length ? other : null;
 }
 
+/** The first of the first 50 rows `mapping` reads as a line (column names aside), or -1. */
+function firstLine(rows: string[][], mapping: CsvMapping): number {
+  const plain = { ...mapping, header: false };
+  return rows.slice(0, 50).findIndex((row) => csvStatement([row], plain).lines.length > 0);
+}
+
 /** The layout to read a statement with: the account's remembered one when it fits, else a guess. */
 export function statementLayout(
   rows: string[][],
@@ -122,11 +128,17 @@ export function statementLayout(
       if (at >= 0) starts.push(at);
     } else {
       if (Number.isInteger(saved.headerRow) && saved.headerRow >= 0) starts.push(saved.headerRow);
+      // Where the lines start now (fewer or more rows above them this time).
+      const first = mapping.header ? -1 : firstLine(rows, mapping);
+      if (first >= 0) starts.push(first);
       starts.push(findHeaderRow(rows));
     }
     for (const start of starts) {
       if (start >= rows.length) continue;
       const fit = fitted(statementTable(rows, start), mapping, preferDayFirst);
+      // A table without column names never starts below a row read as a line:
+      // that line would be lost without a word.
+      if (fit && !fit.header && firstLine(rows.slice(0, start), fit) >= 0) continue;
       if (fit) return { start, mapping: fit, remembered: true };
     }
   }

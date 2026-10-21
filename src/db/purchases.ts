@@ -69,9 +69,10 @@ export async function saveExpense(input: Expense): Promise<Expense> {
       number: input.number.trim(),
       updatedAt: nowStamp(),
     };
-    // Who was paid, when it isn't a vendor: kept only when there is a name.
+    // Who was paid, when it isn't a vendor: kept only when there is a name,
+    // and never beside a vendor (the field is hidden then).
     const payee = input.payee?.trim();
-    if (payee) expense.payee = payee;
+    if (payee && !input.vendorId) expense.payee = payee;
     else delete expense.payee;
     if (!expense.number) {
       const rule = company.numbering.expense ?? defaultNumbering().expense;

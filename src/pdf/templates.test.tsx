@@ -397,6 +397,145 @@ describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, tem
   }, 30000);
 });
 
+type Box = [number, number, number, number];
+type Matrix = [number, number, number, number, number, number];
+
+/**
+ * What the first page paints, in order: shapes filled and pictures, each with
+ * the box it covers on the page (text is left out).
+ */
+async function paints(pdf: Buffer): Promise<{ kind: 'fill' | 'image'; box: Box }[]> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { OPS } = pdfjs;
+  const task = pdfjs.getDocument({ data: new Uint8Array(pdf), verbosity: 0 });
+  const doc = await task.promise;
+  const list = await (await doc.getPage(1)).getOperatorList();
+  await task.destroy();
+  const fills = new Set<number>([
+    OPS.fill,
+    OPS.eoFill,
+    OPS.fillStroke,
+    OPS.eoFillStroke,
+    OPS.closeFillStroke,
+    OPS.closeEOFillStroke,
+  ]);
+  const times = (m: Matrix, n: Matrix): Matrix => [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+  const onPage = (m: Matrix, [x0, y0, x1, y1]: Box): Box => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const [x, y] of [
+      [x0, y0],
+      [x0, y1],
+      [x1, y0],
+      [x1, y1],
+    ]) {
+      xs.push(m[0] * x + m[2] * y + m[4]);
+      ys.push(m[1] * x + m[3] * y + m[5]);
+    }
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  };
+  const out: { kind: 'fill' | 'image'; box: Box }[] = [];
+  const stack: Matrix[] = [];
+  let ctm: Matrix = [1, 0, 0, 1, 0, 0];
+  let path: Box | null = null;
+  list.fnArray.forEach((fn, i) => {
+    const args = list.argsArray[i] as unknown[];
+    if (fn === OPS.save) stack.push(ctm);
+    else if (fn === OPS.restore) ctm = stack.pop() ?? ctm;
+    else if (fn === OPS.transform) ctm = times(args as Matrix, ctm);
+    else if (fn === OPS.constructPath) {
+      // The path's own box (none for an empty one).
+      const minMax = args[2] as ArrayLike<number> | null;
+      path = minMax ? onPage(ctm, Array.from(minMax) as Box) : null;
+      if (path && fills.has(args[0] as number)) out.push({ kind: 'fill', box: path });
+    } else if (fills.has(fn) && path) out.push({ kind: 'fill', box: path });
+    else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) {
+      out.push({ kind: 'image', box: onPage(ctm, [0, 0, 1, 1]) });
+    }
+  });
+  return out;
+}
+
+const overlap = (a: Box, b: Box) =>
+  Math.min(a[2], b[2]) - Math.max(a[0], b[0]) > 1 &&
+  Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > 1;
+
+describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, template) => {
+  it.each(['start', 'center', 'end'] as const)(
+    'draws the logo on its own line (%s) over anything drawn there',
+    async (logoPosition) => {
+      for (const language of ['en', 'ar'] as const) {
+        const own = laidOut({ logoPosition })();
+        const doc = sampleDocument(own, client, 'invoice', {}, language);
+        const model = buildRenderModel(doc, own, client, { language });
+        const painted = await paints(
+          await renderToBuffer(createPdfElement(model, template.id).element),
+        );
+        // The logo is the only picture: no QR code, signature or stamp here.
+        const at = painted.findIndex((p) => p.kind === 'image');
+        expect(at, language).toBeGreaterThanOrEqual(0);
+        const logo = painted[at].box;
+        const over = painted.slice(at + 1).filter((p) => overlap(p.box, logo));
+        expect(over, `${language}: shapes drawn over the logo`).toEqual([]);
+      }
+    },
+    30000,
+  );
+});
+
+/** The words of the first page, with the box each takes. */
+async function placedWords(pdf: Buffer): Promise<{ text: string; box: Box }[]> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task = pdfjs.getDocument({ data: new Uint8Array(pdf), verbosity: 0 });
+  const doc = await task.promise;
+  const content = await (await doc.getPage(1)).getTextContent();
+  await task.destroy();
+  return content.items.flatMap((item) => {
+    if (!('str' in item) || !item.str.trim()) return [];
+    const [x, y] = [item.transform[4] as number, item.transform[5] as number];
+    return [{ text: item.str, box: [x, y, x + item.width, y + item.height] as Box }];
+  });
+}
+
+describe.each(TEMPLATES.map((t) => [t.id, t] as const))('template %s', (_id, template) => {
+  it('keeps the status stamp off the amount due, with the logo on its own line or not', async () => {
+    const layouts: (DocumentLayout | undefined)[] = [
+      undefined,
+      { logoPosition: 'end' },
+      { logoPosition: 'end', logoSize: 'large' },
+      { logoPosition: 'start', logoSize: 'small' },
+    ];
+    const plain = (text: string) => text.replace(/\s+/g, '').toUpperCase();
+    for (const language of LANGUAGES) {
+      for (const layout of layouts) {
+        const own = layout ? laidOut(layout)() : company;
+        const doc = sampleDocument(own, client, 'invoice', { status: 'paid' }, language);
+        const model = buildRenderModel(doc, own, client, { language });
+        const words = await placedWords(
+          await renderToBuffer(createPdfElement(model, template.id).element),
+        );
+        const stamp = words.find((w) => plain(w.text).includes(plain(model.stamp!.text)));
+        expect(stamp, `${language}: the stamp`).toBeDefined();
+        // The stamp's frame, a little turned, takes a little more than its word.
+        const [x0, y0, x1, y1] = stamp!.box;
+        const frame: Box = [x0 - 8, y0 - 6, x1 + 8, y1 + 6];
+        const figure = model.amountDue.value.match(/[\d.,]*\d/)![0];
+        const amounts = words.filter((w) => w.text.includes(figure));
+        expect(amounts.length, `${language}: the amount due`).toBeGreaterThan(0);
+        const covered = amounts.filter((w) => overlap(w.box, frame));
+        expect(covered, `${language}, ${JSON.stringify(layout ?? null)}`).toEqual([]);
+      }
+    }
+  }, 60000);
+});
+
 it('keeps a company’s longer wording for drafts on the page', async () => {
   const own: Company = { ...company, labels: { draftStamp: 'Draft copy, not for payment' } };
   const doc = sampleDocument(own, client, 'invoice', { status: 'draft' }, 'en');

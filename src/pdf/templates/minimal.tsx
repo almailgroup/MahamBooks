@@ -23,6 +23,13 @@ import {
 import { templateMeta } from '../template-meta';
 import type { TemplateDefinition, TemplateProps } from './types';
 
+/**
+ * The status stamp with the logo on its own line, from the top of the title:
+ * just above the amount due, as it prints without that line (the header is
+ * then shorter by what the logo took in it).
+ */
+const STAMP_TOP = 24;
+
 function Minimal({ model, theme }: TemplateProps) {
   const c = model.company;
   const label: Style = {
@@ -78,72 +85,79 @@ function Minimal({ model, theme }: TemplateProps) {
         </View>
       </View>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'flex-end',
-          marginBottom: model.titleSecondary ? 3 : 16,
-        }}
-      >
-        <Text style={{ fontSize: 30, fontWeight: 400, color: theme.ink, letterSpacing: -0.6 }}>
-          {model.title}
-        </Text>
+      {/* The title and the facts, with the status stamp over them: placed from
+          where the header ends, however tall the header is. */}
+      <View>
         <View
           style={{
-            width: 6,
-            height: 6,
-            borderRadius: 3,
-            backgroundColor: theme.accent,
-            marginLeft: 4,
-            marginBottom: 7,
-          }}
-        />
-      </View>
-      {model.titleSecondary ? (
-        <Text
-          style={{
-            fontSize: 8,
-            color: theme.faint,
-            textTransform: 'uppercase',
-            letterSpacing: 2.4,
-            marginBottom: 16,
+            flexDirection: 'row',
+            alignItems: 'flex-end',
+            marginBottom: model.titleSecondary ? 3 : 16,
           }}
         >
-          {model.titleSecondary}
-        </Text>
-      ) : null}
-
-      <View style={sx({ flexDirection: 'row', paddingBottom: 12, marginBottom: 18 }, hairline)}>
-        <View style={{ flex: perRow, flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 }}>
-          {facts.map((f) => (
-            <View key={f.label} style={{ width: `${100 / perRow}%`, paddingRight: 10 }}>
-              <Label text={f.label} secondary={f.secondary} style={label} stack />
-              <Text style={sx({ fontSize: 9.5, fontWeight: 600, color: theme.ink }, TNUM)}>
-                {f.value}
-              </Text>
-            </View>
-          ))}
-        </View>
-        <View style={{ flex: 1.2, alignItems: 'flex-end' }}>
-          <Label
-            text={model.amountDue.label}
-            secondary={model.amountDue.secondary}
-            style={sx(label, { textAlign: 'right' })}
-            stack
-          />
-          <Text
-            style={sx(
-              {
-                fontSize: fitSize(model.amountDue.value, 14, 16),
-                fontWeight: 700,
-                color: theme.accentInk,
-              },
-              TNUM,
-            )}
-          >
-            {model.amountDue.value}
+          <Text style={{ fontSize: 30, fontWeight: 400, color: theme.ink, letterSpacing: -0.6 }}>
+            {model.title}
           </Text>
+          <View
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: theme.accent,
+              marginLeft: 4,
+              marginBottom: 7,
+            }}
+          />
         </View>
+        {model.titleSecondary ? (
+          <Text
+            style={{
+              fontSize: 8,
+              color: theme.faint,
+              textTransform: 'uppercase',
+              letterSpacing: 2.4,
+              marginBottom: 16,
+            }}
+          >
+            {model.titleSecondary}
+          </Text>
+        ) : null}
+
+        <View style={sx({ flexDirection: 'row', paddingBottom: 12, marginBottom: 18 }, hairline)}>
+          <View style={{ flex: perRow, flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 }}>
+            {facts.map((f) => (
+              <View key={f.label} style={{ width: `${100 / perRow}%`, paddingRight: 10 }}>
+                <Label text={f.label} secondary={f.secondary} style={label} stack />
+                <Text style={sx({ fontSize: 9.5, fontWeight: 600, color: theme.ink }, TNUM)}>
+                  {f.value}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <View style={{ flex: 1.2, alignItems: 'flex-end' }}>
+            <Label
+              text={model.amountDue.label}
+              secondary={model.amountDue.secondary}
+              style={sx(label, { textAlign: 'right' })}
+              stack
+            />
+            <Text
+              style={sx(
+                {
+                  fontSize: fitSize(model.amountDue.value, 14, 16),
+                  fontWeight: 700,
+                  color: theme.accentInk,
+                },
+                TNUM,
+              )}
+            >
+              {model.amountDue.value}
+            </Text>
+          </View>
+        </View>
+        {model.logo.row ? (
+          <Stamp model={model} theme={theme} anchored style={{ top: STAMP_TOP, right: 32 }} />
+        ) : null}
       </View>
 
       <View style={{ flexDirection: 'row', marginBottom: 20 }}>
@@ -185,8 +199,11 @@ function Minimal({ model, theme }: TemplateProps) {
         </View>
       </View>
 
-      {/* Placed before the table so it always lands on the first page. */}
-      <Stamp model={model} theme={theme} style={{ top: 168, right: 80 }} />
+      {/* Placed before the table so it always lands on the first page. Without
+          the logo's own line, where it always printed. */}
+      {model.logo.row ? null : (
+        <Stamp model={model} theme={theme} style={{ top: 168, right: 80 }} />
+      )}
 
       <ItemsTable
         model={model}

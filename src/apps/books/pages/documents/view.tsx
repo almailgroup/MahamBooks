@@ -110,6 +110,18 @@ function SummaryRow({
 /** Documents that are emailed and shared with the app's own templates. */
 const EMAILED: DocumentType[] = ['invoice', 'quote', 'credit'];
 
+/** Why a draft's PDF has a watermark and no signature, said as it is downloaded. */
+function draftNotice(doc: InvoiceDocument) {
+  if (!printsAsDraft(doc)) return;
+  toast(
+    EMAILED.includes(doc.type) || doc.type === 'proforma'
+      ? t(
+          'Drafts print with a DRAFT watermark, without the signature and stamp. Mark it as sent for the copy to share.',
+        )
+      : t('Drafts print with a DRAFT watermark, without the signature and stamp.'),
+  );
+}
+
 export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -171,8 +183,9 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     if (autoDownload.current && pdf.blob) {
       autoDownload.current = false;
       downloadBlob(pdf.blob, fileName);
+      if (doc) draftNotice(doc);
     }
-  }, [pdf.blob, fileName]);
+  }, [pdf.blob, fileName, doc]);
 
   if (doc === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
   if (!doc || doc.companyId !== company.id || doc.type !== type) {
@@ -230,15 +243,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const download = () =>
     run('download', async () => {
       downloadBlob(await getPdf(), fileName);
-      if (printsAsDraft(doc)) {
-        toast(
-          emailed || type === 'proforma'
-            ? t(
-                'Drafts print with a DRAFT watermark, without the signature and stamp. Mark it as sent for the copy to share.',
-              )
-            : t('Drafts print with a DRAFT watermark, without the signature and stamp.'),
-        );
-      }
+      draftNotice(doc);
     });
 
   const print = () => run('print', async () => printBlob(await getPdf()));

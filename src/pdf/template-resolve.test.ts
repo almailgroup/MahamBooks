@@ -92,10 +92,34 @@ describe('changing a design', () => {
     expect(coloured.branding.byType?.quote?.accentColor).toBe('#0f766e');
   });
 
+  it('keeps a type’s own design when the invoices’ layout changes later', () => {
+    // A company that never set a layout gives quotes and credit notes their own.
+    let c = withSameAsInvoices(company(), 'quote', false);
+    c = withTypeDesign(c, 'quote', { templateId: 'classic' });
+    c = withTypeDesign(c, 'credit', { accentColor: '#15803d' });
+    // Later, on the Invoices tab: the acceptance box and the logo on top, centred.
+    c = withTypeDesign(c, 'invoice', { layout: { showAcceptance: true, logoPosition: 'center' } });
+    expect(documentLayout({ type: 'invoice' }, c)).toEqual({
+      showAcceptance: true,
+      logoPosition: 'center',
+    });
+    expect(documentLayout({ type: 'quote' }, c)).toEqual({});
+    expect(documentLayout({ type: 'credit' }, c)).toEqual({});
+    // Proformas follow the invoices, as before.
+    expect(documentLayout({ type: 'proforma' }, c)).toEqual({
+      showAcceptance: true,
+      logoPosition: 'center',
+    });
+  });
+
   it('switches “Same as invoices” off with a copy and on by removing the own design', () => {
     const base = company();
     const own = withSameAsInvoices(base, 'quote', false);
-    expect(own.branding.byType?.quote).toEqual({ templateId: 'modern', accentColor: '#4f46e5' });
+    expect(own.branding.byType?.quote).toEqual({
+      templateId: 'modern',
+      accentColor: '#4f46e5',
+      layout: {},
+    });
     // Off again keeps what was set.
     const changed = withTypeDesign(own, 'quote', { templateId: 'classic' });
     expect(withSameAsInvoices(changed, 'quote', false)).toBe(changed);
