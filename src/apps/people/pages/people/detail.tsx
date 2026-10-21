@@ -26,6 +26,7 @@ import { maskNumber } from '@/lib/format';
 import { serviceYears } from '@/lib/hr/eosi';
 import { today } from '@/lib/dates';
 import { EmployeeDocuments } from '@/features/people/employee-documents';
+import { useVehicles } from '@/features/renewals/hooks';
 import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
 import { EmployeePhotoEditor } from '@/features/people/employee-photo';
@@ -116,6 +117,7 @@ export default function EmployeeDetailPage() {
   );
   const renewals = useLiveQuery(() => db.renewals.where('employeeId').equals(id).toArray(), [id]);
   const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
+  const vehicles = useVehicles();
   const employees = useEmployees();
   const settings = usePeopleSettings();
   const [params, setParams] = useSearchParams();
@@ -312,6 +314,7 @@ export default function EmployeeDetailPage() {
               employees={employees}
               reminderDays={normalizeReminderDays(settings.reminderDays)}
               drivingLicences={checksDrivingLicences(settings)}
+              vehicles={vehicles}
             />
             <EosiCard employee={employee} divisor={settings.eosDailyDivisor} />
             <Card>

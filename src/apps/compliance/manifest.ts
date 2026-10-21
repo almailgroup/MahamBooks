@@ -1,4 +1,4 @@
-import { CalendarClock, FolderCheck, House, Settings, ShieldCheck } from 'lucide-react';
+import { CalendarClock, Car, FolderCheck, House, Settings, ShieldCheck } from 'lucide-react';
 import { msg } from '@/i18n';
 import type { SuiteApp } from '@/suite/types';
 
@@ -33,6 +33,14 @@ export const COMPLIANCE: SuiteApp = {
       label: msg('Documents'),
       icon: FolderCheck,
       keywords: 'licence residency passport expiring',
+    },
+    {
+      kind: 'link',
+      to: '/compliance/vehicles',
+      label: msg('Vehicles'),
+      icon: Car,
+      keywords: 'cars plates registration insurance drivers',
+      registerExtrasOnly: true,
     },
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],

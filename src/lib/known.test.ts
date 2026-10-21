@@ -86,7 +86,7 @@ describe('an employee category or status this version doesn’t know', () => {
 });
 
 describe('a register document of a type this version doesn’t know', () => {
-  const type = 'company_contract' as ComplianceDocumentType;
+  const type = 'tender_bond' as ComplianceDocumentType;
 
   it('is an other document, with its fee account', () => {
     expect(documentTypeInfo(type)).toBe(DOCUMENT_TYPES.other);

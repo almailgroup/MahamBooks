@@ -413,6 +413,84 @@ describe('the first file run again', () => {
   }, 60_000);
 });
 
+describe('a register document made confidential under new ids', () => {
+  it('reaches staff and viewers as the deletion of the old records, and nothing else', async () => {
+    const t = await team();
+    const c = t.company;
+    const first = await push(t.owner, c, [
+      {
+        tbl: 'complianceDocuments',
+        id: 'doc-old',
+        data: rec(c, 'doc-old', { type: 'other', employeeId: null }),
+      },
+      {
+        tbl: 'renewals',
+        id: 'ren-old',
+        data: rec(c, 'ren-old', { documentKey: 'doc:doc-old', documentId: 'doc-old' }),
+      },
+      { tbl: 'attachments', id: 'att-old', data: rec(c, 'att-old', { ownerId: 'doc-old' }) },
+      {
+        tbl: 'activities',
+        id: 'act-old',
+        data: rec(c, 'act-old', { entity: 'compliance', entityId: 'doc-old' }),
+      },
+    ]);
+    const held = Math.max(...first.map((r) => r.rev));
+    // As the app sends it: the document first, its files and activity marked private.
+    await push(t.owner, c, [
+      {
+        tbl: 'complianceDocuments',
+        id: 'doc-new',
+        data: rec(c, 'doc-new', { type: 'other', employeeId: null, confidential: true }),
+      },
+      { tbl: 'complianceDocuments', id: 'doc-old', deleted: true },
+      {
+        tbl: 'renewals',
+        id: 'ren-new',
+        data: rec(c, 'ren-new', { documentKey: 'doc:doc-new', documentId: 'doc-new' }),
+      },
+      { tbl: 'renewals', id: 'ren-old', deleted: true },
+      {
+        tbl: 'attachments',
+        id: 'att-new',
+        data: rec(c, 'att-new', { ownerId: 'doc-new', _private: true }),
+      },
+      { tbl: 'attachments', id: 'att-old', deleted: true },
+      {
+        tbl: 'activities',
+        id: 'act-new',
+        data: rec(c, 'act-new', {
+          entity: 'compliance',
+          entityId: 'doc-new',
+          confidential: true,
+          _private: true,
+        }),
+      },
+      { tbl: 'activities', id: 'act-old', deleted: true },
+    ]);
+    for (const user of [t.staff, t.viewer]) {
+      const rows = await pull(user, c, held);
+      expect(rows.map((r) => `${r.id} ${r.deleted}`).sort()).toEqual([
+        'act-old true',
+        'att-old true',
+        'doc-old true',
+        'ren-old true',
+      ]);
+    }
+    const owner = await pull(t.owner, c, held);
+    expect(owner.map((r) => `${r.id} ${r.deleted}`).sort()).toEqual([
+      'act-new false',
+      'act-old true',
+      'att-new false',
+      'att-old true',
+      'doc-new false',
+      'doc-old true',
+      'ren-new false',
+      'ren-old true',
+    ]);
+  });
+});
+
 describe('server_features', () => {
   it('tells signed-in people what the server has, and nobody else', async () => {
     const user = await h.user('features@example.com');

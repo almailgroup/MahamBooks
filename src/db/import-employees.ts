@@ -1,7 +1,7 @@
 import { db } from './db';
 import { logActivity } from './activity';
 import { compactAccountNumber, createEmployee, putLeaveOpening, saveEmployee } from './people';
-import { createComplianceDocument, saveComplianceDocument } from './renewals';
+import { createComplianceDocument, DOCUMENT_TABLES, saveComplianceDocument } from './renewals';
 import type {
   ComplianceDocumentType,
   Employee,
@@ -746,14 +746,7 @@ export async function commitEmployeeImport(
     const batch = records.slice(start, start + BATCH_SIZE);
     await db.transaction(
       'rw',
-      [
-        db.employees,
-        db.companies,
-        db.activities,
-        db.complianceDocuments,
-        db.finalSettlements,
-        db.leaveRecords,
-      ],
+      [...DOCUMENT_TABLES(), db.finalSettlements, db.leaveRecords],
       async () => {
         for (const record of batch) {
           // An employee that arrived meanwhile (from another device) is not added twice.

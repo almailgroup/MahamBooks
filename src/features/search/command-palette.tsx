@@ -23,6 +23,7 @@ import {
 import { cn } from '@/lib/cn';
 import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { registerExtrasOn } from '@/lib/compliance';
 import { CREATE_ACTIONS } from '@/features/shell/create';
 import { APPS } from '@/suite/apps';
 import { useAppAccess, useCurrentApp } from '@/suite/current-app';
@@ -149,6 +150,7 @@ function PaletteBody({
   onOpenItem: (id: string) => void;
 }) {
   const company = useCompany();
+  const extras = registerExtrasOn(company);
   const fmt = useFormat();
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
@@ -180,7 +182,12 @@ function PaletteBody({
   const fixed = useMemo(() => {
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
-      ...staticEntries(taxesOn, { access, current: app.id, create: !readOnly }),
+      ...staticEntries(taxesOn, {
+        access,
+        current: app.id,
+        create: !readOnly,
+        registerExtras: extras,
+      }),
       makeEntry({
         key: 'action:sync-status',
         kind: 'action',
@@ -237,7 +244,7 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, language, dark, access, app.id, readOnly, syncText, syncing]);
+  }, [taxesOn, extras, language, dark, access, app.id, readOnly, syncText, syncing]);
   const found = useLiveQuery(
     () => recordEntries(company, fmt),
     // `language` changes the names and words shown.

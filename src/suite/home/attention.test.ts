@@ -70,18 +70,26 @@ describe('what needs attention on the home', () => {
         updatedAt: stamp,
       },
     ];
+    // A confidential document stays with People too.
+    docs.push({
+      ...docs[1],
+      id: newId(),
+      title: 'Guards cost sheet',
+      ownerType: 'other',
+      confidential: true,
+    });
     await db.complianceDocuments.bulkAdd(docs);
     const all = await loadHomeAlertData(company, true);
     const hidden = await loadHomeAlertData(company, false);
     expect(all.employees).toHaveLength(1);
-    expect(all.complianceDocuments).toHaveLength(2);
+    expect(all.complianceDocuments).toHaveLength(3);
     expect(hidden.employees).toEqual([]);
     expect(hidden.complianceDocuments.map((d) => d.employeeId)).toEqual([null]);
 
     const topics = homeTopics(accessMap('owner'));
     const papers = (data: typeof all) =>
       homeAlerts(data, '2026-10-17', topics).filter((a) => a.topic === 'documents');
-    expect(papers(all).length).toBeGreaterThanOrEqual(2);
+    expect(papers(all).length).toBeGreaterThanOrEqual(3);
     expect(papers(hidden)).toHaveLength(1);
     const own = papers(all).find((a) => a.topic === 'documents' && a.entry.employeeId);
     expect(own && alertPage(own, true)).toBe(`/employees/${employee.id}`);

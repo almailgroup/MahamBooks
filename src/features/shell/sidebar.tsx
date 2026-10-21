@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/overlay';
 import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
+import { registerExtrasOn } from '@/lib/compliance';
 import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
 import { APPS } from '@/suite/apps';
@@ -283,10 +284,11 @@ function CompanyLinks({
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const taxesOn = useTaxesEnabled();
+  const { company } = useCompanyContext();
   const { pathname } = useLocation();
   // The open app's sidebar; apps the person may not open never show.
   const app = useCurrentApp();
-  const nav = visibleNav(app.nav, taxesOn);
+  const nav = visibleNav(app.nav, taxesOn, registerExtrasOn(company));
   const current = activeLink(pathname, [...navLinks(nav), ...app.footer]);
   const { state, toggle } = useGroupState(activeGroupId(pathname, nav));
   const list = useRef<HTMLElement>(null);

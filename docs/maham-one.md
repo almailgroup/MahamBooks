@@ -141,8 +141,8 @@ is asked of the server.
 - **Who drives.** An employee needs a licence when their page says so
   (_Drives for work_: Automatic, Yes or No, kept as
   `drivingLicenceRequired`, null for Automatic), else when a company vehicle
-  has them as its driver (the hook is in `requiresDrivingLicence`; vehicles
-  are passed once #17 assigns drivers), else by the job title in English,
+  has them as its driver (Compliance → Vehicles, below), else by the job
+  title in English,
   Arabic or on the work permit: the word "driver" (Valet Driver too) or
   سائق, never a valet who only parks cars (`isDriverTitle`).
 - **What is flagged.** A current driver whose licence in the register is
@@ -187,6 +187,56 @@ is asked of the server.
 - The Leave page, the employee's leave tab and the leave dialog take their
   texts from the policy. Both fields are payroll and employee data, private
   as before; older versions ignore them and keep the law's figures.
+
+## Contracts, customers and vehicles
+
+- **Off until switched on.** Compliance → Settings has _Contracts, customers
+  and vehicles_ (العقود والعملاء والمركبات), kept on the company
+  (`Company.registerExtras`). Until it is on the documents register is as
+  before: no new types, fields, columns, filters, Vehicles page or search
+  results.
+- **What it adds to a document.** Three types (company contract, customer
+  contract, customer cost sheet: عقد الشركة، عقد العميل، كشف تكاليف العميل),
+  which need a title; a _Purpose_ (الغرض) from the company's list
+  (`Company.documentPurposes`, English and Arabic names, archived but never
+  removed, added from the document's form or in the settings); a _Customer_
+  (العميل) for papers under Other, which a customer's contract or cost sheet
+  must have; and a vehicle from the company's list. The paper keeps the
+  customer's name or the vehicle's plate in `ownerName`, so older versions
+  still show who it belongs to, and the owner stays `other` or `vehicle`.
+- **The register** gets a purpose column, a paperclip with the number of
+  files, a _No file_ tab and a customer filter. A link to one document
+  (`/compliance/documents?doc=<id>`, from search or the customer's page)
+  opens it. The command palette finds the register's papers by title,
+  number, type, owner, issuer and purpose; an employee's opens on their page.
+- **Customers' pages** in Books have a _Contracts and papers_ card with the
+  customer's documents, added and edited there by those who work in
+  Compliance.
+- **Vehicles** (المركبات, `/compliance/vehicles`, the `vehicles` table of
+  version 16): plate (once per company), make, model, year, chassis number,
+  the fixed asset it is and, for those who see employees, its usual driver,
+  who then needs a valid driving licence. Each vehicle lists its papers with
+  _Add paper_ and _Renew_; renaming the plate renames its papers. _Link
+  vehicles_ groups the papers that only name a plate (spaces, separators,
+  case and Arabic digits aside), shows what it will do and, once confirmed,
+  links them, adding a vehicle for each new plate. A vehicle with papers is
+  archived, not deleted. In a company kept in the cloud, vehicles are added
+  and changed only once its server has the version 16 script
+  (`20261102000000_tables_v16.sql`); until then the page says so.
+- **Confidential** (سري), offered to owners, admins and accountants only, and
+  ticked for a new cost sheet: the document, its files, renewals and
+  activity are then people data, which staff and viewers never receive, and
+  its renewal fees are recorded without its name, number or note. A
+  document never in the cloud is simply marked. One that staff may already
+  hold is saved again under new ids with its renewals, files and activity
+  (`makeDocumentConfidential`), and the old ones are deleted, so the
+  deletion is what reaches their devices. Its files must be on the device
+  first (the form fetches them). It can't be undone, and in the cloud it
+  waits for the version 16 script too. The home page's alerts for staff
+  leave confidential documents out.
+- Staff and viewers still only look at the register; files stay PDFs and
+  images up to 10 MB. The demo company has the extras on, with its pickup as
+  a vehicle, a contract with the Ministry and a confidential cost sheet.
 
 ## Code layout
 

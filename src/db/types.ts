@@ -517,8 +517,25 @@ export interface Company {
   demo?: boolean;
   /** The company's other tools (a task manager, an HR portal…), in the sidebar. */
   links?: CompanyLink[];
+  /**
+   * Contracts, customers' papers, vehicles and confidential documents in the
+   * documents register (Compliance → Settings). Missing or false: the
+   * register as before.
+   */
+  registerExtras?: boolean;
+  /** What register documents are for (a tender, a site, a bank facility…); missing until one is added. */
+  documentPurposes?: DocumentPurpose[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** One of the company's purposes of documents (الغرض), chosen on a document in the register. */
+export interface DocumentPurpose {
+  id: ID;
+  name: string;
+  nameAr: string;
+  /** No longer offered for new documents; those that have it keep it. */
+  archived?: boolean;
 }
 
 /** A link in the sidebar to another tool; it opens in a new tab. */
@@ -1371,6 +1388,10 @@ export type ComplianceDocumentType =
   // Vehicles
   | 'vehicle_registration'
   | 'vehicle_insurance'
+  // Contracts and customers' papers (with the register's extras)
+  | 'company_contract'
+  | 'client_contract'
+  | 'customer_cost'
   | 'other';
 
 export type DocumentOwnerType = 'company' | 'employee' | 'vehicle' | 'other';

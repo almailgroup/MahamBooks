@@ -26,6 +26,7 @@ import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompany, useFormat } from '@/app/c
 import { CONTACT_COPY, type ContactKind } from '@/features/clients/contact-kind';
 import { ContactSummary } from '@/features/clients/contact-summary';
 import { RetentionPanel } from '@/features/clients/retention-panel';
+import { ClientDocuments } from '@/features/renewals/client-documents';
 import { StatementPanel } from '@/apps/books/features/statements/statement-panel';
 import { formatAddressLines, isAddressEmpty } from '@/lib/geo';
 import { chequeStatusMeta, displayStatus } from '@/lib/status';
@@ -524,6 +525,7 @@ export default function ClientDetailPage({ kind = 'customer' }: { kind?: Contact
               docList(recent)
             )}
           </Card>
+          {vendorView ? null : <ClientDocuments client={client} />}
         </div>
         {details}
       </div>

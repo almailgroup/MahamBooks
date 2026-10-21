@@ -4,7 +4,7 @@ import type { StatusTone } from '@/lib/status';
 import { t } from '@/i18n';
 import { daysLeftLabel } from './text';
 
-export { daysLeftLabel, daysText, entryOwner, entryTitle } from './text';
+export { daysLeftLabel, daysText, entryOwner, entryTitle, purposeName, vehicleLabel } from './text';
 
 const TONES: Record<ExpiryInfo['status'], StatusTone> = {
   valid: 'green',

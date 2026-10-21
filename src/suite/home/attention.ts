@@ -86,10 +86,10 @@ export async function loadHomeAlertData(company: Company, people: boolean): Prom
   return {
     company,
     employees,
-    // An employee's own papers stay with People.
+    // An employee's own papers, and confidential documents, stay with People.
     complianceDocuments: people
       ? complianceDocuments
-      : complianceDocuments.filter((d) => !d.employeeId),
+      : complianceDocuments.filter((d) => !d.employeeId && d.confidential !== true),
     complianceMarks,
     peopleSettings: peopleSettings ?? null,
     documents,

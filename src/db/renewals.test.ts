@@ -10,6 +10,7 @@ import {
 } from './people';
 import { isPrivateRecord } from '@/cloud/roles';
 import {
+  addDocumentPurpose,
   clearComplianceMark,
   ComplianceError,
   createComplianceDocument,
@@ -17,14 +18,21 @@ import {
   documentRenewals,
   expiringDocuments,
   fileDrivingLicence,
+  FilesNotHereError,
   loadRegister,
+  makeDocumentConfidential,
   markComplianceDone,
   renewDocument,
   saveComplianceDocument,
+  saveDocumentPurposes,
   setDocumentArchived,
+  setRegisterExtras,
   upcomingCompliance,
 } from './renewals';
-import { setupCompany } from './records';
+import { addAttachment } from './purchases';
+import { createClient } from './defaults';
+import { saveClient, setupCompany } from './records';
+import { registerExtrasOn } from '@/lib/compliance';
 import { addDaysISO, today } from '@/lib/dates';
 import { emptyAddress } from '@/lib/geo';
 import { trialBalance } from '@/lib/accounting/statements';
@@ -499,5 +507,287 @@ describe('the compliance calendar', () => {
     expect(
       (await upcomingCompliance(company, today(), 400)).find((i) => i.key === pifss.key)?.status,
     ).not.toBe('done');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The register's extras (#17)                                                */
+/* -------------------------------------------------------------------------- */
+
+const PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+/** The company as linked to the cloud, with what its server has. */
+async function inTheCloud(companyId: ID, features?: string[]) {
+  await db.syncState.put({
+    companyId,
+    userId: 'user-owner',
+    role: 'owner',
+    status: 'ready',
+    cursor: 0,
+    name: 'Made-up Trading',
+    linkedAt: '2026-10-01T00:00:00Z',
+    lastSyncAt: null,
+    lastError: null,
+    lastErrorAt: null,
+    ...(features ? { features } : {}),
+  });
+}
+
+const customer = (companyId: ID, name = 'Made-up Customer Co.') =>
+  saveClient(createClient(companyId, { name }));
+
+describe('the register’s extras', () => {
+  it('keep a customer’s paper under Other, with the customer’s name for older versions', async () => {
+    const { company } = await kuwaitCompany();
+    const client = await customer(company.id);
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        ownerType: 'other',
+        clientId: client.id,
+        type: 'client_contract',
+        title: 'Guarding contract, site A',
+      }),
+    );
+    expect(doc).toMatchObject({ clientId: client.id, ownerName: 'Made-up Customer Co.' });
+    expect((await loadRegister(company.id)).entries[0]).toMatchObject({ clientId: client.id });
+    // Moved to the company, it no longer belongs to the customer.
+    const moved = await saveComplianceDocument({
+      ...doc,
+      ownerType: 'company',
+      type: 'company_contract',
+    });
+    expect(moved.clientId).toBeNull();
+    // A document saved as before gets none of the new fields.
+    const plain = await saveComplianceDocument(createComplianceDocument(company.id));
+    for (const field of ['clientId', 'vehicleId', 'purposeId', 'confidential']) {
+      expect(plain).not.toHaveProperty(field);
+    }
+  });
+
+  it('check the customer, the vehicle, the purpose and the title of a contract', async () => {
+    const { company } = await kuwaitCompany();
+    const other = await setupCompany({ name: 'Another Company' });
+    const stranger = await customer(other.id, 'Their Customer');
+    const doc = (overrides: Parameters<typeof createComplianceDocument>[1]) =>
+      saveComplianceDocument(createComplianceDocument(company.id, overrides));
+    await expect(
+      doc({ ownerType: 'other', clientId: stranger.id, type: 'client_contract', title: 'X' }),
+    ).rejects.toThrow('Choose a customer of this company.');
+    await expect(doc({ ownerType: 'other', type: 'customer_cost', title: 'X' })).rejects.toThrow(
+      'Choose the customer the document belongs to.',
+    );
+    await expect(doc({ type: 'company_contract' })).rejects.toThrow('Enter the document’s title.');
+    await expect(doc({ ownerType: 'vehicle', vehicleId: 'no-such-vehicle' })).rejects.toThrow(
+      'Choose a vehicle of this company.',
+    );
+    await expect(doc({ purposeId: 'no-such-purpose' })).rejects.toThrow(
+      'Choose a purpose from the list.',
+    );
+    expect(await db.complianceDocuments.count()).toBe(0);
+  });
+
+  it('keep purposes in both languages, archived and never removed', async () => {
+    const { company } = await kuwaitCompany();
+    const tenders = await addDocumentPurpose(company.id, {
+      name: ' Tenders ',
+      nameAr: 'المناقصات',
+    });
+    expect(tenders).toMatchObject({ name: 'Tenders', nameAr: 'المناقصات' });
+    // The same purpose typed again, in either language, is that one.
+    expect((await addDocumentPurpose(company.id, { name: 'tenders' })).id).toBe(tenders.id);
+    expect((await addDocumentPurpose(company.id, { name: '', nameAr: 'المناقصات' })).id).toBe(
+      tenders.id,
+    );
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, { purposeId: tenders.id }),
+    );
+    // An empty new row is dropped; archived, the purpose stays with its documents.
+    await saveDocumentPurposes(company.id, [
+      { ...tenders, archived: true },
+      { id: 'blank', name: ' ', nameAr: '' },
+    ]);
+    expect((await db.companies.get(company.id))!.documentPurposes).toEqual([
+      { ...tenders, archived: true },
+    ]);
+    await expect(saveComplianceDocument({ ...doc, notes: 'Kept' })).resolves.toMatchObject({
+      purposeId: tenders.id,
+    });
+    // Added again, it is restored.
+    expect(await addDocumentPurpose(company.id, { name: 'Tenders' })).toEqual(tenders);
+    await expect(
+      saveDocumentPurposes(company.id, [tenders, { id: 'twice', name: 'TENDERS', nameAr: '' }]),
+    ).rejects.toThrow('There is already a purpose called Tenders.');
+  });
+
+  it('are switched on and off by the company, and logged', async () => {
+    const { company } = await kuwaitCompany();
+    expect(registerExtrasOn(company)).toBe(false);
+    await setRegisterExtras(company.id, true);
+    await setRegisterExtras(company.id, true);
+    expect(registerExtrasOn(await db.companies.get(company.id))).toBe(true);
+    await setRegisterExtras(company.id, false);
+    const logged = (await db.activities.where('entityId').equals(company.id).toArray())
+      .filter((a) => a.action === 'updated')
+      .map((a) => a.message)
+      .sort();
+    // Once each: switching on what is on logs nothing.
+    expect(logged).toEqual([
+      'Contracts, customers and vehicles switched off in the register',
+      'Contracts, customers and vehicles switched on in the register',
+    ]);
+  });
+
+  it('count each document’s files', async () => {
+    const { company } = await kuwaitCompany();
+    const scanned = await saveComplianceDocument(createComplianceDocument(company.id));
+    const bare = await saveComplianceDocument(createComplianceDocument(company.id));
+    for (const name of ['front.png', 'back.png']) {
+      await addAttachment(company.id, scanned.id, { name, type: 'image/png', dataUrl: PNG });
+    }
+    const { files } = await loadRegister(company.id);
+    expect(files.get(scanned.id)).toBe(2);
+    expect(files.get(bare.id)).toBeUndefined();
+  });
+});
+
+describe('making a document confidential', () => {
+  async function withHistory(companyId: ID) {
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(companyId, {
+        type: 'other',
+        title: 'Guards cost sheet',
+        number: 'CS-0001',
+        expiryDate: inDays(30),
+      }),
+    );
+    const scan = await addAttachment(companyId, doc.id, {
+      name: 'cost-sheet.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    await db.attachments.update(scan.id, { docKey: `doc:${doc.id}` });
+    const { renewal, expense } = await renewDocument({
+      companyId,
+      key: `doc:${doc.id}`,
+      renewedOn: today(),
+      newExpiry: inDays(400),
+      note: 'For the new site',
+      fee: { amount: 25, accountId: null, paidFromAccountId: null },
+    });
+    return { doc: (await db.complianceDocuments.get(doc.id))!, scan, renewal, expense: expense! };
+  }
+
+  it('only marks it in a company kept on this device', async () => {
+    const { company } = await kuwaitCompany();
+    const { doc, renewal } = await withHistory(company.id);
+    const saved = await makeDocumentConfidential({ ...doc, notes: 'Guard salaries' });
+    expect(saved).toMatchObject({ id: doc.id, confidential: true, notes: 'Guard salaries' });
+    expect(await db.renewals.get(renewal.id)).toBeDefined();
+  });
+
+  it('saves it again under new ids in the cloud, with its renewals, files and activity', async () => {
+    const { company } = await kuwaitCompany();
+    const { doc, scan, renewal, expense } = await withHistory(company.id);
+    await inTheCloud(company.id, ['tables_v16']);
+    const saved = await makeDocumentConfidential({ ...doc, notes: 'Guard salaries' });
+
+    expect(saved.id).not.toBe(doc.id);
+    expect(saved).toMatchObject({
+      confidential: true,
+      title: 'Guards cost sheet',
+      notes: 'Guard salaries',
+      expiryDate: inDays(400),
+      createdAt: doc.createdAt,
+    });
+    expect(await db.complianceDocuments.get(doc.id)).toBeUndefined();
+    const [moved] = await documentRenewals(`doc:${saved.id}`);
+    expect(moved).toMatchObject({
+      documentId: saved.id,
+      expenseId: expense.id,
+      newExpiry: inDays(400),
+    });
+    expect(moved.id).not.toBe(renewal.id);
+    expect(await db.renewals.get(renewal.id)).toBeUndefined();
+
+    const files = await db.attachments.where('ownerId').equals(saved.id).toArray();
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({
+      name: 'cost-sheet.png',
+      dataUrl: PNG,
+      docKey: `doc:${saved.id}`,
+    });
+    expect(files[0].id).not.toBe(scan.id);
+    expect(files[0]).not.toHaveProperty('storagePath');
+    expect(await db.attachments.get(scan.id)).toBeUndefined();
+
+    expect(await db.activities.where('entityId').anyOf([doc.id, renewal.id]).count()).toBe(0);
+    const activity = await db.activities.where('entityId').anyOf([saved.id, moved.id]).toArray();
+    expect(activity.map((a) => a.action).sort()).toEqual(['created', 'renewed', 'updated']);
+    expect(activity.every((a) => a.confidential === true)).toBe(true);
+    expect(activity.every((a) => isPrivateRecord('activities', { ...a }))).toBe(true);
+
+    // The fee, which staff see, no longer names it.
+    expect(await db.expenses.get(expense.id)).toMatchObject({
+      description: 'Document renewal fee',
+      reference: '',
+      notes: '',
+      amount: 25,
+    });
+    // The old records' deletion goes to the cloud, their activity too.
+    const deleted = (await db.outbox.toArray()).filter((e) => e.op === 'delete');
+    expect(
+      deleted
+        .filter((e) => e.table !== 'activities')
+        .map((e) => `${e.table}/${e.id}`)
+        .sort(),
+    ).toEqual(
+      [`attachments/${scan.id}`, `complianceDocuments/${doc.id}`, `renewals/${renewal.id}`].sort(),
+    );
+    expect(deleted.filter((e) => e.table === 'activities')).toHaveLength(2);
+  });
+
+  it('waits for the server, and for files kept in the cloud only', async () => {
+    const { company } = await kuwaitCompany();
+    const { doc, scan } = await withHistory(company.id);
+    await inTheCloud(company.id);
+    await expect(makeDocumentConfidential(doc)).rejects.toThrow(
+      'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+    );
+    await inTheCloud(company.id, ['tables_v16']);
+    await db.attachments.update(scan.id, { dataUrl: '', storagePath: `${company.id}/${scan.id}` });
+    await expect(makeDocumentConfidential(doc)).rejects.toBeInstanceOf(FilesNotHereError);
+    expect(await db.complianceDocuments.get(doc.id)).toMatchObject({ title: 'Guards cost sheet' });
+    expect((await db.complianceDocuments.get(doc.id))!.confidential).toBeUndefined();
+  });
+
+  it('is never saved with the mark in a cloud that can’t keep it, or over a copy staff hold', async () => {
+    const { company } = await kuwaitCompany();
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, { title: 'Guards cost sheet' }),
+    );
+    await inTheCloud(company.id);
+    const secret = createComplianceDocument(company.id, {
+      title: 'Cost sheet',
+      confidential: true,
+    });
+    await expect(saveComplianceDocument(secret)).rejects.toThrow(
+      'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+    );
+    await inTheCloud(company.id, ['tables_v16']);
+    await expect(saveComplianceDocument(secret)).resolves.toMatchObject({ confidential: true });
+    await expect(saveComplianceDocument({ ...doc, confidential: true })).rejects.toThrow(
+      'This document is in the cloud already: make it confidential from its form.',
+    );
+    expect((await db.complianceDocuments.get(doc.id))!.confidential).toBeUndefined();
+  });
+
+  it('keeps it confidential', async () => {
+    const { company } = await kuwaitCompany();
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, { title: 'Guards cost sheet', confidential: true }),
+    );
+    const saved = await saveComplianceDocument({ ...doc, confidential: false });
+    expect(saved.confidential).toBe(true);
   });
 });

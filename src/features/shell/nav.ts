@@ -13,6 +13,8 @@ export interface NavLink {
   keywords?: string;
   /** Shown only when taxes are on (VAT returns). */
   taxesOnly?: boolean;
+  /** Shown only with the register's extras (Compliance → Vehicles). */
+  registerExtrasOnly?: boolean;
 }
 
 export interface NavTopLink extends NavLink {
@@ -33,16 +35,19 @@ export interface NavGroup {
 export type NavEntry = NavTopLink | NavGroup;
 
 /**
- * The entries shown for this company: VAT returns only when taxes are on.
- * Which app's entries, and whether the person may open that app, is the
- * suite's business (src/suite/apps.ts).
+ * The entries shown for this company: VAT returns only when taxes are on,
+ * Vehicles only with the register's extras. Which app's entries, and
+ * whether the person may open that app, is the suite's business
+ * (src/suite/apps.ts).
  */
-export function visibleNav(nav: NavEntry[], taxesOn: boolean): NavEntry[] {
-  return nav.map((entry) =>
-    entry.kind === 'group'
-      ? { ...entry, children: entry.children.filter((c) => taxesOn || !c.taxesOnly) }
-      : entry,
-  );
+export function visibleNav(nav: NavEntry[], taxesOn: boolean, registerExtras = false): NavEntry[] {
+  const shown = (link: NavLink) =>
+    (taxesOn || !link.taxesOnly) && (registerExtras || !link.registerExtrasOnly);
+  return nav
+    .filter((entry) => entry.kind === 'group' || shown(entry))
+    .map((entry) =>
+      entry.kind === 'group' ? { ...entry, children: entry.children.filter(shown) } : entry,
+    );
 }
 
 /** Whether a link is the current page or one of its sub-pages. */

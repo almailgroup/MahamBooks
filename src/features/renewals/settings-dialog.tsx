@@ -1,8 +1,12 @@
 import { useState } from 'react';
+import { Archive, ArchiveRestore, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { savePeopleSettings } from '@/db/people';
-import type { PeopleSettings } from '@/db/types';
-import { checksDrivingLicences, normalizeReminderDays } from '@/lib/compliance';
+import { saveDocumentPurposes, setRegisterExtras } from '@/db/renewals';
+import type { DocumentPurpose, PeopleSettings } from '@/db/types';
+import { useCompany } from '@/app/company';
+import { checksDrivingLicences, normalizeReminderDays, registerExtrasOn } from '@/lib/compliance';
+import { newId } from '@/lib/ids';
 import { normalizeDigits } from '@/lib/money';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { Button } from '@/components/ui/button';
@@ -12,7 +16,9 @@ import { t } from '@/i18n';
 
 /**
  * Reminders, statutory deadlines and end-of-service settings of the company,
- * and whether drivers' licences are checked.
+ * whether drivers' licences are checked, and the register's extras
+ * (contracts, customers' papers, vehicles and confidential documents) with
+ * the company's purposes of documents.
  */
 export function ComplianceSettingsDialog({
   settings,
@@ -25,7 +31,12 @@ export function ComplianceSettingsDialog({
   const [days, setDays] = useState(settings.reminderDays.join(', '));
   const [saving, setSaving] = useState(false);
   const { peopleHidden } = useRoleView();
+  const company = useCompany();
+  const [extras, setExtras] = useState(registerExtrasOn(company));
+  const [purposes, setPurposes] = useState<DocumentPurpose[]>(company.documentPurposes ?? []);
   const set = (patch: Partial<PeopleSettings>) => setDraft((d) => ({ ...d, ...patch }));
+  const setPurpose = (id: string, patch: Partial<DocumentPurpose>) =>
+    setPurposes((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
   const save = async () => {
     setSaving(true);
@@ -36,6 +47,9 @@ export function ComplianceSettingsDialog({
           .map(Number)
           .filter((n) => n > 0),
       );
+      // The company's list first: a name given twice stops everything.
+      if (extras) await saveDocumentPurposes(company.id, purposes);
+      await setRegisterExtras(company.id, extras);
       await savePeopleSettings({ ...draft, reminderDays });
       toast.success(t('Settings saved'));
       onClose();
@@ -132,6 +146,66 @@ export function ComplianceSettingsDialog({
               )}
             />
           )}
+          <Switch
+            checked={extras}
+            onChange={setExtras}
+            label={t('Contracts, customers and vehicles')}
+            description={t(
+              'Company and customer contracts, cost sheets, what each document is for, the company’s vehicles with their papers, and confidential documents only owners, admins and accountants see.',
+            )}
+          />
+          {extras ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-700">{t('Purposes of documents')}</p>
+              {purposes.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  {t('What documents are for, such as a tender, a site or a bank facility.')}
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {purposes.map((purpose) => (
+                    <li key={purpose.id} className="flex items-center gap-2">
+                      <Input
+                        value={purpose.name}
+                        onChange={(e) => setPurpose(purpose.id, { name: e.target.value })}
+                        aria-label={t('Name (English)')}
+                        disabled={purpose.archived}
+                        dir="auto"
+                      />
+                      <Input
+                        value={purpose.nameAr}
+                        onChange={(e) => setPurpose(purpose.id, { nameAr: e.target.value })}
+                        aria-label={t('Name (Arabic)')}
+                        disabled={purpose.archived}
+                        dir="rtl"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setPurpose(purpose.id, { archived: !purpose.archived })}
+                        aria-label={
+                          purpose.archived
+                            ? t('Restore {name}', { name: purpose.name })
+                            : t('Archive {name}', { name: purpose.name })
+                        }
+                      >
+                        {purpose.archived ? <ArchiveRestore /> : <Archive />}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setPurposes((list) => [...list, { id: newId(), name: '', nameAr: '' }])
+                }
+              >
+                <Plus /> {t('Add purpose')}
+              </Button>
+            </div>
+          ) : null}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

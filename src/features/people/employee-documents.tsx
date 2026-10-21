@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { Pencil, Plus, RefreshCw } from 'lucide-react';
-import type { ComplianceDocument, Employee } from '@/db/types';
+import type { ComplianceDocument, Employee, Vehicle } from '@/db/types';
 import { createComplianceDocument } from '@/db/renewals';
 import { useCompany, useFormat } from '@/app/company';
 import {
@@ -32,6 +32,7 @@ export function EmployeeDocuments({
   employees,
   reminderDays,
   drivingLicences = false,
+  vehicles = [],
 }: {
   employee: Employee;
   records: ComplianceDocument[];
@@ -39,6 +40,8 @@ export function EmployeeDocuments({
   reminderDays: number[];
   /** The company checks drivers' licences (PeopleSettings.drivingLicences). */
   drivingLicences?: boolean;
+  /** The company's vehicles: their driver needs a licence too. */
+  vehicles?: readonly Vehicle[];
 }) {
   const company = useCompany();
   const fmt = useFormat();
@@ -51,10 +54,9 @@ export function EmployeeDocuments({
     ...records.filter((d) => !d.archived).map((d) => recordEntry(d, reminderDays)),
   ];
   // An expired licence shows as expired on its own row; one never added has none.
-  // Vehicles with a driver count too once #17 assigns them: pass them here.
   const licenceMissing =
     drivingLicences &&
-    missingDocuments({ employees: [employee], documents: records, on }).some(
+    missingDocuments({ employees: [employee], documents: records, on, vehicles }).some(
       (m) => m.type === 'driving_licence' && m.reason === 'missing',
     );
   const add = (type: ComplianceDocument['type']) =>

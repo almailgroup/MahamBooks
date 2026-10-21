@@ -3,9 +3,14 @@ import { NavLink } from 'react-router';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/misc';
 import { t } from '@/i18n';
+import { useRegisterExtras } from './hooks';
 
-/** Title and the Calendar / Documents tabs shared by the compliance pages. */
+/**
+ * Title and the Calendar / Documents tabs shared by the compliance pages,
+ * and Vehicles with the register's extras.
+ */
 export function ComplianceHeader({ actions }: { actions?: ReactNode }) {
+  const { on: extras } = useRegisterExtras();
   const tab = ({ isActive }: { isActive: boolean }) =>
     cn(
       'border-b-2 px-1 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors',
@@ -30,6 +35,11 @@ export function ComplianceHeader({ actions }: { actions?: ReactNode }) {
         <NavLink to="/compliance/documents" className={tab}>
           {t('Documents')}
         </NavLink>
+        {extras ? (
+          <NavLink to="/compliance/vehicles" className={tab}>
+            {t('Vehicles')}
+          </NavLink>
+        ) : null}
       </nav>
     </div>
   );

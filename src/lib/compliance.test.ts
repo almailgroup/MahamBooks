@@ -4,13 +4,17 @@ import {
   complianceCalendar,
   currentDrivingLicence,
   dayOfMonthAfter,
+  documentTypeInfo,
   employeeDocuments,
   expiryStatus,
   fiscalYearEndIn,
   missingDocuments,
   monthsAfter,
+  needsTitle,
   normalizeReminderDays,
+  recordEntry,
   registerEntries,
+  registerExtrasOn,
   registerTypesFor,
   requiresDrivingLicence,
   statutoryDeadlines,
@@ -203,6 +207,51 @@ describe('the register', () => {
     ]);
     expect(registerTypesFor('company')).toContain('commercial_licence');
     expect(registerTypesFor('company')).not.toContain('residency');
+  });
+
+  it('offers contracts and cost sheets only with the register’s extras', () => {
+    for (const owner of ['company', 'employee', 'vehicle', 'other'] as const) {
+      expect(registerTypesFor(owner)).not.toContain('company_contract');
+      expect(registerTypesFor(owner)).not.toContain('customer_cost');
+    }
+    expect(registerTypesFor('company', true)).toContain('company_contract');
+    expect(registerTypesFor('company', true)).not.toContain('client_contract');
+    expect(registerTypesFor('vehicle', true)).toEqual([
+      'vehicle_registration',
+      'vehicle_insurance',
+      'other',
+    ]);
+    expect(registerTypesFor('other', true)).toEqual(
+      expect.arrayContaining(['company_contract', 'client_contract', 'customer_cost']),
+    );
+    expect(['company_contract', 'client_contract', 'customer_cost'].map(needsTitle)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(needsTitle('lease_contract')).toBe(false);
+    expect(registerExtrasOn({})).toBe(false);
+    expect(registerExtrasOn({ registerExtras: true })).toBe(true);
+    // An older version reads them as other documents.
+    expect(documentTypeInfo('customer_cost').label).toBe('Customer cost sheet');
+  });
+
+  it('carries a stored document’s purpose, customer, vehicle and mark', () => {
+    const plain = recordEntry(createComplianceDocument('co'), DAYS);
+    for (const field of ['purposeId', 'clientId', 'vehicleId', 'confidential']) {
+      expect(plain).not.toHaveProperty(field);
+    }
+    const entry = recordEntry(
+      createComplianceDocument('co', {
+        ownerType: 'other',
+        type: 'customer_cost',
+        purposeId: 'p1',
+        clientId: 'c1',
+        confidential: true,
+      }),
+      DAYS,
+    );
+    expect(entry).toMatchObject({ purposeId: 'p1', clientId: 'c1', confidential: true });
   });
 });
 

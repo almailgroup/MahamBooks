@@ -104,9 +104,15 @@ export function useDraftAttachments(ownerId: ID) {
       if (added.some((f) => f.id === id)) setAdded((list) => list.filter((f) => f.id !== id));
       else setRemoved((list) => [...list, id]);
     },
-    commit: async (companyId: ID) => {
+    /** Removes the stored files taken off the list now (before the record moves to a new id). */
+    removeNow: async () => {
       for (const id of removed) await removeAttachment(id);
-      for (const file of added) await addAttachment(companyId, ownerId, file);
+      setRemoved([]);
+    },
+    /** Saves the changes; `owner` when the record was saved under another id. */
+    commit: async (companyId: ID, owner: ID = ownerId) => {
+      for (const id of removed) await removeAttachment(id);
+      for (const file of added) await addAttachment(companyId, owner, file);
       setAdded([]);
       setRemoved([]);
     },

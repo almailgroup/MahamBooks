@@ -7,6 +7,7 @@ import { closeLastYear, closingDate, importNbkStatement } from './closing';
 import { moneyStory } from './money';
 import { peopleStory } from './people';
 import { purchasesStory } from './purchases';
+import { registerStory } from './register';
 import { salesStory } from './sales';
 import { setUpCompany } from './setup';
 
@@ -26,7 +27,8 @@ import { setUpCompany } from './setup';
  */
 export async function seedDemoCompany(): Promise<Company> {
   const clock = new SeedClock();
-  const tables = [...DATA_TABLES.map((name) => db[name]), db.meta];
+  // The link too: saving a vehicle asks whether the cloud keeps them (never, for the demo).
+  const tables = [...DATA_TABLES.map((name) => db[name]), db.meta, db.syncState];
   // An async scope function, so Dexie keeps the transaction across the awaits.
   return clock.around(() => db.transaction('rw', tables, async () => seed(clock)));
 }
@@ -51,6 +53,8 @@ async function seed(clock: SeedClock): Promise<Company> {
   // Closing last year locks it, so it comes after everything dated in it.
   clock.set(closingDate(calendar));
   await closeLastYear(books);
+  clock.set(calendar.today);
+  await registerStory(books);
   // Marked so it never goes to the cloud.
   await db.companies.update(books.company.id, { demo: true });
   return books.refresh();

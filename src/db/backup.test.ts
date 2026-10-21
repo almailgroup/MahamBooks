@@ -18,7 +18,13 @@ import {
   saveEmployee,
   savePeopleSettings,
 } from './people';
-import { createComplianceDocument, saveComplianceDocument } from './renewals';
+import {
+  addDocumentPurpose,
+  createComplianceDocument,
+  saveComplianceDocument,
+  setRegisterExtras,
+} from './renewals';
+import { createVehicle, saveVehicle } from './vehicles';
 import { getPayrollSettings, savePayrollSettings } from './payroll';
 
 beforeEach(async () => {
@@ -151,6 +157,43 @@ describe('backup', () => {
     expect((await db.peopleSettings.get(a.id))?.drivingLicences).toBe(true);
     expect((await db.employees.get(driver.id))?.drivingLicenceRequired).toBe(true);
     expect((await db.complianceDocuments.get(licence.id))?.licenceClass).toBe('Heavy');
+  });
+
+  it('keeps vehicles, purposes, customers’ papers and the register’s extras', async () => {
+    const a = await setupCompany({ name: 'Made-up Guarding' });
+    await setRegisterExtras(a.id, true);
+    const purpose = await addDocumentPurpose(a.id, { name: 'Tenders', nameAr: 'المناقصات' });
+    const client = await saveClient(createClient(a.id, { name: 'Made-up Customer Co.' }));
+    const vehicle = await saveVehicle(createVehicle(a.id, { plate: 'TEST-1', make: 'Toyota' }));
+    const sheet = await saveComplianceDocument(
+      createComplianceDocument(a.id, {
+        ownerType: 'other',
+        type: 'customer_cost',
+        title: 'Guards cost sheet',
+        clientId: client.id,
+        purposeId: purpose.id,
+        confidential: true,
+      }),
+    );
+    const paper = await saveComplianceDocument(
+      createComplianceDocument(a.id, { ownerType: 'vehicle', vehicleId: vehicle.id }),
+    );
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect(await db.companies.get(a.id)).toMatchObject({
+      registerExtras: true,
+      documentPurposes: [purpose],
+    });
+    expect(await db.vehicles.get(vehicle.id)).toMatchObject({ plate: 'TEST-1', make: 'Toyota' });
+    expect(await db.complianceDocuments.get(sheet.id)).toMatchObject({
+      clientId: client.id,
+      purposeId: purpose.id,
+      confidential: true,
+      ownerName: 'Made-up Customer Co.',
+    });
+    expect((await db.complianceDocuments.get(paper.id))?.vehicleId).toBe(vehicle.id);
   });
 
   it('keeps the leave policy and employees’ own days of annual leave', async () => {

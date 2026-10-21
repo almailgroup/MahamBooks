@@ -118,8 +118,39 @@ export const DOCUMENT_TYPES: Record<ComplianceDocumentType, DocumentTypeInfo> = 
     fee: 'government',
   },
   vehicle_insurance: { label: msg('Vehicle insurance'), owner: 'vehicle', fee: 'insurance' },
+  company_contract: { label: msg('Company contract'), owner: 'company', fee: 'government' },
+  client_contract: { label: msg('Customer contract'), owner: 'other', fee: 'government' },
+  customer_cost: { label: msg('Customer cost sheet'), owner: 'other', fee: 'government' },
   other: { label: msg('Other document'), owner: 'other', fee: 'government' },
 };
+
+/**
+ * Types offered only with the register's extras (Company.registerExtras):
+ * older versions show them as other documents.
+ */
+export const EXTRA_DOCUMENT_TYPES: readonly ComplianceDocumentType[] = [
+  'company_contract',
+  'client_contract',
+  'customer_cost',
+];
+
+/** A customer's papers: kept under Other with the customer (clientId), who must be chosen. */
+export const CUSTOMER_DOCUMENT_TYPES: readonly ComplianceDocumentType[] = [
+  'client_contract',
+  'customer_cost',
+];
+
+/** Contracts and cost sheets have no name of their own: their title is asked for. */
+export function needsTitle(type: string): boolean {
+  return (EXTRA_DOCUMENT_TYPES as readonly string[]).includes(type);
+}
+
+/** The company keeps contracts, customers' papers, vehicles and confidential documents (off until switched on). */
+export function registerExtrasOn(
+  company: { registerExtras?: boolean } | null | undefined,
+): boolean {
+  return company?.registerExtras === true;
+}
 
 /** What the app knows of a type of document; a type a newer version saved is an other document. */
 export function documentTypeInfo(type: string): DocumentTypeInfo {
@@ -138,12 +169,22 @@ export function ownerLabel(owner: string): string {
   return lookup(OWNER_LABELS, owner, OWNER_LABELS.other);
 }
 
-/** Types that can be added to the register for an owner (employee papers on file are excluded). */
-export function registerTypesFor(owner: DocumentOwnerType): ComplianceDocumentType[] {
+/**
+ * Types that can be added to the register for an owner (employee papers on
+ * file are excluded); contracts and cost sheets only with the register's
+ * extras.
+ */
+export function registerTypesFor(
+  owner: DocumentOwnerType,
+  extras = false,
+): ComplianceDocumentType[] {
   return (Object.keys(DOCUMENT_TYPES) as ComplianceDocumentType[]).filter((type) => {
     const info = DOCUMENT_TYPES[type];
     if (info.fromEmployee) return false;
+    if (!extras && EXTRA_DOCUMENT_TYPES.includes(type)) return false;
     if (type === 'other') return true;
+    // A customer's papers belong to the customer, never to the company or a vehicle.
+    if (CUSTOMER_DOCUMENT_TYPES.includes(type)) return owner === 'other';
     return owner === 'other' || info.owner === owner;
   });
 }
@@ -219,6 +260,12 @@ export interface RegisterEntry {
   ownerType: DocumentOwnerType;
   /** Vehicle or other owner's name (stored records). */
   ownerName: string;
+  /** What it is for, the customer and the vehicle (stored records, with the register's extras). */
+  purposeId?: ID | null;
+  clientId?: ID | null;
+  vehicleId?: ID | null;
+  /** Seen only by owners, admins and accountants (stored records). */
+  confidential?: boolean;
 }
 
 export const recordKey = (id: ID) => `doc:${id}`;
@@ -324,6 +371,10 @@ export function recordEntry(doc: ComplianceDocument, reminderDays: number[]): Re
     reminderDays: doc.reminderDays?.length ? normalizeReminderDays(doc.reminderDays) : reminderDays,
     ownerType: doc.ownerType,
     ownerName: doc.ownerName,
+    ...(doc.purposeId ? { purposeId: doc.purposeId } : {}),
+    ...(doc.clientId ? { clientId: doc.clientId } : {}),
+    ...(doc.vehicleId ? { vehicleId: doc.vehicleId } : {}),
+    ...(doc.confidential === true ? { confidential: true } : {}),
   };
 }
 

@@ -328,6 +328,31 @@ describe('the demo company', () => {
     expect(runs.length).toBe(12);
   });
 
+  it('keeps its pickup with its papers and driver, and a customer’s contract and cost sheet', async () => {
+    expect(company.registerExtras).toBe(true);
+    expect(company.documentPurposes?.map((p) => p.name)).toEqual([
+      'Maintenance contracts',
+      'Tenders',
+    ]);
+    const [vehicle] = await db.vehicles.where('companyId').equals(company.id).toArray();
+    const driver = await db.employees.get(vehicle.driverEmployeeId!);
+    const asset = await db.assets.get(vehicle.assetId!);
+    expect(vehicle).toMatchObject({ plate: '18/62417', make: 'Toyota' });
+    expect(driver?.jobTitle).toBe('Driver');
+    expect(asset?.name).toBe('Toyota Hilux double cab');
+    const papers = await db.complianceDocuments.where('vehicleId').equals(vehicle.id).toArray();
+    expect(papers.map((d) => d.type).sort()).toEqual(['vehicle_insurance', 'vehicle_registration']);
+    const ofCustomers = await db.complianceDocuments
+      .where('companyId')
+      .equals(company.id)
+      .filter((d) => Boolean(d.clientId))
+      .toArray();
+    expect(ofCustomers.map((d) => [d.type, d.confidential === true]).sort()).toEqual([
+      ['client_contract', false],
+      ['customer_cost', true],
+    ]);
+  });
+
   it('closed last year with the statutory reserve and locked it', async () => {
     const closes = await db.yearEnds.where('companyId').equals(company.id).toArray();
     expect(closes).toHaveLength(1);

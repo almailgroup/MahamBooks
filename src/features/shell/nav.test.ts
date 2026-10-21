@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BOOKS } from '@/apps/books/manifest';
 import { PEOPLE } from '@/apps/people/manifest';
+import { COMPLIANCE } from '@/apps/compliance/manifest';
 import {
   activeGroupId,
   activeLink,
@@ -47,6 +48,18 @@ describe('navigation', () => {
       );
     expect(links(false)).not.toContain('/vat');
     expect(links(true)).toContain('/vat');
+  });
+
+  it('shows Compliance’s vehicles only with the register’s extras', () => {
+    const links = (extras: boolean) =>
+      navLinks(visibleNav(COMPLIANCE.nav, false, extras)).map((l) => l.to);
+    expect(links(false)).toEqual(['/', '/compliance', '/compliance/documents']);
+    expect(links(true)).toEqual([
+      '/',
+      '/compliance',
+      '/compliance/documents',
+      '/compliance/vehicles',
+    ]);
   });
 
   it('remembers open and closed groups', () => {

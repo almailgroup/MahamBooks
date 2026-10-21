@@ -4,6 +4,8 @@ import { DOCUMENT_LABELS, DOCUMENT_ROUTES } from '@/app/company';
 import { displayStatus, statusMeta } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
 import { isCurrent } from '@/lib/hr/employees';
+import { documentTypeInfo, registerExtrasOn } from '@/lib/compliance';
+import { entryOwner, entryTitle, purposeName } from '@/features/renewals/text';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
 import { visibleNav } from '@/features/shell/nav';
@@ -88,7 +90,8 @@ export function staticEntries(
     access = FULL_ACCESS,
     current = 'books',
     create = true,
-  }: { access?: AccessMap; current?: AppId; create?: boolean } = {},
+    registerExtras = false,
+  }: { access?: AccessMap; current?: AppId; create?: boolean; registerExtras?: boolean } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
   const seen = new Set<string>();
@@ -128,7 +131,7 @@ export function staticEntries(
         boost: 35,
       }),
     );
-    for (const entry of visibleNav(app.nav, taxesOn)) {
+    for (const entry of visibleNav(app.nav, taxesOn, registerExtras)) {
       if (entry.kind === 'link') {
         page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
       } else {
@@ -189,14 +192,20 @@ const SEARCHED_DOCUMENTS: DocumentType[] = [
   'purchase_order',
 ];
 
-/** Contacts, items, employees, documents and payments of a company. */
+/**
+ * Contacts, items, employees, documents and payments of a company, and with
+ * the register's extras its papers in the register.
+ */
 export async function recordEntries(company: Company, fmt: SearchFormat): Promise<SearchEntry[]> {
-  const [clients, products, employees, documents, payments] = await Promise.all([
+  const extras = registerExtrasOn(company);
+  const [clients, products, employees, documents, payments, papers, vehicles] = await Promise.all([
     db.clients.where('companyId').equals(company.id).toArray(),
     db.products.where('companyId').equals(company.id).toArray(),
     db.employees.where('companyId').equals(company.id).toArray(),
     db.documents.where('companyId').equals(company.id).toArray(),
     db.payments.where('companyId').equals(company.id).toArray(),
+    extras ? db.complianceDocuments.where('companyId').equals(company.id).toArray() : [],
+    extras ? db.vehicles.where('companyId').equals(company.id).toArray() : [],
   ]);
   const now = today();
   const ar = (record: { nameAr?: string }) => record.nameAr?.trim() || undefined;
@@ -276,6 +285,44 @@ export async function recordEntries(company: Company, fmt: SearchFormat): Promis
         precision: currencyPrecision(d.currency),
         // Newer documents first when the match is as good (a fraction of a point).
         boost: recency(d.issueDate),
+      }),
+    );
+  }
+
+  const byEmployee = new Map(employees.map((e) => [e.id, e]));
+  const owners = { clients: names, vehicles: new Map(vehicles.map((v) => [v.id, v])) };
+  for (const paper of papers) {
+    // Confidential ones are found in the register only: the palette keeps
+    // what was opened on this browser, which someone else may use.
+    if (paper.archived || paper.confidential) continue;
+    const type = t(documentTypeInfo(paper.type).label);
+    const owner = entryOwner(paper, byEmployee, company, owners);
+    entries.push(
+      makeEntry({
+        key: `paper:${paper.id}`,
+        kind: 'document',
+        title: entryTitle(paper),
+        subtitle: [
+          paper.title ? type : '',
+          owner,
+          paper.expiryDate ? t('Expires {date}', { date: fmt.date(paper.expiryDate) }) : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        // An employee's paper opens with them, as People keeps it.
+        to: paper.employeeId
+          ? `/employees/${paper.employeeId}`
+          : `/compliance/documents?doc=${paper.id}`,
+        names: [paper.title, type],
+        terms: [
+          type,
+          documentTypeInfo(paper.type).label,
+          owner,
+          paper.ownerName,
+          paper.issuer,
+          purposeName(company.documentPurposes, paper.purposeId),
+        ],
+        numbers: [paper.number],
       }),
     );
   }

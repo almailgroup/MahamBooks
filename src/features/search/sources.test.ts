@@ -6,7 +6,11 @@ import type { CloudLink } from '@/cloud/types';
 import type { MemberRole } from '@/cloud/roles';
 import { peopleCompanies } from '@/features/people/all-companies';
 import { searchEntries } from './rank';
-import { otherCompanyEmployeeEntries, staticEntries } from './sources';
+import { otherCompanyEmployeeEntries, recordEntries, staticEntries } from './sources';
+import { db } from '@/db/db';
+import { setupCompany } from '@/db/records';
+import { saveEmployee } from '@/db/people';
+import { createComplianceDocument, saveComplianceDocument } from '@/db/renewals';
 
 const keys = (...args: Parameters<typeof staticEntries>) =>
   staticEntries(...args).map((e) => e.key);
@@ -80,6 +84,56 @@ describe('the pages and actions search finds', () => {
   it('show VAT returns only when taxes are on', () => {
     expect(keys(true)).toContain('page:/vat');
     expect(keys(false)).not.toContain('page:/vat');
+  });
+
+  it('show Vehicles only with the register’s extras', () => {
+    expect(keys(true)).not.toContain('page:/compliance/vehicles');
+    expect(keys(true, { registerExtras: true })).toContain('page:/compliance/vehicles');
+  });
+});
+
+describe('papers of the register', () => {
+  const fmt = { money: (n: number) => String(n), date: (d: string | null | undefined) => d ?? '' };
+
+  it('are found with the register’s extras, never confidential ones', async () => {
+    await db.delete();
+    await db.open();
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    const guard = await saveEmployee(createEmployee(company.id, { name: 'Test Guard' }));
+    const contract = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'company_contract',
+        title: 'Guarding contract, Site A',
+        number: 'GC-2026-001',
+      }),
+    );
+    const licence = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'driving_licence',
+        ownerType: 'employee',
+        employeeId: guard.id,
+      }),
+    );
+    await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        title: 'Guards cost sheet',
+        confidential: true,
+      }),
+    );
+    const papers = (entries: Awaited<ReturnType<typeof recordEntries>>) =>
+      entries.filter((e) => e.key.startsWith('paper:'));
+
+    expect(papers(await recordEntries(company, fmt))).toEqual([]);
+    const on = { ...company, registerExtras: true };
+    const found = papers(await recordEntries(on, fmt));
+    expect(found.map((e) => e.key).sort()).toEqual(
+      [`paper:${contract.id}`, `paper:${licence.id}`].sort(),
+    );
+    expect(searchEntries(found, 'gc-2026-001').map((e) => e.to)).toEqual([
+      `/compliance/documents?doc=${contract.id}`,
+    ]);
+    // An employee's paper opens with them.
+    expect(found.find((e) => e.key === `paper:${licence.id}`)?.to).toBe(`/employees/${guard.id}`);
   });
 });
 

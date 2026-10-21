@@ -5,6 +5,7 @@ import { addAttachment } from '@/db/purchases';
 import {
   createComplianceDocument,
   deleteComplianceDocument,
+  makeDocumentConfidential,
   renewDocument,
   saveComplianceDocument,
 } from '@/db/renewals';
@@ -340,7 +341,9 @@ describe('a confidential register document', () => {
       createComplianceDocument(company.id, { type: 'other', title: 'Guards cost sheet' }),
     );
     await syncCompany(company.id, ctx);
-    await saveComplianceDocument({ ...doc, confidential: true });
+    // Marked in place (the app re-creates one in the cloud under new ids), then edited.
+    await db.complianceDocuments.update(doc.id, { confidential: true });
+    await saveComplianceDocument({ ...(await db.complianceDocuments.get(doc.id))!, notes: 'x' });
     await syncCompany(company.id, ctx);
     await deleteComplianceDocument(doc.id);
     await syncCompany(company.id, ctx);
@@ -441,5 +444,71 @@ describe('a confidential register document', () => {
     // Nothing of it is deleted in the cloud.
     expect(await db.outbox.count()).toBe(0);
     expect(server.record(company.id, 'complianceDocuments', doc.id)).toBeDefined();
+  });
+});
+
+describe('a register document made confidential once staff have it', () => {
+  it('reaches staff as the deletion of what they hold, and nothing of the new copy', async () => {
+    const company = await uploaded();
+    server.addMember(company.id, STAFF, 'staff');
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'other',
+        title: 'Guards cost sheet',
+        expiryDate: '2026-12-31',
+      }),
+    );
+    const scan = await addAttachment(company.id, doc.id, {
+      name: 'cost-sheet.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    const { renewal } = await renewDocument({
+      companyId: company.id,
+      key: `doc:${doc.id}`,
+      renewedOn: '2026-10-20',
+      newExpiry: '2027-12-31',
+    });
+    await syncCompany(company.id, ctx);
+    const held = server.rev;
+    // Staff have it, as any document of the register.
+    const before = await server.client(STAFF).pullRecords(company.id, 0, 1000);
+    const theirs = before
+      .filter(
+        (r) =>
+          [doc.id, scan.id, renewal.id].includes(r.id) ||
+          r.data?.entityId === doc.id ||
+          r.data?.entityId === renewal.id,
+      )
+      .map((r) => r.id);
+    expect(theirs).toEqual(expect.arrayContaining([doc.id, scan.id, renewal.id]));
+    expect(theirs.length).toBeGreaterThan(3);
+
+    await makeDocumentConfidential({
+      ...(await db.complianceDocuments.get(doc.id))!,
+      notes: 'Guard salaries',
+    });
+    await syncCompany(company.id, ctx);
+    const moved = (await db.complianceDocuments.where('companyId').equals(company.id).toArray())[0];
+    const [copy] = await db.attachments.where('ownerId').equals(moved.id).toArray();
+    expect(server.record(company.id, 'complianceDocuments', moved.id)?.confidential).toBe(true);
+    expect(server.record(company.id, 'attachments', copy.id)?._private).toBe(true);
+    expect(server.files.has(`${company.id}/${copy.id}`)).toBe(true);
+    expect(server.record(company.id, 'complianceDocuments', doc.id)).toBeUndefined();
+
+    // What a staff device asks for next: only that what it holds is gone.
+    const after = await server.client(STAFF).pullRecords(company.id, held, 1000);
+    expect(after.filter((r) => !r.deleted)).toEqual([]);
+    expect(after.map((r) => r.id).sort()).toEqual([...theirs].sort());
+
+    // A staff device never gets the new copy, its renewal, file or activity.
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.companies.get(company.id)).toBeDefined();
+    expect(await db.complianceDocuments.count()).toBe(0);
+    expect(await db.renewals.count()).toBe(0);
+    expect(await db.attachments.count()).toBe(0);
+    expect(JSON.stringify(await db.activities.toArray())).not.toContain('Guards cost sheet');
   });
 });
