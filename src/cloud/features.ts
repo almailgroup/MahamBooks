@@ -11,7 +11,12 @@ import type { CloudLink } from './types';
  */
 export type ServerFeature =
   /** 20261102000000_tables_v16.sql: cheque layouts, vehicles, approvals and letters. */
-  'tables_v16';
+  | 'tables_v16'
+  /**
+   * 20261116000000_super_admin_approvals.sql: the owner's limits per member,
+   * approvers, and the owner's switch for admins and accountants.
+   */
+  | 'super_admin';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

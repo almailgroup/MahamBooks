@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Crown, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany, unsentChanges } from '@/db/records';
+import type { OwnedCompany } from '@/cloud/api';
 import { allowOnDevice, keepOffDevice } from '@/cloud/kept-off';
+import { useCloud } from '@/cloud/store';
 import { withSyncLock } from '@/cloud/lock';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useCompanyContext } from '@/app/company';
@@ -12,7 +15,7 @@ import { countryName, currencyName } from '@/lib/geo';
 import { companyTypeName } from '@/features/company/company-types';
 import { usePeopleCompanies } from '@/features/people/hooks';
 import { GroupSearchSwitches } from '@/features/people/group-search';
-import { currentLanguage, t } from '@/i18n';
+import { currentLanguage, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge } from '@/components/ui/misc';
@@ -23,6 +26,7 @@ export default function CompaniesSettings() {
   return (
     <div className="space-y-6">
       <CompanyList />
+      <OwnedCompanies />
       <EmployeeSearch />
     </div>
   );
@@ -139,6 +143,84 @@ function CompanyList() {
             </li>
           );
         })}
+      </ul>
+    </SettingsSection>
+  );
+}
+
+/**
+ * The companies the signed-in account owns, and so is Super Admin of, with
+ * their teams and waiting approval requests: shown once the cloud has them.
+ */
+function OwnedCompanies() {
+  const { api, user } = useCloud();
+  const { companies, switchCompany } = useCompanyContext();
+  const navigate = useNavigate();
+  const [owned, setOwned] = useState<OwnedCompany[] | null>(null);
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    if (!api || !userId) return;
+    let cancelled = false;
+    api
+      .ownedCompanies()
+      .then((rows) => {
+        if (!cancelled) setOwned(rows);
+      })
+      .catch(() => {
+        // Offline: the list shows again next time.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, userId]);
+  if (!userId || !owned || owned.length === 0) return null;
+  const here = new Set(companies.map((c) => c.id));
+  return (
+    <SettingsSection
+      id="owned-companies"
+      title={t('Companies you own')}
+      description={t(
+        'You are the Super Admin of these companies in the cloud: you decide who does what in each, in Settings → Team.',
+      )}
+    >
+      <ul className="divide-y divide-slate-100">
+        {owned.map((c) => (
+          <li key={c.id} className="flex flex-wrap items-center gap-3 py-3">
+            <Crown className="size-5 shrink-0 text-violet-600" aria-hidden />
+            <div className="min-w-0 flex-1 basis-48">
+              <p dir="auto" className="truncate font-medium text-slate-900">
+                {c.name}
+              </p>
+              <p className="text-xs text-slate-500">
+                {tp(c.members, '{count} member', '{count} members')}
+                {c.pendingApprovals > 0 ? (
+                  <>
+                    {' · '}
+                    {tp(
+                      c.pendingApprovals,
+                      '{count} request waiting for approval',
+                      '{count} requests waiting for approval',
+                    )}
+                  </>
+                ) : null}
+              </p>
+            </div>
+            {here.has(c.id) ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  await switchCompany(c.id);
+                  navigate('/settings/team');
+                }}
+              >
+                {t('Open its team')}
+              </Button>
+            ) : (
+              <span className="text-xs text-slate-500">{t('Not on this device')}</span>
+            )}
+          </li>
+        ))}
       </ul>
     </SettingsSection>
   );

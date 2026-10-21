@@ -2,7 +2,7 @@ import { BOOKS } from '@/apps/books/manifest';
 import { PEOPLE } from '@/apps/people/manifest';
 import { CRM } from '@/apps/crm/manifest';
 import { COMPLIANCE } from '@/apps/compliance/manifest';
-import type { MemberRole } from '@/cloud/roles';
+import { appLimit, lowerAccess, type MemberPermissions, type MemberRole } from '@/cloud/roles';
 import type { CreateAction, CreateGroup } from '@/features/shell/create';
 import type { Language } from '@/i18n';
 import type { AccessKey, AppAccess, AppId, SuiteApp } from './types';
@@ -44,22 +44,45 @@ export function appForPath(pathname: string, last?: AppId | null): AppId | null 
   return OWNER.get(segment) ?? null;
 }
 
-/**
- * What someone may do in an app, from their role in the company (null for a
- * company kept on this device only). Until the role is known nothing of
- * People is shown and the other apps are only looked at.
- */
-export function appAccess(app: AppId, role: MemberRole | null, known = true): AppAccess {
-  if (!known) return app === 'people' ? 'none' : 'view';
+/** What a role may do in an app, before any limits of the owner. */
+export function roleAccess(app: AppId, role: MemberRole | null): AppAccess {
   const key: AccessKey = role ?? 'device';
   return appById(app).access[key];
 }
 
+/**
+ * What someone may do in an app, from their role in the company (null for a
+ * company kept on this device only) and the owner's limits on them, which
+ * only take away. Until the role is known nothing of People is shown and the
+ * other apps are only looked at. Books is never hidden (the other apps use
+ * its customers and items): limited to no access, it is view only. CRM works
+ * on Books' customers and quotes, so it is never more open than Books.
+ */
+export function appAccess(
+  app: AppId,
+  role: MemberRole | null,
+  known = true,
+  permissions?: MemberPermissions,
+): AppAccess {
+  if (!known) return app === 'people' ? 'none' : 'view';
+  let access = lowerAccess(roleAccess(app, role), appLimit(role, permissions, app));
+  if (app === 'books' && access === 'none') access = 'view';
+  if (app === 'crm') {
+    const books = appLimit(role, permissions, 'books');
+    access = lowerAccess(access, books === 'none' ? 'view' : books);
+  }
+  return access;
+}
+
 export type AccessMap = Record<AppId, AppAccess>;
 
-export function accessMap(role: MemberRole | null, known = true): AccessMap {
+export function accessMap(
+  role: MemberRole | null,
+  known = true,
+  permissions?: MemberPermissions,
+): AccessMap {
   return Object.fromEntries(
-    APPS.map((app) => [app.id, appAccess(app.id, role, known)]),
+    APPS.map((app) => [app.id, appAccess(app.id, role, known, permissions)]),
   ) as AccessMap;
 }
 

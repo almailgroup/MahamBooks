@@ -1,6 +1,6 @@
 import type { Company, CompanyType, Employee, ID, PeopleSettings } from '@/db/types';
 import type { CloudLink } from '@/cloud/types';
-import { canSeePeople } from '@/cloud/roles';
+import { appLimit, canSeePeople } from '@/cloud/roles';
 import {
   CATEGORY_FILTERS,
   categoryLabel,
@@ -30,7 +30,7 @@ import { localName } from '@/i18n/names';
  * (`PeopleSettings.groupSearch`); until then nothing changes.
  */
 
-type LinkRole = Pick<CloudLink, 'userId' | 'role' | 'status'>;
+type LinkRole = Pick<CloudLink, 'userId' | 'role' | 'status' | 'permissions'>;
 
 /** Whether the person sees payroll and people in a company, from its own link (null: on this device only). */
 export function seesPeopleIn(
@@ -42,7 +42,9 @@ export function seesPeopleIn(
     Boolean(userId) &&
     link.userId === userId &&
     link.status !== 'removed' &&
-    canSeePeople(link.role)
+    canSeePeople(link.role) &&
+    // Not where the owner turned People off for them.
+    appLimit(link.role, link.permissions, 'people') !== 'none'
   );
 }
 

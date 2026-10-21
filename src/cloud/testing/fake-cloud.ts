@@ -6,6 +6,7 @@ import {
   type CompanyOp,
   type EmailAlertSettings,
   type Invite,
+  type MemberAccess,
   type PulledRow,
   type PushChange,
   type PushResult,
@@ -14,10 +15,17 @@ import {
   type TeamMember,
 } from '../api';
 import {
+  canChangeMember,
   canWriteRecord,
+  grantableRoles,
+  isApprover,
   isPrivateRecord,
+  limitBlocksWrite,
+  MAX_APPROVERS,
+  readPermissions,
   sameData,
   staffCompanyChangeOk,
+  type MemberPermissions,
   type MemberRole,
 } from '../roles';
 import { mergeNumbering } from '../numbering';
@@ -73,6 +81,13 @@ export class FakeCloud {
   /** What public.server_features answers; a legacy server doesn't have it. */
   features = ['tables_v16'];
   members = new Map<string, Map<string, MemberRole>>();
+  /**
+   * The owner's limits and approver mark per member, by "company user"
+   * (company_members.permissions and can_approve). Missing: none.
+   */
+  access = new Map<string, { permissions: MemberPermissions; canApprove: boolean }>();
+  /** Companies whose owner makes admins and accountants alone (companies.senior_roles_owner_only). */
+  seniorRolesOwnerOnly = new Set<string>();
   records = new Map<string, Row>();
   markers = new Map<string, Marker>();
   files = new Map<string, { blob: Blob; createdAt: string; owner: string }>();
@@ -105,6 +120,25 @@ export class FakeCloud {
     let members = this.members.get(company);
     if (!members) this.members.set(company, (members = new Map()));
     members.set(user, role);
+    // As company_members_before_write: the owner has no limits, and only
+    // admins and accountants approve.
+    const key = `${company} ${user}`;
+    const access = this.access.get(key);
+    if (access && role === 'owner') this.access.delete(key);
+    else if (access && role !== 'admin' && role !== 'accountant') access.canApprove = false;
+  }
+
+  /** The owner's limits on a member, written straight into the server (as the owner's RPC would). */
+  setAccess(company: string, user: string, permissions: MemberPermissions, canApprove = false) {
+    this.access.set(`${company} ${user}`, { permissions, canApprove });
+  }
+
+  private permissionsOf(company: string, user: string): MemberPermissions | undefined {
+    return this.access.get(`${company} ${user}`)?.permissions;
+  }
+
+  private ownerOnly(company: string): boolean {
+    return this.seniorRolesOwnerOnly.has(company);
   }
 
   /** Server-side view of a record. */
@@ -146,7 +180,11 @@ export class FakeCloud {
   private canWrite(company: string, user: string, tbl: string, data: Record<string, unknown>) {
     const role = this.role(company, user);
     if (!role) return false;
-    return canWriteRecord(role, tbl, data, this.lookup(company));
+    // As can_write_record: the role, then the owner's limits on the member.
+    return (
+      canWriteRecord(role, tbl, data, this.lookup(company)) &&
+      !limitBlocksWrite(role, this.permissionsOf(company, user), tbl, data)
+    );
   }
 
   /** Mirrors almailbooks.can_use_file: files follow their attachment record. */
@@ -447,6 +485,10 @@ export class FakeCloud {
         guard('createInvite');
         const mine = member(company);
         if (mine !== 'owner' && mine !== 'admin') throw fail('permission');
+        if (role === 'owner') throw fail('invalid');
+        if (!grantableRoles(mine, this.ownerOnly(company)).includes(role)) {
+          throw fail('permission');
+        }
         return {
           id: `invite-${email}`,
           email,
@@ -472,18 +514,104 @@ export class FakeCloud {
         guard('acceptInvite');
         throw fail('invite_invalid');
       },
+      // Mirror public.set_member_role and remove_member (with the owner's switch).
       setMemberRole: async (company, target, role) => {
         guard('setMemberRole');
-        member(company);
+        const mine = member(company);
+        const current = this.role(company, target);
+        if (role === 'owner' || !current) throw fail('invalid');
+        const ownerOnly = this.ownerOnly(company);
+        if (
+          !canChangeMember(mine, current, ownerOnly) ||
+          !grantableRoles(mine, ownerOnly).includes(role)
+        ) {
+          throw fail('permission');
+        }
         this.addMember(company, target, role);
       },
       removeMember: async (company, target) => {
         guard('removeMember');
-        member(company);
+        const mine = member(company);
+        const current = this.role(company, target);
+        if (!current) return;
+        if (current === 'owner') throw fail('permission');
+        if (target !== user && !canChangeMember(mine, current, this.ownerOnly(company))) {
+          throw fail('permission');
+        }
         this.members.get(company)?.delete(target);
+        this.access.delete(`${company} ${target}`);
       },
-      transferOwnership: async () => {
+      transferOwnership: async (company, target) => {
         guard('transferOwnership');
+        if (member(company) !== 'owner') throw fail('permission');
+        if (!this.role(company, target) || target === user) throw fail('invalid');
+        this.addMember(company, user, 'admin');
+        this.addMember(company, target, 'owner');
+      },
+
+      // Mirror the Super Admin's functions (20261116000000_super_admin_approvals.sql).
+      myPermissions: async (company) => {
+        guard('myPermissions');
+        if (this.legacy || !this.features.includes('super_admin')) return null;
+        const role = member(company);
+        const access = this.access.get(`${company} ${user}`);
+        return {
+          permissions: role === 'owner' ? {} : readPermissions(access?.permissions),
+          approver: isApprover(role, access?.canApprove),
+          owner: role === 'owner',
+          seniorRolesOwnerOnly: this.ownerOnly(company),
+        };
+      },
+      teamPermissions: async (company): Promise<MemberAccess[] | null> => {
+        guard('teamPermissions');
+        if (this.legacy || !this.features.includes('super_admin')) return null;
+        const mine = member(company);
+        return [...(this.members.get(company) ?? new Map<string, MemberRole>()).entries()]
+          .filter(([id]) => mine === 'owner' || mine === 'admin' || id === user)
+          .map(([id, role]) => {
+            const access = this.access.get(`${company} ${id}`);
+            return {
+              userId: id,
+              permissions: readPermissions(access?.permissions),
+              canApprove: isApprover(role, access?.canApprove) && role !== 'owner',
+            };
+          });
+      },
+      setMemberPermissions: async (company, target, permissions, canApprove) => {
+        guard('setMemberPermissions');
+        if (member(company) !== 'owner') throw fail('permission');
+        const role = this.role(company, target);
+        if (!role) throw fail('invalid');
+        if (role === 'owner') throw fail('permission');
+        if (canApprove && role !== 'admin' && role !== 'accountant') throw fail('invalid');
+        const others = [...(this.members.get(company) ?? new Map<string, MemberRole>())].filter(
+          ([id, r]) =>
+            id !== target && isApprover(r, this.access.get(`${company} ${id}`)?.canApprove),
+        );
+        if (canApprove && others.filter(([, r]) => r !== 'owner').length >= MAX_APPROVERS) {
+          throw fail('limit');
+        }
+        this.setAccess(company, target, readPermissions(permissions), canApprove);
+      },
+      setTeamRules: async (company, rules) => {
+        guard('setTeamRules');
+        if (member(company) !== 'owner') throw fail('permission');
+        if (rules.seniorRolesOwnerOnly) this.seniorRolesOwnerOnly.add(company);
+        else this.seniorRolesOwnerOnly.delete(company);
+      },
+      ownedCompanies: async () => {
+        guard('ownedCompanies');
+        if (this.legacy || !this.features.includes('super_admin')) return null;
+        return [...this.companies.values()]
+          .filter((c) => this.role(c.id, user) === 'owner')
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            members: this.members.get(c.id)?.size ?? 0,
+            pendingApprovals: this.rows(c.id, 'approvals').filter(
+              (r) => r.data.status === 'pending',
+            ).length,
+          }));
       },
       deleteCompany: async (company) => {
         guard('deleteCompany');

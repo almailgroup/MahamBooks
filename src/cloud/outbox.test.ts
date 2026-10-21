@@ -16,8 +16,13 @@ beforeEach(async () => {
   await db.open();
 });
 
-async function link(company: Company, role: MemberRole = 'owner'): Promise<void> {
+async function link(
+  company: Company,
+  role: MemberRole = 'owner',
+  permissions?: CloudLink['permissions'],
+): Promise<void> {
   const row: CloudLink = {
+    permissions,
     companyId: company.id,
     userId: 'user-1',
     role,
@@ -204,6 +209,23 @@ describe('roles on this device', () => {
         updatedAt: '',
       }),
     ).rejects.toBeInstanceOf(CloudPermissionError);
+  });
+
+  it('refuse at once what the owner made view only for this person, and nothing else', async () => {
+    const acme = await company();
+    await link(acme, 'accountant', { apps: { books: 'view' } });
+    await expect(saveClient(createClient(acme.id, { name: 'Nope' }))).rejects.toThrow(
+      /The owner has made this app view only for you/,
+    );
+    expect(await db.clients.count()).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+    // Settings follow the role.
+    const current = (await db.companies.get(acme.id))!;
+    await db.companies.put({ ...current, currency: 'USD' });
+    expect(await queued()).toEqual([`put companies ${acme.id}`]);
+    // The owner is never limited.
+    await link(acme, 'owner', { apps: { books: 'view' } });
+    await saveClient(createClient(acme.id, { name: 'Allowed' }));
   });
 
   it('tell before a draft is sent whether it may be marked as sent, queuing nothing', async () => {

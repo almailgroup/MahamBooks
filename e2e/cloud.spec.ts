@@ -273,3 +273,69 @@ test('staff open only the apps of their role', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Pipeline', level: 1 })).toBeVisible();
   await expect(page.getByRole('link', { name: 'New quote' })).toBeVisible();
 });
+
+test('the owner, as Super Admin, limits a member, and the cloud parks what they still try', async ({
+  page,
+  pageErrors,
+}) => {
+  test.slow();
+  const { account, companyId } = await companyInTheCloud(page, 'Coral Reef Trading');
+  const member = cloud.addUser('salem@example.com', 'safe-password-4', 'Salem Test');
+  cloud.companies.get(companyId)!.members.set(member.id, 'accountant');
+
+  // Settings → Team: the owner is the Super Admin and decides who does what.
+  await page.goto('#/settings/team');
+  await expect(page.getByText('Owner (Super Admin)')).toBeVisible();
+  await page.getByRole('switch', { name: /Only the owner makes admins and accountants/ }).click();
+  await expect(page.getByText('Team rules saved')).toBeVisible();
+  expect(cloud.seniorRolesOwnerOnly.has(companyId)).toBe(true);
+
+  await page.getByRole('button', { name: 'Permissions of Salem Test' }).click();
+  const dialog = page.getByRole('dialog', { name: 'What Salem Test can do' });
+  await dialog.getByLabel('Access to Maham People').selectOption('none');
+  await dialog.getByRole('switch', { name: /Can approve/ }).click();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Permissions saved')).toBeVisible();
+  expect(cloud.access.get(`${companyId} ${member.id}`)).toEqual({
+    permissions: { apps: { people: 'none' } },
+    canApprove: true,
+  });
+  await expect(page.getByText('Can approve', { exact: true })).toBeVisible();
+  await expect(page.getByText('Limited access', { exact: true })).toBeVisible();
+  await signOutRemovingCompanies(page, account);
+
+  // The accountant on their own device: People is off for them.
+  await page.goto('#/signin');
+  await signIn(page, 'salem@example.com', 'safe-password-4');
+  const theirs = page.getByRole('button', { name: 'Account: Salem Test' });
+  await expect(theirs).toContainText('Synced', { timeout: 30_000 });
+  await page.goto('#/employees');
+  await expect(
+    page.getByRole('heading', { name: 'The owner has turned Maham People off for you' }),
+  ).toBeVisible();
+
+  // The owner makes Books view only too. A customer saved before this device
+  // knows it is refused by the cloud and waits in Settings → Cloud and sync.
+  cloud.access.set(`${companyId} ${member.id}`, {
+    permissions: { apps: { people: 'none', books: 'view' } },
+    canApprove: true,
+  });
+  await page.goto('#/clients/new');
+  await page.getByLabel('Client name').fill('Made-up Customer');
+  await page.getByRole('button', { name: 'Save client' }).first().click();
+  await expect(theirs).toContainText('Sync problem', { timeout: 30_000 });
+  expect(
+    cloud.rows(companyId, 'clients').filter((r) => r.data?.name === 'Made-up Customer'),
+  ).toEqual([]);
+  // Known on this device now: Books is view only for them.
+  await page.goto('#/invoices');
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'The owner has made Maham Books view only for you' }),
+  ).toBeVisible();
+  // The browser logs the cloud's refusals; nothing else may go wrong.
+  const refused = pageErrors.filter((e) => e.includes('status of 403'));
+  expect(refused.length).toBeGreaterThan(0);
+  for (const error of refused) pageErrors.splice(pageErrors.indexOf(error), 1);
+});

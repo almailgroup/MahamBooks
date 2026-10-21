@@ -53,8 +53,8 @@ function useLastApp(): AppId | null {
 
 /** What the person may do in each app of the current company. */
 export function useAppAccess(): AccessMap {
-  const { role, known } = useRoleView();
-  return useMemo(() => accessMap(role, known), [role, known]);
+  const { role, known, permissions } = useRoleView();
+  return useMemo(() => accessMap(role, known, permissions), [role, known, permissions]);
 }
 
 /**

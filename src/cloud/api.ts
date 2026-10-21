@@ -1,6 +1,6 @@
 import { msg, t } from '@/i18n';
 import type { AlertTopic } from '@/alerts/topics';
-import type { MemberRole } from './roles';
+import type { MemberPermissions, MemberRole } from './roles';
 
 /**
  * What the app asks of the cloud. The sync engine only talks to this
@@ -55,6 +55,33 @@ export interface TeamMember {
   email: string;
   role: MemberRole;
   joinedAt: string;
+}
+
+/** The signed-in person's own limits in a company (my_permissions). */
+export interface MyPermissions {
+  permissions: MemberPermissions;
+  /** Decides approval requests: the owner, or an admin or accountant the owner allowed. */
+  approver: boolean;
+  /** The owner of the company: its Super Admin. */
+  owner: boolean;
+  /** Only the owner makes admins and accountants. */
+  seniorRolesOwnerOnly: boolean;
+}
+
+/** A member's limits and approver mark, as the owner set them (team_permissions). */
+export interface MemberAccess {
+  userId: string;
+  permissions: MemberPermissions;
+  canApprove: boolean;
+}
+
+/** A company the signed-in person owns, for Settings → Companies. */
+export interface OwnedCompany {
+  id: string;
+  name: string;
+  members: number;
+  /** Approval requests waiting for a decision. */
+  pendingApprovals: number;
 }
 
 export interface Invite {
@@ -236,6 +263,24 @@ export interface CloudApi {
   setMemberRole(companyId: string, userId: string, role: MemberRole): Promise<void>;
   removeMember(companyId: string, userId: string): Promise<void>;
   transferOwnership(companyId: string, userId: string): Promise<void>;
+  /**
+   * The signed-in person's limits in the company; null when the server
+   * doesn't have them yet (the owner hasn't run the Super Admin script).
+   */
+  myPermissions(companyId: string): Promise<MyPermissions | null>;
+  /** Every member's limits (the caller's own unless owner or admin); null as above. */
+  teamPermissions(companyId: string): Promise<MemberAccess[] | null>;
+  /** The owner sets a member's limits and approver mark. */
+  setMemberPermissions(
+    companyId: string,
+    userId: string,
+    permissions: MemberPermissions,
+    canApprove: boolean,
+  ): Promise<void>;
+  /** The owner's switch: only the owner makes admins and accountants. */
+  setTeamRules(companyId: string, rules: { seniorRolesOwnerOnly: boolean }): Promise<void>;
+  /** The companies the signed-in person owns; null when the server doesn't have it yet. */
+  ownedCompanies(): Promise<OwnedCompany[] | null>;
   deleteCompany(companyId: string): Promise<void>;
   /** Calls `onChange` when the company changes in the cloud; returns a stop function. */
   watch(companyId: string, onChange: () => void): () => void;

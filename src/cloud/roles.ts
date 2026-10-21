@@ -1,4 +1,5 @@
 import { msg } from '@/i18n';
+import type { AppAccess, AppId } from '@/suite/types';
 
 /**
  * What each role may do, as the database enforces it (see
@@ -166,6 +167,164 @@ export function canEdit(role: MemberRole | null | undefined): boolean {
 /** Invites people and changes roles. */
 export function canManageTeam(role: MemberRole | null | undefined): boolean {
   return role === 'owner' || role === 'admin';
+}
+
+/**
+ * The Super Admin: the owner of the company. Whoever should be Super Admin is
+ * made the owner with Transfer ownership; no account is named in the app.
+ */
+export function isSuperAdmin(role: MemberRole | null | undefined): boolean {
+  return role === 'owner';
+}
+
+/** Roles only the owner gives once the owner keeps them (Settings → Team). */
+export const SENIOR_ROLES: readonly MemberRole[] = ['admin', 'accountant'];
+
+const senior = (role: MemberRole) => SENIOR_ROLES.includes(role);
+
+/** At most this many admins or accountants approve besides the owner. */
+export const MAX_APPROVERS = 2;
+
+/**
+ * Decides approval requests: the owner, or an admin or accountant the owner
+ * allowed to (`canApprove`), as almailbooks.is_approver.
+ */
+export function isApprover(
+  role: MemberRole | null | undefined,
+  canApprove: boolean | undefined,
+): boolean {
+  return role === 'owner' || (Boolean(canApprove) && (role === 'admin' || role === 'accountant'));
+}
+
+/**
+ * The roles `me` may invite someone as, or give a member. With the owner's
+ * rule on (`ownerOnly`), admins give staff and viewer only, as the server
+ * does (create_invite, set_member_role).
+ */
+export function grantableRoles(
+  me: MemberRole | null | undefined,
+  ownerOnly: boolean,
+): Exclude<MemberRole, 'owner'>[] {
+  if (me === 'owner') return [...INVITE_ROLES];
+  if (me !== 'admin') return [];
+  return ownerOnly ? INVITE_ROLES.filter((role) => !senior(role)) : [...INVITE_ROLES];
+}
+
+/** Whether `me` may change the role of, or remove, a member who is `role`. */
+export function canChangeMember(
+  me: MemberRole | null | undefined,
+  role: MemberRole,
+  ownerOnly: boolean,
+): boolean {
+  if (role === 'owner') return false;
+  if (me === 'owner') return true;
+  return me === 'admin' && !(ownerOnly && senior(role));
+}
+
+/**
+ * What the owner lets a member do, app by app. Limits only ever take away:
+ * the member keeps the lower of their role's access and the limit. Missing
+ * (every member until the owner sets some) means the role's access.
+ */
+export interface MemberPermissions {
+  apps?: Partial<Record<AppId, AppAccess>>;
+}
+
+const ACCESS_ORDER: readonly AppAccess[] = ['none', 'view', 'edit', 'manage'];
+
+/** The apps the owner can limit: every app of Maham One. */
+export const LIMIT_APPS: readonly AppId[] = ['books', 'people', 'crm', 'compliance'];
+
+/**
+ * Limits as the server sent them, keeping only apps and levels this version
+ * knows (a newer server may know more): what isn't understood limits nothing.
+ */
+export function readPermissions(value: unknown): MemberPermissions {
+  const apps = (value as { apps?: unknown } | null)?.apps;
+  if (!apps || typeof apps !== 'object' || Array.isArray(apps)) return {};
+  const known: Partial<Record<AppId, AppAccess>> = {};
+  for (const app of LIMIT_APPS) {
+    const limit = (apps as Record<string, unknown>)[app];
+    if (typeof limit === 'string' && (ACCESS_ORDER as string[]).includes(limit)) {
+      known[app] = limit as AppAccess;
+    }
+  }
+  return Object.keys(known).length ? { apps: known } : {};
+}
+
+/** The lower of a role's access and a limit. */
+export function lowerAccess(access: AppAccess, limit: AppAccess | undefined): AppAccess {
+  if (!limit || !ACCESS_ORDER.includes(limit)) return access;
+  return ACCESS_ORDER.indexOf(limit) < ACCESS_ORDER.indexOf(access) ? limit : access;
+}
+
+/** The owner's limit on an app for a member; never for the owner. */
+export function appLimit(
+  role: MemberRole | null | undefined,
+  permissions: MemberPermissions | undefined,
+  app: AppId,
+): AppAccess | undefined {
+  if (role == null || role === 'owner') return undefined;
+  const limit = permissions?.apps?.[app];
+  return limit && ACCESS_ORDER.includes(limit) ? limit : undefined;
+}
+
+const PEOPLE_APP = new Set<string>(PEOPLE_TABLES);
+const COMPLIANCE_APP = new Set(['complianceDocuments', 'renewals', 'complianceMarks', 'vehicles']);
+const BOOKS_APP = new Set([
+  'clients',
+  'products',
+  'taxRates',
+  'documents',
+  'payments',
+  'recurring',
+  'accounts',
+  'journals',
+  'expenses',
+  'vatReturns',
+  'bankTransactions',
+  'securityCheques',
+  'assets',
+  'depreciationRuns',
+  'yearEnds',
+  'warehouses',
+  'stockMovements',
+  'stockEntries',
+  'landedCosts',
+  'chequeLayouts',
+]);
+
+/**
+ * The app a record belongs to, for the owner's limits; null for what every
+ * app shares (the company record, activity, files, approval requests). The
+ * same as almailbooks.record_app on the server. Maham CRM works on Books'
+ * customers and quotes, so it has none of its own.
+ */
+export function recordApp(table: string, record: Row): AppId | null {
+  if (PEOPLE_APP.has(table)) return 'people';
+  if (table === 'journals' && record?.kind === 'payroll') return 'people';
+  const employee = typeof record?.employeeId === 'string' && record.employeeId !== '';
+  if ((table === 'complianceDocuments' || table === 'renewals') && employee) return 'people';
+  if (COMPLIANCE_APP.has(table)) return 'compliance';
+  if (BOOKS_APP.has(table)) return 'books';
+  return null;
+}
+
+/**
+ * Whether the owner's limits keep this member from storing `record` in
+ * `table` (an app limited to view only or no access), as the server does in
+ * can_write_record. Never the owner, never a company kept on this device.
+ */
+export function limitBlocksWrite(
+  role: MemberRole | null | undefined,
+  permissions: MemberPermissions | undefined,
+  table: string,
+  record: Row,
+): boolean {
+  const app = recordApp(table, record);
+  if (!app) return false;
+  const limit = appLimit(role, permissions, app);
+  return limit === 'none' || limit === 'view';
 }
 
 /** Changes accounting setup: accounts, tax rates, manual journals, year-end. */

@@ -7,7 +7,7 @@ import Dexie, {
   type Middleware,
 } from 'dexie';
 import { t } from '@/i18n';
-import { canWriteRecord, sameData, staffCompanyChangeOk } from './roles';
+import { canWriteRecord, limitBlocksWrite, sameData, staffCompanyChangeOk } from './roles';
 import type { CloudLink, OutboxEntry } from './types';
 
 /**
@@ -20,8 +20,9 @@ import type { CloudLink, OutboxEntry } from './types';
  *
  * The capture also refuses, before anything is written, changes the person's
  * role does not allow (viewers change nothing; staff stay out of accounting
- * setup and payroll), with a message they can act on. The server enforces the
- * same rules on its own.
+ * setup and payroll), or the owner's limits on them (an app made view only),
+ * with a message they can act on. The server enforces the same rules on its
+ * own.
  */
 
 export class CloudPermissionError extends Error {
@@ -113,6 +114,14 @@ function refuse(link: CloudLink, table: string, change: Change): string | null {
     );
   }
   if (link.role === 'viewer') return t('You can view this company but not change it.');
+  // The owner's limits on this person, as the server applies them.
+  const limited = (row: Record<string, unknown> | undefined) =>
+    row !== undefined && limitBlocksWrite(link.role, link.permissions, table, row);
+  if (limited(change.before) || limited(change.after)) {
+    return t(
+      'The owner has made this app view only for you. Ask the owner if you need to change it.',
+    );
+  }
   if (link.role !== 'staff') return null;
   const denied = t('Your role can’t make this change. Ask an owner, admin or accountant.');
   if (table === 'companies') {

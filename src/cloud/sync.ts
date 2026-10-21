@@ -12,6 +12,7 @@ import {
   CloudError,
   type CloudApi,
   type CompanyOp,
+  type MyPermissions,
   type PulledRow,
   type PushChange,
   type PushResult,
@@ -28,6 +29,7 @@ import {
   canEdit,
   canSeePeople,
   isPrivateRecord,
+  limitBlocksWrite,
   PEOPLE_TABLES,
   renewedDocumentId,
   sameData,
@@ -57,6 +59,8 @@ const CATCH_UP_PAGE = 100;
 const CATCH_UP_AT_ONCE = 8;
 /** How long what the server has (server_features) is taken as known before asking again. */
 export const FEATURES_RECHECK_MS = 10 * 60_000;
+/** How long the owner's limits on this person are taken as known before asking again. */
+export const PERMISSIONS_RECHECK_MS = 5 * 60_000;
 /** Files younger than this are left alone by the clean-up: they may be on their way. */
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** Tries to remove a file before it is shown as a problem. */
@@ -343,6 +347,7 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
     // Reconciling may have corrected something here: send that too.
     await pushAll(companyId, sync, result);
     await refreshFeatures(companyId, sync);
+    await refreshPermissions(companyId, sync, result.parked > 0);
     const after = await db.syncState.get(companyId);
     if (after && after.status !== 'removed') {
       await db.syncState.update(companyId, {
@@ -1506,6 +1511,40 @@ async function refreshFeatures(companyId: string, ctx: SyncContext): Promise<voi
   if (features.includes('tables_v16')) await releaseHeld(companyId);
 }
 
+/**
+ * Notes the owner's limits on this person (see roles.ts), once the server
+ * has them, asked at most every PERMISSIONS_RECHECK_MS, and at once when the
+ * server just refused a change (`now`): the limits may have changed since.
+ * When they can't be asked, what was known stays.
+ */
+async function refreshPermissions(
+  companyId: string,
+  ctx: SyncContext,
+  now: boolean,
+): Promise<void> {
+  const link = await db.syncState.get(companyId);
+  if (!link || link.status === 'removed' || !linkHasFeature(link, 'super_admin')) return;
+  const askedAt = link.permissionsAt ? Date.parse(link.permissionsAt) : 0;
+  if (!now && Date.now() - askedAt < PERMISSIONS_RECHECK_MS) return;
+  let mine: MyPermissions | null;
+  try {
+    mine = await ctx.api.myPermissions(companyId);
+  } catch {
+    return;
+  }
+  if (mine) await notePermissions(companyId, mine);
+}
+
+/** Keeps the owner's limits on this person as the server just said them. */
+export async function notePermissions(companyId: string, mine: MyPermissions): Promise<void> {
+  await db.syncState.update(companyId, {
+    permissions: mine.permissions,
+    approver: mine.approver,
+    seniorRolesOwnerOnly: mine.seniorRolesOwnerOnly,
+    permissionsAt: new Date().toISOString(),
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Derived data                                                               */
 /* -------------------------------------------------------------------------- */
@@ -1530,6 +1569,8 @@ async function reconcile(companyId: string, touched: Touched): Promise<void> {
   if (touched.tables.size === 0) return;
   const link = await db.syncState.get(companyId);
   if (!link || link.role === 'viewer' || link.status !== 'ready') return;
+  // Books made view only by the owner: other devices work these out.
+  if (limitBlocksWrite(link.role, link.permissions, 'documents', {})) return;
   const [{ rebuildStock }, { recalculateDocuments, refreshOrdersFor }] = await Promise.all([
     import('@/db/inventory'),
     import('@/db/documents'),
@@ -1619,6 +1660,8 @@ export async function applyRole(companyId: string, role: MemberRole): Promise<vo
     const seesMore = !canSeePeople(link.role) && canSeePeople(role);
     await db.syncState.update(companyId, {
       role,
+      // The owner's limits and approvers follow the role: asked again.
+      permissionsAt: undefined,
       ...(seesMore ? { cursor: 0, epoch: (link.epoch ?? 0) + 1, tables: [...DATA_TABLES] } : {}),
     });
     if (!canSeePeople(role)) await removeHiddenRecords(companyId);

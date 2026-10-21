@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALERT_TOPICS, isAlertTopic } from '@/alerts/topics';
-import { isMemberRole, type MemberRole } from './roles';
+import { isMemberRole, readPermissions, type MemberRole } from './roles';
 import { FILES_BUCKET } from './config';
 import {
   AlertEmailError,
@@ -12,6 +12,8 @@ import {
   type CloudCompany,
   type Invite,
   type InviteDetails,
+  type MemberAccess,
+  type OwnedCompany,
   type PulledRow,
   type PushResult,
   type RecordKey,
@@ -367,6 +369,66 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
 
     async transferOwnership(companyId, userId) {
       await rpc('transfer_ownership', { p_company: companyId, p_user: userId });
+    },
+
+    async myPermissions(companyId) {
+      const rows = await optionalRpc<
+        {
+          permissions: unknown;
+          can_approve: boolean | null;
+          is_owner: boolean | null;
+          senior_roles_owner_only: boolean | null;
+        }[]
+      >('my_permissions', { p_company: companyId });
+      if (rows === MISSING) return null;
+      const [row] = rows;
+      return {
+        permissions: readPermissions(row?.permissions),
+        approver: Boolean(row?.can_approve),
+        owner: Boolean(row?.is_owner),
+        seniorRolesOwnerOnly: Boolean(row?.senior_roles_owner_only),
+      };
+    },
+
+    async teamPermissions(companyId) {
+      const rows = await optionalRpc<
+        { user_id: string; permissions: unknown; can_approve: boolean | null }[]
+      >('team_permissions', { p_company: companyId });
+      if (rows === MISSING) return null;
+      return rows.map((r): MemberAccess => ({
+        userId: r.user_id,
+        permissions: readPermissions(r.permissions),
+        canApprove: Boolean(r.can_approve),
+      }));
+    },
+
+    async setMemberPermissions(companyId, userId, permissions, canApprove) {
+      await rpc('set_member_permissions', {
+        p_company: companyId,
+        p_user: userId,
+        p_permissions: permissions,
+        p_can_approve: canApprove,
+      });
+    },
+
+    async setTeamRules(companyId, rules) {
+      await rpc('set_team_rules', {
+        p_company: companyId,
+        p_senior_roles_owner_only: rules.seniorRolesOwnerOnly,
+      });
+    },
+
+    async ownedCompanies() {
+      const rows = await optionalRpc<
+        { company_id: string; name: string; members: number; pending_approvals: number }[]
+      >('owned_companies_overview', {});
+      if (rows === MISSING) return null;
+      return rows.map((r): OwnedCompany => ({
+        id: r.company_id,
+        name: r.name,
+        members: Number(r.members),
+        pendingApprovals: Number(r.pending_approvals),
+      }));
     },
 
     async deleteCompany(companyId) {

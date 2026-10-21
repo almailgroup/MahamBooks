@@ -1,6 +1,7 @@
 import { lazy } from 'react';
 import type { RouteObject } from 'react-router';
 import { Bare } from '@/app/route-shell';
+import { AppGate } from '@/suite/app-gate';
 import type { DocumentType, PurchaseDocumentType } from '@/db/types';
 
 /** Maham Books' pages. Their URLs are the ones they have always had. */
@@ -150,49 +151,54 @@ export const booksPrintRoutes: RouteObject[] = [
   },
 ];
 
-/** Pages inside the shell. */
-export const booksRoutes: RouteObject[] = [
-  { path: 'books', element: <Dashboard /> },
-  ...documentRoutes('invoices', 'invoice'),
-  ...documentRoutes('quotes', 'quote'),
-  ...documentRoutes('credits', 'credit'),
-  ...documentRoutes('proformas', 'proforma'),
-  ...documentRoutes('sales-orders', 'sales_order'),
-  ...documentRoutes('delivery-notes', 'delivery_note'),
-  { path: 'recurring', element: <RecurringList /> },
-  { path: 'recurring/new', element: <RecurringEditor /> },
-  { path: 'recurring/:id', element: <RecurringEditor /> },
-  ...paymentRoutes('payments', 'in'),
-  { path: 'cheques', element: <ChequeRegister /> },
-  { path: 'cheques/layouts', element: <ChequeLayouts /> },
-  ...contactRoutes('clients', 'customer'),
-  ...contactRoutes('vendors', 'vendor'),
-  ...purchaseRoutes('bills', 'bill'),
-  ...purchaseRoutes('vendor-credits', 'vendor_credit'),
-  ...purchaseRoutes('purchase-orders', 'purchase_order'),
-  ...paymentRoutes('payments-made', 'out'),
-  { path: 'expenses', element: <Expenses /> },
-  { path: 'products', element: <Products /> },
-  { path: 'inventory', element: <Inventory /> },
-  { path: 'inventory/adjustments/new', element: <StockEntryForm /> },
-  { path: 'inventory/entries/:id', element: <StockEntryView /> },
-  { path: 'inventory/count', element: <StockCount /> },
-  { path: 'inventory/landed-costs/new', element: <LandedCostForm /> },
-  { path: 'inventory/landed-costs/:id', element: <LandedCostView /> },
-  { path: 'reports', element: <Reports /> },
-  { path: 'reports/:report', element: <Reports /> },
-  { path: 'accounts', element: <ChartOfAccounts /> },
-  { path: 'journals', element: <Journals /> },
-  { path: 'journals/new', element: <JournalEditor key="new" /> },
-  { path: 'journals/:id', element: <JournalEditor /> },
-  { path: 'assets', element: <Assets /> },
-  { path: 'assets/new', element: <AssetForm key="new" /> },
-  { path: 'assets/:id', element: <AssetDetail /> },
-  { path: 'assets/:id/edit', element: <AssetForm /> },
-  { path: 'year-end', element: <YearEnd /> },
-  { path: 'banking', element: <Banking /> },
-  { path: 'banking/:accountId', element: <Banking /> },
-  { path: 'vat', element: <Vat /> },
-  { path: 'vat/:start', element: <Vat /> },
-  { path: 'templates', element: <Templates /> },
-];
+/**
+ * Pages inside the shell, view only for someone the owner limited to that
+ * (see AppGate).
+ */
+export const booksRoutes: RouteObject[] = (
+  [
+    { path: 'books', element: <Dashboard /> },
+    ...documentRoutes('invoices', 'invoice'),
+    ...documentRoutes('quotes', 'quote'),
+    ...documentRoutes('credits', 'credit'),
+    ...documentRoutes('proformas', 'proforma'),
+    ...documentRoutes('sales-orders', 'sales_order'),
+    ...documentRoutes('delivery-notes', 'delivery_note'),
+    { path: 'recurring', element: <RecurringList /> },
+    { path: 'recurring/new', element: <RecurringEditor /> },
+    { path: 'recurring/:id', element: <RecurringEditor /> },
+    ...paymentRoutes('payments', 'in'),
+    { path: 'cheques', element: <ChequeRegister /> },
+    { path: 'cheques/layouts', element: <ChequeLayouts /> },
+    ...contactRoutes('clients', 'customer'),
+    ...contactRoutes('vendors', 'vendor'),
+    ...purchaseRoutes('bills', 'bill'),
+    ...purchaseRoutes('vendor-credits', 'vendor_credit'),
+    ...purchaseRoutes('purchase-orders', 'purchase_order'),
+    ...paymentRoutes('payments-made', 'out'),
+    { path: 'expenses', element: <Expenses /> },
+    { path: 'products', element: <Products /> },
+    { path: 'inventory', element: <Inventory /> },
+    { path: 'inventory/adjustments/new', element: <StockEntryForm /> },
+    { path: 'inventory/entries/:id', element: <StockEntryView /> },
+    { path: 'inventory/count', element: <StockCount /> },
+    { path: 'inventory/landed-costs/new', element: <LandedCostForm /> },
+    { path: 'inventory/landed-costs/:id', element: <LandedCostView /> },
+    { path: 'reports', element: <Reports /> },
+    { path: 'reports/:report', element: <Reports /> },
+    { path: 'accounts', element: <ChartOfAccounts /> },
+    { path: 'journals', element: <Journals /> },
+    { path: 'journals/new', element: <JournalEditor key="new" /> },
+    { path: 'journals/:id', element: <JournalEditor /> },
+    { path: 'assets', element: <Assets /> },
+    { path: 'assets/new', element: <AssetForm key="new" /> },
+    { path: 'assets/:id', element: <AssetDetail /> },
+    { path: 'assets/:id/edit', element: <AssetForm /> },
+    { path: 'year-end', element: <YearEnd /> },
+    { path: 'banking', element: <Banking /> },
+    { path: 'banking/:accountId', element: <Banking /> },
+    { path: 'vat', element: <Vat /> },
+    { path: 'vat/:start', element: <Vat /> },
+    { path: 'templates', element: <Templates /> },
+  ] as RouteObject[]
+).map((route) => ({ ...route, element: <AppGate app="books">{route.element}</AppGate> }));

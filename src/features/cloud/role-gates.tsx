@@ -8,7 +8,7 @@ import { Card, EmptyState, Spinner } from '@/components/ui/misc';
 import type { ReadOnlyState } from '@/components/ui/read-only';
 import { cn } from '@/lib/cn';
 import { useCloudLink } from '@/cloud/hooks';
-import { canSeePeople, ROLE_LABELS, type MemberRole } from '@/cloud/roles';
+import { canSeePeople, ROLE_LABELS, type MemberPermissions, type MemberRole } from '@/cloud/roles';
 import { usePeopleCompanies } from '@/features/people/hooks';
 
 export interface RoleView {
@@ -19,6 +19,8 @@ export interface RoleView {
   /** The company's link to the cloud has been read (until then the role is not known). */
   known: boolean;
   readOnly: ReadOnlyState;
+  /** The owner's limits on this person, app by app; missing: the role's access. */
+  permissions?: MemberPermissions;
 }
 
 /** What the person's role in the current company lets them see and do. */
@@ -37,6 +39,7 @@ export function useRoleView(): RoleView {
         readOnly: viewer || removed,
         reason: removed ? t('No longer shared with you') : viewer ? t('View only') : '',
       },
+      permissions: link?.permissions,
     };
   }, [link]);
 }

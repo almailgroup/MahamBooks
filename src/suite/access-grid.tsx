@@ -16,7 +16,7 @@ export const ACCESS_LABELS: Record<AppAccess, string> = {
   manage: msg('Full access'),
 };
 
-const ACCESS_ICONS: Record<AppAccess, LucideIcon> = {
+export const ACCESS_ICONS: Record<AppAccess, LucideIcon> = {
   none: Minus,
   view: Eye,
   edit: PencilLine,
@@ -24,7 +24,7 @@ const ACCESS_ICONS: Record<AppAccess, LucideIcon> = {
 };
 
 /** Literal class names, so Tailwind and the theme check see every one. */
-const ACCESS_TONES: Record<AppAccess, string> = {
+export const ACCESS_TONES: Record<AppAccess, string> = {
   none: 'text-slate-400',
   view: 'text-slate-600',
   edit: 'text-sky-700',

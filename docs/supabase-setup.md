@@ -38,6 +38,12 @@ has to be added to the app or to Vercel.
    layouts, vehicles, approval requests and HR letters, and keeps letters and
    confidential documents from staff and viewers. Until it runs, the app keeps
    the features that need it hidden; everything else works as before.
+9. Then the fifth script,
+   [`supabase/migrations/20261116000000_super_admin_approvals.sql`](../supabase/migrations/20261116000000_super_admin_approvals.sql)
+   (a new query, paste, **Run**), after the fourth. It adds the Super Admin's
+   controls in **Settings → Team** (see "The Super Admin" below). Running it
+   changes nothing by itself: every member keeps their role's access, and
+   admins keep inviting and changing roles until the owner switches that off.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -175,6 +181,37 @@ doesn't pause.
 
 The database itself enforces this (row-level security), not just the app.
 Details and the security checklist: [`supabase/README.md`](../supabase/README.md).
+
+## The Super Admin
+
+The Super Admin of a company is its **owner**. The app names nobody: to make
+someone the Super Admin, the current owner opens **Settings → Team → Transfer
+ownership** (الإعدادات ← الفريق ← نقل الملكية) and chooses them; the previous
+owner becomes an admin. Do this once in every company, after the fifth script
+(step 1.9) has run. **Settings → Companies → Companies you own** then lists
+every company the account owns.
+
+In **Settings → Team**, the owner (badge **Owner (Super Admin)**, المالك
+(المشرف العام)) has:
+
+- **Only the owner makes admins and accountants** (المالك وحده يعيّن المديرين
+  والمحاسبين). Off until the owner turns it on. On, only the owner invites,
+  makes, changes or removes admins and accountants; admins still invite and
+  remove staff and viewers. Turning it on cancels invitations as admin or
+  accountant that someone else made. Tell the admins before turning it on.
+- **Permissions** (الصلاحيات) next to each member: make an app view only or
+  turn it off for them (Maham Books can only be made view only, because the
+  other apps use its customers and items). Limits only take away from the
+  role, and the cloud refuses what the member saves in that app. Settings,
+  files and activity follow the role, and what is already on their device
+  stays there.
+- **Can approve** (صلاحية الاعتماد), in the same dialog: up to two admins or
+  accountants may approve requests besides the owner. Off for everyone at
+  first.
+
+If the owner's account is ever deleted, the longest-standing admin (or else
+accountant) becomes the owner, as before; the change is now recorded for the
+change notifications of a later release.
 
 ## Problems
 

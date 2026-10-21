@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appLimit,
+  canChangeMember,
   canEdit,
   canEditAccounting,
   canManageTeam,
   canSeePeople,
   canWriteRecord,
+  grantableRoles,
+  isApprover,
   isPrivateRecord,
+  isSuperAdmin,
+  limitBlocksWrite,
+  lowerAccess,
   MEMBER_ROLES,
+  readPermissions,
+  recordApp,
   renewedDocumentId,
   sameData,
   staffCompanyChangeOk,
@@ -259,5 +268,93 @@ describe('sameData', () => {
     expect(sameData([1, 2], [2, 1])).toBe(false);
     expect(sameData({ a: 1 }, { a: '1' })).toBe(false);
     expect(sameData({ a: [] }, { a: {} })).toBe(false);
+  });
+});
+
+describe('the Super Admin', () => {
+  it('is the owner, who approves with up to two admins or accountants', () => {
+    expect(MEMBER_ROLES.filter(isSuperAdmin)).toEqual(['owner']);
+    expect(isSuperAdmin(null)).toBe(false);
+    expect(MEMBER_ROLES.filter((role) => isApprover(role, false))).toEqual(['owner']);
+    expect(MEMBER_ROLES.filter((role) => isApprover(role, true))).toEqual([
+      'owner',
+      'admin',
+      'accountant',
+    ]);
+  });
+
+  it('keeps admins and accountants for the owner to give once the owner says so', () => {
+    expect(grantableRoles('owner', true)).toEqual(['admin', 'accountant', 'staff', 'viewer']);
+    expect(grantableRoles('admin', false)).toEqual(['admin', 'accountant', 'staff', 'viewer']);
+    expect(grantableRoles('admin', true)).toEqual(['staff', 'viewer']);
+    for (const role of ['accountant', 'staff', 'viewer', null] as const) {
+      expect(grantableRoles(role, false)).toEqual([]);
+    }
+    // Nobody changes the owner; admins change everyone else, unless the owner keeps them.
+    expect(MEMBER_ROLES.filter((role) => canChangeMember('owner', role, true))).toEqual([
+      'admin',
+      'accountant',
+      'staff',
+      'viewer',
+    ]);
+    expect(MEMBER_ROLES.filter((role) => canChangeMember('admin', role, false))).toEqual([
+      'admin',
+      'accountant',
+      'staff',
+      'viewer',
+    ]);
+    expect(MEMBER_ROLES.filter((role) => canChangeMember('admin', role, true))).toEqual([
+      'staff',
+      'viewer',
+    ]);
+    expect(canChangeMember('accountant', 'staff', false)).toBe(false);
+  });
+});
+
+describe('the owner’s limits on a member', () => {
+  it('only ever take away, and never from the owner', () => {
+    expect(lowerAccess('manage', 'view')).toBe('view');
+    expect(lowerAccess('view', 'edit')).toBe('view');
+    expect(lowerAccess('edit', undefined)).toBe('edit');
+    expect(lowerAccess('none', 'manage')).toBe('none');
+    const limits = { apps: { books: 'view', people: 'none' } } as const;
+    expect(appLimit('admin', limits, 'books')).toBe('view');
+    expect(appLimit('admin', limits, 'crm')).toBeUndefined();
+    expect(appLimit('owner', limits, 'books')).toBeUndefined();
+    expect(appLimit(null, limits, 'books')).toBeUndefined();
+    expect(appLimit('staff', undefined, 'books')).toBeUndefined();
+  });
+
+  it('keep only what this version knows from the server', () => {
+    expect(readPermissions(null)).toEqual({});
+    expect(readPermissions({})).toEqual({});
+    expect(readPermissions({ apps: [] })).toEqual({});
+    expect(
+      readPermissions({ apps: { books: 'view', people: 'none', later: 'none', crm: 'boss' } }),
+    ).toEqual({ apps: { books: 'view', people: 'none' } });
+  });
+
+  it('put each record in an app, as the server does', () => {
+    expect(recordApp('documents', {})).toBe('books');
+    expect(recordApp('journals', { kind: 'transfer' })).toBe('books');
+    expect(recordApp('journals', { kind: 'payroll' })).toBe('people');
+    expect(recordApp('employees', {})).toBe('people');
+    expect(recordApp('complianceDocuments', { employeeId: 'emp-1' })).toBe('people');
+    expect(recordApp('complianceDocuments', { employeeId: null })).toBe('compliance');
+    expect(recordApp('vehicles', {})).toBe('compliance');
+    // What every app shares, and kinds this version doesn't know.
+    for (const table of ['companies', 'activities', 'attachments', 'approvals', 'later']) {
+      expect(recordApp(table, {})).toBeNull();
+    }
+  });
+
+  it('block writes to an app made view only or turned off', () => {
+    const limits = { apps: { books: 'view', compliance: 'none', people: 'edit' } } as const;
+    expect(limitBlocksWrite('staff', limits, 'documents', {})).toBe(true);
+    expect(limitBlocksWrite('admin', limits, 'vehicles', {})).toBe(true);
+    expect(limitBlocksWrite('accountant', limits, 'employees', {})).toBe(false);
+    expect(limitBlocksWrite('staff', limits, 'activities', {})).toBe(false);
+    expect(limitBlocksWrite('owner', limits, 'documents', {})).toBe(false);
+    expect(limitBlocksWrite('staff', undefined, 'documents', {})).toBe(false);
   });
 });

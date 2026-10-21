@@ -8,6 +8,8 @@ import {
   Link2,
   Mail,
   MessageCircle,
+  ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   UserPlus,
   UsersRound,
@@ -20,7 +22,7 @@ import { tr } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
 import { isValidEmail } from '@/lib/email';
 import { Button, buttonClass } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/form';
+import { Field, Input, Select, Switch } from '@/components/ui/form';
 import { Badge, EmptyState, Spinner } from '@/components/ui/misc';
 import {
   Dialog,
@@ -30,24 +32,35 @@ import {
   useConfirm,
 } from '@/components/ui/overlay';
 import { ReadOnlyContext } from '@/components/ui/read-only';
-import { cloudError, cloudErrorMessage, type Invite, type TeamMember } from '@/cloud/api';
+import {
+  cloudError,
+  cloudErrorMessage,
+  type Invite,
+  type MemberAccess,
+  type TeamMember,
+} from '@/cloud/api';
 import { useCloud } from '@/cloud/store';
-import { useCloudLink } from '@/cloud/hooks';
+import { useCloudLink, useServerFeature } from '@/cloud/hooks';
 import { emailInvite, inviteUrl, whatsappInvite } from '@/cloud/invite';
 import {
+  canChangeMember,
   canManageTeam,
-  INVITE_ROLES,
+  grantableRoles,
+  isApprover,
+  isSuperAdmin,
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
+  type MemberPermissions,
   type MemberRole,
 } from '@/cloud/roles';
 import { withSyncLock } from '@/cloud/lock';
-import { deleteFromCloud, isDemoCompany } from '@/cloud/sync';
+import { deleteFromCloud, isDemoCompany, notePermissions } from '@/cloud/sync';
 import { Avatar } from '@/features/cloud/account-menu';
 import { FormError } from '@/features/cloud/auth-shell';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import { AccessGrid } from '@/suite/access-grid';
+import { MemberPermissionsDialog } from './member-permissions';
 import { SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -141,7 +154,13 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
   const [error, setError] = useState('');
   const [created, setCreated] = useState<Invite | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
+  // The Super Admin's controls, once the server has them.
+  const superAdmin = useServerFeature(companyId, 'super_admin');
+  const [access, setAccess] = useState<MemberAccess[]>([]);
+  const [ownerOnly, setOwnerOnly] = useState(false);
+  const [editing, setEditing] = useState<TeamMember | null>(null);
   const manage = canManageTeam(role);
+  const owner = isSuperAdmin(role);
   const name = localName(company);
 
   const [version, setVersion] = useState(0);
@@ -154,11 +173,17 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     Promise.all([
       api.companyTeam(companyId),
       manage ? api.listInvites(companyId) : Promise.resolve([]),
+      superAdmin ? api.teamPermissions(companyId) : Promise.resolve(null),
+      superAdmin ? api.myPermissions(companyId) : Promise.resolve(null),
     ])
-      .then(([team, pending]) => {
+      .then(([team, pending, rows, mine]) => {
         if (cancelled) return;
         setMembers(team);
         setInvites(pending);
+        setAccess(rows ?? []);
+        setOwnerOnly(mine?.seniorRolesOwnerOnly ?? false);
+        // What this device applies as the person works, fresh from the cloud.
+        if (mine) void notePermissions(companyId, mine);
         setError('');
       })
       .catch((err) => {
@@ -169,19 +194,31 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
     return () => {
       cancelled = true;
     };
-  }, [api, companyId, manage, version]);
+  }, [api, companyId, manage, superAdmin, version]);
 
   if (!api || !user) return null;
 
-  const act = async (work: () => Promise<unknown>, done: string) => {
+  const act = async (work: () => Promise<unknown>, done: string): Promise<boolean> => {
     try {
       await work();
       toast.success(done);
       load();
+      return true;
     } catch (err) {
       toast.error(cloudErrorMessage(err));
+      return false;
     }
   };
+
+  const accessOf = (userId: string) => access.find((a) => a.userId === userId);
+  const approversBesides = (userId: string) =>
+    (members ?? []).filter(
+      (m) =>
+        m.userId !== userId &&
+        m.role !== 'owner' &&
+        isApprover(m.role, accessOf(m.userId)?.canApprove),
+    ).length;
+  const grantable = grantableRoles(role, ownerOnly);
 
   const linkFor = (invite: Invite) =>
     inviteUrl(invite.token, {
@@ -268,7 +305,19 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
                 key={member.userId}
                 member={member}
                 me={member.userId === user.id}
-                canEdit={manage && member.role !== 'owner' && member.userId !== user.id}
+                superAdmin={superAdmin}
+                access={accessOf(member.userId)}
+                roles={grantable}
+                canEdit={
+                  manage &&
+                  member.userId !== user.id &&
+                  canChangeMember(role, member.role, ownerOnly)
+                }
+                onPermissions={
+                  superAdmin && owner && member.role !== 'owner'
+                    ? () => setEditing(member)
+                    : undefined
+                }
                 onRole={(next) =>
                   void act(
                     () => api.setMemberRole(companyId, member.userId, next),
@@ -298,6 +347,35 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
         )}
       </SettingsSection>
 
+      {superAdmin && owner ? (
+        <SettingsSection
+          title={t('Super Admin')}
+          description={t(
+            'As the owner of {company} you are its Super Admin: you decide who does what. To make someone else Super Admin, transfer ownership to them below.',
+            { company: name },
+          )}
+        >
+          <Switch
+            checked={ownerOnly}
+            onChange={(on) =>
+              void act(async () => {
+                await api.setTeamRules(companyId, { seniorRolesOwnerOnly: on });
+                setOwnerOnly(on);
+              }, t('Team rules saved'))
+            }
+            label={t('Only the owner makes admins and accountants')}
+            description={t(
+              'Admins still invite and remove staff and viewers. Turning this on cancels invitations as admin or accountant that others made.',
+            )}
+          />
+          <p className="text-sm text-slate-500">
+            {t(
+              'Use Permissions next to a member to make an app view only or turn it off for them, and to let up to two admins or accountants approve.',
+            )}
+          </p>
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection
         title={t('What each role can open')}
         description={t('Which apps each role opens, and what it can do there.')}
@@ -308,6 +386,8 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
       {manage ? (
         <InviteForm
           companyId={companyId}
+          roles={grantable}
+          ownerOnly={ownerOnly && !owner}
           onCreated={(invite) => {
             setCreated(invite);
             load();
@@ -418,6 +498,25 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
         )}
       </SettingsSection>
 
+      {editing ? (
+        <MemberPermissionsDialog
+          key={editing.userId}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditing(null);
+          }}
+          member={editing}
+          access={accessOf(editing.userId)}
+          otherApprovers={approversBesides(editing.userId)}
+          onSave={(permissions: MemberPermissions, canApprove: boolean) =>
+            act(
+              () => api.setMemberPermissions(companyId, editing.userId, permissions, canApprove),
+              t('Permissions saved'),
+            )
+          }
+        />
+      ) : null}
+
       {members ? (
         <TransferDialog
           open={transferOpen}
@@ -467,31 +566,60 @@ function Row({
 function MemberRow({
   member,
   me,
+  superAdmin,
+  access,
+  roles,
   canEdit,
+  onPermissions,
   onRole,
   onRemove,
 }: {
   member: TeamMember;
   me: boolean;
+  /** The server has the Super Admin's controls. */
+  superAdmin: boolean;
+  access: MemberAccess | undefined;
+  /** The roles the reader may give. */
+  roles: Exclude<MemberRole, 'owner'>[];
   canEdit: boolean;
+  /** The owner sets this member's limits. */
+  onPermissions?: () => void;
   onRole: (role: MemberRole) => void;
   onRemove: () => void;
 }) {
   const label = member.fullName || member.email;
+  const limited = Object.keys(access?.permissions.apps ?? {}).length > 0;
+  const approves = member.role !== 'owner' && isApprover(member.role, access?.canApprove);
   return (
     <li className="flex flex-wrap items-center gap-3 py-3">
       <Avatar name={member.fullName} email={member.email} />
       <div className="min-w-0 flex-1 basis-40">
-        <p className="flex min-w-0 items-center gap-2 font-medium text-slate-900">
+        <p className="flex min-w-0 flex-wrap items-center gap-2 font-medium text-slate-900">
           <span dir="auto" className="truncate">
             {label}
           </span>
           {me ? <Badge tone="blue">{t('You')}</Badge> : null}
+          {approves ? (
+            <Badge tone="green">
+              <ShieldCheck className="size-3" aria-hidden /> {t('Can approve')}
+            </Badge>
+          ) : null}
+          {limited ? <Badge tone="amber">{t('Limited access')}</Badge> : null}
         </p>
         <p dir="ltr" className="truncate text-xs text-slate-500 rtl:text-end">
           {member.email}
         </p>
       </div>
+      {onPermissions ? (
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={t('Permissions of {name}', { name: label })}
+          onClick={onPermissions}
+        >
+          <SlidersHorizontal /> {t('Permissions')}
+        </Button>
+      ) : null}
       {canEdit ? (
         <div className="flex items-center gap-2">
           <Select
@@ -500,7 +628,7 @@ function MemberRow({
             aria-label={t('Role of {name}', { name: label })}
             className="w-36"
           >
-            {INVITE_ROLES.map((role) => (
+            {roles.map((role) => (
               <option key={role} value={role}>
                 {t(ROLE_LABELS[role])}
               </option>
@@ -517,7 +645,9 @@ function MemberRow({
         </div>
       ) : (
         <Badge tone={member.role === 'owner' ? 'violet' : 'gray'}>
-          {t(ROLE_LABELS[member.role])}
+          {member.role === 'owner' && superAdmin
+            ? t('Owner (Super Admin)')
+            : t(ROLE_LABELS[member.role])}
         </Badge>
       )}
     </li>
@@ -526,14 +656,22 @@ function MemberRow({
 
 function InviteForm({
   companyId,
+  roles,
+  ownerOnly,
   onCreated,
 }: {
   companyId: string;
+  /** The roles the reader may invite as. */
+  roles: Exclude<MemberRole, 'owner'>[];
+  /** Only the owner invites admins and accountants (the reader isn't the owner). */
+  ownerOnly: boolean;
   onCreated: (invite: Invite) => void;
 }) {
   const { api } = useCloud();
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Exclude<MemberRole, 'owner'>>('accountant');
+  const [chosen, setRole] = useState<Exclude<MemberRole, 'owner'>>('accountant');
+  // The owner's rule may arrive after the form: never offer a role they can't give.
+  const role = roles.includes(chosen) ? chosen : (roles[0] ?? 'staff');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submit = async (e: FormEvent) => {
@@ -583,7 +721,7 @@ function InviteForm({
                 value={role}
                 onChange={(e) => setRole(e.target.value as Exclude<MemberRole, 'owner'>)}
               >
-                {INVITE_ROLES.map((r) => (
+                {roles.map((r) => (
                   <option key={r} value={r}>
                     {t(ROLE_LABELS[r])}
                   </option>
@@ -593,6 +731,11 @@ function InviteForm({
           </Field>
         </div>
         <p className="text-sm text-slate-500">{t(ROLE_DESCRIPTIONS[role])}</p>
+        {ownerOnly ? (
+          <p className="text-sm text-slate-500">
+            {t('Only the owner invites admins and accountants.')}
+          </p>
+        ) : null}
         <FormError>{error}</FormError>
         <div className="flex justify-end">
           <Button type="submit" loading={busy}>
@@ -690,7 +833,7 @@ function TransferDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   members: TeamMember[];
-  onTransfer: (member: TeamMember) => Promise<void>;
+  onTransfer: (member: TeamMember) => Promise<unknown>;
 }) {
   const [chosen, setChosen] = useState('');
   const [busy, setBusy] = useState(false);

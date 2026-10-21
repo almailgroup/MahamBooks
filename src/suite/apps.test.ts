@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matchRoutes } from 'react-router';
 import { routes } from '@/app/routes';
-import { canEdit as roleCanEdit, canSeePeople, MEMBER_ROLES } from '@/cloud/roles';
+import { canEdit as roleCanEdit, canSeePeople, LIMIT_APPS, MEMBER_ROLES } from '@/cloud/roles';
 import { navLinks } from '@/features/shell/nav';
 import {
   accessMap,
@@ -194,5 +194,38 @@ describe('the New menus', () => {
     expect(left.map((g) => g.label)).toContain('Sales');
     expect(right.map((g) => g.label)).toContain('Purchases');
     expect(left.length + right.length).toBe(createGroups('books', accessMap('owner')).length);
+  });
+});
+
+describe('the owner’s limits on a member', () => {
+  it('cover every app', () => {
+    expect([...LIMIT_APPS]).toEqual(APPS.map((app) => app.id));
+  });
+
+  it('only take away from the role, and never from the owner', () => {
+    const limits = { apps: { books: 'view', people: 'none', compliance: 'edit' } } as const;
+    expect(accessMap('accountant', true, limits)).toEqual({
+      books: 'view',
+      people: 'none',
+      // CRM works on Books' customers and quotes: no more open than Books.
+      crm: 'view',
+      compliance: 'edit',
+    });
+    // Staff look at Compliance whatever the limit says.
+    expect(appAccess('compliance', 'staff', true, limits)).toBe('view');
+    expect(accessMap('owner', true, limits)).toEqual(accessMap('owner'));
+    expect(accessMap(null, true, limits)).toEqual(accessMap(null));
+    for (const role of ROLES) expect(accessMap(role, true, {})).toEqual(accessMap(role));
+  });
+
+  it('never hide Books, which the other apps use', () => {
+    const off = { apps: { books: 'none' } } as const;
+    expect(appAccess('books', 'admin', true, off)).toBe('view');
+    expect(appAccess('crm', 'admin', true, off)).toBe('view');
+    expect(visibleApps(accessMap('staff', true, off)).map((app) => app.id)).toEqual([
+      'books',
+      'crm',
+      'compliance',
+    ]);
   });
 });

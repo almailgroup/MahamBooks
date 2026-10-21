@@ -58,6 +58,47 @@ const CORS = {
 
 const base64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
+/** A database function refusing the call, as PostgREST answers it. */
+class Refusal {
+  constructor(
+    readonly status: number,
+    readonly body: { code: string; message: string },
+  ) {}
+}
+
+const refuse = (message: string) => new Refusal(403, { code: '42501', message });
+
+type Access = 'none' | 'view' | 'edit' | 'manage';
+
+/**
+ * The app a record belongs to, for the owner's limits on a member: the same
+ * as almailbooks.record_app (and recordApp in src/cloud/roles.ts).
+ */
+function recordApp(tbl: string, data: Record<string, unknown> | null): string | null {
+  const people = [
+    'employees',
+    'payRuns',
+    'payrollSettings',
+    'peopleSettings',
+    'leaveRecords',
+    'staffLoans',
+    'finalSettlements',
+    'letterTemplates',
+    'employeeLetters',
+  ];
+  const shared = ['companies', 'activities', 'attachments', 'approvals'];
+  if (people.includes(tbl)) return 'people';
+  if (tbl === 'journals' && data?.kind === 'payroll') return 'people';
+  const employee = typeof data?.employeeId === 'string' && data.employeeId !== '';
+  if ((tbl === 'complianceDocuments' || tbl === 'renewals') && employee) return 'people';
+  if (['complianceDocuments', 'renewals', 'complianceMarks', 'vehicles'].includes(tbl)) {
+    return 'compliance';
+  }
+  return shared.includes(tbl) ? null : 'books';
+}
+
+const SENIOR: Role[] = ['admin', 'accountant'];
+
 export class FakeSupabase {
   users = new Map<string, FakeUser>();
   companies = new Map<
@@ -67,6 +108,13 @@ export class FakeSupabase {
   records = new Map<string, Row>();
   invites: Invite[] = [];
   requests: SeenRequest[] = [];
+  /** The owner's limits and approver mark per member, by "company user". */
+  access = new Map<
+    string,
+    { permissions: { apps?: Record<string, Access> }; canApprove: boolean }
+  >();
+  /** Companies whose owner makes admins and accountants alone. */
+  seniorRolesOwnerOnly = new Set<string>();
   /** Email alerts by "company user", and the emails asked for from the app. */
   emailAlerts = new Map<string, { enabled: boolean; topics: string[]; appUrl: string }>();
   alertEmails: { company: string; to: string }[] = [];
@@ -265,13 +313,32 @@ export class FakeSupabase {
     if (fn && me) {
       const result = this.rpc(fn, b, me);
       if (result === undefined) return route.fulfill({ status: 204, headers: CORS });
+      if (result instanceof Refusal) {
+        return json(result.status, { ...result.body, details: null, hint: null });
+      }
       return json(200, result);
     }
     return json(404, { message: 'Not found' });
   }
 
+  /** Whether the owner's limits keep `user` from storing this record (as can_write_record). */
+  private limited(
+    company: string,
+    user: string,
+    tbl: string,
+    data: Record<string, unknown> | null,
+  ): boolean {
+    if (this.companies.get(company)?.members.get(user) === 'owner') return false;
+    const app = recordApp(tbl, data);
+    const limit = app ? this.access.get(`${company} ${user}`)?.permissions.apps?.[app] : undefined;
+    return limit === 'none' || limit === 'view';
+  }
+
   private rpc(fn: string, b: Record<string, unknown>, me: FakeUser): unknown {
     const company = String(b.p_company ?? '');
+    const entry = this.companies.get(company);
+    const mine = entry?.members.get(me.id);
+    const ownerOnly = this.seniorRolesOwnerOnly.has(company);
     switch (fn) {
       case 'create_company': {
         const id = String(b.p_id);
@@ -305,6 +372,17 @@ export class FakeSupabase {
           data?: Record<string, unknown>;
           deleted?: boolean;
         }[];
+        // All or nothing, like the database: the owner's limits on the member.
+        const blocked = changes.some((change) => {
+          const old = this.records.get(`${company}/${change.tbl}/${change.id}`)?.data ?? null;
+          return (
+            this.limited(company, me.id, change.tbl, change.data ?? null) ||
+            this.limited(company, me.id, change.tbl, old)
+          );
+        });
+        if (blocked) {
+          return refuse('new row violates row-level security policy for table "records"');
+        }
         return changes.map((change) => {
           this.rev += 1;
           this.records.set(`${company}/${change.tbl}/${change.id}`, {
@@ -340,7 +418,73 @@ export class FakeSupabase {
       case 'company_record_ids':
         return [];
       case 'server_features':
-        return ['tables_v16'];
+        return ['tables_v16', 'super_admin'];
+      case 'my_permissions': {
+        const access = this.access.get(`${company} ${me.id}`);
+        return [
+          {
+            permissions: mine === 'owner' ? {} : (access?.permissions ?? {}),
+            can_approve: mine === 'owner' || Boolean(access?.canApprove),
+            is_owner: mine === 'owner',
+            senior_roles_owner_only: ownerOnly,
+          },
+        ];
+      }
+      case 'team_permissions':
+        return [...(entry?.members ?? new Map<string, Role>()).keys()]
+          .filter((id) => mine === 'owner' || mine === 'admin' || id === me.id)
+          .map((id) => ({
+            user_id: id,
+            permissions: this.access.get(`${company} ${id}`)?.permissions ?? {},
+            can_approve: Boolean(this.access.get(`${company} ${id}`)?.canApprove),
+          }));
+      case 'set_member_permissions':
+        if (mine !== 'owner') return refuse('almail:permission Only the owner can set this.');
+        this.access.set(`${company} ${String(b.p_user)}`, {
+          permissions: (b.p_permissions ?? {}) as { apps?: Record<string, Access> },
+          canApprove: Boolean(b.p_can_approve),
+        });
+        return undefined;
+      case 'set_team_rules':
+        if (mine !== 'owner') return refuse('almail:permission Only the owner can set this.');
+        if (b.p_senior_roles_owner_only) this.seniorRolesOwnerOnly.add(company);
+        else this.seniorRolesOwnerOnly.delete(company);
+        return undefined;
+      case 'owned_companies_overview':
+        return [...this.companies.values()]
+          .filter((c) => c.members.get(me.id) === 'owner')
+          .map((c) => ({
+            company_id: c.id,
+            name: c.name,
+            members: c.members.size,
+            pending_approvals: 0,
+          }));
+      case 'set_member_role': {
+        const target = entry?.members.get(String(b.p_user));
+        const role = b.p_role as Role;
+        if (mine !== 'owner' && mine !== 'admin') return refuse('almail:permission');
+        if (!target || target === 'owner') return refuse('almail:permission');
+        if (mine === 'admin' && ownerOnly && (SENIOR.includes(target) || SENIOR.includes(role))) {
+          return refuse(
+            'almail:permission Only the owner can make or change admins and accountants.',
+          );
+        }
+        entry!.members.set(String(b.p_user), role);
+        return undefined;
+      }
+      case 'remove_member': {
+        const target = entry?.members.get(String(b.p_user));
+        if (!target) return undefined;
+        if (target === 'owner') return refuse('almail:permission');
+        if (String(b.p_user) !== me.id) {
+          if (mine !== 'owner' && mine !== 'admin') return refuse('almail:permission');
+          if (mine === 'admin' && ownerOnly && SENIOR.includes(target)) {
+            return refuse('almail:permission Only the owner can remove admins and accountants.');
+          }
+        }
+        entry!.members.delete(String(b.p_user));
+        return undefined;
+      }
       case 'company_team': {
         const entry = this.companies.get(company);
         return [...(entry?.members ?? new Map<string, Role>()).entries()].map(([id, role]) => {
@@ -367,6 +511,9 @@ export class FakeSupabase {
             invited_by_name: me.fullName,
           }));
       case 'create_invite': {
+        if (mine === 'admin' && ownerOnly && SENIOR.includes(b.p_role as Role)) {
+          return refuse('almail:permission Only the owner can invite admins and accountants.');
+        }
         // Like the server: a new link for the same address cancels the pending one.
         for (const pending of this.invites) {
           if (pending.company === company && pending.email === String(b.p_email).toLowerCase()) {

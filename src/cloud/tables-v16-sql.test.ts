@@ -494,7 +494,9 @@ describe('a register document made confidential under new ids', () => {
 describe('server_features', () => {
   it('tells signed-in people what the server has, and nobody else', async () => {
     const user = await h.user('features@example.com');
-    expect(await h.rpc(user, 'server_features')).toEqual([{ server_features: ['tables_v16'] }]);
+    // Later files add their own names to it.
+    const [row] = await h.rpc<{ server_features: string[] }>(user, 'server_features');
+    expect(row.server_features).toContain('tables_v16');
     await expect(h.rpc(null, 'server_features')).rejects.toThrow(/permission denied/);
   });
 

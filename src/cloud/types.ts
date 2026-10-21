@@ -1,4 +1,4 @@
-import type { MemberRole } from './roles';
+import type { MemberPermissions, MemberRole } from './roles';
 
 /**
  * Local bookkeeping of the cloud copy, kept in IndexedDB next to the data
@@ -53,6 +53,19 @@ export interface CloudLink {
   features?: string[];
   /** When `features` was asked. */
   featuresAt?: string;
+  /**
+   * The owner's limits on this person, app by app (see roles.ts), as last
+   * asked (my_permissions, once the server has 'super_admin'). Missing: the
+   * role's access, as before. Kept on this device only: never synced or
+   * backed up.
+   */
+  permissions?: MemberPermissions;
+  /** The owner allowed this person to approve requests (an admin or accountant). */
+  approver?: boolean;
+  /** Only the owner makes admins and accountants (the owner's switch in Settings → Team). */
+  seniorRolesOwnerOnly?: boolean;
+  /** When `permissions` was asked. */
+  permissionsAt?: string;
 }
 
 /** A change made here that the server has not confirmed yet (table `outbox`). */

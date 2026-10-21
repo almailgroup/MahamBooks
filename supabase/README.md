@@ -8,8 +8,10 @@ the cloud, deleting a company safely, and the file checks below. Until the
 second runs, the app notices its functions are missing and works as before.
 `migrations/20261007000000_email_alerts.sql` comes next and adds email alerts
 (see "Email alerts" below). `migrations/20261102000000_tables_v16.sql` comes
-last: the records of the app's database version 16 and their privacy (see
-"Records of database version 16" below). Each file is run once, in this
+next: the records of the app's database version 16 and their privacy (see
+"Records of database version 16" below).
+`migrations/20261116000000_super_admin_approvals.sql` comes last: the Super
+Admin's controls (see "The Super Admin" below). Each file is run once, in this
 order; a release that needs more from the server adds a file, and only that
 one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
@@ -52,6 +54,7 @@ commit order, so a pull "after rev N" never skips a change that committed late.
 | See payroll and people data                              |  yes  |         yes         |    yes     |         **no**         | **no** |
 | Invite, change roles, remove members                     |  yes  | yes (not the owner) |     no     |           no           |   no   |
 | Transfer ownership, delete the company                   |  yes  |         no          |     no     |           no           |   no   |
+| Limit members, choose approvers, keep senior roles       |  yes  |         no          |     no     |           no           |   no   |
 | Leave the company                                        |  no   |         yes         |    yes     |          yes           |  yes   |
 
 **Payroll and people data** (invisible to staff and viewers, not even
@@ -66,6 +69,9 @@ the tables above); register documents marked `confidential` with their
 renewals, files and activity. The rule is `almailbooks.record_is_private`. The
 app also marks files and activity about employees, letters and confidential
 documents with `_private: true`, which can only make a record more private.
+
+With the owner's switch on (see "The Super Admin" below), admins invite,
+change and remove only staff and viewers.
 
 ## Functions
 
@@ -87,7 +93,9 @@ The app calls these (all `revoke`d from `anon` and `public`, granted to
 | `reserve_number(company, kind, date, min)`                                 | invoker | The next number of a kind of document, taken from the company's counter at once.          |
 | `begin_delete_company(company)`                                            | definer | Owners only, before the app removes any file; uploads are refused for an hour.            |
 | `stored_files(company, names)`                                             | definer | Which of these files are still stored, for members: a removal that removed nothing.       |
-| `server_features()`                                                        | invoker | What the server has beyond the first files (`tables_v16`), so the app can hide the rest.  |
+| `server_features()`                                                        | invoker | What the server has beyond the first files (`tables_v16`…), so the app can hide the rest. |
+| `set_member_permissions`, `set_team_rules`                                 | definer | Owner only: a member's limits and approver mark; who makes admins and accountants.        |
+| `team_permissions`, `my_permissions`, `owned_companies_overview`           | definer | Limits and approver marks (everyone's for owners and admins), and the companies owned.    |
 
 `create_company` refuses a company that is already in the cloud with records
 (`almail:company_exists`): the app offers to download it instead, so an older
@@ -286,6 +294,42 @@ skipped the new tables' records fetches just those tables once
 (`company_record_ids` and the records), instead of syncing everything again.
 `src/cloud/tables-v16-sql.test.ts` checks the rules, and
 `src/cloud/table-parity.test.ts` that the table lists here and in the app agree.
+
+## The Super Admin
+
+`20261116000000_super_admin_approvals.sql`. The Super Admin is each company's
+owner (`company_members_one_owner`); someone becomes Super Admin through
+`transfer_ownership`, and nothing names a person.
+
+- `company_members.permissions` (jsonb, `'{}'` by default) holds the owner's
+  limits on a member: `{"apps": {"books" | "people" | "crm" | "compliance":
+"none" | "view" | "edit" | "manage"}}`. `can_write_record` reads the
+  member's row once (as `member_role` did) and refuses a write when the
+  record's app (`almailbooks.record_app`: People tables, payroll journals and
+  employees' papers are People; the register and vehicles Compliance; the
+  books Books; the company record, activity, files and approval requests no
+  app) is limited to `none` or `view`. Owners are never limited. `'{}'`, every
+  member's value until the owner sets one, gives the first file's answers
+  (the regular tests run with it). Reading is unchanged.
+- `company_members.can_approve` (false by default): admins and accountants
+  only, two at most; `almailbooks.is_approver(company)` is the owner or one of
+  them. A trigger clears it when the role changes to anything else, and
+  clears an owner's limits.
+- `companies.senior_roles_owner_only` (false by default) is the owner's
+  switch (`set_team_rules`): with it on, `create_invite`, `revoke_invite`,
+  `set_member_role` and `remove_member` (same signatures) leave admins and
+  accountants to the owner; admins still invite and remove staff and
+  viewers, and anyone may leave. Turning it on cancels invitations as admin
+  or accountant someone else made. Refusals are `almail:permission` with
+  SQLSTATE 42501.
+- `company_members_audit` sends every team change (joined, role, limits,
+  left, ownership, succession when the owner's account is deleted) to
+  `public.change_events` as kind `member`, with ids and roles only. It does
+  nothing until `20261123000000_change_feed.sql` creates that table, and
+  ignores any error writing to it, so it never stops a team change.
+- `server_features()` also answers `super_admin`.
+- `src/cloud/super-admin-sql.test.ts` checks all of it, and that the app's
+  test cloud (`src/cloud/testing/fake-cloud.ts`) refuses the same changes.
 
 ## Email alerts
 
