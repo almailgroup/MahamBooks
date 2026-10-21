@@ -26,6 +26,7 @@ import {
 } from './renewals';
 import { createVehicle, saveVehicle } from './vehicles';
 import { getPayrollSettings, savePayrollSettings } from './payroll';
+import { setFileFinder } from './files';
 
 beforeEach(async () => {
   await db.delete();
@@ -194,6 +195,16 @@ describe('backup', () => {
       ownerName: 'Made-up Customer Co.',
     });
     expect((await db.complianceDocuments.get(paper.id))?.vehicleId).toBe(vehicle.id);
+  });
+
+  it('keeps the document finder switched on', async () => {
+    const a = await setupCompany({ name: 'Made-up Guarding' });
+    await setFileFinder(a.id, true);
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.companies.get(a.id))?.fileFinder).toBe(true);
   });
 
   it('keeps the leave policy and employees’ own days of annual leave', async () => {

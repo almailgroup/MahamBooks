@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { amountQuery, compactSearch, normalizeSearch } from './normalize';
+import { amountQuery, compactSearch, normalizeSearch, textMatches } from './normalize';
 import { makeEntry, searchEntries, type EntryInput } from './rank';
 
 const contact = (id: string, name: string, nameAr?: string): EntryInput => ({
@@ -25,6 +25,18 @@ describe('normalizeSearch', () => {
     expect(normalizeSearch('  Café  DU   Golfe ')).toBe('cafe du golfe');
     expect(normalizeSearch('٢٠٢٦')).toBe('2026');
     expect(compactSearch('INV-2026-0001')).toBe('inv20260001');
+  });
+
+  it('matches every word typed against a list of fields', () => {
+    const fields = ['Residency', 'أحمد التجريبي', '18/2024/55', null, undefined];
+    expect(textMatches('', fields)).toBe(true);
+    expect(textMatches('residency', fields)).toBe(true);
+    expect(textMatches('احمد', fields)).toBe(true);
+    expect(textMatches('RESIDENCY احمد', fields)).toBe(true);
+    expect(textMatches('١٨/٢٠٢٤', fields)).toBe(true);
+    expect(textMatches('18202455', fields)).toBe(true);
+    expect(textMatches('residency passport', fields)).toBe(false);
+    expect(textMatches('99', fields)).toBe(false);
   });
 
   it('reads typed amounts', () => {

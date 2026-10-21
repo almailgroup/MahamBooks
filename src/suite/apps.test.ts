@@ -50,6 +50,8 @@ describe('the apps of Maham One', () => {
     expect(appForPath('/people/directory')).toBe('people');
     expect(appForPath('/compliance/documents')).toBe('compliance');
     expect(appForPath('/crm/prospects')).toBe('crm');
+    // Every app's files, listed in Compliance.
+    expect(appForPath('/files')).toBe('compliance');
     // The suite's own pages belong to no app.
     expect(appForPath('/')).toBeNull();
     expect(appForPath('/settings/team')).toBeNull();

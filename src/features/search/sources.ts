@@ -4,8 +4,15 @@ import { DOCUMENT_LABELS, DOCUMENT_ROUTES } from '@/app/company';
 import { displayStatus, statusMeta } from '@/lib/status';
 import { currencyPrecision } from '@/lib/money';
 import { isCurrent } from '@/lib/hr/employees';
-import { documentTypeInfo, registerExtrasOn } from '@/lib/compliance';
+import {
+  DEFAULT_REMINDER_DAYS,
+  documentTypeInfo,
+  employeeDocuments,
+  registerExtrasOn,
+} from '@/lib/compliance';
 import { entryOwner, entryTitle, purposeName } from '@/features/renewals/text';
+import { fileFinderOn } from '@/db/files';
+import { loadFileIndex } from '@/features/files/file-index';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
 import { visibleNav } from '@/features/shell/nav';
@@ -14,6 +21,7 @@ import type { AppId } from '@/suite/types';
 import { currentLanguage, msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { makeEntry, type SearchEntry } from './rank';
+import { isPeopleItem } from './recent';
 
 /** Formatting bound to the company and language (`useFormat()`). */
 export interface SearchFormat {
@@ -91,7 +99,14 @@ export function staticEntries(
     current = 'books',
     create = true,
     registerExtras = false,
-  }: { access?: AccessMap; current?: AppId; create?: boolean; registerExtras?: boolean } = {},
+    fileFinder = false,
+  }: {
+    access?: AccessMap;
+    current?: AppId;
+    create?: boolean;
+    registerExtras?: boolean;
+    fileFinder?: boolean;
+  } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
   const seen = new Set<string>();
@@ -131,7 +146,7 @@ export function staticEntries(
         boost: 35,
       }),
     );
-    for (const entry of visibleNav(app.nav, taxesOn, registerExtras)) {
+    for (const entry of visibleNav(app.nav, taxesOn, registerExtras, fileFinder)) {
       if (entry.kind === 'link') {
         page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
       } else {
@@ -193,19 +208,34 @@ const SEARCHED_DOCUMENTS: DocumentType[] = [
 ];
 
 /**
- * Contacts, items, employees, documents and payments of a company, and with
- * the register's extras its papers in the register.
+ * Contacts, items, employees, documents and payments of a company; with the
+ * register's extras its papers in the register; and with the document
+ * finder the papers on employees' records too, expenses, fixed assets,
+ * security cheques and stored files. Without `people` (staff and viewers),
+ * files of payroll and people data are not even listed.
  */
-export async function recordEntries(company: Company, fmt: SearchFormat): Promise<SearchEntry[]> {
+export async function recordEntries(
+  company: Company,
+  fmt: SearchFormat,
+  { people = true }: { people?: boolean } = {},
+): Promise<SearchEntry[]> {
   const extras = registerExtrasOn(company);
+  const finder = fileFinderOn(company);
+  const withPapers = extras || finder;
   const [clients, products, employees, documents, payments, papers, vehicles] = await Promise.all([
     db.clients.where('companyId').equals(company.id).toArray(),
     db.products.where('companyId').equals(company.id).toArray(),
     db.employees.where('companyId').equals(company.id).toArray(),
     db.documents.where('companyId').equals(company.id).toArray(),
     db.payments.where('companyId').equals(company.id).toArray(),
-    extras ? db.complianceDocuments.where('companyId').equals(company.id).toArray() : [],
-    extras ? db.vehicles.where('companyId').equals(company.id).toArray() : [],
+    withPapers ? db.complianceDocuments.where('companyId').equals(company.id).toArray() : [],
+    withPapers ? db.vehicles.where('companyId').equals(company.id).toArray() : [],
+  ]);
+  const [expenses, assets, cheques, files] = await Promise.all([
+    finder ? db.expenses.where('companyId').equals(company.id).toArray() : [],
+    finder ? db.assets.where('companyId').equals(company.id).toArray() : [],
+    finder ? db.securityCheques.where('companyId').equals(company.id).toArray() : [],
+    finder ? loadFileIndex(company, { people }) : [],
   ]);
   const now = today();
   const ar = (record: { nameAr?: string }) => record.nameAr?.trim() || undefined;
@@ -300,7 +330,7 @@ export async function recordEntries(company: Company, fmt: SearchFormat): Promis
     entries.push(
       makeEntry({
         key: `paper:${paper.id}`,
-        kind: 'document',
+        kind: 'paper',
         title: entryTitle(paper),
         subtitle: [
           paper.title ? type : '',
@@ -323,6 +353,114 @@ export async function recordEntries(company: Company, fmt: SearchFormat): Promis
           purposeName(company.documentPurposes, paper.purposeId),
         ],
         numbers: [paper.number],
+      }),
+    );
+  }
+
+  if (finder) {
+    // The papers on current employees' own records (Civil ID, residency…).
+    for (const e of employees) {
+      if (!isCurrent(e)) continue;
+      for (const entry of employeeDocuments(e, DEFAULT_REMINDER_DAYS)) {
+        const type = documentTypeInfo(entry.type).label;
+        entries.push(
+          makeEntry({
+            key: `paper:${entry.key}`,
+            kind: 'paper',
+            title: t(type),
+            subtitle: [
+              localName(e),
+              entry.expiryDate ? t('Expires {date}', { date: fmt.date(entry.expiryDate) }) : '',
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            to: `/employees/${e.id}`,
+            names: [t(type), type],
+            terms: [e.name, ar(e), e.number],
+            numbers: [entry.number],
+          }),
+        );
+      }
+    }
+  }
+
+  for (const e of expenses) {
+    const vendor = e.vendorId ? names.get(e.vendorId) : undefined;
+    entries.push(
+      makeEntry({
+        key: `expense:${e.id}`,
+        kind: 'document',
+        title: `${t('Expense')} ${e.number}`.trim(),
+        subtitle: [e.description, vendor ? localName(vendor) : '', fmt.date(e.date)]
+          .filter(Boolean)
+          .join(' · '),
+        amount: fmt.money(e.amount, e.currency),
+        to: `/expenses?open=${e.id}`,
+        names: [e.number, e.description],
+        terms: [vendor?.name, vendor && ar(vendor), t('Expense'), 'Expense'],
+        numbers: [e.number, e.reference],
+        amounts: [e.amount],
+        precision: currencyPrecision(e.currency),
+        boost: recency(e.date),
+      }),
+    );
+  }
+
+  for (const a of assets) {
+    entries.push(
+      makeEntry({
+        key: `asset:${a.id}`,
+        kind: 'document',
+        title: localName(a) || a.number,
+        subtitle: [t('Fixed asset'), a.number, a.location].filter(Boolean).join(' · '),
+        amount: fmt.money(a.cost),
+        to: `/assets/${a.id}`,
+        names: [a.name, ar(a)],
+        terms: [t('Fixed asset'), 'Fixed asset', a.location, a.custodian],
+        numbers: [a.number, a.serialNumber],
+        amounts: [a.cost],
+        precision: currencyPrecision(company.currency),
+        boost: a.status === 'active' ? 1 : -5,
+      }),
+    );
+  }
+
+  for (const c of cheques) {
+    const client = c.clientId ? names.get(c.clientId) : undefined;
+    entries.push(
+      makeEntry({
+        key: `security:${c.id}`,
+        kind: 'document',
+        title: `${t('Security cheque')} ${c.number}`.trim(),
+        subtitle: [client ? localName(client) : c.drawer, c.purpose].filter(Boolean).join(' · '),
+        amount: fmt.money(c.amount, c.currency),
+        // The register's tab, searched for it (returned and cashed ones too).
+        to: `/cheques?tab=security&q=${encodeURIComponent(c.number)}${c.status === 'held' ? '' : '&all=1'}`,
+        names: [c.number],
+        terms: [client?.name, client && ar(client), c.drawer, c.purpose, t('Security cheque')],
+        numbers: [c.number],
+        amounts: [c.amount],
+        precision: currencyPrecision(c.currency),
+        boost: c.status === 'held' ? 1 : -5,
+      }),
+    );
+  }
+
+  for (const f of files) {
+    // A confidential paper's files are found on the Files page only, as the
+    // paper is; an employee's open with them (staff never get these).
+    if (f.private && !isPeopleItem({ kind: 'file', to: f.to ?? '' })) continue;
+    entries.push(
+      makeEntry({
+        key: `file:${f.id}`,
+        kind: 'file',
+        title: f.name,
+        subtitle: [f.owner, f.detail].filter(Boolean).join(' · '),
+        to: f.to ?? '',
+        names: [f.name, f.name.replace(/\.[a-z0-9]{1,5}$/i, '')],
+        terms: [f.owner, f.detail, ...f.terms],
+        numbers: f.numbers,
+        boost: f.date ? recency(f.date) : 0,
       }),
     );
   }

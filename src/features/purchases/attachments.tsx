@@ -37,12 +37,24 @@ export function openAttachment(file: Pick<AttachedFile, 'dataUrl' | 'type'> & { 
     window.open(blobUrl(file.dataUrl, file.type), '_blank', 'noopener');
     return;
   }
-  if (!file.id) return;
+  if (file.id) openInTab(file.id, file.type);
+}
+
+/**
+ * Opens a stored file by its id, reading its content only now (the
+ * document finder lists files without it). The tab opens at once, so it
+ * isn't blocked as a pop-up.
+ */
+export function openStoredAttachment(id: ID) {
+  openInTab(id, '');
+}
+
+function openInTab(id: ID, fallbackType: string) {
   const tab = window.open('', '_blank');
   void import('@/cloud/attachments')
-    .then(({ attachmentContent }) => attachmentContent(file.id!))
+    .then(({ attachmentContent }) => attachmentContent(id))
     .then(({ dataUrl, type }) => {
-      const url = blobUrl(dataUrl, type || file.type);
+      const url = blobUrl(dataUrl, type || fallbackType);
       if (tab) {
         tab.opener = null;
         tab.location.href = url;

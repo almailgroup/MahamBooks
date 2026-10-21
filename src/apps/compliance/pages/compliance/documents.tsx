@@ -43,6 +43,7 @@ import { Button } from '@/components/ui/button';
 import { useReadOnly } from '@/components/ui/read-only';
 import { Badge, Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
 import { Input, Select } from '@/components/ui/form';
+import { textMatches } from '@/features/search/normalize';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 
@@ -142,25 +143,30 @@ export default function DocumentsRegisterPage() {
         .sort((a, b) => a.name.localeCompare(b.name))
     : [];
   const shownCustomer = customers.some((c) => c.id === customer) ? customer : '';
-  const q = query.trim().toLowerCase();
-  const filtered = rows.filter(
-    (r) =>
+  // Arabic in any of its spellings, Arabic digits and numbers without their
+  // separators, and owners by their name in either language.
+  const filtered = rows.filter((r) => {
+    const employee = r.entry.employeeId ? byEmployee.get(r.entry.employeeId) : undefined;
+    const client = r.entry.clientId ? names.clients.get(r.entry.clientId) : undefined;
+    return (
       (status === 'all' || (status === 'nofile' ? r.files === 0 : r.info.status === status)) &&
       (!owner || r.entry.ownerType === owner) &&
       (!shownCustomer || r.entry.clientId === shownCustomer) &&
-      (!q ||
-        [
-          r.title,
-          t(documentTypeInfo(r.entry.type).label),
-          r.owner,
-          r.entry.number,
-          r.entry.issuer,
-          r.purpose,
-        ]
-          .join(' ')
-          .toLowerCase()
-          .includes(q)),
-  );
+      textMatches(query, [
+        r.title,
+        t(documentTypeInfo(r.entry.type).label),
+        documentTypeInfo(r.entry.type).label,
+        r.owner,
+        employee?.name,
+        employee?.nameAr,
+        client?.name,
+        client?.nameAr,
+        r.entry.number,
+        r.entry.issuer,
+        r.purpose,
+      ])
+    );
+  });
 
   const add = () =>
     setEditing({

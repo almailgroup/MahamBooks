@@ -238,6 +238,46 @@ is asked of the server.
   images up to 10 MB. The demo company has the extras on, with its pickup as
   a vehicle, a contract with the Ministry and a confidential cost sheet.
 
+## Files and papers
+
+- **Off until switched on.** Compliance → Settings has _Find files and
+  papers_ (البحث في الملفات والوثائق), kept on the company
+  (`Company.fileFinder`); the Files page offers the same switch to owners,
+  admins and accountants. Until it is on, nothing in the sidebar or search
+  changes.
+- **Files** (الملفات, `/files`, in Compliance's sidebar) lists every file
+  kept with the company's records: scanned bills and other documents,
+  receipts of expenses, payments, fixed assets, register papers and their
+  renewals, personnel files, clearance certificates and (later) employee
+  letters, each with what it is kept with and a link to its page; newest
+  record first. Employees' photos are shown as photos, not here. It is
+  built from the attachments' indexes (`[ownerId+name]`,
+  `[companyId+contentMissing]`), never from their content
+  (`src/features/files/file-index.ts`): the records files are kept with are
+  read by id. Search folds Arabic like the command palette (أحمد, احمد),
+  reads Arabic digits and finds numbers without their separators; a filter
+  picks what files are kept with. A file opens in a new tab; one kept only
+  in the cloud says _In the cloud_ and is downloaded when opened. It works
+  offline.
+- **Search** (Ctrl K) also finds, once it is on: files, under _Files_, which
+  open in a new tab; the register's papers under _Papers_ (الوثائق), with the
+  papers on current employees' own records (Civil ID, passport, residency,
+  work permit, review card, contract end), which open on the employee's
+  page; expenses (`/expenses?open=<id>`), fixed assets and security cheques
+  (the register searched for the cheque, `/cheques?tab=security&q=<number>`).
+- **Privacy.** Staff and viewers never see employees' files or papers, nor a
+  confidential paper's: the page leaves out every file `isPrivateRecord`
+  calls private and every file whose record isn't on the device, and says
+  so; search builds no file entries of people data for them, and an
+  employee's paper or file leads to the employee's page, which search and
+  its recent items hide from them. A confidential paper's files are found on
+  the Files page only, as the paper is in the register.
+- **The register's search** folds Arabic the same way and finds owners by
+  their name in either language.
+- `?doc=<id>` (the register, from #17) and `?open=<id>` (expenses, as
+  before) are the links search and the Files page use. The AI assistant
+  (part B) is a later phase.
+
 ## Code layout
 
 ```

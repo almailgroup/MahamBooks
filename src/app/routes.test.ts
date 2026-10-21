@@ -142,6 +142,7 @@ const SUITE_PATHS = [
   '/crm',
   '/crm/prospects',
   '/compliance/vehicles',
+  '/files',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */
@@ -161,6 +162,9 @@ const SAMPLE_URLS = [
   '/vat/2026-01-01',
   '/compliance/documents',
   '/compliance/vehicles',
+  '/compliance/documents?doc=d1',
+  '/expenses?open=e1',
+  '/files',
   '/settings/alerts',
   '/settings/team',
   '/people',

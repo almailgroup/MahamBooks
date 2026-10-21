@@ -62,6 +62,13 @@ describe('navigation', () => {
     ]);
   });
 
+  it('shows Files only with the document finder', () => {
+    const links = (finder: boolean) =>
+      navLinks(visibleNav(COMPLIANCE.nav, false, false, finder)).map((l) => l.to);
+    expect(links(false)).not.toContain('/files');
+    expect(links(true)).toEqual(['/', '/compliance', '/compliance/documents', '/files']);
+  });
+
   it('remembers open and closed groups', () => {
     expect(isGroupOpen({}, 'sales')).toBe(true);
     expect(isGroupOpen({}, 'accounting')).toBe(false);

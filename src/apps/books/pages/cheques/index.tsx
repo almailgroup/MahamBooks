@@ -109,7 +109,8 @@ export default function ChequeRegisterPage() {
   const [params, setParams] = useSearchParams();
   const tab = registerTab(params.get('tab'));
   const filter = registerFilter(params.get('filter'));
-  const [query, setQuery] = useState('');
+  // "?q=" from search opens the register searched for one cheque ("&all=1": not only those held).
+  const [query, setQuery] = useState(() => params.get('q') ?? '');
   const [action, setAction] = useState<{ action: ChequeAction; payment: ChequePayment } | null>(
     null,
   );
@@ -119,7 +120,7 @@ export default function ChequeRegisterPage() {
     | { kind: 'cash'; cheque: SecurityCheque }
     | null
   >(null);
-  const [showAllSecurity, setShowAllSecurity] = useState(false);
+  const [showAllSecurity, setShowAllSecurity] = useState(() => params.get('all') === '1');
 
   const payments = useLiveQuery(
     () => db.payments.where('companyId').equals(company.id).toArray(),

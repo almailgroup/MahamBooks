@@ -64,6 +64,24 @@ export function compactSearch(text: string): string {
 }
 
 /**
+ * Whether every word typed is in one of `fields`, both folded as search
+ * folds them ("احمد" finds "أحمد", "١٨" finds "18"); a number is also found
+ * without its separators ("18202455" finds "18/2024/55").
+ */
+export function textMatches(
+  query: string,
+  fields: readonly (string | null | undefined)[],
+): boolean {
+  const words = normalizeSearch(query).split(' ').filter(Boolean);
+  if (!words.length) return true;
+  const present = fields.filter((f): f is string => Boolean(f));
+  const text = present.map(normalizeSearch).join(' ');
+  if (words.every((word) => text.includes(word))) return true;
+  const compact = compactSearch(query);
+  return compact.length >= 2 && present.some((f) => compactSearch(f).includes(compact));
+}
+
+/**
  * A typed amount ("1,250.750", "١٢٥٠٫٧٥", "1250") as a plain decimal
  * string, or null when the query isn't a number.
  */

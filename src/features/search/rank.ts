@@ -10,6 +10,10 @@ export type SearchKind =
   /** An employee of another company on this device (the search across companies). */
   | 'elsewhere'
   | 'document'
+  /** A paper of the documents register, stored or on an employee's record (the document finder). */
+  | 'paper'
+  /** A stored file, opened in a new tab (the document finder). */
+  | 'file'
   | 'recent';
 
 /** One thing the command palette can find. Text fields are already normalised. */

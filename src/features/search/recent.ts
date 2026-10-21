@@ -16,8 +16,9 @@ const PEOPLE_PATHS = /^\/(employees|payroll|people)(\/|$)/;
 
 /**
  * Whether something in the palette is payroll or people data: an employee,
- * or a payroll or employee page. Staff and viewers don't see these, not even
- * among the items opened before their role changed.
+ * or a payroll or employee page (an employee's papers and files lead to
+ * their page). Staff and viewers don't see these, not even among the items
+ * opened before their role changed.
  */
 export function isPeopleItem(item: Pick<RecentItem, 'kind' | 'to'>): boolean {
   return item.kind === 'employee' || PEOPLE_PATHS.test(item.to.split(/[?#]/)[0]);

@@ -3,6 +3,7 @@ import { Archive, ArchiveRestore, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { savePeopleSettings } from '@/db/people';
 import { saveDocumentPurposes, setRegisterExtras } from '@/db/renewals';
+import { fileFinderOn, setFileFinder } from '@/db/files';
 import type { DocumentPurpose, PeopleSettings } from '@/db/types';
 import { useCompany } from '@/app/company';
 import { checksDrivingLicences, normalizeReminderDays, registerExtrasOn } from '@/lib/compliance';
@@ -16,9 +17,10 @@ import { t } from '@/i18n';
 
 /**
  * Reminders, statutory deadlines and end-of-service settings of the company,
- * whether drivers' licences are checked, and the register's extras
- * (contracts, customers' papers, vehicles and confidential documents) with
- * the company's purposes of documents.
+ * whether drivers' licences are checked, the register's extras (contracts,
+ * customers' papers, vehicles and confidential documents) with the
+ * company's purposes of documents, and the document finder (the Files page
+ * and search over files and papers).
  */
 export function ComplianceSettingsDialog({
   settings,
@@ -33,6 +35,7 @@ export function ComplianceSettingsDialog({
   const { peopleHidden } = useRoleView();
   const company = useCompany();
   const [extras, setExtras] = useState(registerExtrasOn(company));
+  const [finder, setFinder] = useState(fileFinderOn(company));
   const [purposes, setPurposes] = useState<DocumentPurpose[]>(company.documentPurposes ?? []);
   const set = (patch: Partial<PeopleSettings>) => setDraft((d) => ({ ...d, ...patch }));
   const setPurpose = (id: string, patch: Partial<DocumentPurpose>) =>
@@ -50,6 +53,7 @@ export function ComplianceSettingsDialog({
       // The company's list first: a name given twice stops everything.
       if (extras) await saveDocumentPurposes(company.id, purposes);
       await setRegisterExtras(company.id, extras);
+      await setFileFinder(company.id, finder);
       await savePeopleSettings({ ...draft, reminderDays });
       toast.success(t('Settings saved'));
       onClose();
@@ -206,6 +210,14 @@ export function ComplianceSettingsDialog({
               </Button>
             </div>
           ) : null}
+          <Switch
+            checked={finder}
+            onChange={setFinder}
+            label={t('Find files and papers')}
+            description={t(
+              'A Files page lists every file kept with the company’s records, and search also finds files, papers on employees’ records, expenses, fixed assets and security cheques. Staff and viewers never see employees’ files.',
+            )}
+          />
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

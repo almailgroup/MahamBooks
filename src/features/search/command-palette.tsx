@@ -9,11 +9,13 @@ import {
   Clock,
   CornerDownLeft,
   FileText,
+  FolderCheck,
   IdCard,
   Languages,
   Moon,
   Package,
   Palette,
+  Paperclip,
   Search,
   Sun,
   Truck,
@@ -24,6 +26,8 @@ import { cn } from '@/lib/cn';
 import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { registerExtrasOn } from '@/lib/compliance';
+import { fileFinderOn } from '@/db/files';
+import { openStoredAttachment } from '@/features/purchases/attachments';
 import { CREATE_ACTIONS } from '@/features/shell/create';
 import { APPS } from '@/suite/apps';
 import { useAppAccess, useCurrentApp } from '@/suite/current-app';
@@ -52,6 +56,8 @@ const SECTION_LABELS: Record<SearchKind, string> = {
   employee: msg('Employees'),
   elsewhere: msg('Employees in other companies'),
   document: msg('Documents'),
+  paper: msg('Papers'),
+  file: msg('Files'),
 };
 
 const KIND_ICONS: Record<SearchKind, LucideIcon> = {
@@ -64,6 +70,8 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   employee: IdCard,
   elsewhere: Building2,
   document: FileText,
+  paper: FolderCheck,
+  file: Paperclip,
 };
 
 /** Each page's and action's own icon. */
@@ -151,6 +159,7 @@ function PaletteBody({
 }) {
   const company = useCompany();
   const extras = registerExtrasOn(company);
+  const finder = fileFinderOn(company);
   const fmt = useFormat();
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
@@ -187,6 +196,7 @@ function PaletteBody({
         current: app.id,
         create: !readOnly,
         registerExtras: extras,
+        fileFinder: finder,
       }),
       makeEntry({
         key: 'action:sync-status',
@@ -244,11 +254,12 @@ function PaletteBody({
       }),
     ];
     // The language is a dependency: titles are translated when built.
-  }, [taxesOn, extras, language, dark, access, app.id, readOnly, syncText, syncing]);
+  }, [taxesOn, extras, finder, language, dark, access, app.id, readOnly, syncText, syncing]);
   const found = useLiveQuery(
-    () => recordEntries(company, fmt),
+    // Files of people data aren't even listed for those who don't see them.
+    () => recordEntries(company, fmt, { people: !hidePeople }),
     // `language` changes the names and words shown.
-    [company, fmt, language],
+    [company, fmt, language, hidePeople],
   );
   // Employees of the other companies switched on for the search across
   // companies: each judged by its own role, whatever the open company's is.
@@ -350,6 +361,10 @@ function PaletteBody({
     if (entry.kind === 'item') {
       navigate('/products');
       onOpenItem(entry.key.slice('item:'.length));
+      return;
+    }
+    if (entry.kind === 'file') {
+      openStoredAttachment(entry.key.slice('file:'.length));
       return;
     }
     navigate(entry.to);

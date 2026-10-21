@@ -15,6 +15,8 @@ export interface NavLink {
   taxesOnly?: boolean;
   /** Shown only with the register's extras (Compliance → Vehicles). */
   registerExtrasOnly?: boolean;
+  /** Shown only with the document finder (Compliance → Files). */
+  fileFinderOnly?: boolean;
 }
 
 export interface NavTopLink extends NavLink {
@@ -36,13 +38,20 @@ export type NavEntry = NavTopLink | NavGroup;
 
 /**
  * The entries shown for this company: VAT returns only when taxes are on,
- * Vehicles only with the register's extras. Which app's entries, and
- * whether the person may open that app, is the suite's business
- * (src/suite/apps.ts).
+ * Vehicles only with the register's extras, Files only with the document
+ * finder. Which app's entries, and whether the person may open that app,
+ * is the suite's business (src/suite/apps.ts).
  */
-export function visibleNav(nav: NavEntry[], taxesOn: boolean, registerExtras = false): NavEntry[] {
+export function visibleNav(
+  nav: NavEntry[],
+  taxesOn: boolean,
+  registerExtras = false,
+  fileFinder = false,
+): NavEntry[] {
   const shown = (link: NavLink) =>
-    (taxesOn || !link.taxesOnly) && (registerExtras || !link.registerExtrasOnly);
+    (taxesOn || !link.taxesOnly) &&
+    (registerExtras || !link.registerExtrasOnly) &&
+    (fileFinder || !link.fileFinderOnly);
   return nav
     .filter((entry) => entry.kind === 'group' || shown(entry))
     .map((entry) =>

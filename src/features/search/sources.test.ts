@@ -11,6 +11,11 @@ import { db } from '@/db/db';
 import { setupCompany } from '@/db/records';
 import { saveEmployee } from '@/db/people';
 import { createComplianceDocument, saveComplianceDocument } from '@/db/renewals';
+import { addAttachment, createExpense } from '@/db/purchases';
+import { createAsset } from '@/db/assets';
+import { createSecurityCheque } from '@/db/cheques';
+import { isPeopleItem } from './recent';
+import { loadLanguage } from '@/i18n';
 
 const keys = (...args: Parameters<typeof staticEntries>) =>
   staticEntries(...args).map((e) => e.key);
@@ -90,6 +95,12 @@ describe('the pages and actions search finds', () => {
     expect(keys(true)).not.toContain('page:/compliance/vehicles');
     expect(keys(true, { registerExtras: true })).toContain('page:/compliance/vehicles');
   });
+
+  it('show Files only with the document finder', () => {
+    expect(keys(true)).not.toContain('page:/files');
+    expect(keys(true, { fileFinder: true })).toContain('page:/files');
+    expect(keys(true, { fileFinder: true, access: accessMap('staff') })).toContain('page:/files');
+  });
 });
 
 describe('papers of the register', () => {
@@ -134,6 +145,124 @@ describe('papers of the register', () => {
     ]);
     // An employee's paper opens with them.
     expect(found.find((e) => e.key === `paper:${licence.id}`)?.to).toBe(`/employees/${guard.id}`);
+  });
+});
+
+describe('the document finder', () => {
+  const fmt = { money: (n: number) => String(n), date: (d: string | null | undefined) => d ?? '' };
+  const PDF = { type: 'application/pdf', dataUrl: 'data:application/pdf;base64,JVBERi0xLjQK' };
+
+  async function seed() {
+    await db.delete();
+    await db.open();
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    const guard = await saveEmployee(
+      createEmployee(company.id, {
+        name: 'Ahmad Testing',
+        nameAr: 'أحمد التجريبي',
+        nationality: 'IN',
+        category: 'expat',
+        residencyNumber: '18/2024/55',
+        residencyExpiry: '2027-03-01',
+      }),
+    );
+    const expense = createExpense(company.id, {
+      number: 'EXP-0002',
+      description: 'Fuel for the pickup',
+      amount: 12.5,
+      currency: 'KWD',
+    });
+    await db.expenses.put(expense);
+    const asset = createAsset(company.id, { name: 'Pickup truck', number: 'FA-0001' });
+    await db.assets.put(asset);
+    const cheque = createSecurityCheque(company.id, {
+      number: '445566',
+      purpose: 'Rent deposit',
+      amount: 500,
+      currency: 'KWD',
+    });
+    await db.securityCheques.put(cheque);
+    const sheet = await saveComplianceDocument(
+      createComplianceDocument(company.id, { title: 'Guards cost sheet', confidential: true }),
+    );
+    const receipt = await addAttachment(company.id, expense.id, { name: 'Receipt 12.pdf', ...PDF });
+    const contract = await addAttachment(company.id, guard.id, { name: 'Contract.pdf', ...PDF });
+    const costs = await addAttachment(company.id, sheet.id, { name: 'Cost sheet.pdf', ...PDF });
+    return { company, guard, expense, asset, cheque, receipt, contract, costs };
+  }
+  const added = /^(file|paper|expense|asset|security):/;
+
+  it('adds nothing to search until it is switched on', async () => {
+    const { company } = await seed();
+    expect((await recordEntries(company, fmt)).filter((e) => added.test(e.key))).toEqual([]);
+  });
+
+  it('finds files, papers on employees’ records, expenses, fixed assets and security cheques', async () => {
+    const { company, guard, expense, asset, cheque, receipt, contract } = await seed();
+    const found = await recordEntries({ ...company, fileFinder: true }, fmt);
+    const first = (query: string) => searchEntries(found, query, 5)[0];
+
+    expect(first('receipt 12')).toMatchObject({ key: `file:${receipt.id}`, kind: 'file' });
+    // A file is also found by what it is kept with.
+    expect(searchEntries(found, 'exp-0002').map((e) => e.key)).toContain(`file:${receipt.id}`);
+    expect(first('fuel')).toMatchObject({
+      key: `expense:${expense.id}`,
+      to: `/expenses?open=${expense.id}`,
+    });
+    expect(first('pickup truck')).toMatchObject({ to: `/assets/${asset.id}` });
+    expect(first('445566')?.to).toBe('/cheques?tab=security&q=445566');
+    expect(searchEntries(found, '445566').map((e) => e.key)).toContain(`security:${cheque.id}`);
+
+    // An employee's residency, by their name in any spelling or its number in any form.
+    const residency = `paper:emp:${guard.id}:residency`;
+    for (const query of [
+      'residency ahmad',
+      'احمد',
+      'أحمد',
+      '18/2024/55',
+      '18202455',
+      '١٨/٢٠٢٤/٥٥',
+    ]) {
+      expect(
+        searchEntries(found, query).map((e) => e.key),
+        query,
+      ).toContain(residency);
+    }
+    const paper = found.find((e) => e.key === residency)!;
+    expect(paper).toMatchObject({ kind: 'paper', to: `/employees/${guard.id}` });
+    // An employee's files and papers are People data: hidden with them.
+    expect(isPeopleItem(paper)).toBe(true);
+    const file = found.find((e) => e.key === `file:${contract.id}`)!;
+    expect(file.to).toBe(`/employees/${guard.id}`);
+    expect(isPeopleItem(file)).toBe(true);
+    expect(isPeopleItem(found.find((e) => e.key === `file:${receipt.id}`)!)).toBe(false);
+  });
+
+  it('finds papers by their Arabic names in the Arabic interface', async () => {
+    const { company, guard } = await seed();
+    await loadLanguage('ar');
+    try {
+      const found = await recordEntries({ ...company, fileFinder: true }, fmt);
+      const keys = (query: string) => searchEntries(found, query).map((e) => e.key);
+      // "الإقامة" written without its hamza, and the name with one.
+      expect(keys('اقامه احمد')).toContain(`paper:emp:${guard.id}:residency`);
+      // The English name still finds it.
+      expect(keys('residency')).toContain(`paper:emp:${guard.id}:residency`);
+    } finally {
+      await loadLanguage('en');
+    }
+  });
+
+  it('never offers a confidential paper’s files, nor people’s files to those who don’t see them', async () => {
+    const { company, contract, costs, receipt } = await seed();
+    const on = { ...company, fileFinder: true };
+    const owner = (await recordEntries(on, fmt)).map((e) => e.key);
+    expect(owner).toContain(`file:${contract.id}`);
+    expect(owner).not.toContain(`file:${costs.id}`);
+    const staff = (await recordEntries(on, fmt, { people: false })).map((e) => e.key);
+    expect(staff).toContain(`file:${receipt.id}`);
+    expect(staff).not.toContain(`file:${contract.id}`);
+    expect(staff).not.toContain(`file:${costs.id}`);
   });
 });
 

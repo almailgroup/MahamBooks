@@ -525,6 +525,12 @@ export interface Company {
   registerExtras?: boolean;
   /** What register documents are for (a tender, a site, a bank facility…); missing until one is added. */
   documentPurposes?: DocumentPurpose[];
+  /**
+   * The document finder (Compliance → Settings): the Files page, and search
+   * over files, register papers, expenses, fixed assets and security
+   * cheques. Missing or false: neither, as before.
+   */
+  fileFinder?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
