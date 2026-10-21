@@ -1,4 +1,7 @@
 import { createCompany, expect, test } from './fixtures';
+import { buildWorkbook } from '../src/test/workbook';
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 test('a stock item is bought on a bill, sold on an invoice and costed', async ({ page }) => {
   await createCompany(page, 'Gulf Paper Trading');
@@ -84,4 +87,71 @@ test('a stock item is bought on a bill, sold on an invoice and costed', async ({
   await expect(page.getByText('Inventory adjustments against inventory: KD 1.250')).toBeVisible();
   await page.goto('#/inventory');
   await expect(page.getByRole('row', { name: /Printer paper A4/ })).toContainText('6 box');
+});
+
+test('stock items come in from an Excel file with their opening stock', async ({ page }) => {
+  await createCompany(page, 'Shuwaikh Stationers');
+
+  // Products links to the import, which opens on products.
+  await page.goto('#/products');
+  await page.getByRole('link', { name: 'Import from a spreadsheet' }).click();
+  await expect(page.getByRole('radio', { name: /Products and services/ })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+
+  // A made-up stock list: two stock items in the main store and a service.
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'stock.xlsx',
+    mimeType: XLSX,
+    buffer: Buffer.from(
+      buildWorkbook([
+        ['Item name', 'SKU', 'Item type', 'Unit', 'Selling price', 'Cost price', 'Quantity'],
+        ['Printer paper A4', 'PAP-A4', 'Stock item', 'box', 2.5, 1.25, 40],
+        ['Blue pens', 'PEN-B', 'مخزون', 'pcs', 0.25, 0.1, 200],
+        ['Delivery', 'DLV', 'Service', 'trip', 3, null, null],
+      ]),
+    ),
+  });
+  await expect(page.getByText('3 items ready')).toBeVisible();
+  await expect(page.getByLabel('Stock as at')).toBeVisible();
+  await expect(page.getByLabel('Warehouse', { exact: true })).toHaveValue(/main-store/);
+  await expect(page.getByText('2 items · 1 warehouse')).toBeVisible();
+  await expect(page.getByText('40 in Main store')).toBeVisible();
+
+  // Nothing posts until the person confirms.
+  await page.getByRole('button', { name: 'Import 3 items' }).click();
+  const confirm = page.getByRole('dialog', { name: 'Post the stock in this file?' });
+  await expect(confirm).toContainText(
+    'Opening stock worth KD 70.000 goes to opening balance equity, dated',
+  );
+  await confirm.getByRole('button', { name: 'Import and post stock' }).click();
+  await expect(page.getByText('3 items imported').first()).toBeVisible();
+  await expect(page.getByText('Stock entries OPN-0001')).toBeVisible();
+
+  // The opening stock entry, booked against opening balance equity.
+  await page.getByRole('link', { name: 'View the stock entries' }).click();
+  await page.getByRole('link', { name: 'OPN-0001' }).click();
+  await expect(page.getByText('Inventory against opening balance equity: KD 70.000')).toBeVisible();
+  await page.goto('#/inventory');
+  const paper = page.getByRole('row', { name: /Printer paper A4/ });
+  await expect(paper).toContainText('40 box');
+  await expect(paper).toContainText('KD 50.000');
+  await page.goto('#/reports/stock-valuation');
+  await expect(page.getByText('Agrees with the books')).toBeVisible();
+
+  // A count sheet filled in on Excel.
+  await page.goto('#/inventory/count');
+  await page.getByLabel('Import counts').setInputFiles({
+    name: 'count.xlsx',
+    mimeType: XLSX,
+    buffer: Buffer.from(
+      buildWorkbook([
+        ['SKU', 'Item', 'Unit', 'On record', 'Counted'],
+        ['PAP-A4', 'Printer paper A4', 'box', 40, 38],
+      ]),
+    ),
+  });
+  await expect(page.getByText('1 count read from the file')).toBeVisible();
+  await expect(page.getByLabel('Counted quantity of Printer paper A4')).toHaveValue('38');
 });

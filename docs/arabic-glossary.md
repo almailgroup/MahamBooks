@@ -223,22 +223,25 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 
 ## Inventory
 
-| English          | Arabic          |
-| ---------------- | --------------- |
-| Inventory        | المخزون         |
-| Stock            | المخزون         |
-| Warehouse        | المستودع        |
-| Stock on hand    | الكمية المتوفرة |
-| Reorder level    | حد إعادة الطلب  |
-| Stock adjustment | تسوية المخزون   |
-| Barcode          | الباركود        |
-| SKU              | رمز الصنف       |
-| Item codes (SKU) | رموز الأصناف    |
-| Label            | ملصق            |
-| Print labels     | طباعة الملصقات  |
-| Price list       | قائمة الأسعار   |
-| Item picture     | صورة الصنف      |
-| Main picture     | صورة رئيسية     |
+| English          | Arabic            |
+| ---------------- | ----------------- |
+| Inventory        | المخزون           |
+| Stock            | المخزون           |
+| Warehouse        | المستودع          |
+| Stock on hand    | الكمية المتوفرة   |
+| Reorder level    | حد إعادة الطلب    |
+| Item type        | نوع الصنف         |
+| Opening stock    | المخزون الافتتاحي |
+| Cost price       | سعر التكلفة       |
+| Stock adjustment | تسوية المخزون     |
+| Barcode          | الباركود          |
+| SKU              | رمز الصنف         |
+| Item codes (SKU) | رموز الأصناف      |
+| Label            | ملصق              |
+| Print labels     | طباعة الملصقات    |
+| Price list       | قائمة الأسعار     |
+| Item picture     | صورة الصنف        |
+| Main picture     | صورة رئيسية       |
 
 ## App
 

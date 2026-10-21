@@ -16,6 +16,7 @@ import {
   Search,
   SlidersHorizontal,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,7 +31,7 @@ import { fromMinor, toMinor } from '@/lib/money';
 import { unitText } from '@/lib/units';
 import { currentLanguage, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Badge,
   Card,
@@ -289,6 +290,9 @@ export default function ProductsPage() {
                 <Download /> {t('Export CSV')}
               </Button>
             ) : null}
+            <ButtonLink to="/settings/import?kind=products" variant="outline">
+              <Upload /> {t('Import')}
+            </ButtonLink>
             <Button onClick={() => openNew()}>
               <Plus /> {t('New item')}
             </Button>
@@ -337,6 +341,9 @@ export default function ProductsPage() {
                 <Button variant="outline" onClick={() => openNew('stock')}>
                   <Boxes /> {t('New stock item')}
                 </Button>
+                <ButtonLink to="/settings/import?kind=products" variant="outline">
+                  <Upload /> {t('Import from a spreadsheet')}
+                </ButtonLink>
               </div>
             }
           />

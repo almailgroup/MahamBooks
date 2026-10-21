@@ -6,7 +6,8 @@ import { recordStockEntry } from '@/db/inventory';
 import type { ID } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
 import { stockLevels } from '@/lib/inventory/costing';
-import { countSheetRows, parseCountSheet } from '@/lib/inventory/count';
+import { countSheetRows, readCountRows } from '@/lib/inventory/count';
+import { readImportFile } from '@/features/company/import-columns';
 import { downloadCsv } from '@/lib/csv';
 import { dec, fromMinor, normalizeDigits, toMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
@@ -122,7 +123,15 @@ export default function StockCountPage() {
     );
 
   const importSheet = async (file: File) => {
-    const result = parseCountSheet(await file.text(), items);
+    let rows: string[][];
+    try {
+      // CSV, or the first sheet of an Excel workbook.
+      rows = await readImportFile(await file.arrayBuffer(), file.name);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('Could not read the file.'));
+      return;
+    }
+    const result = readCountRows(rows, items);
     if (result.counted.size === 0) {
       toast.error(t('No counted quantities were found in this file.'));
       return;
@@ -197,7 +206,7 @@ export default function StockCountPage() {
               <input
                 ref={fileInput}
                 type="file"
-                accept=".csv,text/csv"
+                accept=".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 className="hidden"
                 aria-label={t('Import counts')}
                 onChange={(e) => {

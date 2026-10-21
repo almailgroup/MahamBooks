@@ -9,10 +9,15 @@ import {
   planImport,
   type ImportOptions,
 } from './import';
+import { createProduct } from './defaults';
+import { createWarehouse, ensureDefaultWarehouse, saveItem, saveWarehouse } from './inventory';
 import type { Company } from './types';
 import { guessColumns, type ImportKind } from '@/features/company/import-columns';
 import { parseCsvRows } from '@/lib/banking/statement';
 import { trialBalance } from '@/lib/accounting/statements';
+import { stockLevels } from '@/lib/inventory/costing';
+import { readXlsx } from '@/lib/xlsx';
+import { buildWorkbook } from '@/test/workbook';
 
 beforeEach(async () => {
   await db.delete();
@@ -379,5 +384,312 @@ describe('importing open invoices and bills', () => {
       run(company, 'documents', 'Number,Customer,Date,Amount\n,,,'),
     ).rejects.toBeInstanceOf(ImportError);
     expect(await db.documents.count()).toBe(0);
+  });
+});
+
+describe('importing stock items', () => {
+  /** A company with its main store and a shop; stock as at 30 September 2026. */
+  async function stockCompany() {
+    const company = await kuwaitCompany();
+    const main = await ensureDefaultWarehouse(company.id);
+    const shop = await saveWarehouse(
+      createWarehouse(company.id, { name: 'Salmiya shop', nameAr: 'فرع السالمية' }),
+    );
+    return { company, main, shop };
+  }
+
+  async function levels(company: Company) {
+    const movements = await db.stockMovements.where('companyId').equals(company.id).toArray();
+    return stockLevels(movements, 3);
+  }
+
+  const inventoryCode = '1200';
+
+  it('posts opening stock, one entry per warehouse, against opening balance equity', async () => {
+    const { company, main, shop } = await stockCompany();
+    const csv = [
+      'Name,SKU,Type,Unit,Price,Cost price,Quantity,Warehouse,Reorder level,Barcode',
+      'A4 paper box,PAP-A4,Stock item,box,4.750,3.250,40,,10,2000000000015',
+      'Blue pens,PEN-B,stock,pcs,0.250,0.150,"1,000",Salmiya shop,,',
+      'A4 paper box,PAP-A4,,,,,10,فرع السالمية,,',
+      'Office cleaning,SRV-1,Service,month,85,,,,,',
+    ].join('\n');
+    const { result } = await plan(company, 'products', csv);
+    expect(result.rows.map((r) => r.status)).toEqual(['ready', 'ready', 'ready', 'ready']);
+    // 40 × 3.250 + 1,000 × 0.150 + 10 × 3.250
+    expect(result.stock).toEqual({
+      value: 312_500,
+      opening: 3,
+      warehouses: 2,
+      counted: 0,
+      differences: 0,
+    });
+
+    const done = await run(company, 'products', csv);
+    expect(done).toMatchObject({ added: 3, updated: 0, skipped: 0 });
+    expect(done.stockEntries?.map((e) => [e.number, e.kind])).toEqual([
+      ['OPN-0001', 'opening'],
+      ['OPN-0002', 'opening'],
+    ]);
+    const entries = await db.stockEntries.where('companyId').equals(company.id).sortBy('number');
+    expect(entries.map((e) => [e.warehouseId, e.date, e.reference, e.lines.length])).toEqual([
+      [main.id, '2026-09-30', 'old-books.csv', 1],
+      [shop.id, '2026-09-30', 'old-books.csv', 2],
+    ]);
+    const products = await db.products.where('companyId').equals(company.id).sortBy('sku');
+    expect(
+      products.map((p) => [p.sku, p.kind, p.costPrice, p.reorderLevel ?? null, p.barcode ?? '']),
+    ).toEqual([
+      ['PAP-A4', 'stock', 3.25, 10, '2000000000015'],
+      ['PEN-B', 'stock', 0.15, null, ''],
+      ['SRV-1', 'service', undefined, null, ''],
+    ]);
+    const paper = products[0];
+    const stock = await levels(company);
+    expect(stock.get(paper.id)?.byWarehouse).toEqual(
+      new Map([
+        [main.id, 40],
+        [shop.id, 10],
+      ]),
+    );
+    const byCode = await balances(company);
+    expect(byCode.get(inventoryCode)).toBe(312_500);
+    expect(byCode.get('3900')).toBe(-312_500);
+  });
+
+  it('counts items with stock history and gives opening stock to the others', async () => {
+    const { company, main } = await stockCompany();
+    const counted = await saveItem(
+      createProduct(company.id, { name: 'Toner', sku: 'TON-1', kind: 'stock', costPrice: 2 }),
+      { opening: { warehouseId: main.id, quantity: 20, unitCost: 2, date: '2026-09-01' } },
+    );
+    const fresh = await saveItem(
+      createProduct(company.id, { name: 'Stapler', sku: 'STP-1', kind: 'stock', costPrice: 1.5 }),
+    );
+    const service = await saveItem(createProduct(company.id, { name: 'Repairs', sku: 'REP-1' }));
+    const csv = ['SKU,Name,Quantity', 'TON-1,Toner,15', 'STP-1,Stapler,4', 'REP-1,Repairs,'].join(
+      '\n',
+    );
+    const { result } = await plan(company, 'products', csv);
+    expect(result.rows.map((r) => [r.status, r.issues.map((i) => i.text)])).toEqual([
+      [
+        'ready',
+        [
+          'Already in your items: only its stock is taken.',
+          'It has stock history, so the quantity is a count: 20 on record.',
+        ],
+      ],
+      ['ready', ['Already in your items: only its stock is taken.']],
+      ['skipped', ['SKU REP-1 is already used.']],
+    ]);
+    expect(result.stock).toMatchObject({ value: 6_000, opening: 1, counted: 1, differences: 1 });
+
+    const done = await run(company, 'products', csv);
+    expect(done).toMatchObject({ added: 0, skipped: 1 });
+    expect(done.stockEntries?.map((e) => [e.number, e.kind])).toEqual([
+      ['OPN-0002', 'opening'],
+      ['ADJ-0001', 'adjustment'],
+    ]);
+    const adjustment = (await db.stockEntries.get(done.stockEntries![1].id))!;
+    expect(adjustment).toMatchObject({ reason: 'count', date: '2026-09-30' });
+    expect(adjustment.lines.map((l) => [l.productId, l.quantity])).toEqual([[counted.id, -5]]);
+    const stock = await levels(company);
+    expect(stock.get(counted.id)?.quantity).toBe(15);
+    expect(stock.get(fresh.id)).toMatchObject({ quantity: 4, value: 6 });
+    expect(stock.get(service.id)).toBeUndefined();
+    // 20 × 2 opening, 5 × 2 written off, 4 × 1.500 opening.
+    const byCode = await balances(company);
+    expect(byCode.get(inventoryCode)).toBe(36_000);
+    expect(byCode.get('5300')).toBe(10_000);
+  });
+
+  it('imports nothing when a row of a file with stock is wrong', async () => {
+    const { company } = await stockCompany();
+    await saveItem(createProduct(company.id, { name: 'Repairs', sku: 'REP-1' }));
+    const csv = [
+      'Name,SKU,Type,Cost,Qty,Warehouse',
+      'Good item,G-1,stock,1,5,',
+      'Lost item,L-1,stock,1,5,Jahra store',
+      'Minus item,M-1,stock,1,-2,',
+      'Not a number,N-1,stock,1,a few,',
+      'Service with stock,S-1,service,,3,',
+      'Repairs,REP-1,,,1,',
+      'Twice,G-1,,,7,',
+    ].join('\n');
+    const { result } = await plan(company, 'products', csv);
+    expect(
+      result.rows.map((r) => [r.status, r.issues.find((i) => i.level === 'error')?.text]),
+    ).toEqual([
+      ['ready', undefined],
+      ['error', 'No warehouse is called Jahra store.'],
+      ['error', 'The quantity can’t be negative.'],
+      ['error', '“a few” is not a quantity.'],
+      ['error', 'Service with stock is not a stock item, so it can’t have a quantity.'],
+      ['error', 'Repairs is not a stock item, so it can’t have a quantity.'],
+      ['error', 'Twice already has a quantity for this warehouse on another row.'],
+    ]);
+    await expect(run(company, 'products', csv)).rejects.toThrow(
+      'Fix the rows with problems first. Nothing was imported.',
+    );
+    expect(await db.products.count()).toBe(1);
+    expect(await db.stockEntries.count()).toBe(0);
+
+    // Without quantities, rows with problems are left out as before.
+    const done = await run(company, 'products', 'Name,Price\nGood item,1\n,2\nBad,-1');
+    expect(done).toMatchObject({ added: 1, skipped: 2 });
+  });
+
+  it('refuses stock dated on or before the lock date', async () => {
+    const { company } = await stockCompany();
+    await db.companies.update(company.id, {
+      accounting: { ...company.accounting!, lockDate: '2026-09-30' },
+    });
+    const { result } = await plan(company, 'products', 'Name,Cost,Quantity\nToner,2,5');
+    expect(result.errors).toBe(1);
+    expect(result.rows[0].issues[0].text).toMatch(/lock date/);
+    await expect(run(company, 'products', 'Name,Cost,Quantity\nToner,2,5')).rejects.toThrow(
+      ImportError,
+    );
+    // A later date posts.
+    const done = await run(company, 'products', 'Name,Cost,Quantity\nToner,2,5', {
+      ...OPTIONS,
+      asOf: '2026-10-01',
+    });
+    expect(done.stockEntries).toHaveLength(1);
+  });
+
+  it('reads Arabic column names and types, and Excel files like CSV', async () => {
+    const { company, shop } = await stockCompany();
+    const header = [
+      'اسم الصنف',
+      'رمز الصنف',
+      'نوع الصنف',
+      'سعر التكلفة',
+      'الكمية',
+      'المستودع',
+      'حد إعادة الطلب',
+      'الباركود',
+    ];
+    expect(guessColumns('products', header)).toMatchObject({
+      name: 0,
+      sku: 1,
+      type: 2,
+      cost: 3,
+      quantity: 4,
+      warehouse: 5,
+      reorderLevel: 6,
+      barcode: 7,
+    });
+    const body = [
+      ['ورق A4', 'PAP-A4', 'مخزون', '٣٫٢٥٠', '٤٠', 'فرع السالمية', '10', '2000000000015'],
+      ['تنظيف', 'SRV-1', 'خدمة', '', '', '', '', ''],
+      ['أكياس', 'BAG-1', 'غير مخزني', '0.040', '', '', '', ''],
+    ];
+    const csv = [header, ...body].map((r) => r.join(',')).join('\n');
+    const fromCsv = await plan(company, 'products', csv);
+    const workbook = buildWorkbook([
+      header,
+      ...body.map((r) => r.map((v, i) => (i === 4 && v ? 40 : v))),
+    ]);
+    const rows = await readXlsx(workbook);
+    const mapping = guessColumns('products', rows[0]);
+    const fromXlsx = planImport(
+      'products',
+      rows,
+      mapping,
+      OPTIONS,
+      await loadImportContext(company.id),
+    );
+    const summary = (p: typeof fromXlsx) =>
+      p.rows.map((r) => {
+        const value = r.record?.kind === 'products' ? r.record.value : null;
+        return [r.status, value?.product.kind, value?.product.costPrice, value?.stock?.quantity];
+      });
+    expect(summary(fromCsv.result)).toEqual([
+      ['ready', 'stock', 3.25, 40],
+      ['ready', 'service', undefined, undefined],
+      ['ready', 'non_stock', 0.04, undefined],
+    ]);
+    expect(summary(fromXlsx)).toEqual(summary(fromCsv.result));
+    expect(fromXlsx.stock).toEqual(fromCsv.result.stock);
+    const done = await commitImport(company.id, 'products', rows, mapping, OPTIONS);
+    const [entry] = await db.stockEntries.where('companyId').equals(company.id).toArray();
+    expect(done.stockEntries).toHaveLength(1);
+    expect(entry).toMatchObject({ kind: 'opening', warehouseId: shop.id });
+  });
+
+  it('gives units from the list, item codes and default taxes when the company uses them', async () => {
+    const company = await setupCompany({ name: 'Coded Trading' }, [{ name: 'VAT', rate: 5 }]);
+    await db.companies.update(company.id, { items: { units: true, autoSku: true } });
+    const csv = ['Name,SKU,Unit', 'Screws,,Pcs.', 'Rope,,roll', 'Glue,GLU-1,علبة'].join('\n');
+    const { result } = await plan(company, 'products', csv);
+    expect(result.itemCodes).toBe(2);
+    expect(result.rows[1].issues.map((i) => i.text)).toEqual([
+      'The unit roll is not in the list of units; it is kept as written.',
+    ]);
+    await run(company, 'products', csv);
+    const products = await db.products.where('companyId').equals(company.id).sortBy('sku');
+    expect(products.map((p) => [p.sku, p.name, p.unit, p.unitId ?? null])).toEqual([
+      ['GLU-1', 'Glue', 'box', 'box'],
+      ['SKU-00001', 'Screws', 'pcs', 'pcs'],
+      ['SKU-00002', 'Rope', 'roll', null],
+    ]);
+    const defaults = (await db.companies.get(company.id))!;
+    expect(defaults.numbering.product?.next).toBe(3);
+    expect(
+      products.every((p) => p.taxRateIds.join() === defaults.defaults.defaultTaxRateIds.join()),
+    ).toBe(true);
+    expect(defaults.defaults.defaultTaxRateIds).toHaveLength(1);
+  });
+
+  it('updates items already here only when asked', async () => {
+    const { company } = await stockCompany();
+    const toner = await saveItem(
+      createProduct(company.id, { name: 'Toner', sku: 'TON-1', kind: 'stock', unitPrice: 9 }),
+    );
+    const csv =
+      'SKU,Name,Arabic name,Price,Cost\nTON-1,Toner cartridge,حبر,12.500,6\nTON-2,Ink,,1,';
+    const skipped = await plan(company, 'products', csv);
+    expect(skipped.result.rows[0]).toMatchObject({ status: 'skipped' });
+    expect(skipped.result.existing).toBe(1);
+
+    const options = { ...OPTIONS, updateExisting: true };
+    const done = await run(company, 'products', csv, options);
+    expect(done).toMatchObject({ added: 1, updated: 1 });
+    expect(await db.products.get(toner.id)).toMatchObject({
+      name: 'Toner cartridge',
+      nameAr: 'حبر',
+      unitPrice: 12.5,
+      costPrice: 6,
+      kind: 'stock',
+    });
+    const again = await plan(company, 'products', csv, options);
+    expect(again.result.rows.map((r) => [r.status, r.issues[0]?.text])).toEqual([
+      ['skipped', 'Nothing to change.'],
+      ['skipped', 'Nothing to change.'],
+    ]);
+  });
+
+  it('imports 2,000 stock items in one go', async () => {
+    const { company } = await stockCompany();
+    const lines = ['Name,SKU,Cost,Quantity'];
+    for (let i = 1; i <= 2000; i++) lines.push(`Part ${i},P-${i},0.500,${i % 7}`);
+    const csv = lines.join('\n');
+    const done = await run(company, 'products', csv);
+    expect(done.added).toBe(2000);
+    const [entry] = await db.stockEntries.where('companyId').equals(company.id).toArray();
+    // Rows with a quantity of 0 add the item without stock.
+    expect(entry.lines).toHaveLength(2000 - Math.floor(2000 / 7));
+    const byCode = await balances(company);
+    const units = Array.from({ length: 2000 }, (_, i) => (i + 1) % 7).reduce((a, b) => a + b, 0);
+    expect(byCode.get(inventoryCode)).toBe(units * 500);
+  }, 60_000);
+
+  it('knows when the opening balances already hold stock', async () => {
+    const company = await kuwaitCompany();
+    await run(company, 'opening', 'Code,Debit,Credit\n1200,500,\n3000,,500');
+    const ctx = await loadImportContext(company.id, 'products');
+    expect(ctx.stock?.inBooks).toBe(500_000);
+    expect((await loadImportContext(company.id, 'contacts')).stock).toBeUndefined();
   });
 });

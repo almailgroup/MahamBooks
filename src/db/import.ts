@@ -16,6 +16,17 @@ import {
   saveJournal,
 } from './accounting';
 import { accountingSettings } from './chart-setup';
+import {
+  addStockEntry,
+  ensureDefaultWarehouse,
+  ensureStockAccounts,
+  nextItemCodes,
+  productKind,
+  recost,
+  reserveItemCodes,
+  skuKey,
+  type StockEntryInput,
+} from './inventory';
 import type {
   Account,
   Address,
@@ -28,6 +39,10 @@ import type {
   InvoiceDocument,
   LineItem,
   Product,
+  ProductKind,
+  StockEntry,
+  StockMovement,
+  Warehouse,
 } from './types';
 import {
   commitEmployeeImport,
@@ -50,8 +65,11 @@ import {
 } from '@/lib/banking/statement';
 import { countryOptions, emptyAddress } from '@/lib/geo';
 import { findArea, findGovernorate, isValidCivilId, normalizeKuwaitPhone } from '@/lib/kuwait';
-import { currencyPrecision, dec, fromMinor, normalizeDigits, toMinor } from '@/lib/money';
-import { allocateNumber } from '@/lib/numbering';
+import { currencyPrecision, dec, fromMinor, normalizeDigits, round, toMinor } from '@/lib/money';
+import { allocateNumber, canReserveCounters, type ReservedCounter } from '@/lib/numbering';
+import { stockLevels } from '@/lib/inventory/costing';
+import { stockAccounts } from '@/lib/inventory/sources';
+import { findUnit, matchUnit } from '@/lib/units';
 import { isValidEmail } from '@/lib/email';
 import { addDaysISO, isISODate, today } from '@/lib/dates';
 import { shortId } from '@/lib/ids';
@@ -72,6 +90,13 @@ import { localName } from '@/i18n/names';
  * and bills (and contacts' opening balances) become issued documents whose
  * only line is booked to Opening balance equity, so receivables and payables
  * are right per customer and vendor without counting old sales twice.
+ *
+ * Products can bring their stock: with the quantity column matched, new stock
+ * items (and items without stock history) get opening stock at the file's
+ * cost, one opening entry per warehouse against Opening balance equity, and
+ * items with stock history are counted, the differences posted as one count
+ * adjustment per warehouse. Such a file is imported only when every row is
+ * right.
  */
 
 export class ImportError extends Error {}
@@ -81,15 +106,20 @@ export interface ImportOptions {
   contactType: 'customer' | 'vendor';
   /** Open documents: invoices (customers owe you) or bills (you owe vendors). */
   documentType: 'invoice' | 'bill';
-  /** Opening balances, and contacts' opening balances, are as at this date. */
+  /** Opening balances, contacts' opening balances and items' stock are as at this date. */
   asOf: ISODate;
   /** How dates are written in the file. */
   dateFormat: CsvDateFormat;
   fileName: string;
   /** Shows a date in messages (defaults to yyyy-MM-dd). */
   formatDate?: (date: ISODate) => string;
-  /** Employees: rows for employees already in the company update them (else they are skipped). */
+  /**
+   * Employees and products: rows for employees or items already in the
+   * company update them (else they are skipped; items' stock is still taken).
+   */
   updateExisting?: boolean;
+  /** Products: where the stock of rows that name no warehouse goes (defaults to the main one). */
+  warehouseId?: ID;
   /** Employees: the day documents' expiry and joining dates are judged on (defaults to today). */
   today?: ISODate;
 }
@@ -101,6 +131,18 @@ export interface ImportContext {
   accounts: Account[];
   documents: Pick<InvoiceDocument, 'type' | 'number'>[];
   employees: Employee[];
+  /** Products: the warehouses and the stock on record (loaded for products only). */
+  warehouses?: Warehouse[];
+  stock?: ImportStock;
+}
+
+/** What is in stock already, for products files that bring quantities. */
+export interface ImportStock {
+  /** Items with stock history (movements or stock entries): their quantities are counts. */
+  history: Set<ID>;
+  movements: Pick<StockMovement, 'productId' | 'warehouseId' | 'date' | 'quantity' | 'value'>[];
+  /** What the opening balances already put on the inventory account, in minor units (debit positive). */
+  inBooks: number;
 }
 
 export type RowStatus = 'ready' | 'skipped' | 'error';
@@ -132,9 +174,47 @@ export interface DocumentRecord {
   promote: Client | null;
 }
 
+/** Stock a products row brings in, when the file's quantity column is matched. */
+export interface ProductStock {
+  /** '' for the main store, added on import when the company has no warehouse. */
+  warehouseId: ID;
+  quantity: number;
+  /** Opening stock: cost of one unit (company currency). */
+  unitCost: number;
+  /**
+   * opening: stock the item starts with, at the cost; count: what is on hand
+   * of an item with stock history, the difference from the books posted as a
+   * count adjustment at average cost.
+   */
+  as: 'opening' | 'count';
+  /** Counts: the quantity on record in the warehouse at the end of the stock date. */
+  onRecord: number;
+}
+
+export interface ProductRecord {
+  product: Product;
+  /** new: the row adds the item; existing: one already here; repeat: one an earlier row has. */
+  source: 'new' | 'existing' | 'repeat';
+  /** Existing items: the row changes their details (Update existing items). */
+  update: boolean;
+  stock: ProductStock | null;
+}
+
+/** The stock a products file brings in. */
+export interface StockImportSummary {
+  /** Value of the opening stock, in minor units of the company currency. */
+  value: number;
+  /** Items getting opening stock, and the warehouses it goes to. */
+  opening: number;
+  warehouses: number;
+  /** Items with stock history whose quantity is a count, and how many differ from the books. */
+  counted: number;
+  differences: number;
+}
+
 export type ImportRecord =
   | { kind: 'contacts'; value: ContactRecord }
-  | { kind: 'products'; value: Product }
+  | { kind: 'products'; value: ProductRecord }
   | { kind: 'opening'; value: OpeningRecord }
   | { kind: 'documents'; value: DocumentRecord }
   | { kind: 'employees'; value: EmployeeRecord };
@@ -161,6 +241,12 @@ export interface ImportPlan {
   totals: { debit: number; credit: number; difference: number };
   /** Employees: what the file holds and what to check. */
   employees?: EmployeeImportSummary;
+  /** Products: the stock the file brings in, when it has quantities (all or nothing). */
+  stock?: StockImportSummary;
+  /** Products: new items without an SKU that get the next item codes (items.autoSku). */
+  itemCodes?: number;
+  /** Products: rows naming items already here (updated with updateExisting, else skipped). */
+  existing?: number;
 }
 
 export interface ImportResult {
@@ -175,6 +261,8 @@ export interface ImportResult {
   /** Opening documents created for contacts' opening balances. */
   documents: number;
   journalNumber: string | null;
+  /** Products: the stock entries posted (opening stock per warehouse, then counts). */
+  stockEntries?: Pick<StockEntry, 'id' | 'number' | 'kind'>[];
 }
 
 export const OPENING_ITEM = { name: 'Opening balance', nameAr: 'رصيد افتتاحي' };
@@ -410,49 +498,7 @@ export function planImport(
     });
   }
 
-  if (kind === 'products') {
-    const skus = new Set(ctx.products.map((p) => key(p.sku)).filter(Boolean));
-    const names = new Set(ctx.products.map((p) => key(p.name)).filter(Boolean));
-    body.forEach((row, i) => {
-      const cells = cellsOf(kind, row, mapping);
-      const issues: RowIssue[] = [];
-      const name = cells.name || cells.nameAr;
-      if (!name) issues.push({ level: 'error', text: t('Enter a name.') });
-      if (cells.sku && skus.has(key(cells.sku))) {
-        issues.push({ level: 'skip', text: t('SKU {sku} is already used.', { sku: cells.sku }) });
-      } else if (name && names.has(key(name))) {
-        issues.push({ level: 'skip', text: t('{name} is already in your items.', { name }) });
-      }
-      let price = 0;
-      if (cells.price) {
-        // Unit prices may be finer than the currency (e.g. 0.0375 a piece).
-        const money = readMoney(cells.price, currency, 6);
-        if ('problem' in money) issues.push({ level: 'error', text: money.problem });
-        else if (money.amount < 0)
-          issues.push({ level: 'error', text: t('The price cannot be negative.') });
-        else price = money.amount;
-      }
-      const status = statusOf(issues);
-      let record: ImportRecord | null = null;
-      if (status === 'ready') {
-        if (cells.sku) skus.add(key(cells.sku));
-        names.add(key(name));
-        record = {
-          kind: 'products',
-          value: createProduct(ctx.company.id, {
-            name: name.trim(),
-            ...(cells.nameAr ? { nameAr: cells.nameAr.trim() } : {}),
-            sku: cells.sku,
-            unit: cells.unit,
-            unitPrice: price,
-            description: cells.description,
-            ...(cells.descriptionAr ? { descriptionAr: cells.descriptionAr } : {}),
-          }),
-        };
-      }
-      plan.rows.push({ line: i + 2, status, issues, cells, record });
-    });
-  }
+  if (kind === 'products') planProducts(plan, body, mapping, options, ctx);
 
   if (kind === 'opening') {
     const byCode = new Map(ctx.accounts.map((a) => [key(a.code), a]));
@@ -649,6 +695,370 @@ export function planImport(
   return finish(plan);
 }
 
+/** The kind of item a Type cell names: null when blank, undefined when not recognised. */
+function itemKind(value: string): ProductKind | null | undefined {
+  const v = key(value);
+  if (!v) return null;
+  if (
+    /^(non stock|non stock item|non inventory|non inventory item|غير مخزني|غير مخزون|صنف غير مخزني)$/.test(
+      v,
+    )
+  )
+    return 'non_stock';
+  if (/^(stock|stock item|inventory|inventory item|مخزون|مخزني|صنف مخزني|صنف مخزون)$/.test(v))
+    return 'stock';
+  if (/^(service|services|خدمه|خدمات)$/.test(v)) return 'service';
+  return undefined;
+}
+
+/** A quantity from the file (at most 6 decimals), or null when it isn't a number. */
+function readQuantity(value: string): number | null {
+  const cleaned = normalizeDigits(value).replace(/[\s,]/g, '');
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  return round(Number(cleaned), 6);
+}
+
+/** Names of the warehouse ensureDefaultWarehouse adds. */
+const MAIN_STORE = ['Main store', 'المستودع الرئيسي'].map(key);
+
+/** What an Update existing items row may change. */
+const UPDATED_FIELDS = [
+  'name',
+  'nameAr',
+  'description',
+  'descriptionAr',
+  'unit',
+  'unitId',
+  'unitPrice',
+  'costPrice',
+  'reorderLevel',
+  'barcode',
+] as const;
+
+/**
+ * Products and services, with their stock when the quantity column is
+ * matched. Rows for items already here are skipped as before, unless they
+ * bring stock (taken as opening stock, or as a count for items with stock
+ * history) or `updateExisting` is set. A later row may give an item of an
+ * earlier one stock in another warehouse.
+ */
+function planProducts(
+  plan: ImportPlan,
+  body: string[][],
+  mapping: ColumnMapping,
+  options: ImportOptions,
+  ctx: ImportContext,
+) {
+  const company = ctx.company;
+  const currency = company.currency;
+  const precision = currencyPrecision(currency);
+  const fmtDate = options.formatDate ?? ((d: ISODate) => d);
+  const lock = accountingSettings(company).lockDate;
+  const stockLocked = Boolean(lock && options.asOf <= lock);
+  const units = Boolean(company.items?.units);
+  const quantityAt = mapping.quantity;
+  const stockFile = quantityAt != null && body.some((row) => (row[quantityAt] ?? '').trim() !== '');
+
+  const live = (ctx.warehouses ?? []).filter((w) => !w.archived);
+  const main =
+    live.find((w) => w.id === options.warehouseId) ?? live.find((w) => w.isDefault) ?? live[0];
+  const warehouses = new Map<string, Warehouse | null>();
+  for (const w of live) {
+    for (const n of [w.name, w.nameAr ?? ''].map(key).filter(Boolean)) {
+      // Two warehouses with the same name can't be told apart.
+      warehouses.set(n, warehouses.has(n) && warehouses.get(n)?.id !== w.id ? null : w);
+    }
+  }
+  const levels = stockLevels(
+    stockFile ? (ctx.stock?.movements ?? []) : [],
+    precision,
+    options.asOf,
+  );
+  const history = ctx.stock?.history ?? new Set<ID>();
+
+  // Items already here, by SKU and by name (null: more than one has it).
+  const bySku = new Map<string, Product>();
+  const english = new Map<string, Product | null>();
+  const arabic = new Map<string, Product | null>();
+  const note = (map: Map<string, Product | null>, text: string | undefined, p: Product) => {
+    const k = key(text ?? '');
+    if (k) map.set(k, map.has(k) && map.get(k)?.id !== p.id ? null : p);
+  };
+  for (const p of ctx.products) {
+    const k = key(p.sku);
+    if (k && !bySku.has(k)) bySku.set(k, p);
+    note(english, p.name, p);
+    note(arabic, p.nameAr, p);
+  }
+  // Rows planned so far, by item; and the SKUs and names of the items they add.
+  const planned = new Map<ID, ProductRecord>();
+  const fileSkus = new Map<string, ID>();
+  const fileNames = new Map<string, ID>();
+  const stocked = new Set<string>();
+  const summary: StockImportSummary = {
+    value: 0,
+    opening: 0,
+    warehouses: 0,
+    counted: 0,
+    differences: 0,
+  };
+  const openingWarehouses = new Set<ID>();
+  let itemCodes = 0;
+  let existingRows = 0;
+
+  body.forEach((row, i) => {
+    const cells = cellsOf('products', row, mapping);
+    const issues: RowIssue[] = [];
+    const error = (text: string) => issues.push({ level: 'error', text });
+    const name = (cells.name || cells.nameAr).trim();
+    if (!name) error(t('Enter a name.'));
+    const wantsStock = stockFile && cells.quantity !== '';
+
+    // The item: one an earlier row has, one already here, or a new one.
+    const codeKey = key(cells.sku);
+    const nameKey = key(name);
+    let earlier: ProductRecord | undefined;
+    let existing: Product | undefined;
+    let ambiguous = false;
+    let nameTaken = false;
+    if (codeKey) {
+      earlier = planned.get(fileSkus.get(codeKey) ?? '');
+      existing = earlier ? undefined : bySku.get(codeKey);
+      // A new SKU with a name another item has.
+      nameTaken =
+        !earlier &&
+        !existing &&
+        Boolean(nameKey) &&
+        (fileNames.has(nameKey) || english.has(nameKey) || (!cells.name && arabic.has(nameKey)));
+    } else if (nameKey) {
+      earlier = planned.get(fileNames.get(nameKey) ?? '');
+      if (!earlier) {
+        const found = cells.name
+          ? english.get(nameKey)
+          : (english.get(nameKey) ?? arabic.get(nameKey));
+        if (found === null) ambiguous = true;
+        else existing = found;
+      }
+    }
+    if (existing && planned.has(existing.id)) {
+      earlier = planned.get(existing.id);
+      existing = undefined;
+    }
+    if (existing || earlier?.source === 'existing') existingRows += 1;
+    const takenText =
+      codeKey && (earlier || existing)
+        ? t('SKU {sku} is already used.', { sku: cells.sku })
+        : t('{name} is already in your items.', { name });
+
+    // Values, checked whatever the row turns out to be.
+    let price: number | null = null;
+    if (cells.price) {
+      // Unit prices may be finer than the currency (e.g. 0.0375 a piece).
+      const money = readMoney(cells.price, currency, 6);
+      if ('problem' in money) error(money.problem);
+      else if (money.amount < 0) error(t('The price cannot be negative.'));
+      else price = money.amount;
+    }
+    let cost: number | null = null;
+    if (cells.cost) {
+      const money = readMoney(cells.cost, currency, 6);
+      if ('problem' in money) error(money.problem);
+      else if (money.amount < 0) error(t('The cost can’t be negative.'));
+      else cost = money.amount;
+    }
+    let reorderLevel: number | null = null;
+    if (cells.reorderLevel) {
+      const level = readQuantity(cells.reorderLevel);
+      if (level === null) error(t('“{value}” is not a number.', { value: cells.reorderLevel }));
+      else if (level < 0) error(t('The reorder level can’t be negative.'));
+      else reorderLevel = level;
+    }
+    let unit = cells.unit;
+    let unitId: ID | undefined;
+    if (units && cells.unit) {
+      // Units come from the list (Settings → Items and units).
+      const found = findUnit(company, matchUnit(cells.unit, company));
+      if (found) {
+        unit = found.name;
+        unitId = found.id;
+      } else {
+        issues.push({
+          level: 'info',
+          text: t('The unit {unit} is not in the list of units; it is kept as written.', {
+            unit: cells.unit,
+          }),
+        });
+      }
+    }
+    const typed = itemKind(cells.type);
+    let quantity = 0;
+    let warehouse = main;
+    if (wantsStock) {
+      const read = readQuantity(cells.quantity);
+      if (read === null) error(t('“{value}” is not a quantity.', { value: cells.quantity }));
+      else if (read < 0) error(t('The quantity can’t be negative.'));
+      else quantity = read;
+      if (cells.warehouse) {
+        const found = warehouses.get(key(cells.warehouse));
+        if (found) warehouse = found;
+        // The main store, added on import when the company has no warehouse yet.
+        else if (!(live.length === 0 && MAIN_STORE.includes(key(cells.warehouse)))) {
+          error(t('No warehouse is called {name}.', { name: cells.warehouse }));
+        }
+      }
+      if (stockLocked) {
+        error(t('This is on or before the lock date ({date}).', { date: fmtDate(lock!) }));
+      }
+    }
+
+    let source: ProductRecord['source'] = 'new';
+    let product: Product | null = null;
+    let update = false;
+    if (earlier) {
+      if (!wantsStock) issues.push({ level: 'skip', text: takenText });
+      source = 'repeat';
+      product = earlier.product;
+    } else if (existing) {
+      const before = existing;
+      source = 'existing';
+      product = before;
+      if (options.updateExisting) {
+        const next: Product = { ...before };
+        // Matched by its SKU: the file's name is the item's name.
+        if (codeKey && cells.name) next.name = cells.name.trim();
+        if (cells.nameAr) next.nameAr = cells.nameAr.trim();
+        if (cells.description) next.description = cells.description;
+        if (cells.descriptionAr) next.descriptionAr = cells.descriptionAr;
+        if (cells.unit) {
+          next.unit = unit;
+          if (unitId) next.unitId = unitId;
+          else delete next.unitId;
+        }
+        if (price !== null) next.unitPrice = price;
+        if (cost !== null) next.costPrice = cost;
+        if (reorderLevel !== null && productKind(before) === 'stock') {
+          next.reorderLevel = reorderLevel;
+        }
+        if (cells.barcode) next.barcode = cells.barcode;
+        update = UPDATED_FIELDS.some((f) => (next[f] ?? null) !== (before[f] ?? null));
+        if (update) {
+          product = next;
+          issues.push({ level: 'info', text: t('Updates the item already in your items.') });
+        }
+      }
+      if (!wantsStock && !update) {
+        issues.push({
+          level: 'skip',
+          text: options.updateExisting ? t('Nothing to change.') : takenText,
+        });
+      } else if (!update) {
+        issues.push({ level: 'info', text: t('Already in your items: only its stock is taken.') });
+      }
+      if (typed && typed !== productKind(before) && (wantsStock || update)) {
+        issues.push({
+          level: 'warning',
+          text: t('The type of an item already in your items is not changed by an import.'),
+        });
+      }
+    } else if (ambiguous || nameTaken) {
+      const text = ambiguous
+        ? t('More than one item is called {name}. Add the SKU to say which.', { name })
+        : t('{name} is already in your items.', { name });
+      issues.push({
+        level: wantsStock || (ambiguous && options.updateExisting) ? 'error' : 'skip',
+        text,
+      });
+    } else if (name) {
+      if (typed === undefined) {
+        issues.push({
+          level: 'warning',
+          text: wantsStock
+            ? t('Type “{value}” not recognised; imported as a stock item, as it has a quantity.', {
+                value: cells.type,
+              })
+            : t('Type “{value}” not recognised; imported as a service.', { value: cells.type }),
+        });
+      }
+      // Without a type, a row with a quantity is a stock item; others are services as before.
+      const kind = typed ?? (wantsStock ? 'stock' : undefined);
+      product = createProduct(company.id, {
+        name,
+        ...(cells.nameAr ? { nameAr: cells.nameAr.trim() } : {}),
+        sku: cells.sku,
+        unit,
+        ...(unitId ? { unitId } : {}),
+        unitPrice: price ?? 0,
+        description: cells.description,
+        ...(cells.descriptionAr ? { descriptionAr: cells.descriptionAr } : {}),
+        taxRateIds: [...company.defaults.defaultTaxRateIds],
+        ...(kind ? { kind } : {}),
+        ...(cost !== null ? { costPrice: cost } : {}),
+        ...(kind === 'stock' ? { reorderLevel } : {}),
+        ...(cells.barcode ? { barcode: cells.barcode } : {}),
+      });
+    }
+
+    let stock: ProductStock | null = null;
+    if (wantsStock && product) {
+      const warehouseId = warehouse?.id ?? '';
+      if (productKind(product) !== 'stock') {
+        error(t('{name} is not a stock item, so it can’t have a quantity.', { name }));
+      } else if (stocked.has(`${product.id}|${warehouseId}`)) {
+        error(t('{name} already has a quantity for this warehouse on another row.', { name }));
+      }
+      const counted = source !== 'new' && history.has(product.id);
+      const onRecord = counted ? (levels.get(product.id)?.byWarehouse.get(warehouseId) ?? 0) : 0;
+      const unitCost = cost ?? product.costPrice ?? 0;
+      stock = { warehouseId, quantity, unitCost, as: counted ? 'count' : 'opening', onRecord };
+      if (counted) {
+        issues.push({
+          level: 'info',
+          text: t('It has stock history, so the quantity is a count: {quantity} on record.', {
+            quantity: onRecord,
+          }),
+        });
+      } else if (quantity > 0 && unitCost === 0) {
+        issues.push({
+          level: 'warning',
+          text: t('No cost price: this stock is valued at nothing.'),
+        });
+      }
+    }
+
+    const status = statusOf(issues);
+    let record: ImportRecord | null = null;
+    if (status === 'ready' && product) {
+      const value: ProductRecord = { product, source, update, stock };
+      record = { kind: 'products', value };
+      if (source !== 'repeat') planned.set(product.id, value);
+      if (source === 'new') {
+        if (codeKey) fileSkus.set(codeKey, product.id);
+        fileNames.set(nameKey, product.id);
+        if (company.items?.autoSku && !product.sku.trim()) itemCodes += 1;
+      }
+      if (stock) {
+        stocked.add(`${product.id}|${stock.warehouseId}`);
+        if (stock.as === 'count') {
+          summary.counted += 1;
+          if (!dec(stock.quantity).eq(dec(stock.onRecord))) summary.differences += 1;
+        } else if (stock.quantity > 0) {
+          summary.opening += 1;
+          openingWarehouses.add(stock.warehouseId);
+          summary.value += toMinor(
+            round(dec(stock.quantity).times(dec(stock.unitCost)), precision),
+            precision,
+          );
+        }
+      }
+    }
+    plan.rows.push({ line: i + 2, status, issues, cells, record });
+  });
+  summary.warehouses = openingWarehouses.size;
+  if (stockFile) plan.stock = summary;
+  plan.itemCodes = itemCodes;
+  plan.existing = existingRows;
+}
+
 /** An issued document for money owed before the books start here. */
 function openingDocument(
   company: Company,
@@ -704,8 +1114,11 @@ function openingDocument(
   });
 }
 
-/** Everything a plan needs to know about the company's existing records. */
-export async function loadImportContext(companyId: ID): Promise<ImportContext> {
+/**
+ * Everything a plan needs to know about the company's existing records; the
+ * stock only for products (or when no kind is given).
+ */
+export async function loadImportContext(companyId: ID, kind?: ImportKind): Promise<ImportContext> {
   const company = await db.companies.get(companyId);
   if (!company) throw new ImportError(t('Company not found.'));
   const [clients, products, accounts, documents, employees] = await Promise.all([
@@ -715,7 +1128,28 @@ export async function loadImportContext(companyId: ID): Promise<ImportContext> {
     db.documents.where('companyId').equals(companyId).toArray(),
     db.employees.where('companyId').equals(companyId).toArray(),
   ]);
-  return { company, clients, products, accounts, documents, employees };
+  const ctx: ImportContext = { company, clients, products, accounts, documents, employees };
+  if (kind && kind !== 'products') return ctx;
+  const [warehouses, movements, entries, journals] = await Promise.all([
+    db.warehouses.where('companyId').equals(companyId).toArray(),
+    db.stockMovements.where('companyId').equals(companyId).toArray(),
+    db.stockEntries.where('companyId').equals(companyId).toArray(),
+    db.journals.bulkGet(company.openingBalances?.journalIds ?? []),
+  ]);
+  const history = new Set<ID>(movements.map((m) => m.productId));
+  for (const entry of entries) for (const line of entry.lines) history.add(line.productId);
+  // Stock already in the opening balances would be counted twice.
+  const precision = currencyPrecision(company.currency);
+  const inventory = stockAccounts(accounts, accountingSettings(company).template).inventory;
+  let inBooks = 0;
+  for (const journal of journals) {
+    if (!journal || journal.status !== 'posted') continue;
+    for (const line of journal.lines) {
+      if (line.accountId !== inventory?.id) continue;
+      inBooks += toMinor(line.debit, precision) - toMinor(line.credit, precision);
+    }
+  }
+  return { ...ctx, warehouses, stock: { history, movements, inBooks } };
 }
 
 /**
@@ -729,7 +1163,8 @@ export async function importEmployees(
   options: ImportOptions,
   onProgress?: (progress: EmployeeImportProgress) => void,
 ): Promise<ImportResult> {
-  const plan = planImport('employees', rows, mapping, options, await loadImportContext(companyId));
+  const ctx = await loadImportContext(companyId, 'employees');
+  const plan = planImport('employees', rows, mapping, options, ctx);
   return commitEmployeeImport(companyId, plan, onProgress);
 }
 
@@ -757,6 +1192,92 @@ async function openingAccount(company: Company): Promise<Account> {
     arabic: { name: account.nameAr },
   });
   return account;
+}
+
+/**
+ * For new items of a products file that get item codes, in a company kept in
+ * the cloud: a block of the cloud's counter, taken before the import's
+ * transaction (see reserveItemCodes). Null to number on this device.
+ */
+async function reserveImportCodes(
+  companyId: ID,
+  rows: string[][],
+  mapping: ColumnMapping,
+  options: ImportOptions,
+): Promise<ReservedCounter | null> {
+  if (!canReserveCounters()) return null;
+  const ctx = await loadImportContext(companyId, 'products');
+  if (!ctx.company.items?.autoSku) return null;
+  const count = planImport('products', rows, mapping, options, ctx).itemCodes ?? 0;
+  return count ? reserveItemCodes(companyId, count) : null;
+}
+
+/**
+ * Posts the stock of a products file: one opening stock entry per warehouse
+ * for items without stock history, then one count adjustment per warehouse
+ * for the differences of items with history. Runs in the import's
+ * transaction, after the items are saved.
+ */
+async function postImportedStock(
+  company: Company,
+  items: ProductRecord[],
+  options: ImportOptions,
+): Promise<Pick<StockEntry, 'id' | 'number' | 'kind'>[]> {
+  const stocked = items.flatMap((r) => (r.stock ? [{ ...r, stock: r.stock }] : []));
+  const opening = stocked.filter((r) => r.stock.as === 'opening' && r.stock.quantity > 0);
+  const counts = stocked.filter(
+    (r) => r.stock.as === 'count' && !dec(r.stock.quantity).eq(dec(r.stock.onRecord)),
+  );
+  if (opening.length === 0 && counts.length === 0) return [];
+  const main = stocked.some((r) => !r.stock.warehouseId)
+    ? (await ensureDefaultWarehouse(company.id)).id
+    : '';
+  // Opening stock is booked against opening balance equity.
+  if (opening.length) await openingAccount(company);
+  const fresh = (await db.companies.get(company.id)) ?? company;
+  const byWarehouse = (rows: typeof stocked) => {
+    const groups = new Map<ID, typeof stocked>();
+    for (const r of rows) {
+      const id = r.stock.warehouseId || main;
+      const group = groups.get(id);
+      if (group) group.push(r);
+      else groups.set(id, [r]);
+    }
+    return groups;
+  };
+  const base = {
+    date: options.asOf,
+    reference: options.fileName,
+    notes: t('Imported from {file}.', { file: options.fileName || 'CSV' }),
+  };
+  const entries: StockEntry[] = [];
+  for (const [warehouseId, rows] of byWarehouse(opening)) {
+    const input: StockEntryInput = {
+      ...base,
+      kind: 'opening',
+      warehouseId,
+      lines: rows.map((r) => ({
+        productId: r.product.id,
+        quantity: r.stock.quantity,
+        unitCost: r.stock.unitCost,
+      })),
+    };
+    entries.push(await addStockEntry(fresh, input));
+  }
+  for (const [warehouseId, rows] of byWarehouse(counts)) {
+    const input: StockEntryInput = {
+      ...base,
+      kind: 'adjustment',
+      reason: 'count',
+      warehouseId,
+      lines: rows.map((r) => ({
+        productId: r.product.id,
+        quantity: dec(r.stock.quantity).minus(dec(r.stock.onRecord)).toNumber(),
+      })),
+    };
+    entries.push(await addStockEntry(fresh, input));
+  }
+  return entries.map(({ id, number, kind }) => ({ id, number, kind }));
 }
 
 /** Gives new contacts their numbers (C-0001…), skipping numbers already used. */
@@ -787,6 +1308,8 @@ export async function commitImport(
 ): Promise<ImportResult> {
   // Employees are saved in batches, not in one transaction.
   if (kind === 'employees') return importEmployees(companyId, rows, mapping, options);
+  const reserved =
+    kind === 'products' ? await reserveImportCodes(companyId, rows, mapping, options) : null;
   return db.transaction(
     'rw',
     [
@@ -800,11 +1323,17 @@ export async function commitImport(
       db.activities,
       // Read by loadImportContext.
       db.employees,
+      // Opening stock (see stockTables).
+      db.warehouses,
+      db.stockMovements,
+      db.stockEntries,
+      db.landedCosts,
     ],
     async () => {
-      const ctx = await loadImportContext(companyId);
+      const ctx = await loadImportContext(companyId, kind);
       const plan = planImport(kind, rows, mapping, options, ctx);
-      if (kind === 'opening' && plan.errors > 0) {
+      // A partial trial balance, or stock of part of a file, would leave the books wrong.
+      if ((kind === 'opening' || plan.stock) && plan.errors > 0) {
         throw new ImportError(t('Fix the rows with problems first. Nothing was imported.'));
       }
       if (plan.ready === 0) throw new ImportError(t('There is nothing to import.'));
@@ -894,15 +1423,56 @@ export async function commitImport(
       }
 
       if (kind === 'products') {
-        const products = records.flatMap((r) => (r.kind === 'products' ? [r.value] : []));
-        await db.products.bulkAdd(products);
-        for (const p of products) {
+        const items = records.flatMap((r) => (r.kind === 'products' ? [r.value] : []));
+        const fresh = items.filter((r) => r.source === 'new').map((r) => r.product);
+        // New items without an SKU get the next item codes, as when saved one by one.
+        const uncoded = company.items?.autoSku ? fresh.filter((p) => !p.sku.trim()) : [];
+        if (uncoded.length) {
+          const taken = new Set(
+            [...ctx.products, ...fresh].map((p) => skuKey(p.sku)).filter(Boolean),
+          );
+          const { codes, rule } = nextItemCodes(company, taken, uncoded.length, reserved);
+          uncoded.forEach((p, i) => (p.sku = codes[i]));
+          company = { ...company, numbering: { ...company.numbering, product: rule } };
+          await db.companies.put({ ...company, updatedAt: nowStamp() });
+        }
+        await db.products.bulkAdd(fresh);
+        for (const p of fresh) {
           await logActivity(company.id, 'product', p.id, 'created', {
             text: msg('Item {name} imported'),
             vars: { name: p.name },
             arabic: { name: p.nameAr },
           });
         }
+        const changed = items.filter((r) => r.source === 'existing' && r.update);
+        if (changed.length) {
+          const stamp = nowStamp();
+          await db.products.bulkPut(changed.map((r) => ({ ...r.product, updatedAt: stamp })));
+          for (const { product: p } of changed) {
+            await logActivity(company.id, 'product', p.id, 'updated', {
+              text: msg('Item {name} updated'),
+              vars: { name: p.name },
+            });
+          }
+          // The cost price values sales made before any stock had a cost.
+          const before = new Map(ctx.products.map((p) => [p.id, p]));
+          await recost(
+            company,
+            changed
+              .map((r) => r.product)
+              .filter(
+                (p) => productKind(p) === 'stock' && before.get(p.id)?.costPrice !== p.costPrice,
+              )
+              .map((p) => p.id),
+          );
+        }
+        if (fresh.some((p) => productKind(p) === 'stock')) {
+          await ensureStockAccounts(company);
+          await ensureDefaultWarehouse(company.id);
+        }
+        result.added = fresh.length;
+        result.updated = changed.length;
+        result.stockEntries = await postImportedStock(company, items, options);
       }
 
       if (kind === 'opening') {

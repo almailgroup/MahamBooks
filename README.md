@@ -159,7 +159,12 @@ and the compliance calendar (Maham Compliance).
   when papers expire, deadlines and cheques come due, bills are to pay or
   invoices become overdue, and a summary every Sunday (Settings → Email
   alerts; setup in [`docs/email-alerts.md`](docs/email-alerts.md)).
-- Import contacts, items, opening balances and open invoices from CSV.
+- Import contacts, items, opening balances and open invoices from CSV or
+  Excel (Settings → Import data, or Import on Products & services). Items can
+  bring their type, cost, barcode, reorder level and stock: with a quantity
+  column and your confirmation, stock items get their opening stock per
+  warehouse against opening balance equity, and items with stock history are
+  counted instead. Stock count sheets can be filled in on Excel too.
 - Works offline and installs like an app on phones and computers.
 - 20 themes, 10 light and 10 dark, chosen per device in **Settings →
   Appearance** or from the header, or following the device's light and dark

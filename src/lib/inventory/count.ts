@@ -4,8 +4,8 @@ import { normalizeDigits } from '@/lib/money';
 
 /**
  * Stock count sheets: exported as CSV (SKU, item, unit, quantity on record,
- * counted), filled in on a spreadsheet or on paper, and read back. Rows are
- * matched by SKU, else by the English or Arabic name.
+ * counted), filled in on a spreadsheet or on paper, and read back from CSV
+ * or Excel. Rows are matched by SKU, else by the English or Arabic name.
  */
 
 export type CountItem = Pick<Product, 'id' | 'sku' | 'name' | 'nameAr' | 'unit'>;
@@ -43,6 +43,11 @@ export function countSheetRows(
  * rows left blank are skipped.
  */
 export function parseCountSheet(text: string, items: CountItem[]): CountImport {
+  return readCountRows(parseCsvRows(text), items);
+}
+
+/** Counted quantities from the rows of a sheet, CSV or Excel (see parseCountSheet). */
+export function readCountRows(rows: string[][], items: CountItem[]): CountImport {
   const bySku = new Map(items.filter((i) => i.sku.trim()).map((i) => [key(i.sku), i.id]));
   const byName = new Map<string, ID>();
   for (const i of items) {
@@ -50,7 +55,7 @@ export function parseCountSheet(text: string, items: CountItem[]): CountImport {
     if (i.nameAr?.trim()) byName.set(key(i.nameAr), i.id);
   }
   const result: CountImport = { counted: new Map(), unmatched: [], invalid: [] };
-  parseCsvRows(text).forEach((row, index) => {
+  rows.forEach((row, index) => {
     const cells = row.map((c) => c.trim());
     if (cells.length < 2 || cells.every((c) => !c)) return;
     const quantity = parseQuantity(cells[cells.length - 1]);
