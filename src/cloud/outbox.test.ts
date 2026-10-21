@@ -3,6 +3,7 @@ import { db } from '@/db/db';
 import { createClient } from '@/db/defaults';
 import { deleteCompany, saveClient, setupCompany, UnsentChangesError } from '@/db/records';
 import { createPayment, deletePayment, savePayment } from '@/db/payments';
+import { checkMarkSent, draftDocument, saveDocument } from '@/db/documents';
 import { addAttachment } from '@/db/purchases';
 import { wipeAllData } from '@/db/backup';
 import type { Company } from '@/db/types';
@@ -203,6 +204,21 @@ describe('roles on this device', () => {
         updatedAt: '',
       }),
     ).rejects.toBeInstanceOf(CloudPermissionError);
+  });
+
+  it('tell before a draft is sent whether it may be marked as sent, queuing nothing', async () => {
+    const acme = await company();
+    const client = await saveClient(createClient(acme.id, { name: 'Sample Trading' }));
+    const draft = await draftDocument(acme, 'invoice', client);
+    draft.items[0] = { ...draft.items[0], name: 'Service', quantity: 1, unitPrice: 10 };
+    const invoice = await saveDocument(draft);
+    await link(acme, 'staff');
+    await checkMarkSent(invoice.id);
+    expect(await db.outbox.count()).toBe(0);
+    await link(acme, 'viewer');
+    await expect(checkMarkSent(invoice.id)).rejects.toBeInstanceOf(CloudPermissionError);
+    expect((await db.documents.get(invoice.id))?.status).toBe('draft');
+    expect(await db.outbox.count()).toBe(0);
   });
 
   it('let staff attach a scan to a payment and delete them together, and viewers neither', async () => {

@@ -35,6 +35,38 @@ describe('ways of showing amounts', () => {
     expect(applyPreset(table, typed, 'signed')).toMatchObject({ amount: 2, debitCredit: null });
   });
 
+  it('find the debit or credit column taken as the description, and its other words', () => {
+    const table = parseCsvRows(
+      'Date,Amount,Dr/Cr,Balance\n01/10/2026,1.250,DR,98.750\n02/10/2026,50.000,CR,148.750\n',
+    );
+    const guess = guessMapping(table);
+    expect(guess.description).toBe(2);
+    const typed = applyPreset(table, guess, 'amount-type');
+    expect(typed).toMatchObject({ amount: 1, debitCredit: 2 });
+    expect(csvStatement(table, typed).lines.map((l) => l.amount)).toEqual([-1.25, 50]);
+    for (const [out, into] of [
+      ['DB', 'CR'],
+      ['صادر', 'وارد'],
+    ]) {
+      const other = parseCsvRows(
+        `Date,Details,Amount,Type,Balance\n01/10/2026,Fee,1.250,${out},98.750\n02/10/2026,Deposit,50.000,${into},148.750\n`,
+      );
+      const read = applyPreset(other, guessMapping(other), 'amount-type');
+      expect(read.debitCredit).toBe(3);
+      expect(csvStatement(other, read).lines.map((l) => l.amount)).toEqual([-1.25, 50]);
+    }
+  });
+
+  it('leave the debit or credit column to be chosen when none is found', () => {
+    const table = parseCsvRows(
+      'Date,Details,Amount,Balance\n01/10/2026,Fee,1.250,98.750\n02/10/2026,Deposit,50.000,148.750\n',
+    );
+    const typed = applyPreset(table, guessMapping(table), 'amount-type');
+    expect(typed).toMatchObject({ amount: 2, debitCredit: null });
+    // Read as one column until it is chosen (the import keeps the choice).
+    expect(presetOf(typed)).toBe('signed');
+  });
+
   it('take unnamed numeric columns in order, never the dates', () => {
     const table = parseCsvRows('01/10/2026,02/10/2026,Fee,1.250,,98.750\n');
     const split = applyPreset(table, guessMapping(table), 'debit-credit');

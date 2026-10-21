@@ -295,8 +295,12 @@ describe('statements with account details above the table', () => {
   });
 
   it('read an amount column with a debit or credit column beside it', () => {
-    expect(['Dr', 'D', 'debit', 'مدين', '-'].map(debitOrCredit)).toEqual(Array(5).fill('debit'));
-    expect(['CR', 'c.', 'Credit', 'دائن', '+'].map(debitOrCredit)).toEqual(Array(5).fill('credit'));
+    expect(['Dr', 'DB', 'D', 'debit', 'مدين', 'صادر', '-'].map(debitOrCredit)).toEqual(
+      Array(7).fill('debit'),
+    );
+    expect(['CR', 'c.', 'Credit', 'دائن', 'وارد', '+'].map(debitOrCredit)).toEqual(
+      Array(6).fill('credit'),
+    );
     expect(debitOrCredit('Card')).toBeNull();
     const rows = parseCsvRows(
       'Date,Details,Amount,Dr/Cr,Balance\n01/10/2026,Fee,1.250,DR,98.750\n02/10/2026,Deposit,50.000,CR,148.750\n',
@@ -326,5 +330,20 @@ describe('running balances', () => {
     );
     expect(checkBalances(lines([-1, -1], [99, 97]))).toBe('differs');
     expect(checkBalances(lines([-1, -1], [99, null]))).toBeNull();
+  });
+
+  it('swapped money in and out are put right by swapping the columns, not by flipping signs', () => {
+    const rows = parseCsvRows(
+      'Date,Description,Debit,Credit,Balance\n01/10/2026,Fee,1.250,,98.750\n' +
+        '02/10/2026,Transfer in,,50.000,148.750\n03/10/2026,Card,10.000,,138.750\n',
+    );
+    const right = guessMapping(rows);
+    expect(checkBalances(csvStatement(rows, right).lines)).toBe('agrees');
+    const swapped = { ...right, moneyIn: right.moneyOut, moneyOut: right.moneyIn };
+    expect(checkBalances(csvStatement(rows, swapped).lines)).toBe('flipped');
+    // Flipping the signs turns the balances round too: still the wrong way.
+    expect(checkBalances(csvStatement(rows, { ...swapped, invert: true }).lines)).toBe('flipped');
+    const back = { ...swapped, moneyIn: swapped.moneyOut, moneyOut: swapped.moneyIn };
+    expect(checkBalances(csvStatement(rows, back).lines)).toBe('agrees');
   });
 });

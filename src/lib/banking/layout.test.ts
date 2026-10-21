@@ -85,4 +85,33 @@ describe('statement layouts', () => {
     expect(lines(rows, format)).toMatchObject({ layout: { start: 1, remembered: true } });
     expect(lines(rows, format).lines).toHaveLength(2);
   });
+
+  it('of tables without column names lose no line when fewer rows are above them', () => {
+    const october = parseCsvRows(
+      'Statement\nAccount,TEST-0001\nPeriod,October 2026\n' +
+        '2026-10-01,Coffee,-3.200\n2026-10-02,Lunch,-6.500\n',
+    );
+    const guessed = guessLayout(october, 3);
+    expect(guessed.mapping.header).toBe(false);
+    const format = rememberedFormat('csv', october, 3, guessed.mapping);
+    expect(format.headerRow).toBe(3);
+    // November's statement has no Period line.
+    const november = parseCsvRows(
+      'Statement\nAccount,TEST-0001\n' +
+        '2026-11-01,Rent,-300.000\n2026-11-02,Fee,-1.250\n2026-11-03,Salary,850.000\n',
+    );
+    const read = lines(november, format);
+    expect(read.layout).toMatchObject({ start: 2, remembered: true });
+    expect(read.lines.map((l) => [l.description, l.amount])).toEqual([
+      ['Rent', -300],
+      ['Fee', -1.25],
+      ['Salary', 850],
+    ]);
+    // And with more rows above them, the lines are all read too.
+    const december = parseCsvRows(
+      'Statement\nAccount,TEST-0001\nPeriod,December 2026\nBranch,Main\n' +
+        '2026-12-01,Rent,-300.000\n2026-12-02,Fee,-1.250\n',
+    );
+    expect(lines(december, format).lines.map((l) => l.description)).toEqual(['Rent', 'Fee']);
+  });
 });

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
 import { createClient } from './defaults';
 import {
+  checkMarkSent,
   convertQuoteToInvoice,
   deleteDocument,
   draftDocument,
@@ -19,6 +20,7 @@ import {
   saveClient,
   setupCompany,
 } from './records';
+import { LockedPeriodError } from './accounting';
 import type { Company, InvoiceDocument } from './types';
 
 async function freshCompany(): Promise<Company> {
@@ -105,6 +107,23 @@ describe('documents', () => {
     await expect(saveDocument({ ...draft, number: first.number })).rejects.toBeInstanceOf(
       DuplicateNumberError,
     );
+  });
+
+  it('tries marking a draft as sent without changing anything, with the error it would give', async () => {
+    const company = await freshCompany();
+    const client = await saveClient(createClient(company.id, { name: 'A' }));
+    const invoice = await invoiceFor(company, client.id);
+    const logged = await db.activities.count();
+    await checkMarkSent(invoice.id);
+    expect(await db.documents.get(invoice.id)).toEqual(invoice);
+    expect(await db.activities.count()).toBe(logged);
+    // Issuing it would post it into a locked period.
+    await db.companies.update(company.id, {
+      accounting: { ...company.accounting!, lockDate: invoice.issueDate },
+    });
+    await expect(checkMarkSent(invoice.id)).rejects.toThrow(LockedPeriodError);
+    await expect(markSent(invoice.id)).rejects.toThrow(LockedPeriodError);
+    expect((await db.documents.get(invoice.id))?.status).toBe('draft');
   });
 
   it('tracks payments through partial and paid', async () => {

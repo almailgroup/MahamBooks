@@ -77,6 +77,15 @@ export function applyPreset(
       filled.length > 0 && filled.filter((v) => debitOrCredit(v)).length >= filled.length * 0.8
     );
   };
-  const side = named(SIDE, undefined, sides) ?? free.find((i) => i !== amount && sides(i)) ?? null;
+  // Failing that, a column taken as the description or the reference: a file
+  // whose only text column says debit or credit.
+  const taken = [mapping.description, mapping.reference].filter(
+    (i): i is number => i !== null && i !== amount,
+  );
+  const side =
+    named(SIDE, undefined, sides) ??
+    free.find((i) => i !== amount && sides(i)) ??
+    taken.find(sides) ??
+    null;
   return { ...mapping, amount, moneyIn: null, moneyOut: null, debitCredit: side };
 }

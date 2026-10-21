@@ -124,6 +124,25 @@ describe('importing statements read from Excel and CSV', () => {
     expect((await db.accounts.get(bank.id))?.statementFormat).toEqual(format);
     await importStatement(company.id, bank.id, lines, 'oct.csv', null);
     expect(await db.accounts.get(bank.id)).not.toHaveProperty('statementFormat');
+    // The same layout again writes nothing, whatever the order of its keys
+    // (as the cloud sends records back).
+    await importStatement(company.id, bank.id, lines, 'oct.csv', format);
+    const kept = (await db.accounts.get(bank.id))!;
+    const reorder = (value: unknown): unknown =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.entries(value)
+              .reverse()
+              .map(([k, v]) => [k, reorder(v)]),
+          )
+        : value;
+    await db.accounts.put({
+      ...kept,
+      statementFormat: reorder(kept.statementFormat) as typeof format,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    await importStatement(company.id, bank.id, lines, 'oct.csv', format);
+    expect((await db.accounts.get(bank.id))?.updatedAt).toBe('2026-10-01T00:00:00.000Z');
     // Lines without a value date store none.
     await importStatement(company.id, bank.id, [line('2026-11-01', -1, 'Fee')], 'nov.csv');
     const fee = await db.bankTransactions.filter((t) => t.description === 'Fee').first();

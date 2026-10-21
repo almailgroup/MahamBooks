@@ -912,11 +912,18 @@ export function Stamp({
   theme,
   style,
   size = 20,
+  anchored = false,
 }: {
   model: RenderModel;
   theme: TemplateTheme;
   style?: Style;
   size?: number;
+  /**
+   * Placed within what follows the header (a View of its own), not from the
+   * top of the page: it moves with the header, whatever makes it taller or
+   * shorter (the logo's own line, the logo leaving the header for it).
+   */
+  anchored?: boolean;
 }) {
   if (!model.stamp) return null;
   const color =
@@ -944,7 +951,7 @@ export function Stamp({
     style,
   );
   // The logo's own line moves what the stamp sits on down.
-  if (typeof placed.top === 'number') placed.top += logoRowHeight(model);
+  if (!anchored && typeof placed.top === 'number') placed.top += logoRowHeight(model);
   return (
     <View style={placed}>
       <Text style={text}>{model.stamp.text}</Text>

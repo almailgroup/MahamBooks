@@ -13,7 +13,12 @@ const scan: AttachedFile = {
   dataUrl: 'data:image/jpeg;base64,AAAA',
 };
 
-function renderList(props: { files: AttachedFile[]; readOnly?: boolean }) {
+function renderList(props: {
+  files: AttachedFile[];
+  readOnly?: boolean;
+  camera?: boolean;
+  compact?: boolean;
+}) {
   render(
     <AttachmentList
       {...props}
@@ -39,6 +44,23 @@ describe('attachment lists', () => {
     expect(screen.queryByRole('button', { name: 'Remove cheque-scan.jpg' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Attach file' })).toBeNull();
     expect(screen.queryByLabelText('Attach a file')).toBeNull();
+  });
+
+  it('with a camera and no file yet, put Take photo first (a bill or a payment form)', () => {
+    renderList({ files: [], camera: true });
+    const photo = screen.getByRole('button', { name: 'Take photo' });
+    expect(photo.className).toContain('bg-primary-solid');
+    expect(photo.className).toContain('flex-1');
+  });
+
+  it('compact (the Record payment dialog), keep both buttons small and plain', () => {
+    renderList({ files: [], camera: true, compact: true });
+    for (const name of ['Take photo', 'Choose file']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.className).not.toContain('bg-primary-solid');
+      expect(button.className).toContain('h-8');
+      expect(button.className).not.toContain('flex-1');
+    }
   });
 
   it('read only and empty, say so', () => {

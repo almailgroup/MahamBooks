@@ -31,7 +31,11 @@ const TNUM: Style = { fontFeatureSettings: ['tnum'] };
 /** Fonts a voucher needs (the Arabic one is the fallback for Arabic letters). */
 export const VOUCHER_FONTS = ['inter', 'plexarabic'] as const;
 
-/** Sizes on a full page, and on half of one (A5), where everything is tighter. */
+/**
+ * Sizes on a full page, on half of one (A5), where everything is tighter,
+ * and on a half page that is still too short for the voucher (long names,
+ * many invoices): tighter again, so the signatures stay on the sheet.
+ */
 const SIZES = {
   page: {
     padding: 36,
@@ -53,7 +57,18 @@ const SIZES = {
     rowPadding: 1.5,
     gap: 5,
     signatures: 8,
-    signed: 36,
+    signed: 32,
+  },
+  compact: {
+    padding: 14,
+    logo: 16,
+    label: 6.5,
+    labelWidth: 74,
+    value: 7.5,
+    rowPadding: 0.5,
+    gap: 3,
+    signatures: 4,
+    signed: 26,
   },
 };
 type Sizes = (typeof SIZES)['page'];
@@ -80,7 +95,16 @@ function Value({ line, size }: { line: VoucherLine; size: Sizes }) {
   );
 }
 
-function SignatureLine({ line, height }: { line: VoucherSignature; height: number }) {
+function SignatureLine({
+  line,
+  height,
+  oneLine,
+}: {
+  line: VoucherSignature;
+  height: number;
+  /** Both languages on one line (half pages). */
+  oneLine: boolean;
+}) {
   return (
     <View style={{ flex: 1, paddingHorizontal: 8 }}>
       <View
@@ -111,23 +135,31 @@ function SignatureLine({ line, height }: { line: VoucherSignature; height: numbe
         ) : null}
       </View>
       <View style={{ borderTopWidth: 0.75, borderTopColor: RULE, marginTop: 3, paddingTop: 3 }}>
-        {line.label.en ? (
-          <Text style={{ fontSize: 8, color: BODY, textAlign: 'center' }}>{line.label.en}</Text>
-        ) : null}
-        {line.label.ar ? (
-          <Text style={{ fontSize: 8, color: BODY, textAlign: 'center' }}>{line.label.ar}</Text>
-        ) : null}
+        {oneLine && line.label.en && line.label.ar ? (
+          <Text style={{ fontSize: 7.5, color: BODY, textAlign: 'center' }}>
+            {pair(line.label)}
+          </Text>
+        ) : (
+          <>
+            {line.label.en ? (
+              <Text style={{ fontSize: 8, color: BODY, textAlign: 'center' }}>{line.label.en}</Text>
+            ) : null}
+            {line.label.ar ? (
+              <Text style={{ fontSize: 8, color: BODY, textAlign: 'center' }}>{line.label.ar}</Text>
+            ) : null}
+          </>
+        )}
       </View>
     </View>
   );
 }
 
-function VoucherPage({ model }: { model: VoucherModel }) {
+function VoucherPage({ model, compact }: { model: VoucherModel; compact: boolean }) {
   const accent = model.accent;
   const accentText = textSafe(accent);
   const font = FONT_FAMILIES.inter.family;
   const half = model.paper === 'A5';
-  const size = half ? SIZES.half : SIZES.page;
+  const size = half ? (compact ? SIZES.compact : SIZES.half) : SIZES.page;
   const signed = model.signatures.some((s) => s.signature || s.stamp);
   const small: Style = { fontSize: half ? 7 : 7.5, color: MUTED, marginTop: 1.5, lineHeight: 1.3 };
   const meta: Style = { fontSize: size.label, color: MUTED, textAlign: 'left' };
@@ -183,7 +215,8 @@ function VoucherPage({ model }: { model: VoucherModel }) {
             {model.company.address?.en ? (
               <Text style={small}>{model.company.address.en}</Text>
             ) : null}
-            {model.company.email ? <Text style={small}>{model.company.email}</Text> : null}
+            {/* On half a page the email goes with the phone, on the other side. */}
+            {model.company.email && !half ? <Text style={small}>{model.company.email}</Text> : null}
           </View>
           <View style={{ flex: 1, alignItems: 'center', paddingTop: 4 }}>
             <Text
@@ -217,6 +250,11 @@ function VoucherPage({ model }: { model: VoucherModel }) {
             {model.company.phone ? (
               <Text style={sx(small, { direction: 'ltr', textAlign: 'right' })}>
                 {model.company.phone}
+              </Text>
+            ) : null}
+            {model.company.email && half ? (
+              <Text style={sx(small, { direction: 'ltr', textAlign: 'right' })}>
+                {model.company.email}
               </Text>
             ) : null}
             {model.company.address?.ar ? (
@@ -305,7 +343,12 @@ function VoucherPage({ model }: { model: VoucherModel }) {
         {/* Signatures */}
         <View wrap={false} style={{ flexDirection: 'row', marginTop: size.signatures }}>
           {model.signatures.map((line, i) => (
-            <SignatureLine key={i} line={line} height={signed ? size.signed : 28} />
+            <SignatureLine
+              key={i}
+              line={line}
+              height={signed ? size.signed : half ? 22 : 28}
+              oneLine={half}
+            />
           ))}
         </View>
 
@@ -344,8 +387,14 @@ function VoucherPage({ model }: { model: VoucherModel }) {
   );
 }
 
-/** The voucher as a PDF document. */
-export function voucherDocument(model: VoucherModel): ReactElement<DocumentProps> {
+/**
+ * The voucher as a PDF document. `compact` draws a half page (A5) tighter,
+ * for a voucher that doesn't fit on one otherwise (see fitVoucher).
+ */
+export function voucherDocument(
+  model: VoucherModel,
+  { compact = false }: { compact?: boolean } = {},
+): ReactElement<DocumentProps> {
   return (
     <Document
       title={model.documentTitle}
@@ -354,7 +403,31 @@ export function voucherDocument(model: VoucherModel): ReactElement<DocumentProps
       producer={APP_NAME}
       language="en"
     >
-      <VoucherPage model={model} />
+      <VoucherPage model={model} compact={compact} />
     </Document>
   );
+}
+
+/** How many pages a PDF made here has (react-pdf leaves its page objects uncompressed). */
+export function pdfPageCount(bytes: Uint8Array): number {
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return (text.match(/\/Type\s*\/Page(?!s)/g) ?? []).length;
+}
+
+/**
+ * The voucher rendered by `render`: a half page (A5) that runs onto a second
+ * one is drawn again, tighter, so the voucher and its signatures stay on one
+ * sheet.
+ */
+export async function fitVoucher<T>(
+  model: VoucherModel,
+  render: (document: ReactElement<DocumentProps>) => Promise<T>,
+  bytes: (file: T) => Promise<Uint8Array> | Uint8Array,
+): Promise<T> {
+  const file = await render(voucherDocument(model));
+  if (model.paper !== 'A5' || pdfPageCount(await bytes(file)) <= 1) return file;
+  return render(voucherDocument(model, { compact: true }));
 }

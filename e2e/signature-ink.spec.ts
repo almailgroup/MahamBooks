@@ -123,8 +123,14 @@ test('a draft prints as a draft, and the copy sent is signed', async ({ page }) 
   await expect(clientDialog).toBeHidden();
   await page.getByLabel('Item 1 name').fill('Printing');
   await page.getByLabel('Item 1 unit price').fill('120');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  // Saved and downloaded at once: the draft's copy, and the download says why.
+  const saved = await downloadFrom(page, async () => {
+    await page.getByRole('button', { name: 'More save options' }).click();
+    await page.getByRole('menuitem', { name: 'Save and download PDF' }).click();
+  });
   await expect(page).toHaveURL(/#\/invoices\/[0-9a-f-]{36}$/);
+  expect(await pdfText(saved.content)).toContain('DRAFT');
+  await expect(page.getByText('Mark it as sent for the copy to share.')).toBeVisible();
   await expect(page.locator('canvas').first()).toBeVisible({ timeout: 30_000 });
 
   // The draft: watermarked, and the download says why.
@@ -133,7 +139,7 @@ test('a draft prints as a draft, and the copy sent is signed', async ({ page }) 
   );
   expect(await pdfText(draft.content)).toContain('DRAFT');
   await expect(
-    page.getByText('Drafts print with a DRAFT watermark, without the signature and stamp.'),
+    page.getByText('Drafts print with a DRAFT watermark, without the signature and stamp.').first(),
   ).toBeVisible();
 
   // Sent from the draft and marked as sent at once: the copy shared is the sent one.

@@ -290,21 +290,22 @@ function PaymentVoucher({ direction }: { direction: PaymentDirection }) {
   const { id = '' } = useParams();
   const company = useCompany();
   const copy = PAYMENT_COPY[direction];
-  const payment = useLiveQuery(async () => (await db.payments.get(id)) ?? null, [id]);
-  const client = useLiveQuery(
-    async () => (payment?.clientId ? ((await db.clients.get(payment.clientId)) ?? null) : null),
-    [payment?.clientId],
-  );
-  const docs = useLiveQuery(async () => {
-    if (!payment) return [];
-    return (await db.documents.bulkGet(payment.documentIds)).filter((d): d is InvoiceDocument =>
-      Boolean(d),
+  // Read together, so the party and the invoices are never those of a
+  // moment before (a query that waits on another keeps its last answer).
+  const loaded = useLiveQuery(async () => {
+    const payment = await db.payments.get(id);
+    if (!payment) return null;
+    const client = payment.clientId ? ((await db.clients.get(payment.clientId)) ?? null) : null;
+    const docs = (await db.documents.bulkGet(payment.documentIds)).filter(
+      (d): d is InvoiceDocument => Boolean(d),
     );
-  }, [payment]);
+    return { payment, client, docs };
+  }, [id]);
 
-  if (payment === undefined || client === undefined || !docs) {
+  if (loaded === undefined) {
     return <Spinner className="min-h-dvh" label={t('Loading…')} />;
   }
+  const { payment, client, docs } = loaded ?? { payment: null, client: null, docs: [] };
   if (!payment || payment.companyId !== company.id || paymentDirection(payment) !== direction) {
     return (
       <Missing
@@ -333,13 +334,12 @@ function PaymentVoucher({ direction }: { direction: PaymentDirection }) {
 function ExpenseVoucher() {
   const { id = '' } = useParams();
   const company = useCompany();
-  const expense = useLiveQuery(async () => (await db.expenses.get(id)) ?? null, [id]);
-  const vendor = useLiveQuery(
-    async () => (expense?.vendorId ? ((await db.clients.get(expense.vendorId)) ?? null) : null),
-    [expense?.vendorId],
-  );
-  const accounts = useLiveQuery(async () => {
+  // Read together: a query that waits on another keeps its last answer for a
+  // moment, which showed "could not be found" while the expense loaded.
+  const loaded = useLiveQuery(async () => {
+    const expense = await db.expenses.get(id);
     if (!expense) return null;
+    const vendor = expense.vendorId ? ((await db.clients.get(expense.vendorId)) ?? null) : null;
     const [category, chosen] = await db.accounts.bulkGet([
       expense.accountId,
       expense.paidFromAccountId ?? '',
@@ -348,12 +348,17 @@ function ExpenseVoucher() {
     const paidFrom =
       chosen ??
       (await db.accounts.where('[companyId+role]').equals([expense.companyId, 'bank']).first());
-    return { category: category ?? null, paidFrom: paidFrom ?? null };
-  }, [expense]);
+    return {
+      expense,
+      vendor,
+      accounts: { category: category ?? null, paidFrom: paidFrom ?? null },
+    };
+  }, [id]);
 
-  if (expense === undefined || vendor === undefined || accounts === undefined) {
+  if (loaded === undefined) {
     return <Spinner className="min-h-dvh" label={t('Loading…')} />;
   }
+  const { expense, vendor, accounts } = loaded ?? { expense: null, vendor: null, accounts: null };
   if (!expense || !accounts || expense.companyId !== company.id) {
     return (
       <Missing

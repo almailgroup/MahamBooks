@@ -372,8 +372,8 @@ export function guessMapping(rows: string[][], preferDayFirst = true): CsvMappin
 /** Whether a debit/credit column says debit (money out), credit (money in), or neither. */
 export function debitOrCredit(value: string): 'debit' | 'credit' | null {
   const v = value.trim().replace(/\.$/, '').toLowerCase();
-  if (/^(?:dr|d|debit|withdrawal|-|مدين|سحب)$/.test(v)) return 'debit';
-  if (/^(?:cr|c|credit|deposit|\+|دائن|إيداع|ايداع)$/.test(v)) return 'credit';
+  if (/^(?:dr|db|d|debit|withdrawal|-|مدين|سحب|صادر)$/.test(v)) return 'debit';
+  if (/^(?:cr|c|credit|deposit|\+|دائن|إيداع|ايداع|وارد)$/.test(v)) return 'credit';
   return null;
 }
 

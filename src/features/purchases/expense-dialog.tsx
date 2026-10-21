@@ -86,7 +86,8 @@ export function ExpenseDialog({
   const [more, setMore] = useState(!isNew);
   const detailsId = useId();
   const set = (patch: Partial<Expense>) => setDraft((d) => ({ ...d, ...patch }));
-  const changed = JSON.stringify(draft) !== JSON.stringify(expense);
+  // A receipt added or taken off counts too: it is only kept once saved.
+  const changed = attachments.dirty || JSON.stringify(draft) !== JSON.stringify(expense);
   const currency = draft.currency || company.currency;
   const tax = includedTax(draft.amount, draft.taxes, currency);
   const reverse = reverseChargeTax(draft.amount, draft.taxes, currency);

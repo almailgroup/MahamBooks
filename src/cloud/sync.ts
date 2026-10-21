@@ -984,6 +984,8 @@ async function logCompanyConflicts(companyId: string, paths: string[][]): Promis
 interface Touched {
   tables: Set<string>;
   documents: Set<string>;
+  /** Payments deleted by the cloud's changes: their scans go with them (see reconcile). */
+  deletedPayments?: Set<string>;
 }
 
 /** What became of a page of changes. */
@@ -1114,6 +1116,7 @@ export async function applyRows(
         if (local) {
           noteTouched(touched, row.tbl, local);
           await store.delete(row.id);
+          if (row.tbl === 'payments') (touched.deletedPayments ??= new Set()).add(row.id);
         }
         await db.syncRevs.delete([row.tbl, row.id]);
         continue;
@@ -1349,6 +1352,9 @@ async function fullResync(companyId: string, ctx: SyncContext, touched: Touched)
       );
       if (gone.length === 0) continue;
       for (const record of gone) noteTouched(touched, name, record);
+      if (name === 'payments') {
+        for (const record of gone) (touched.deletedPayments ??= new Set()).add(String(record.id));
+      }
       await table(name).bulkDelete(gone.map((r) => String(r.id)));
       await db.syncRevs.bulkDelete(gone.map((r) => [name, String(r.id)] as [string, string]));
     }
@@ -1509,6 +1515,33 @@ async function reconcile(companyId: string, touched: Touched): Promise<void> {
       recalculateDocuments(ids),
     );
     await refreshOrdersFor(ids);
+  }
+  if (touched.deletedPayments?.size) await removeScansOf(companyId, [...touched.deletedPayments]);
+}
+
+/**
+ * The scans of payments deleted on another device, deleted here too and sent,
+ * so their files go from the cloud as well. A payment deleted by an older
+ * build (before #21) leaves its scans behind; this build deletes them with the
+ * payment, and then nothing is left here to delete. Never stops the sync.
+ */
+async function removeScansOf(companyId: string, paymentIds: string[]): Promise<void> {
+  try {
+    await db.transaction('rw', [db.payments, db.attachments], async () => {
+      const back = new Set(
+        (await db.payments.bulkGet(paymentIds)).filter(Boolean).map((p) => p!.id),
+      );
+      const gone = paymentIds.filter((id) => !back.has(id));
+      if (gone.length === 0) return;
+      const scans = await db.attachments
+        .where('ownerId')
+        .anyOf(gone)
+        .filter((a) => a.companyId === companyId)
+        .primaryKeys();
+      if (scans.length) await db.attachments.bulkDelete(scans);
+    });
+  } catch {
+    // Not allowed (any more) or not saved: the next device to sync tidies up.
   }
 }
 

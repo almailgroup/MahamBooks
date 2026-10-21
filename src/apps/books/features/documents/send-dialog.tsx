@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Copy, Mail, MessageCircle, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Client, Company, InvoiceDocument } from '@/db/types';
-import { markSent } from '@/db/documents';
+import { checkMarkSent, markSent } from '@/db/documents';
 import { logActivity } from '@/db/activity';
 import { useFormat } from '@/app/company';
 import { fillTemplate, isValidEmail, mailtoLink } from '@/lib/email';
@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox, Field, Input, Textarea } from '@/components/ui/form';
 import { Segmented } from '@/components/ui/misc';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
+import { useReadOnly } from '@/components/ui/read-only';
 import { downloadBlob } from '@/pdf/client';
 import { salesType } from '@/lib/document-types';
 
@@ -50,6 +51,39 @@ export function emailValues(doc: InvoiceDocument, company: Company, client: Clie
     // Email templates are written by the company, in its own words.
     paymentLink: link ? `Pay online: ${link}` : '',
   };
+}
+
+/**
+ * A draft sent with "Mark as sent": the status change is tried first, so its
+ * signed copy never leaves while it stays a draft (a locked period, a role
+ * that may only view…), and the real reason is shown.
+ */
+async function readyToMark(doc: InvoiceDocument, marking: boolean): Promise<void> {
+  if (marking && doc.status === 'draft') await checkMarkSent(doc.id);
+}
+
+/** After it went out: marks it as sent and notes it; says so if marking it fails. */
+async function noteSent(
+  doc: InvoiceDocument,
+  marking: boolean,
+  readOnly: boolean,
+  log: () => Promise<void>,
+): Promise<void> {
+  if (marking && doc.status === 'draft') {
+    try {
+      await markSent(doc.id);
+    } catch (error) {
+      toast.error(
+        t('{number} went out, but could not be marked as sent: {reason}', {
+          number: doc.number,
+          reason: error instanceof Error ? error.message : t('Something went wrong.'),
+        }),
+      );
+      return;
+    }
+  }
+  // Viewers can't write to the log; what was sent went out all the same.
+  if (!readOnly) await log().catch(() => undefined);
 }
 
 /** Whether this browser can share a PDF file with other apps (phones mostly). */
@@ -92,7 +126,9 @@ export function SendDialog({
   );
   const [subject, setSubject] = useState(fillTemplate(template.subject, values));
   const [body, setBody] = useState(fillTemplate(template.body, values));
-  const [markAsSent, setMarkAsSent] = useState(doc.status === 'draft');
+  // Viewers can't mark it as sent: their copy of a draft stays a draft.
+  const { readOnly } = useReadOnly();
+  const [markAsSent, setMarkAsSent] = useState(doc.status === 'draft' && !readOnly);
   const [busy, setBusy] = useState<'mail' | 'share' | null>(null);
   const canShare = canSharePdf();
 
@@ -102,57 +138,67 @@ export function SendDialog({
     .filter(Boolean);
   const invalid = recipients.filter((r) => !isValidEmail(r));
 
-  const afterSend = async (via: string) => {
-    if (markAsSent && doc.status === 'draft') await markSent(doc.id);
-    const vars = { number: doc.number, recipients: recipients.join(', '), via };
-    await logActivity(
-      company.id,
-      doc.type,
-      doc.id,
-      kind === 'reminder' ? 'reminded' : 'emailed',
-      kind === 'reminder'
-        ? recipients.length
-          ? { text: msg('Reminder for {number} sent to {recipients} ({via})'), vars }
-          : { text: msg('Reminder for {number} sent ({via})'), vars }
-        : recipients.length
-          ? { text: msg('{number} sent to {recipients} ({via})'), vars }
-          : { text: msg('{number} sent ({via})'), vars },
-      { clientId: doc.clientId || null, documentId: doc.id },
-    );
-  };
+  const afterSend = (via: string) =>
+    noteSent(doc, markAsSent, readOnly, async () => {
+      const vars = { number: doc.number, recipients: recipients.join(', '), via };
+      await logActivity(
+        company.id,
+        doc.type,
+        doc.id,
+        kind === 'reminder' ? 'reminded' : 'emailed',
+        kind === 'reminder'
+          ? recipients.length
+            ? { text: msg('Reminder for {number} sent to {recipients} ({via})'), vars }
+            : { text: msg('Reminder for {number} sent ({via})'), vars }
+          : recipients.length
+            ? { text: msg('{number} sent to {recipients} ({via})'), vars }
+            : { text: msg('{number} sent ({via})'), vars },
+        { clientId: doc.clientId || null, documentId: doc.id },
+      );
+    });
 
   const openMail = async () => {
     setBusy('mail');
     try {
+      await readyToMark(doc, markAsSent);
       // Email links cannot carry attachments, so download the PDF to attach.
       downloadBlob(await getPdf(markAsSent), fileName);
       window.location.assign(mailtoLink({ to: recipients, subject, body }));
-      await afterSend(t('email app'));
-      toast.success(t('PDF downloaded. Attach it to the email that just opened.'));
-      onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Could not prepare the email.'));
-    } finally {
       setBusy(null);
+      return;
     }
+    toast.success(t('PDF downloaded. Attach it to the email that just opened.'));
+    await afterSend(t('email app'));
+    setBusy(null);
+    onOpenChange(false);
   };
 
   const share = async () => {
     setBusy('share');
     try {
+      await readyToMark(doc, markAsSent);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      setBusy(null);
+      return;
+    }
+    try {
       const file = new File([await getPdf(markAsSent)], downloadName(fileName), {
         type: 'application/pdf',
       });
       await navigator.share({ files: [file], title: subject, text: body });
-      await afterSend(t('share'));
-      onOpenChange(false);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         toast.error(t('Sharing failed. Try “Open email app” instead.'));
       }
-    } finally {
       setBusy(null);
+      return;
     }
+    await afterSend(t('share'));
+    setBusy(null);
+    onOpenChange(false);
   };
 
   const copy = async () => {
@@ -217,7 +263,7 @@ export function SendDialog({
               <Textarea id={id} value={body} onChange={(e) => setBody(e.target.value)} rows={9} />
             )}
           </Field>
-          {doc.status === 'draft' ? (
+          {doc.status === 'draft' && !readOnly ? (
             <Checkbox
               checked={markAsSent}
               onChange={(e) => setMarkAsSent(e.target.checked)}
@@ -290,7 +336,9 @@ export function WhatsAppDialog({
   const fmt = useFormat();
   const [language, setLanguage] = useState<MessageLanguage>('both');
   const [phone, setPhone] = useState(clientPhone(client));
-  const [markAsSent, setMarkAsSent] = useState(doc.status === 'draft');
+  // Viewers can't mark it as sent: their copy of a draft stays a draft.
+  const { readOnly } = useReadOnly();
+  const [markAsSent, setMarkAsSent] = useState(doc.status === 'draft' && !readOnly);
   const [busy, setBusy] = useState(false);
   const expired = isLinkExpired(doc.paymentLink, today());
   const link = documentPaymentLink(doc, company);
@@ -315,44 +363,49 @@ export function WhatsAppDialog({
   const kuwaiti = normalizeKuwaitPhone(phone);
   const canShare = canSharePdf();
 
-  const afterShare = async (via: string) => {
-    if (markAsSent && doc.status === 'draft') await markSent(doc.id);
-    await logActivity(
-      company.id,
-      doc.type,
-      doc.id,
-      'shared',
-      { text: msg('{number} shared on {via}'), vars: { number: doc.number, via } },
-      { clientId: doc.clientId || null, documentId: doc.id },
-    );
-  };
+  const afterShare = (via: string) =>
+    noteSent(doc, markAsSent, readOnly, async () => {
+      await logActivity(
+        company.id,
+        doc.type,
+        doc.id,
+        'shared',
+        { text: msg('{number} shared on {via}'), vars: { number: doc.number, via } },
+        { clientId: doc.clientId || null, documentId: doc.id },
+      );
+    });
 
   const openWhatsApp = async () => {
+    // The message carries no PDF, so nothing signed leaves before the change.
     window.open(whatsappUrl(phone, text), '_blank', 'noopener,noreferrer');
-    try {
-      await afterShare('WhatsApp');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
-    }
+    await afterShare('WhatsApp');
     onOpenChange(false);
   };
 
   const sharePdf = async () => {
     setBusy(true);
     try {
+      await readyToMark(doc, markAsSent);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      setBusy(false);
+      return;
+    }
+    try {
       const file = new File([await getPdf(markAsSent)], downloadName(fileName), {
         type: 'application/pdf',
       });
       await navigator.share({ files: [file], text });
-      await afterShare(t('share'));
-      onOpenChange(false);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         toast.error(t('Sharing failed. Try “Open WhatsApp” instead.'));
       }
-    } finally {
       setBusy(false);
+      return;
     }
+    await afterShare(t('share'));
+    setBusy(false);
+    onOpenChange(false);
   };
 
   const copy = async () => {
@@ -430,7 +483,7 @@ export function WhatsAppDialog({
               />
             )}
           </Field>
-          {doc.status === 'draft' ? (
+          {doc.status === 'draft' && !readOnly ? (
             <Checkbox
               checked={markAsSent}
               onChange={(e) => setMarkAsSent(e.target.checked)}

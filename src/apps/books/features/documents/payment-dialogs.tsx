@@ -286,6 +286,7 @@ export function RecordPaymentDialog({
               onRemove={attachments.remove}
               emptyText={t('A scan of the cheque or the transfer receipt.')}
               camera
+              compact
               readOnly={readOnly}
             />
           </section>

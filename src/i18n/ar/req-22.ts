@@ -34,4 +34,8 @@ export default {
     'تُطبع المسودات بعلامة مائية «مسودة» ومن دون التوقيع والختم.',
   'The PDF stays a draft: a DRAFT watermark, without the signature and stamp.':
     'يبقى ملف PDF مسودة: بعلامة مائية «مسودة» ومن دون التوقيع والختم.',
+  '{number} went out, but could not be marked as sent: {reason}':
+    'أُرسل {number}، لكن تعذّر تعيينه كمُرسل: {reason}',
+  'Drafts print with a DRAFT watermark, without the signature and stamp. Mark it as issued for the copy to send.':
+    'تُطبع المسودات بعلامة مائية «مسودة» ومن دون التوقيع والختم. عيّن الأمر كصادر للحصول على النسخة التي ترسلها.',
 } satisfies Dictionary;

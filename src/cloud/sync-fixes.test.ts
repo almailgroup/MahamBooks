@@ -4,6 +4,7 @@ import { createClient } from '@/db/defaults';
 import { deleteCompany, saveClient, setupCompany } from '@/db/records';
 import { draftDocument, isNumberTaken, saveDocument } from '@/db/documents';
 import { addAttachment } from '@/db/purchases';
+import { createPayment, savePayment } from '@/db/payments';
 import { createEmployee, saveEmployee } from '@/db/people';
 import { exportBackup, importBackup, wipeAllData } from '@/db/backup';
 import {
@@ -860,6 +861,77 @@ describe('removing files of deleted records', () => {
     await db.attachments.delete(file.id);
     await syncCompany(company.id, ctx);
     expect(await db.fileQueue.count()).toBe(0);
+  });
+});
+
+describe('a payment deleted on another device', () => {
+  async function paymentWithScan() {
+    const { company, invoice } = await uploaded();
+    const payment = await savePayment(
+      createPayment(company.id, {
+        clientId: invoice.clientId,
+        amount: 50,
+        currency: 'KWD',
+        documentIds: [invoice.id],
+        allocations: [{ documentId: invoice.id, amount: 50 }],
+      }),
+    );
+    const scan = await addAttachment(company.id, payment.id, {
+      name: 'cheque.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    await syncCompany(company.id, ctx);
+    const path = `${company.id}/${scan.id}`;
+    expect(server.files.has(path)).toBe(true);
+    return { company, payment, scan, path };
+  }
+
+  it('by an older build, which leaves its scans: they are deleted here and in the cloud', async () => {
+    const { company, payment, scan, path } = await paymentWithScan();
+    // An older build's deletePayment deletes the payment only.
+    const rev = (await db.syncRevs.get(['payments', payment.id]))!.rev;
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [{ tbl: 'payments', id: payment.id, deleted: true, base_rev: rev }]);
+    await syncCompany(company.id, ctx);
+    expect(await db.payments.get(payment.id)).toBeUndefined();
+    expect(await db.attachments.get(scan.id)).toBeUndefined();
+    expect(server.record(company.id, 'attachments', scan.id)).toBeUndefined();
+    expect(server.files.has(path)).toBe(false);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('by this build, with its scans: nothing more to do', async () => {
+    const { company, payment, scan } = await paymentWithScan();
+    const revs = [
+      (await db.syncRevs.get(['payments', payment.id]))!.rev,
+      (await db.syncRevs.get(['attachments', scan.id]))!.rev,
+    ];
+    await server.client(OWNER).pushRecords(company.id, [
+      { tbl: 'payments', id: payment.id, deleted: true, base_rev: revs[0] },
+      { tbl: 'attachments', id: scan.id, deleted: true, base_rev: revs[1] },
+    ]);
+    const pushed = vi.spyOn(ctx.api, 'pushRecords');
+    await syncCompany(company.id, ctx);
+    expect(await db.attachments.get(scan.id)).toBeUndefined();
+    // (The invoice is sent again, its balance recalculated, as before.)
+    const sent = pushed.mock.calls.flatMap(([, changes]) => changes.map((c) => c.tbl));
+    expect(sent).not.toContain('attachments');
+  });
+
+  it('is left alone on a viewer’s device, which can’t delete files', async () => {
+    const { company, payment, scan } = await paymentWithScan();
+    await db.syncState.update(company.id, { role: 'viewer' });
+    const rev = (await db.syncRevs.get(['payments', payment.id]))!.rev;
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [{ tbl: 'payments', id: payment.id, deleted: true, base_rev: rev }]);
+    await syncCompany(company.id, ctx);
+    expect(await db.payments.get(payment.id)).toBeUndefined();
+    expect(await db.attachments.get(scan.id)).toBeDefined();
+    expect(server.record(company.id, 'attachments', scan.id)).toBeDefined();
+    expect(await db.outbox.count()).toBe(0);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Branding, SignatureInk } from '@/db/types';
@@ -36,6 +36,11 @@ export function SignatureField({
   const ink: SignatureInk = stale ? 'original' : chosen;
   // What the ink is applied to: the upload kept beside a blue signature.
   const source = ink === 'blue' ? branding.signatureOriginal || signature : signature;
+  // The ink as it is now, for a file still being read when it was changed.
+  const current = useRef({ ink, branding });
+  useEffect(() => {
+    current.current = { ink, branding };
+  });
 
   useEffect(() => {
     if (chosen !== 'blue' || !signature) return;
@@ -61,11 +66,12 @@ export function SignatureField({
 
   /** A new picture (uploaded or drawn), in the ink chosen. */
   const setPicture = async (upload: string | null) => {
+    const now = current.current;
     // Fields an older version never wrote stay unwritten unless the ink is changed.
-    const kept = branding.signatureOriginal ? { signatureOriginal: null } : {};
+    const kept = now.branding.signatureOriginal ? { signatureOriginal: null } : {};
     if (!upload) {
       onChange({ signature: null, ...kept });
-    } else if (ink === 'blue') {
+    } else if (now.ink === 'blue') {
       onChange({
         signature: await inkImage(upload, 'blue'),
         signatureOriginal: await normalizeImage(upload, ORIGINAL_SIZE),
@@ -75,7 +81,7 @@ export function SignatureField({
       onChange({
         signature: upload,
         ...kept,
-        ...(branding.signatureInk ? { signatureInk: 'original' as const } : {}),
+        ...(now.branding.signatureInk ? { signatureInk: 'original' as const } : {}),
       });
     }
   };
@@ -108,7 +114,8 @@ export function SignatureField({
           'Sign on white paper and take a photo, draw it here, or use a transparent PNG. It is a printed signature, not an electronic one.',
         )}
         value={signature}
-        onChange={setPicture}
+        // The ink can't be changed while the picture is being put in it.
+        onChange={(upload) => run(() => setPicture(upload))}
         processing={busy}
         actions={
           <Button variant="outline" size="sm" onClick={() => setDrawing(true)} disabled={busy}>

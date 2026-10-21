@@ -8,6 +8,7 @@ import {
   Label,
   Lines,
   Logo,
+  LogoRow,
   MetaRows,
   PageFooter,
   RunningHeader,
@@ -38,13 +39,15 @@ function Creative({ model, theme }: TemplateProps) {
   const card: Style = { borderRadius: 10, padding: 13 };
 
   return (
-    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: 40 }}>
+    <DocShell model={model} theme={theme} pageStyle={{ paddingTop: 40 }} logoRow={false}>
       {/* Decorative shapes (first page only) */}
       <Svg style={{ position: 'absolute', top: 0, right: 0 }} width={240} height={150}>
         <Circle cx={220} cy={10} r={120} fill={tint(theme.accent, 0.86)} />
         <Circle cx={132} cy={-18} r={62} fill={theme.accent} />
         <Circle cx={210} cy={118} r={16} fill={tint(theme.accent, 0.55)} />
       </Svg>
+      {/* The logo's own line, drawn over the shapes (drawn first, it was hidden under them). */}
+      <LogoRow model={model} />
       {/* Bottom-left accent; must be `fixed` because non-fixed absolute nodes in
           the bottom margin break react-pdf's pagination. Render props run outside
           React, so this one uses react-pdf's own Svg and mirrors by hand. */}

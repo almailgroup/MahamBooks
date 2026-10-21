@@ -675,6 +675,20 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
   );
 }
 
+/** What a status change writes to. */
+const statusTables = () =>
+  withStockTables([
+    db.documents,
+    db.clients,
+    db.payments,
+    db.companies,
+    db.activities,
+    db.accounts,
+    db.products,
+    db.assets,
+    db.attachments,
+  ]);
+
 /**
  * Changes a document's status. `patch` is stored with it (for example who
  * signed a delivery note).
@@ -685,72 +699,58 @@ export async function setDocumentStatus(
   message?: ActivityMessage,
   patch: Partial<InvoiceDocument> = {},
 ): Promise<void> {
-  await db.transaction(
-    'rw',
-    withStockTables([
-      db.documents,
-      db.clients,
-      db.payments,
-      db.companies,
-      db.activities,
-      db.accounts,
-      db.products,
-      db.assets,
-      db.attachments,
-    ]),
-    async () => {
-      const doc = await db.documents.get(id);
-      if (!doc) return;
-      const company = await db.companies.get(doc.companyId);
-      const posted = isPosted({ type: doc.type, status });
-      if (company && isPosted(doc) !== posted) {
-        assertUnlocked(company, doc.issueDate);
-      }
-      if (hasActiveReleases(doc) && !posted) {
-        throw releasesFirstError();
-      }
-      // Leaving the books: assets made from it are refused, credits applied
-      // to (or from) it are taken off.
-      const leaving = isPosted(doc) && !posted;
-      if (leaving) await assertNoAssets(doc);
-      const credited = leaving && company ? await takeOffCredits(doc, company) : [];
-      let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
-      if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
-      if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
-        // Let payments decide between sent / partial / paid.
-        const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
-        // Issued now: what it posts with is fixed from now on.
-        if (!isPosted(doc)) next = await withPosting(next, client);
-        next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
-      } else if (leaving) {
-        // Voided or back to draft: its totals follow what is still applied to
-        // it now that its credits are off; the status stays as asked.
-        const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
-        const { totals } = applyTotals(next, await paidAmount(doc), client ?? null);
-        next = { ...next, totals, paidAt: null };
-      }
-      if (company && isPosted(next) && next.totals.retention) {
-        await ensureSpecAccount(
-          company,
-          next.type === 'bill' ? 'retentionsPayable' : 'retentionsReceivable',
-        );
-      }
-      await db.documents.put(next);
-      // The credit is free again, and what it was applied to is owed again.
-      await recalculateDocuments(credited);
-      await syncDocumentStock(doc.companyId, doc.id);
-      await logActivity(
-        doc.companyId,
-        doc.type,
-        doc.id,
-        `status:${status}`,
-        message ?? statusMessage(doc, status),
-        { clientId: doc.clientId || null, documentId: doc.id },
+  await db.transaction('rw', statusTables(), async () => {
+    const doc = await db.documents.get(id);
+    if (!doc) return;
+    const company = await db.companies.get(doc.companyId);
+    const posted = isPosted({ type: doc.type, status });
+    if (company && isPosted(doc) !== posted) {
+      assertUnlocked(company, doc.issueDate);
+    }
+    if (hasActiveReleases(doc) && !posted) {
+      throw releasesFirstError();
+    }
+    // Leaving the books: assets made from it are refused, credits applied
+    // to (or from) it are taken off.
+    const leaving = isPosted(doc) && !posted;
+    if (leaving) await assertNoAssets(doc);
+    const credited = leaving && company ? await takeOffCredits(doc, company) : [];
+    let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
+    if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
+    if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
+      // Let payments decide between sent / partial / paid.
+      const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
+      // Issued now: what it posts with is fixed from now on.
+      if (!isPosted(doc)) next = await withPosting(next, client);
+      next = applyTotals({ ...next, status: 'sent' }, await paidAmount(doc), client ?? null);
+    } else if (leaving) {
+      // Voided or back to draft: its totals follow what is still applied to
+      // it now that its credits are off; the status stays as asked.
+      const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
+      const { totals } = applyTotals(next, await paidAmount(doc), client ?? null);
+      next = { ...next, totals, paidAt: null };
+    }
+    if (company && isPosted(next) && next.totals.retention) {
+      await ensureSpecAccount(
+        company,
+        next.type === 'bill' ? 'retentionsPayable' : 'retentionsReceivable',
       );
-      // A confirmed order picks up the invoices already made from it.
-      await refreshOrdersOf(next);
-    },
-  );
+    }
+    await db.documents.put(next);
+    // The credit is free again, and what it was applied to is owed again.
+    await recalculateDocuments(credited);
+    await syncDocumentStock(doc.companyId, doc.id);
+    await logActivity(
+      doc.companyId,
+      doc.type,
+      doc.id,
+      `status:${status}`,
+      message ?? statusMessage(doc, status),
+      { clientId: doc.clientId || null, documentId: doc.id },
+    );
+    // A confirmed order picks up the invoices already made from it.
+    await refreshOrdersOf(next);
+  });
 }
 
 /**
@@ -762,6 +762,26 @@ export async function markSent(id: ID): Promise<void> {
   if (!doc || doc.status !== 'draft') return;
   const status = issuedStatus(doc.type);
   if (status) await setDocumentStatus(id, status);
+}
+
+class TriedOnly extends Error {}
+
+/**
+ * Whether markSent would go through now, without changing anything: it runs
+ * and is rolled back, and its error (a locked period, a role that may not
+ * change the document…) is thrown as it would be. Done before a draft's
+ * signed copy is handed out, so it never leaves while the document stays a
+ * draft.
+ */
+export async function checkMarkSent(id: ID): Promise<void> {
+  try {
+    await db.transaction('rw', statusTables(), async () => {
+      await markSent(id);
+      throw new TriedOnly();
+    });
+  } catch (error) {
+    if (!(error instanceof TriedOnly)) throw error;
+  }
 }
 
 /** Deletes a document. Payments that referenced it keep their money as unapplied credit. */

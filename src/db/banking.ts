@@ -15,6 +15,7 @@ import type {
   TaxLine,
 } from './types';
 import { fingerprints, type StatementLine } from '@/lib/banking/statement';
+import { sameData } from '@/cloud/roles';
 import { newId } from '@/lib/ids';
 import { currencyPrecision, round } from '@/lib/money';
 import { msg, t } from '@/i18n';
@@ -95,7 +96,9 @@ export async function importStatement(
 }
 
 async function rememberFormat(account: Account, format: StatementFormat | null, stamp: string) {
-  if (JSON.stringify(account.statementFormat ?? null) === JSON.stringify(format)) return;
+  // Whatever the order of its keys (the cloud keeps records as jsonb, which
+  // reorders them): an unchanged layout writes nothing.
+  if (sameData(account.statementFormat ?? null, format)) return;
   const { statementFormat: _old, ...rest } = account;
   await db.accounts.put({
     ...rest,
