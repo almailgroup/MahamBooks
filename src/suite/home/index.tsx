@@ -35,7 +35,7 @@ import { lookup } from '@/lib/known';
 import { Card, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
 import { useRoleView } from '@/features/cloud/role-gates';
-import { useApprovalView, usePendingRequests } from '@/features/approvals/hooks';
+import { useApprovalView, useCaughtUp, usePendingRequests } from '@/features/approvals/hooks';
 import { expirePending } from '@/db/approvals';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
@@ -262,10 +262,14 @@ function ApprovalsCard() {
   const view = useApprovalView(company);
   const requests = usePendingRequests(company.id);
   const approver = view.approver && view.link !== null;
-  // Requests that waited longer than the rules allow are cancelled on approvers' devices.
+  // Requests that waited longer than the rules allow are cancelled on
+  // approvers' devices, once caught up with the cloud.
+  const caughtUp = useCaughtUp(company.id);
   useEffect(() => {
-    if (approver && view.rules?.expireDays) void expirePending(company.id).catch(() => undefined);
-  }, [approver, view.rules?.expireDays, company.id]);
+    if (approver && caughtUp && view.rules?.expireDays) {
+      void expirePending(company.id).catch(() => undefined);
+    }
+  }, [approver, caughtUp, view.rules?.expireDays, company.id]);
   if (!requests || !view.link) return null;
   const count = approvalsWaiting(requests, { approver, userId: view.link.userId });
   if (count === 0) return null;

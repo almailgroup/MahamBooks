@@ -339,3 +339,31 @@ test('the owner, as Super Admin, limits a member, and the cloud parks what they 
   expect(refused.length).toBeGreaterThan(0);
   for (const error of refused) pageErrors.splice(pageErrors.indexOf(error), 1);
 });
+
+test('with the owner’s switch on, an admin cancels only the invitations of staff and viewers', async ({
+  page,
+}) => {
+  const { account, companyId } = await companyInTheCloud(page, 'Pearl Dive Trading');
+  const admin = cloud.addUser('noura@example.com', 'safe-password-5', 'Noura Test');
+  cloud.companies.get(companyId)!.members.set(admin.id, 'admin');
+  cloud.seniorRolesOwnerOnly.add(companyId);
+  const owner = cloud.users.get(OWNER.email)!;
+  cloud.invite(companyId, 'new-accountant@example.com', 'accountant', owner.id);
+  cloud.invite(companyId, 'new-staff@example.com', 'staff', admin.id);
+  await signOutRemovingCompanies(page, account);
+
+  await page.goto('#/signin');
+  await signIn(page, 'noura@example.com', 'safe-password-5');
+  await expect(page.getByRole('button', { name: 'Account: Noura Test' })).toContainText('Synced', {
+    timeout: 30_000,
+  });
+  await page.goto('#/settings/team');
+  const accountant = page.getByRole('listitem').filter({ hasText: 'new-accountant@example.com' });
+  await expect(accountant.getByText('Only the owner cancels this invitation.')).toBeVisible();
+  await expect(accountant.getByRole('button', { name: 'Cancel invitation' })).toHaveCount(0);
+  const staff = page.getByRole('listitem').filter({ hasText: 'new-staff@example.com' });
+  await staff.getByRole('button', { name: 'Cancel invitation' }).click();
+  await expect(page.getByText('Invitation cancelled')).toBeVisible();
+  expect(cloud.invites.find((i) => i.email === 'new-staff@example.com')?.revoked).toBe(true);
+  expect(cloud.invites.find((i) => i.email === 'new-accountant@example.com')?.revoked).toBeFalsy();
+});

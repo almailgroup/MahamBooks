@@ -22,16 +22,17 @@ import {
   canChangeMember,
   canWriteRecord,
   chequeChangeNeedsApprover,
+  deleteKeptBy,
   documentChangeNeedsApproval,
   getsChangeFeed,
   grantableRoles,
   guardApprovalWrite,
   isApprover,
   isPrivateRecord,
+  issuesWithoutNumber,
   limitBlocksWrite,
   MAX_APPROVERS,
   readPermissions,
-  rulesKeepRecord,
   sameData,
   seesChange,
   staffCompanyChangeOk,
@@ -1005,18 +1006,25 @@ export class FakeCloud {
       return data;
     }
     if (tbl !== 'documents' && tbl !== 'approvals') return data;
-    const rules = this.approvalRules(company);
-    if (!rules) return data;
     const approver = this.approver(company, user);
-    if (tbl === 'documents') {
-      if (old && !approver && documentChangeNeedsApproval(rules, old, data)) {
-        throw fail('approval_required');
-      }
-      return data;
+    if (tbl === 'approvals') {
+      // Whether or not the rules are on.
+      const write = guardApprovalWrite(old, data, {
+        userId: user,
+        approver,
+        owner: role === 'owner',
+        now: this.now(),
+      });
+      if ('refused' in write) throw fail(write.refused);
+      return write.data;
     }
-    const write = guardApprovalWrite(old, data, { userId: user, approver, now: this.now() });
-    if ('refused' in write) throw fail(write.refused);
-    return write.data;
+    const companyData = this.records.get(this.key(company, 'companies', company))?.data;
+    if (issuesWithoutNumber(companyData, old, data)) throw fail('invalid');
+    const rules = this.approvalRules(company);
+    if (rules && old && !approver && documentChangeNeedsApproval(rules, old, data)) {
+      throw fail('approval_required');
+    }
+    return data;
   }
 
   private applyChange(
@@ -1038,7 +1046,13 @@ export class FakeCloud {
         change.tbl === 'companies' ||
         !this.canWrite(company, user, change.tbl, visibleOld.data) ||
         // As can_delete_record: what the approval rules keep.
-        rulesKeepRecord(this.approvalRules(company), change.tbl, visibleOld.data) ||
+        (this.features.includes('approvals') &&
+          deleteKeptBy(
+            this.approvalRules(company),
+            change.tbl,
+            visibleOld.data,
+            this.approver(company, user),
+          ) !== null) ||
         (!this.approver(company, user) &&
           chequeChangeNeedsApprover(
             this.chequeRules(company),

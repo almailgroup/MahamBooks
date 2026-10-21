@@ -262,8 +262,10 @@ describe('the email of changes by the team', () => {
     ]) {
       expect(text).toContain(part);
     }
-    // The button opens Updates in the app; times are Kuwait's.
-    expect(email.html).toContain('href="https://books.example.com/#/notifications"');
+    // The button opens Updates in the app, in this company; times are Kuwait's.
+    expect(email.html).toContain(
+      `href="https://books.example.com/#/notifications?company=${encodeURIComponent(sampleData().company.id)}"`,
+    );
     expect(text).toContain('10:05');
     expect(email.text).toContain('- Voided invoice INV-');
   });

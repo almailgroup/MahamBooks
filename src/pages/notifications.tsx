@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Bell, CheckCheck } from 'lucide-react';
-import { useCompany, useFormat } from '@/app/company';
+import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import { changeKindLabel } from '@/alerts/changes';
 import type { ChangeEvent } from '@/cloud/api';
 import { cloudErrorMessage } from '@/cloud/api';
@@ -28,6 +28,27 @@ const PAGE = 50;
 type Show = 'all' | 'unread' | 'important';
 
 /**
+ * A link to Updates in a company (#/notifications?company=…, as the emails
+ * of the changes have it) opens it in that company when this device has it.
+ */
+function useCompanyOfLink(current: string) {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const openInCompany = useOpenInCompany();
+  const wanted = params.get('company');
+  useEffect(() => {
+    if (!wanted) return;
+    if (wanted === current) {
+      navigate('/notifications', { replace: true });
+      return;
+    }
+    void openInCompany(wanted, '/notifications').then((opened) => {
+      if (!opened) navigate('/notifications', { replace: true });
+    });
+  }, [wanted, current, navigate, openInCompany]);
+}
+
+/**
  * Updates (المستجدات): every change the team made in the company, newest
  * first, by day, for the owner (the Super Admin) and the members the owner
  * allowed to approve. Their own changes are left out. Filters, "Mark all as
@@ -35,6 +56,7 @@ type Show = 'all' | 'unread' | 'important';
  */
 export default function NotificationsPage() {
   const company = useCompany();
+  useCompanyOfLink(company.id);
   const link = useCloudLink(company.id);
   const access = useChangeFeedAccess(company.id);
   const status = useChangeFeedStatus(access);

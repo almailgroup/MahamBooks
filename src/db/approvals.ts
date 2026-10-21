@@ -19,8 +19,8 @@ import {
   INVOICE_CONTENT_FIELDS,
   invoiceContent,
   isApprover,
+  deleteKeptBy,
   rulesCoverDocument,
-  rulesKeepRecord,
   sameData,
 } from '@/cloud/roles';
 import type { CloudLink } from '@/cloud/types';
@@ -120,13 +120,18 @@ export function assertApproved(
   throw new ApprovalRequiredError(changeKind(before, after), before, after);
 }
 
-/** Whether the rules void this document instead of deleting it (for everyone). */
+/**
+ * Whether the rules keep this person from deleting this document, as the
+ * cloud does (can_delete_record): an issued invoice or credit note of a
+ * type they cover is voided instead, by everyone with "Void instead of
+ * delete" and otherwise by anyone but an approver, who asks for a void.
+ */
 export function voidsInsteadOfDeleting(
   company: Pick<Company, 'approvalRules'> | null | undefined,
   link: CloudLink | null | undefined,
   doc: Pick<InvoiceDocument, 'type' | 'status'>,
 ): boolean {
-  return rulesKeepRecord(rulesInEffect(company, link), 'documents', doc);
+  return deleteKeptBy(rulesInEffect(company, link), 'documents', doc, approverOf(link)) !== null;
 }
 
 /** Whether issued documents of this type wait for an approver, for this person. */
@@ -206,12 +211,20 @@ export const REQUEST_TABLES = () => [
   db.activities,
 ];
 
+/** A request for a new cheque payment: its scans wait with it, kept under the payment's id. */
+function asksForNewCheque(request: ApprovalRequest): boolean {
+  return request.subjectTbl === 'payments' && request.kind === 'cheque_create';
+}
+
 /**
  * A cheque that was never recorded keeps no files: the scans attached to a
  * request for a new cheque go once it is turned down, taken back or expired.
+ * In a company kept in the cloud only once the cloud agrees and has no
+ * payment for it (carryOutDecided): this device's copy of the request may be
+ * older than a confirmation made on another device.
  */
 async function dropUnusedFiles(requests: ApprovalRequest[]): Promise<void> {
-  const unused = requests.filter((r) => r.subjectTbl === 'payments' && r.kind === 'cheque_create');
+  const unused = requests.filter(asksForNewCheque);
   if (unused.length === 0) return;
   await db.transaction('rw', [db.payments, db.attachments], async () => {
     for (const request of unused) {
@@ -329,20 +342,26 @@ export async function cancelApproval(id: ID): Promise<void> {
     });
     await logRequest(current, 'cancelled');
   });
-  await dropUnusedFiles([request]);
+  // In the cloud, the sync that sends it tidies up (carryOutDecided).
+  if (!link) await dropUnusedFiles([request]);
 }
 
 /**
- * An approver's decision. Approved, the change is carried out here at once
- * (applyApproval); when that fails (the period is locked meanwhile, the
- * number is taken), the request stays approved and can be applied again or
- * rejected.
+ * An approver's decision. In a company kept on this device an approved
+ * change is carried out at once (applyApproval). In one kept in the cloud
+ * the cloud has the last word: the request may have been taken back, or
+ * decided on another device, before this decision reaches it. The change is
+ * then carried out once the cloud has taken the decision, by the sync that
+ * sends it (carryOutDecided), on this device. When carrying it out fails
+ * (the period is locked meanwhile, the number is taken), the request stays
+ * approved and can be carried out again or rejected. Returns whether the
+ * change was carried out now.
  */
 export async function decideApproval(
   id: ID,
   decision: 'approved' | 'rejected',
   note = '',
-): Promise<void> {
+): Promise<boolean> {
   const request = await db.approvals.get(id);
   // An approved request that could not be carried out may still be rejected.
   const turnedDown = request?.status === 'approved' && decision === 'rejected';
@@ -365,8 +384,55 @@ export async function decideApproval(
     });
     await logRequest(request, decision);
   });
-  if (decision === 'approved') await applyApproval(id);
-  else await dropUnusedFiles([request]);
+  // In the cloud, the sync that sends the decision carries it out.
+  if (link) return false;
+  if (decision === 'approved') {
+    await applyApproval(id);
+    return true;
+  }
+  await dropUnusedFiles([request]);
+  return false;
+}
+
+/** Whether this device has a change of the request the cloud hasn't taken yet (or refused). */
+export async function decisionUnsent(id: ID): Promise<boolean> {
+  return (await db.outbox.where('[table+id]').equals(['approvals', id]).count()) > 0;
+}
+
+/**
+ * What the sync does with the decisions this device sent, once the cloud has
+ * taken them (src/cloud/sync.ts), with the request as the cloud keeps it:
+ * one still approved is carried out here; a new cheque turned down, taken
+ * back or expired leaves its scans only when the cloud has no payment for it
+ * (`inCloud` asks; it answers true when it can't tell). Never throws: a
+ * change that can't be carried out stays approved, to be carried out again
+ * or rejected.
+ */
+export async function carryOutDecided(
+  companyId: ID,
+  ids: Iterable<ID>,
+  inCloud: (table: 'payments', id: ID) => Promise<boolean>,
+): Promise<void> {
+  for (const id of new Set(ids)) {
+    try {
+      const request = await db.approvals.get(id);
+      if (!request || request.companyId !== companyId) continue;
+      // Changed again here meanwhile: the sync that sends that decides.
+      if (await decisionUnsent(id)) continue;
+      if (request.status === 'approved') {
+        await applyApproval(id);
+      } else if (
+        (request.status === 'rejected' || request.status === 'cancelled') &&
+        asksForNewCheque(request) &&
+        !(await db.payments.get(request.subjectId)) &&
+        !(await inCloud('payments', request.subjectId))
+      ) {
+        await dropUnusedFiles([request]);
+      }
+    } catch {
+      // Stays approved, with Carry it out again on the request.
+    }
+  }
 }
 
 /**
@@ -473,6 +539,6 @@ export async function expirePending(companyId: ID, on = today()): Promise<number
       await logRequest(request, 'expired');
     }
   });
-  await dropUnusedFiles(old);
+  // Only in the cloud: the sync that sends it tidies up (carryOutDecided).
   return old.length;
 }

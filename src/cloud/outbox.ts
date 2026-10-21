@@ -7,16 +7,18 @@ import Dexie, {
   type Middleware,
 } from 'dexie';
 import { t } from '@/i18n';
+import { shortId } from '@/lib/ids';
 import {
   approvalRulesChanged,
   approvalRulesOf,
   canWriteRecord,
   chequeChangeNeedsApprover,
+  deleteKeptBy,
   documentChangeNeedsApproval,
   guardApprovalWrite,
   isApprover,
+  issuesWithoutNumber,
   limitBlocksWrite,
-  rulesKeepRecord,
   sameData,
   staffCompanyChangeOk,
 } from './roles';
@@ -50,6 +52,14 @@ export class CloudPermissionError extends Error {
 
 const remote = new WeakSet<object>();
 const linkCache = new WeakMap<object, Map<string, CloudLink | null>>();
+/** The group of the changes of each transaction (OutboxEntry.group). */
+const groups = new WeakMap<object, string>();
+
+function groupOf(trans: object): string {
+  let group = groups.get(trans);
+  if (!group) groups.set(trans, (group = shortId()));
+  return group;
+}
 const notified = new WeakSet<object>();
 
 /** Marks the running transaction as applying the server's changes: they are not queued. */
@@ -141,13 +151,16 @@ async function companiesFor(
 
 /**
  * The company's approval rules, as the server applies them (records_guard,
- * can_delete_record). `rules` are the company's, null while never turned on.
+ * can_delete_record). `company` is the company's record as stored here; its
+ * rules are null while never turned on. Approval requests are kept honest,
+ * and invoices numbered when they are issued are never issued without a
+ * number, whether or not the rules are on.
  */
 function refuseByRules(
   link: CloudLink,
   table: string,
   change: Change,
-  rules: Record<string, unknown> | null,
+  company: Record<string, unknown> | null | undefined,
 ): string | null {
   if (table === 'companies') {
     return link.role !== 'owner' &&
@@ -156,40 +169,57 @@ function refuseByRules(
       ? t('Only the owner changes the approval rules.')
       : null;
   }
-  if (!rules) return null;
+  const rules = approvalRulesOf(company);
   const approver = isApprover(link.role, link.approver);
+  if (!change.after) {
+    if (!change.before) return null;
+    const kept = deleteKeptBy(rules, table, change.before, approver);
+    if (kept === 'request') {
+      return t('Approval requests are kept as the record of who asked and who decided.');
+    }
+    if (kept === 'void') {
+      return t('Issued documents are voided, never deleted, so their numbers stay used.');
+    }
+    if (kept === 'approver') {
+      return t(
+        'This document is issued, so only an approver can delete it. Ask for a void instead.',
+      );
+    }
+  }
+  if (table === 'documents' && issuesWithoutNumber(company, change.before, change.after)) {
+    return t('This invoice has no number yet. Issue it again to give it one.');
+  }
+  if (table === 'approvals' && change.after) {
+    const write = guardApprovalWrite(change.before, change.after, {
+      userId: link.userId,
+      approver,
+      owner: link.role === 'owner',
+      now: new Date().toISOString(),
+    });
+    return 'refused' in write ? t('Only an approver decides approval requests.') : null;
+  }
+  if (!rules) return null;
   if (table === 'payments' || table === 'securityCheques') {
     // A cheque the rules keep for approvers: recorded, changed or deleted by them only.
     return !approver && chequeChangeNeedsApprover(rules, table, change.before, change.after)
       ? t('This cheque needs confirmation. Send it for confirmation instead.')
       : null;
   }
-  if (!change.after) {
-    if (!change.before || !rulesKeepRecord(rules, table, change.before)) return null;
-    return table === 'approvals'
-      ? t('Approval requests are kept as the record of who asked and who decided.')
-      : t('Issued documents are voided, never deleted, so their numbers stay used.');
-  }
-  if (table === 'documents') {
+  if (table === 'documents' && change.after) {
     return !approver && documentChangeNeedsApproval(rules, change.before, change.after)
       ? t('This change needs approval. Send it for approval instead.')
       : null;
   }
-  const write = guardApprovalWrite(change.before, change.after, {
-    userId: link.userId,
-    approver,
-    now: new Date().toISOString(),
-  });
-  return 'refused' in write ? t('Only an approver decides approval requests.') : null;
+  return null;
 }
 
 function refuse(
   link: CloudLink,
   table: string,
   change: Change,
-  rules: Record<string, unknown> | null,
+  company: Record<string, unknown> | null | undefined,
 ): string | null {
-  return refuseByRole(link, table, change) ?? refuseByRules(link, table, change, rules);
+  return refuseByRole(link, table, change) ?? refuseByRules(link, table, change, company);
 }
 
 function refuseByRole(link: CloudLink, table: string, change: Change): string | null {
@@ -270,14 +300,14 @@ async function capture(
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;
     if (!link) continue;
-    const rules = approvalRulesOf(companies?.get(link.companyId));
-    const reason = refuse(link, name, change, rules);
+    const reason = refuse(link, name, change, companies?.get(link.companyId));
     if (reason) throw new CloudPermissionError(reason, link.companyId);
   }
 
   const result = await table.mutate(req);
 
   const at = new Date().toISOString();
+  const group = groupOf(trans);
   const entries: OutboxEntry[] = [];
   changes.forEach((change, i) => {
     if (result.failures[i] || !change.companyId || !links.get(change.companyId)) return;
@@ -290,6 +320,7 @@ async function capture(
       op: change.after === undefined ? 'delete' : 'put',
       at,
       parked: 0,
+      group,
     });
   });
   if (entries.length) {

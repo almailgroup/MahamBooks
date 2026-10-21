@@ -166,6 +166,7 @@ function chequeContent(p: Data): Data {
     amount: p.amount,
     currency: p.currency,
     exchangeRate: p.exchangeRate ?? 1,
+    accountId: p.accountId,
     number: cheque.number,
     bank: cheque.bank,
     chequeDate: cheque.date,
@@ -216,6 +217,11 @@ function chequeNeedsApprover(
     ) {
       delete a.number;
       delete b.number;
+    }
+    // A cheque given its first account keeps its confirmation.
+    if (a.accountId == null || a.accountId === '') {
+      delete a.accountId;
+      delete b.accountId;
     }
     return canonical(a) !== canonical(b);
   }
@@ -644,29 +650,62 @@ export class FakeSupabase {
       }
       return data;
     }
-    if (!rules || (change.tbl !== 'documents' && change.tbl !== 'approvals')) return data;
+    if (change.tbl !== 'documents' && change.tbl !== 'approvals') return data;
     const covers = (doc: Record<string, unknown> | null) =>
-      Boolean(doc && rules.documentTypes?.includes(String(doc.type)));
+      Boolean(doc && rules?.documentTypes?.includes(String(doc.type)));
     if (!data) {
       if (!old) return null;
+      // Approval requests stay, whether or not the rules are on.
       if (change.tbl === 'approvals')
         return refuse('almail:permission You cannot delete this record.');
-      if (rules.voidInsteadOfDelete && covers(old) && old.status !== 'draft') {
+      if (
+        rules &&
+        covers(old) &&
+        old.status !== 'draft' &&
+        (rules.voidInsteadOfDelete || !approver)
+      ) {
         return refuse('almail:permission You cannot delete this record.');
       }
       return null;
     }
     if (change.tbl === 'documents') {
-      if (!old || approver || old.status === 'draft' || !(covers(old) || covers(data))) return data;
+      // With numberOnIssue, an invoice or credit note is never issued without its number.
+      const defaults = (companyRow?.data?.defaults ?? null) as { numberOnIssue?: boolean } | null;
+      if (
+        defaults?.numberOnIssue === true &&
+        (data.type === 'invoice' || data.type === 'credit') &&
+        stage(data.status) === 'issued' &&
+        String(data.number ?? '').trim() === '' &&
+        (!old || old.status === 'draft')
+      ) {
+        return refuse(
+          'almail:invalid This invoice has no number yet. Update the app on this device, then issue it again.',
+        );
+      }
+      if (!rules || !old || approver || old.status === 'draft' || !(covers(old) || covers(data)))
+        return data;
       return content(old) !== content(data) || stage(old.status) !== stage(data.status)
         ? approvalRequired()
         : data;
     }
+    // Approval requests, whether or not the rules are on.
     const now = new Date().toISOString();
     if (!old) {
-      if (approver && (data.status ?? 'pending') !== 'pending') return data;
+      if (approver && (data.status ?? 'pending') !== 'pending') {
+        if (role === 'owner') return data;
+        const own: Record<string, unknown> = { ...data };
+        if (own.requestedBy !== user) {
+          delete own.requestedByName;
+          Object.assign(own, { requestedBy: user, requestedAt: now });
+        }
+        if (own.decidedBy !== user) Object.assign(own, { decidedBy: user, decidedAt: now });
+        return own;
+      }
+      const asked: Record<string, unknown> = { ...data };
+      delete asked.expired;
+      delete asked.resultId;
       return {
-        ...data,
+        ...asked,
         status: 'pending',
         requestedBy: user,
         requestedAt: now,
@@ -675,15 +714,27 @@ export class FakeSupabase {
         decisionNote: '',
       };
     }
-    const fixed = Object.fromEntries(
-      ['kind', 'subjectTbl', 'subjectId', 'subjectNumber', 'before', 'after', 'reason']
-        .concat(['requestedBy', 'requestedByName', 'requestedAt', 'createdAt'])
-        .filter((key) => key in old)
-        .map((key) => [key, old[key]]),
-    );
+    const kept = (target: Record<string, unknown>, key: string) => {
+      if (key in old && old[key] !== undefined) target[key] = old[key];
+      else delete target[key];
+    };
     const was = String(old.status ?? 'pending');
     const status = String(data.status ?? was);
-    const kept = {
+    // Whoever isn't an approver changes nothing of a request but taking it back.
+    const next: Record<string, unknown> = approver
+      ? { ...data }
+      : { ...old, status, ...('updatedAt' in data ? { updatedAt: data.updatedAt } : {}) };
+    for (const key of [
+      'kind',
+      'subjectTbl',
+      'subjectId',
+      'subjectNumber',
+      'before',
+      'after',
+    ].concat(['reason', 'requestedBy', 'requestedByName', 'requestedAt', 'createdAt'])) {
+      kept(next, key);
+    }
+    const decision = {
       decidedBy: old.decidedBy ?? null,
       decidedAt: old.decidedAt ?? null,
       decisionNote: old.decisionNote ?? '',
@@ -693,14 +744,19 @@ export class FakeSupabase {
       status === 'pending' ||
       ['rejected', 'cancelled', 'applied'].includes(was)
     ) {
-      return { ...data, ...fixed, status: was, ...kept };
+      const same: Record<string, unknown> = { ...next, status: was, ...decision };
+      kept(same, 'expired');
+      kept(same, 'resultId');
+      return same;
     }
     const takenBack = was === 'pending' && status === 'cancelled' && old.requestedBy === user;
     if (!approver && !takenBack) {
       return refuse('almail:permission Only an approver decides approval requests.');
     }
-    if (was === 'approved' && status === 'applied') return { ...data, ...fixed, ...kept };
-    return { ...data, ...fixed, decidedBy: user, decidedAt: now };
+    if (!(approver && was === 'pending' && status === 'cancelled')) kept(next, 'expired');
+    if (!(approver && status === 'applied')) kept(next, 'resultId');
+    if (was === 'approved' && status === 'applied') return { ...next, ...decision };
+    return { ...next, decidedBy: user, decidedAt: now };
   }
 
   private approver(company: string, user: string): boolean {
@@ -1073,6 +1129,24 @@ export class FakeSupabase {
         if (mine === 'admin' && ownerOnly && SENIOR.includes(b.p_role as Role)) {
           return refuse('almail:permission Only the owner can invite admins and accountants.');
         }
+        // Like the server: the owner's invitation of an admin or accountant is the owner's to replace.
+        const email = String(b.p_email).toLowerCase();
+        if (
+          mine === 'admin' &&
+          ownerOnly &&
+          this.invites.some(
+            (i) =>
+              i.company === company &&
+              i.email === email &&
+              !i.accepted &&
+              !i.revoked &&
+              SENIOR.includes(i.role),
+          )
+        ) {
+          return refuse(
+            'almail:permission Only the owner can cancel invitations of admins and accountants.',
+          );
+        }
         // Like the server: a new link for the same address cancels the pending one.
         for (const pending of this.invites) {
           if (pending.company === company && pending.email === String(b.p_email).toLowerCase()) {
@@ -1095,6 +1169,25 @@ export class FakeSupabase {
             expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
           },
         ];
+      }
+      case 'revoke_invite': {
+        // The invitation says which company it is of.
+        const invite = this.invites.find((i) => i.id === b.p_invite);
+        const role = invite ? this.companies.get(invite.company)?.members.get(me.id) : undefined;
+        if (!invite || (role !== 'owner' && role !== 'admin')) {
+          return refuse('almail:permission Only the owner and admins can cancel invitations.');
+        }
+        if (
+          role === 'admin' &&
+          this.seniorRolesOwnerOnly.has(invite.company) &&
+          SENIOR.includes(invite.role)
+        ) {
+          return refuse(
+            'almail:permission Only the owner can cancel invitations of admins and accountants.',
+          );
+        }
+        if (!invite.accepted) invite.revoked = true;
+        return null;
       }
       case 'invite_details': {
         const invite = this.invites.find((i) => i.token === b.p_token);

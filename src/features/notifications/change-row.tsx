@@ -38,9 +38,14 @@ export function ChangeRow({
       />
       <span className="min-w-0 flex-1">
         <span className="block text-sm text-slate-700">
-          <span dir="auto" className="font-semibold text-slate-900">
-            {line.actor}
-          </span>{' '}
+          {/* "Sara joined the team" already says who: no name before it. */}
+          {line.named ? null : (
+            <>
+              <span dir="auto" className="font-semibold text-slate-900">
+                {line.actor}
+              </span>{' '}
+            </>
+          )}
           <span dir="auto">{line.text}</span>
         </span>
         {line.detail ? (

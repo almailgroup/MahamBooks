@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Check, RotateCcw, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
-import { applyApproval, cancelApproval, decideApproval } from '@/db/approvals';
+import { cancelApproval, decideApproval } from '@/db/approvals';
 import type { ApprovalRequest, Client } from '@/db/types';
 import { useFormat } from '@/app/company';
 import { bankName } from '@/lib/cheques';
@@ -20,6 +20,9 @@ import {
   chequeSummary,
   type ChequeFieldChange,
 } from './cheque-changes';
+import { useCloud } from '@/cloud/store';
+import { approve, carryOut } from './decide';
+import { useDecisionUnsent } from './hooks';
 import { kindLabel } from './labels';
 import { ReasonDialog } from './reason-dialog';
 
@@ -132,11 +135,19 @@ export function ChequeRequestCard({
     [request.kind, request.subjectTbl, request.subjectId],
   );
 
-  const run = async (key: string, work: () => Promise<void>, done: string) => {
+  const { manager } = useCloud();
+  // Confirmed here, and not in the cloud yet: recorded once it is.
+  const unsent = useDecisionUnsent(request.id);
+
+  const run = async (key: string, work: () => Promise<unknown>, done: string) => {
     setBusy(key);
     try {
-      await work();
-      toast.success(done);
+      const outcome = await work();
+      if (outcome === 'waiting') {
+        toast.success(t('Confirmed. It is recorded once this device has synced.'));
+      } else {
+        toast.success(done);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
       throw error;
@@ -299,9 +310,11 @@ export function ChequeRequestCard({
       ) : null}
       {request.status === 'approved' ? (
         <p className="text-xs text-amber-700">
-          {t(
-            'Confirmed, but not recorded yet on this device. Carry it out again, or reject it if it can’t be recorded.',
-          )}
+          {unsent
+            ? t('Confirmed. It is recorded once this device has synced.')
+            : t(
+                'Confirmed, but not recorded yet on this device. Carry it out again, or reject it if it can’t be recorded.',
+              )}
         </p>
       ) : null}
       {extra}
@@ -316,7 +329,7 @@ export function ChequeRequestCard({
               onClick={() =>
                 void run(
                   'approve',
-                  () => decideApproval(request.id, 'approved'),
+                  () => approve(request.id, manager),
                   t('Cheque confirmed and recorded'),
                 ).catch(() => undefined)
               }
@@ -358,7 +371,7 @@ export function ChequeRequestCard({
               onClick={() =>
                 void run(
                   'apply',
-                  () => applyApproval(request.id),
+                  () => carryOut(request.id, manager),
                   t('Cheque confirmed and recorded'),
                 ).catch(() => undefined)
               }

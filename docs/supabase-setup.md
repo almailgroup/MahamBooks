@@ -241,12 +241,12 @@ until the owner turns something on:
   voiding it or bringing it back from void is made only by an approver: the
   owner, or an admin or accountant with **Can approve** (Settings → Team).
   Everyone else gets **Send for approval** (إرسال للاعتماد) instead of Save,
-  and **Request void** instead of Void, with a reason. Payments, payment
-  links, credit notes applied to it and retention releases go on as before.
-  Drafts and new invoices are anyone's.
+  and **Request void** instead of Void (or Delete), with a reason. Payments,
+  payment links, credit notes applied to it and retention releases go on as
+  before. Drafts and new invoices are anyone's.
 - **Void instead of delete** (الإبطال بدلاً من الحذف), on by default: issued
   invoices and credit notes are voided, never deleted, so their numbers stay
-  used. They are under **Invoices → Void** (الفواتير الملغاة). Drafts can
+  used. With it off only approvers may delete them. They are under **Invoices → Void** (الفواتير الملغاة). Drafts can
   still be deleted. A voided invoice that was paid leaves the money on the
   payment as the customer's unapplied credit.
 - **Cancel requests still waiting after (days)**: 14 by default; 0 keeps them
@@ -255,19 +255,31 @@ until the owner turns something on:
 Requests are in **Approvals** (الاعتمادات) in the Books sidebar (طلبات
 الاعتماد), and a count is on the home page for approvers. An approver opens a
 request, sees what would change and approves or rejects it; approving makes
-the change on their device, which syncs to everyone. Whoever asked can take a
-request back while it waits. The cloud stamps who asked, who decided and when,
-and a decision once made can't be undone by an older copy.
+the change on their device once the cloud has the decision (offline, when the
+device is back online), and it syncs to everyone. A request taken back or
+decided on another device meanwhile stays as the cloud has it. Whoever asked
+can take a request back while it waits. The cloud stamps who asked, who
+decided and when, and a decision once made can't be undone by an older copy.
+An approval that can't be carried out (the period was locked meanwhile, say)
+stays approved, to be carried out again or rejected.
 
 **Void and reissue** (إبطال وإعادة إصدار), on any issued invoice or credit
-note, voids it and opens a new draft in its place, which prints "Replaces
-INV-…" and gets a new number when issued. Numbers are never reused. To avoid
-using up numbers on drafts, **Settings → Numbering → Number invoices and credit
-notes when they are issued** gives drafts their number only when they are sent.
+note once approvals or the numbering below are on, voids it and opens a new
+draft in its place, which prints "Replaces INV-…" and gets a new number when
+issued. Money paid on the void one becomes the customer's unapplied credit,
+to apply to the new one. Numbers are never reused. To avoid using up numbers
+on drafts, **Settings → Numbering → Number invoices and credit notes when they
+are issued** gives drafts their number only when they are sent; the cloud then
+refuses an invoice issued without its number (an older version issuing such a
+draft), which waits in **Settings → Cloud and sync**.
 
-Before turning approvals on, update every device and let each one sync. A
-change an older version makes to an issued invoice is refused by the cloud and
-waits in **Settings → Cloud and sync**, with **Send for approval instead**.
+Before turning approvals or that numbering on, update every device and let
+each one sync. A change an older version makes to an issued invoice is refused
+by the cloud and waits in **Settings → Cloud and sync**, with **Send for
+approval instead**; what it changed with it (the payments a delete freed, say)
+waits with it on a device with this version. On a device still on an older
+version, undo such a change there (**Undo my change**): its payments were
+already sent.
 Companies kept on one device only have nobody to ask: the rules apply to cloud
 companies.
 
@@ -304,8 +316,11 @@ Received cheques are off by default: while one waits, its invoice stays unpaid
 and the customer may still get a reminder. Before turning cheque confirmation
 on, update every device and let each one sync: a cheque an older version
 records is refused by the cloud and waits in **Settings → Cloud and sync**,
-with **Send for confirmation instead**. The paper cheque should not leave the
-office before it is confirmed: the app can't see paper.
+with **Send for confirmation instead**. On a device still on an older version,
+undo it there instead (**Undo my change**): until then that device counts the
+cheque on its bill, and devices with this version leave the bill as the cloud
+has it after a few tries. The paper cheque should not leave the office before
+it is confirmed: the app can't see paper.
 
 ## Changes by your team
 

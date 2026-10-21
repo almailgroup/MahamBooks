@@ -288,7 +288,7 @@ create trigger company_members_audit
 -- An invitation link for an email address. Owners and admins only; nobody is
 -- invited as owner. A new invitation replaces a pending one for the same
 -- email. With the owner's switch on, only the owner invites admins and
--- accountants.
+-- accountants, and only the owner replaces such an invitation.
 create or replace function public.create_invite(p_company text, p_email text, p_role public.member_role)
 returns table (id uuid, token text, email text, role public.member_role, expires_at timestamptz)
 language plpgsql
@@ -331,6 +331,18 @@ begin
       and i.expires_at > now()
   ) >= 50 then
     raise exception 'almail:limit Too many pending invitations.' using errcode = '54000';
+  end if;
+  -- Replacing the owner's invitation of an admin or accountant would cancel
+  -- it: with the switch on, that is the owner's to do (as revoke_invite).
+  if v_me <> 'owner' and almailbooks.senior_roles_owner_only(p_company) and exists (
+    select 1
+    from public.company_invites i
+    where i.company_id = p_company and i.email = v_email
+      and i.role in ('admin', 'accountant')
+      and i.accepted_at is null and i.revoked_at is null and i.expires_at > now()
+  ) then
+    raise exception 'almail:permission Only the owner can cancel invitations of admins and accountants.'
+      using errcode = '42501';
   end if;
   update public.company_invites i
   set revoked_at = now()
@@ -814,8 +826,9 @@ as $$
 $$;
 
 -- What an approver confirms on a cheque payment: the money (amount,
--- currency, rate, date, direction), who it is for, and the cheque itself
--- (number, bank, date, drawer or payee). Where it is in its life (deposited,
+-- currency, rate, date, direction, the account it is booked to), who it is
+-- for, and the cheque itself (number, bank, date, drawer or payee). Where it
+-- is in its life (deposited,
 -- cleared, returned, cancelled), its prints, the notes and the documents it
 -- pays are not part of it. Kept the same as chequeContent in
 -- src/cloud/roles.ts.
@@ -833,6 +846,7 @@ as $$
     'amount', p -> 'amount',
     'currency', p -> 'currency',
     'exchangeRate', coalesce(nullif(p -> 'exchangeRate', 'null'::jsonb), '1'::jsonb),
+    'accountId', p -> 'accountId',
     'number', p -> 'cheque' -> 'number',
     'bank', p -> 'cheque' -> 'bank',
     'chequeDate', p -> 'cheque' -> 'date',
@@ -864,7 +878,8 @@ $$;
 -- Whether a change of a payment or security cheque waits for an approver:
 -- a new one the rules cover, or a change of what is confirmed on one they
 -- cover (before or after). A printed cheque moved to its next leaf, with the
--- spoiled leaf on record, keeps its confirmation: only its number changed.
+-- spoiled leaf on record, keeps its confirmation: only its number changed;
+-- so does one given its first account.
 create or replace function almailbooks.cheque_change_needs_approver(
   p_rules jsonb,
   p_tbl text,
@@ -906,6 +921,12 @@ begin
       v_old := v_old - 'number';
       v_new := v_new - 'number';
     end if;
+    -- A cheque saved before it had an account gets one when it is saved
+    -- again: only moving it from one account to another needs an approver.
+    if coalesce(v_old ->> 'accountId', '') = '' then
+      v_old := v_old - 'accountId';
+      v_new := v_new - 'accountId';
+    end if;
     return v_old is distinct from v_new;
   end if;
   if p_tbl = 'securityCheques' then
@@ -923,11 +944,48 @@ begin
 end
 $$;
 
+-- Whether the company numbers invoices and credit notes when they are issued
+-- (DocumentDefaults.numberOnIssue, Settings → Numbering): their drafts have
+-- no number until then.
+create or replace function almailbooks.numbers_on_issue(p_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select r.data -> 'defaults' ->> 'numberOnIssue' = 'true'
+      from public.records r
+      where r.company_id = p_company and r.tbl = 'companies' and r.id = p_company
+    ),
+    false
+  )
+$$;
+
+-- A key of a record kept as it was before (or left out, as it was).
+create or replace function almailbooks.kept_key(p_new jsonb, p_old jsonb, p_key text)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when p_old ? p_key then p_new || jsonb_build_object(p_key, p_old -> p_key)
+    else p_new - p_key
+  end
+$$;
+
 -- What the server checks before a record is stored, after
 -- records_before_write (triggers of the same kind run in the order of their
 -- names). Only the company record, documents, approval requests, cheque
 -- payments and security cheques given are looked at; every other record
--- passes at once, and so do they while the company's rules are off (the
+-- passes at once. Approval requests are kept honest whether or not the
+-- company's rules are on (nothing wrote them before this file). With "Number
+-- invoices and credit notes when they are issued" on, neither is issued
+-- without its number (older versions of the app don't give one when they
+-- issue a draft). Everything else waits for the company's rules (the
 -- approval rules themselves are the owner's either way). Refusals have the
 -- SQL state 42501.
 create or replace function almailbooks.records_guard()
@@ -939,6 +997,7 @@ as $$
 declare
   v_rules jsonb;
   v_approver boolean;
+  v_me text := auth.uid()::text;
   v_now jsonb;
   v_status text;
   v_was text;
@@ -981,9 +1040,24 @@ begin
     return new;
   end if;
 
-  v_rules := almailbooks.approval_rules(new.company_id);
-  if v_rules is null then
-    return new;
+  -- An invoice or credit note leaving draft (or new) and issued without a
+  -- number, while the company numbers them when they are issued: an older
+  -- version of the app issuing a draft that waits for its number.
+  if new.tbl = 'documents'
+    and coalesce(new.data ->> 'type', '') in ('invoice', 'credit')
+    and almailbooks.document_stage(new.data ->> 'status') = 'issued'
+    and btrim(coalesce(new.data ->> 'number', '')) = ''
+    and (tg_op = 'INSERT' or coalesce(old.data ->> 'status', '') = 'draft')
+    and almailbooks.numbers_on_issue(new.company_id) then
+    raise exception 'almail:invalid This invoice has no number yet. Update the app on this device, then issue it again.'
+      using errcode = '42501';
+  end if;
+
+  if new.tbl <> 'approvals' then
+    v_rules := almailbooks.approval_rules(new.company_id);
+    if v_rules is null then
+      return new;
+    end if;
   end if;
   v_approver := almailbooks.is_approver(new.company_id);
 
@@ -1021,17 +1095,28 @@ begin
     return new;
   end if;
 
-  -- Approval requests.
+  -- Approval requests, whether or not the rules are on.
   v_now := to_jsonb(to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
   if tg_op = 'INSERT' then
-    -- An approver's own copy of a decision (a company sent up again) is kept.
     if v_approver and coalesce(new.data ->> 'status', 'pending') <> 'pending' then
+      -- The owner's own copy of a decided request (the company sent up again) is kept.
+      if almailbooks.member_role(new.company_id) = 'owner' then
+        return new;
+      end if;
+      -- Anyone else's is asked and decided by them, now, whatever the copy says.
+      if new.data ->> 'requestedBy' is distinct from v_me then
+        new.data := (new.data - 'requestedByName')
+          || jsonb_build_object('requestedBy', v_me, 'requestedAt', v_now);
+      end if;
+      if new.data ->> 'decidedBy' is distinct from v_me then
+        new.data := new.data || jsonb_build_object('decidedBy', v_me, 'decidedAt', v_now);
+      end if;
       return new;
     end if;
     -- A new request waits for a decision, asked by whoever sends it, now.
-    new.data := new.data || jsonb_build_object(
+    new.data := (new.data - 'expired' - 'resultId') || jsonb_build_object(
       'status', 'pending',
-      'requestedBy', auth.uid()::text,
+      'requestedBy', v_me,
       'requestedAt', v_now,
       'decidedBy', null,
       'decidedAt', null,
@@ -1040,19 +1125,24 @@ begin
     return new;
   end if;
 
+  v_was := coalesce(old.data ->> 'status', 'pending');
+  v_status := coalesce(new.data ->> 'status', v_was);
+  if not v_approver then
+    -- Whoever isn't an approver changes nothing of a request but taking it back.
+    new.data := old.data
+      || jsonb_build_object('status', v_status)
+      || case
+        when new.data ? 'updatedAt' then jsonb_build_object('updatedAt', new.data -> 'updatedAt')
+        else '{}'::jsonb
+      end;
+  end if;
   -- What was asked, by whom and when, never changes.
   foreach v_key in array array[
     'kind', 'subjectTbl', 'subjectId', 'subjectNumber', 'before', 'after', 'reason',
     'requestedBy', 'requestedByName', 'requestedAt', 'createdAt'
   ] loop
-    if old.data ? v_key then
-      new.data := jsonb_set(new.data, array[v_key], old.data -> v_key);
-    else
-      new.data := new.data - v_key;
-    end if;
+    new.data := almailbooks.kept_key(new.data, old.data, v_key);
   end loop;
-  v_was := coalesce(old.data ->> 'status', 'pending');
-  v_status := coalesce(new.data ->> 'status', v_was);
   if v_status = v_was or v_status = 'pending' or v_was in ('rejected', 'cancelled', 'applied') then
     -- No decision now (an older copy that still waits, sent again), or one
     -- made before: an older copy can't undo it.
@@ -1062,6 +1152,8 @@ begin
       'decidedAt', old.data -> 'decidedAt',
       'decisionNote', coalesce(nullif(old.data -> 'decisionNote', 'null'::jsonb), to_jsonb(''::text))
     );
+    new.data := almailbooks.kept_key(new.data, old.data, 'expired');
+    new.data := almailbooks.kept_key(new.data, old.data, 'resultId');
     return new;
   end if;
   if v_status not in ('approved', 'rejected', 'cancelled', 'applied') then
@@ -1071,11 +1163,19 @@ begin
     and not (
       v_was = 'pending'
       and v_status = 'cancelled'
-      and old.data ->> 'requestedBy' = auth.uid()::text
+      and old.data ->> 'requestedBy' = v_me
     ) then
     -- Whoever asked may only take the request back while it waits.
     raise exception 'almail:permission Only an approver decides approval requests.'
       using errcode = '42501';
+  end if;
+  -- Expired only when an approver cancels a waiting request, and what it
+  -- made only when it is carried out.
+  if not (v_approver and v_was = 'pending' and v_status = 'cancelled') then
+    new.data := almailbooks.kept_key(new.data, old.data, 'expired');
+  end if;
+  if not (v_approver and v_status = 'applied') then
+    new.data := almailbooks.kept_key(new.data, old.data, 'resultId');
   end if;
   if v_was = 'approved' and v_status = 'applied' then
     -- Carried out as approved: the decision stays the approver's.
@@ -1086,7 +1186,7 @@ begin
     );
   else
     new.data := new.data || jsonb_build_object(
-      'decidedBy', auth.uid()::text,
+      'decidedBy', v_me,
       'decidedAt', v_now
     );
   end if;
@@ -1100,11 +1200,12 @@ create trigger records_guard
   for each row execute function almailbooks.records_guard();
 
 -- The company's own record is never deleted through sync: delete_company
--- does that. With the company's rules on, approval requests stay (they are
--- the record of who asked and who decided), with "Void instead of delete"
--- issued documents of the types the rules cover are voided, never deleted,
--- so their numbers stay used (drafts may still go), and only an approver
--- deletes a cheque the rules cover. As in the first file otherwise.
+-- does that. Approval requests stay (they are the record of who asked and
+-- who decided). With the company's rules on, issued documents of the types
+-- the rules cover are deleted by approvers only, and with "Void instead of
+-- delete" by nobody: they are voided, so their numbers stay used (drafts may
+-- still go); only an approver deletes a cheque the rules cover. As in the
+-- first file otherwise.
 create or replace function almailbooks.can_delete_record(p_company text, p_tbl text, p_data jsonb)
 returns boolean
 language plpgsql
@@ -1115,18 +1216,16 @@ as $$
 declare
   v_rules jsonb;
 begin
-  if p_tbl = 'companies' or not almailbooks.can_write_record(p_company, p_tbl, p_data) then
+  if p_tbl in ('companies', 'approvals')
+    or not almailbooks.can_write_record(p_company, p_tbl, p_data) then
     return false;
   end if;
-  if p_tbl not in ('approvals', 'documents', 'payments', 'securityCheques') then
+  if p_tbl not in ('documents', 'payments', 'securityCheques') then
     return true;
   end if;
   v_rules := almailbooks.approval_rules(p_company);
   if v_rules is null then
     return true;
-  end if;
-  if p_tbl = 'approvals' then
-    return false;
   end if;
   if p_tbl in ('payments', 'securityCheques') then
     return not (
@@ -1135,9 +1234,12 @@ begin
     );
   end if;
   return not (
-    coalesce(v_rules ->> 'voidInsteadOfDelete', '') = 'true'
-    and almailbooks.rules_cover_document(v_rules, p_data ->> 'type')
+    almailbooks.rules_cover_document(v_rules, p_data ->> 'type')
     and coalesce(p_data ->> 'status', '') <> 'draft'
+    and (
+      coalesce(v_rules ->> 'voidInsteadOfDelete', '') = 'true'
+      or not almailbooks.is_approver(p_company)
+    )
   );
 end
 $$;
@@ -1172,6 +1274,8 @@ revoke all on function
   almailbooks.cheque_content(jsonb),
   almailbooks.security_cheque_content(jsonb),
   almailbooks.cheque_change_needs_approver(jsonb, text, jsonb, jsonb),
+  almailbooks.numbers_on_issue(text),
+  almailbooks.kept_key(jsonb, jsonb, text),
   almailbooks.records_guard(),
   almailbooks.can_delete_record(text, text, jsonb)
 from public, anon;

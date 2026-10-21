@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Check, RotateCcw, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { applyApproval, cancelApproval, changedSinceAsked, decideApproval } from '@/db/approvals';
+import { cancelApproval, changedSinceAsked, decideApproval } from '@/db/approvals';
 import type { ApprovalRequest, Client, InvoiceDocument } from '@/db/types';
 import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useFormat } from '@/app/company';
 import { isKnown } from '@/lib/known';
@@ -11,7 +11,10 @@ import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { Badge } from '@/components/ui/misc';
 import { Button } from '@/components/ui/button';
+import { useCloud } from '@/cloud/store';
 import { fieldChanges, totalsOfRequest, type FieldChange } from './changes';
+import { approve, carryOut } from './decide';
+import { useDecisionUnsent } from './hooks';
 import { kindLabel, statusMeta } from './labels';
 import { ReasonDialog } from './reason-dialog';
 
@@ -91,12 +94,20 @@ export function ApprovalRequestCard({
     doc && request.kind === 'invoice_edit' ? totalsOfRequest(request, doc, client) : null;
   const pending = request.status === 'pending';
   const mine = userId !== null && request.requestedBy === userId;
+  const { manager } = useCloud();
+  // Approved here, and not in the cloud yet: carried out once it is.
+  const unsent = useDecisionUnsent(request.id);
+  const approved = request.status === 'approved';
 
-  const run = async (key: string, work: () => Promise<void>, done: string) => {
+  const run = async (key: string, work: () => Promise<unknown>, done: string) => {
     setBusy(key);
     try {
-      await work();
-      toast.success(done);
+      const outcome = await work();
+      if (outcome === 'waiting') {
+        toast.success(t('Approved. It is carried out once this device has synced.'));
+      } else {
+        toast.success(done);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
       throw error;
@@ -208,6 +219,15 @@ export function ApprovalRequestCard({
           ) : null}
         </p>
       ) : null}
+      {approved ? (
+        <p className="text-xs text-amber-700">
+          {unsent
+            ? t('Approved. It is carried out once this device has synced.')
+            : t(
+                'Approved, but not carried out yet on this device. Carry it out again, or reject it if it can’t be carried out.',
+              )}
+        </p>
+      ) : null}
       {extra}
 
       <div className="flex flex-wrap gap-2">
@@ -220,7 +240,7 @@ export function ApprovalRequestCard({
               onClick={() =>
                 void run(
                   'approve',
-                  () => decideApproval(request.id, 'approved'),
+                  () => approve(request.id, manager),
                   t('Approved and done'),
                 ).catch(() => undefined)
               }
@@ -252,20 +272,33 @@ export function ApprovalRequestCard({
             <Undo2 /> {t('Take back')}
           </Button>
         ) : null}
-        {request.status === 'approved' && approver ? (
-          <Button
-            size="sm"
-            variant="outline"
-            loading={busy === 'apply'}
-            disabled={busy !== null || !doc}
-            onClick={() =>
-              void run('apply', () => applyApproval(request.id), t('Approved and done')).catch(
-                () => undefined,
-              )
-            }
-          >
-            <RotateCcw /> {t('Carry it out again')}
-          </Button>
+        {approved && approver ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              loading={busy === 'apply'}
+              disabled={busy !== null || !doc}
+              onClick={() =>
+                void run(
+                  'apply',
+                  () => carryOut(request.id, manager),
+                  t('Approved and done'),
+                ).catch(() => undefined)
+              }
+            >
+              <RotateCcw /> {t('Carry it out again')}
+            </Button>
+            {/* An approval that can't be carried out may still be turned down. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={() => setRejecting(true)}
+            >
+              <X /> {t('Reject')}
+            </Button>
+          </>
         ) : null}
       </div>
 

@@ -10,6 +10,7 @@ import {
 import { chequeWaits, isChequeRequest } from '@/db/cheque-rules';
 import type { ApprovalRequest, ApprovalRules, Company, InvoiceDocument } from '@/db/types';
 import { useCloudLink } from '@/cloud/hooks';
+import { useRuntimeStatus } from '@/cloud/status';
 import { useCloud } from '@/cloud/store';
 import type { CloudLink } from '@/cloud/types';
 
@@ -72,6 +73,33 @@ export function usePendingChequeRequests(companyId: string): ApprovalRequest[] |
         await db.approvals.where('[companyId+status]').equals([companyId, 'pending']).toArray()
       ).filter(isChequeRequest),
     [companyId],
+  );
+}
+
+/**
+ * Whether this device has caught up with the cloud since the app started
+ * (always, for a company kept on this device): requests are expired only
+ * then, as one this device still has waiting may have been decided on
+ * another device meanwhile.
+ */
+export function useCaughtUp(companyId: string): boolean {
+  const link = useCloudLink(companyId);
+  const runtime = useRuntimeStatus(companyId);
+  return (
+    link === null || (link !== undefined && link.status === 'ready' && runtime.syncedOnce === true)
+  );
+}
+
+/**
+ * Whether a decision made on this device hasn't reached the cloud yet: an
+ * approval is carried out once it has (see decideApproval).
+ */
+export function useDecisionUnsent(id: string): boolean {
+  return (
+    useLiveQuery(
+      async () => (await db.outbox.where('[table+id]').equals(['approvals', id]).count()) > 0,
+      [id],
+    ) ?? false
   );
 }
 

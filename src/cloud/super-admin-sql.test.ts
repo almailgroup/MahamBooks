@@ -242,6 +242,32 @@ describe('the owner’s switch: only the owner makes admins and accountants', ()
     expect(await roles(t)).toEqual({ [t.owner]: 'owner', [t.admin]: 'admin' });
   });
 
+  it('keeps the owner’s invitation of an admin from being replaced by an admin’s', async () => {
+    const t = await team();
+    const c = t.company;
+    await h.rpc(t.owner, 'set_team_rules', { p_company: c, p_senior_roles_owner_only: true });
+    const byOwner = await invite(t, t.owner, 'admin');
+    await expect(
+      h.rpc(t.admin, 'create_invite', { p_company: c, p_email: byOwner.email, p_role: 'staff' }),
+    ).rejects.toThrow(/almail:permission/);
+    const left = await h.rpc<{ id: string; role: string }>(t.owner, 'list_invites', {
+      p_company: c,
+    });
+    expect(left.find((i) => i.id === byOwner.id)).toMatchObject({ role: 'admin' });
+    // A staff invitation is still the admin's to replace, and the owner replaces anything.
+    const staff = await invite(t, t.admin, 'staff');
+    await h.rpc(t.admin, 'create_invite', { p_company: c, p_email: staff.email, p_role: 'viewer' });
+    await h.rpc(t.owner, 'create_invite', {
+      p_company: c,
+      p_email: byOwner.email,
+      p_role: 'staff',
+    });
+    // With the switch off, as before: a new invitation replaces the pending one.
+    await h.rpc(t.owner, 'set_team_rules', { p_company: c, p_senior_roles_owner_only: false });
+    const again = await invite(t, t.owner, 'accountant');
+    await h.rpc(t.admin, 'create_invite', { p_company: c, p_email: again.email, p_role: 'staff' });
+  });
+
   it('cancels, once on, the invitations as admin or accountant someone else made', async () => {
     const t = await team();
     const byAdmin = await invite(t, t.admin, 'accountant');

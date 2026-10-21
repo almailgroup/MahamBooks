@@ -342,10 +342,15 @@ describe('records of database version 16', () => {
     const c = t2.company;
     const [first] = await push(t2.owner, c, [
       { tbl: 'employeeLetters', id: 'let-1', deleted: true },
-      { tbl: 'approvals', id: 'apr-pay', deleted: true },
       { tbl: 'renewals', id: 'ren-secret', deleted: true },
       { tbl: 'vehicles', id: 'veh-1', deleted: true },
     ]);
+    // Approval requests are never deleted through sync (records_guard of
+    // 20261116000000_super_admin_approvals.sql); the SQL editor still can.
+    await h.admin(
+      `delete from public.records where company_id = $1 and tbl = 'approvals' and id = 'apr-pay'`,
+      [c],
+    );
     const since = first.rev - 1;
     expect((await pull(t2.owner, c, since)).map((r) => r.id).sort()).toEqual(
       ['apr-pay', 'let-1', 'ren-secret', 'veh-1'].sort(),

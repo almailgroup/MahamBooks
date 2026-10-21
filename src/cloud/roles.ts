@@ -530,21 +530,53 @@ export function documentChangeNeedsApproval(
 }
 
 /**
- * Whether the rules keep a record from being deleted, as can_delete_record:
- * approval requests always, and issued documents of the types the rules
- * cover with "Void instead of delete".
+ * What keeps a record from being deleted, as can_delete_record: approval
+ * requests always ('request', whether or not the rules are on); with the
+ * company's rules on, an issued document of a type they cover, for everyone
+ * with "Void instead of delete" ('void': it is voided instead, so its number
+ * stays used) and otherwise for anyone but an approver ('approver': a void
+ * is asked for instead). Null when nothing keeps it.
  */
-export function rulesKeepRecord(rules: AnyRecord, table: string, record: AnyRecord): boolean {
+export function deleteKeptBy(
+  rules: AnyRecord,
+  table: string,
+  record: AnyRecord,
+  approver: boolean,
+): 'request' | 'void' | 'approver' | null {
+  if (table === 'approvals') return 'request';
   const ruled = asRow(rules);
   const row = asRow(record);
-  if (!ruled) return false;
-  if (table === 'approvals') return true;
-  return (
-    table === 'documents' &&
-    ruled.voidInsteadOfDelete === true &&
-    rulesCoverDocument(ruled, row?.type) &&
-    row?.status !== 'draft'
-  );
+  if (!ruled || table !== 'documents' || row?.status === 'draft') return null;
+  if (!rulesCoverDocument(ruled, row?.type)) return null;
+  if (ruled.voidInsteadOfDelete === true) return 'void';
+  return approver ? null : 'approver';
+}
+
+/** Whether the rules keep a record from being deleted by anyone, approvers too (see deleteKeptBy). */
+export function rulesKeepRecord(rules: AnyRecord, table: string, record: AnyRecord): boolean {
+  return deleteKeptBy(rules, table, record, true) !== null;
+}
+
+/**
+ * Whether storing `after` over `before` (undefined: new) issues an invoice
+ * or credit note without its number while the company numbers them when
+ * they are issued (DocumentDefaults.numberOnIssue), as records_guard
+ * refuses: an older version of the app issuing a draft that waits for its
+ * number gives it none.
+ */
+export function issuesWithoutNumber(
+  company: AnyRecord,
+  before: AnyRecord,
+  after: AnyRecord,
+): boolean {
+  const next = asRow(after);
+  const defaults = asRow(asRow(company)?.defaults as AnyRecord);
+  if (!next || defaults?.numberOnIssue !== true) return false;
+  if (next.type !== 'invoice' && next.type !== 'credit') return false;
+  if (documentStage(next.status) !== 'issued') return false;
+  if (String(next.number ?? '').trim() !== '') return false;
+  const old = asRow(before);
+  return !old || old.status === 'draft';
 }
 
 /* Cheque confirmation (the cheques part of the rules) ---------------------- */
@@ -576,9 +608,10 @@ export function rulesCoverSecurityCheque(rules: AnyRecord, cheque: AnyRecord): b
 
 /**
  * What an approver confirms on a cheque payment, as
- * almailbooks.cheque_content: the money, who it is for and the cheque
- * itself. Its life (deposited, cleared, returned), its prints, the notes and
- * the documents it pays are not part of it.
+ * almailbooks.cheque_content: the money and the account it is booked to,
+ * who it is for and the cheque itself. Its life (deposited, cleared,
+ * returned), its prints, the notes and the documents it pays are not part
+ * of it.
  */
 export function chequeContent(payment: AnyRecord): Record<string, unknown> {
   const row = asRow(payment) ?? {};
@@ -591,6 +624,7 @@ export function chequeContent(payment: AnyRecord): Record<string, unknown> {
     amount: row.amount,
     currency: row.currency,
     exchangeRate: row.exchangeRate ?? 1,
+    accountId: row.accountId,
     number: cheque?.number,
     bank: cheque?.bank,
     chequeDate: cheque?.date,
@@ -635,7 +669,8 @@ function spoiledNumbers(payment: Row): (string | null)[] {
  * for an approver, as almailbooks.cheque_change_needs_approver: a new cheque
  * the rules cover, a change of what is confirmed on one they cover, or
  * deleting one. A printed cheque moved to its next leaf, with the spoiled
- * leaf on record, keeps its confirmation.
+ * leaf on record, keeps its confirmation; so does one given its first
+ * account.
  */
 export function chequeChangeNeedsApprover(
   rules: AnyRecord,
@@ -655,6 +690,11 @@ export function chequeChangeNeedsApprover(
     if (!sameData(a.number, b.number) && moved !== null && spoiledNumbers(next).includes(moved)) {
       delete a.number;
       delete b.number;
+    }
+    // A cheque saved before it had an account gets one: only moving it needs an approver.
+    if (a.accountId === undefined || a.accountId === '') {
+      delete a.accountId;
+      delete b.accountId;
     }
     return !sameData(a, b);
   }
@@ -693,23 +733,46 @@ const DECISIONS = new Set(['approved', 'rejected', 'cancelled', 'applied']);
 export type ApprovalWrite =
   { data: Record<string, unknown> } | { refused: 'permission' | 'invalid' };
 
+/** A key of `before` kept as it was (or left out, as it was), as almailbooks.kept_key. */
+function keptKey(data: Record<string, unknown>, before: Record<string, unknown>, key: string) {
+  if (key in before && before[key] !== undefined) data[key] = before[key];
+  else delete data[key];
+}
+
 /**
  * What the cloud stores when someone writes an approval request
- * (records_guard), or why it refuses: a new request waits, stamped with who
- * asked and when; what was asked never changes; only an approver decides
- * (whoever asked may take it back while it waits); a decision made stays
- * made, whatever an older copy says. `now` is the server's time.
+ * (records_guard, whether or not the company's rules are on), or why it
+ * refuses: a new request waits, stamped with who asked and when; what was
+ * asked never changes; only an approver decides (whoever asked may take it
+ * back while it waits, and changes nothing else); a decision made stays
+ * made, whatever an older copy says. A decided request sent up new is kept
+ * as it is from the owner (their company sent up again) and stamped as
+ * asked and decided by anyone else. `now` is the server's time.
  */
 export function guardApprovalWrite(
   before: Row,
   after: Record<string, unknown>,
-  who: { userId: string; approver: boolean; now: string },
+  who: { userId: string; approver: boolean; owner?: boolean; now: string },
 ): ApprovalWrite {
   if (!before) {
-    if (who.approver && (after.status ?? 'pending') !== 'pending') return { data: after };
+    if (who.approver && (after.status ?? 'pending') !== 'pending') {
+      if (who.owner) return { data: after };
+      const data: Record<string, unknown> = { ...after };
+      if (data.requestedBy !== who.userId) {
+        delete data.requestedByName;
+        Object.assign(data, { requestedBy: who.userId, requestedAt: who.now });
+      }
+      if (data.decidedBy !== who.userId) {
+        Object.assign(data, { decidedBy: who.userId, decidedAt: who.now });
+      }
+      return { data };
+    }
+    const data: Record<string, unknown> = { ...after };
+    delete data.expired;
+    delete data.resultId;
     return {
       data: {
-        ...after,
+        ...data,
         status: 'pending',
         requestedBy: who.userId,
         requestedAt: who.now,
@@ -719,13 +782,13 @@ export function guardApprovalWrite(
       },
     };
   }
-  const data: Record<string, unknown> = { ...after };
-  for (const key of APPROVAL_FIXED) {
-    if (key in before && before[key] !== undefined) data[key] = before[key];
-    else delete data[key];
-  }
   const was = typeof before.status === 'string' ? before.status : 'pending';
   const status = typeof after.status === 'string' ? after.status : was;
+  // Whoever isn't an approver changes nothing of a request but taking it back.
+  const data: Record<string, unknown> = who.approver
+    ? { ...after }
+    : { ...before, status, ...('updatedAt' in after ? { updatedAt: after.updatedAt } : {}) };
+  for (const key of APPROVAL_FIXED) keptKey(data, before, key);
   const kept = {
     decidedBy: before.decidedBy ?? null,
     decidedAt: before.decidedAt ?? null,
@@ -733,12 +796,20 @@ export function guardApprovalWrite(
   };
   // No decision now (an older copy that still waits, sent again), or one made before.
   if (status === was || status === 'pending' || DECIDED.has(was)) {
-    return { data: { ...data, status: was, ...kept } };
+    const same: Record<string, unknown> = { ...data, status: was, ...kept };
+    keptKey(same, before, 'expired');
+    keptKey(same, before, 'resultId');
+    return { data: same };
   }
   if (!DECISIONS.has(status)) return { refused: 'invalid' };
   const takenBack =
     was === 'pending' && status === 'cancelled' && before.requestedBy === who.userId;
   if (!who.approver && !takenBack) return { refused: 'permission' };
+  // Expired only when an approver cancels a waiting request; what it made only when carried out.
+  if (!(who.approver && was === 'pending' && status === 'cancelled')) {
+    keptKey(data, before, 'expired');
+  }
+  if (!(who.approver && status === 'applied')) keptKey(data, before, 'resultId');
   if (was === 'approved' && status === 'applied') return { data: { ...data, ...kept } };
   return { data: { ...data, decidedBy: who.userId, decidedAt: who.now } };
 }

@@ -327,8 +327,9 @@ owner (`company_members_one_owner`); someone becomes Super Admin through
   `set_member_role` and `remove_member` (same signatures) leave admins and
   accountants to the owner; admins still invite and remove staff and
   viewers, and anyone may leave. Turning it on cancels invitations as admin
-  or accountant someone else made. Refusals are `almail:permission` with
-  SQLSTATE 42501.
+  or accountant someone else made, and an admin's new invitation for an
+  address the owner invited as admin or accountant is refused instead of
+  replacing it. Refusals are `almail:permission` with SQLSTATE 42501.
 - `company_members_audit` sends every team change (joined, role, limits,
   left, ownership, succession when the owner's account is deleted) to
   `public.change_events` as kind `member`, with ids and roles only. It does
@@ -345,7 +346,8 @@ The same file. The company's rules are `approvalRules` on its own record
 (`{"documentTypes": ["invoice", "credit"], "voidInsteadOfDelete": true,
 "expireDays": 14}`), set by the owner in Settings → Approvals;
 `almailbooks.approval_rules(company)` is null until then, and every rule below
-does nothing while it is null.
+does nothing while it is null, except those on approval requests themselves
+(nothing wrote them before this file) and invoices numbered when issued.
 
 - `staff_can_write` adds `approvals`: staff ask for approval (never of payroll
   or people data: `record_is_private` of the fourth file still applies).
@@ -365,14 +367,25 @@ does nothing while it is null.
     internal notes are written by payments and sync, and stay open. Refusal:
     `almail:approval_required`, SQLSTATE 42501, which older versions of the app
     park as a permission problem.
-  - `approvals`: a new request waits (`pending`), stamped with the server's
-    `requestedBy` and `requestedAt`; what was asked never changes; only an
+  - `approvals`, whether or not the rules are on: a new request waits
+    (`pending`), stamped with the server's `requestedBy` and `requestedAt`
+    (`expired` and `resultId` dropped); what was asked never changes; only an
     approver decides (`approved`, `rejected`, `applied`, stamped
-    `decidedBy`/`decidedAt`); whoever asked may cancel while it waits; a
-    decision made stays made whatever an older copy says.
-- `can_delete_record` (now plpgsql): approval requests are never deleted, and
-  with `voidInsteadOfDelete` issued documents of the covered types are not
-  either. Counters are unchanged (numbers only move forward).
+    `decidedBy`/`decidedAt`); whoever asked may cancel while it waits and
+    change nothing else; `expired` is kept only when an approver cancels a
+    waiting request and `resultId` only when one is carried out; a decision
+    made stays made whatever an older copy says. A decided request sent up
+    new is kept as it is from the owner (their company sent up again) and
+    stamped as asked and decided by the deputy who sends it otherwise.
+  - `documents`, with `defaults.numberOnIssue` on the company record (Settings
+    → Numbering): an invoice or credit note leaving draft (or new) issued
+    without a number is refused `almail:invalid`, SQLSTATE 42501, whoever
+    sends it: older versions of the app don't number a draft they issue.
+- `can_delete_record` (now plpgsql): approval requests are never deleted
+  (the SQL editor still can); issued documents of the covered types are
+  deleted by approvers only, and with `voidInsteadOfDelete` by nobody, so a
+  delete followed by a new copy never gets round the rules. Counters are
+  unchanged (numbers only move forward).
 - `server_features()` also answers `approvals`.
 - `src/cloud/approvals-sql.test.ts` checks rules off = as before, every role,
   an older app's batch, upserts, deletes, that `invoice_content` matches the
@@ -392,12 +405,13 @@ approver's device records the payment when they confirm it.
   `almailbooks.rules_cover_security_cheque(rules, cheque)`: a security cheque
   with `direction = 'out'` while `securityOut` is on.
 - `almailbooks.cheque_content(payment)`: what is confirmed (method, direction,
-  client, payment date, amount, currency, rate with 1 for none, cheque number,
-  bank, cheque date, drawer or payee, drawer civil ID).
+  client, payment date, amount, currency, rate with 1 for none, the account
+  it is booked to, cheque number, bank, cheque date, drawer or payee, drawer
+  civil ID). A cheque saved before it had an account may be given one.
   `almailbooks.security_cheque_content(cheque)`: direction, number, bank,
   date, amount, currency, drawer, drawer civil ID. Their life (status,
   deposited, cleared, returned, journals, replacements, voiding), prints,
-  notes, allocations, the account and the posting rules stay open. Kept the
+  notes, allocations and the posting rules stay open. Kept the
   same as `chequeContent` / `securityChequeContent` in `src/cloud/roles.ts`.
 - `almailbooks.cheque_change_needs_approver(rules, tbl, old, new)`: a new
   covered cheque, a change of its content (before or after covered), or a

@@ -499,7 +499,8 @@ export function renderChangesEmail(input: ChangesEmailInput): AlertEmail {
           company,
         });
   const base = safeAppUrl(input.appUrl);
-  const url = base ? `${base}#/notifications` : '';
+  // Opens Updates in this company, whichever is open on the device.
+  const url = base ? `${base}#/notifications?company=${encodeURIComponent(input.company.id)}` : '';
   const footer = [
     t(
       'You get these emails because you turned on Changes by your team for {company} in {app}: important changes within a few minutes (at most one email every {minutes} minutes and {max} a day), and the rest every morning at 8:00 (Kuwait time).',

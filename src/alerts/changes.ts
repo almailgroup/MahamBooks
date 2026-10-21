@@ -96,6 +96,11 @@ export interface ChangeLine {
   /** The customer and the amount, when there are any to show. */
   detail: string;
   important: boolean;
+  /**
+   * The text starts with the person it is about, who made it (or nobody
+   * did: a new owner taking over): it reads without the actor before it.
+   */
+  named?: boolean;
 }
 
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -177,8 +182,24 @@ function teamText(event: ChangeEvent): string {
     case 'permissions':
       return t('Changed what {name} may do', { name });
     default:
-      return t('Made {name} {role}', { name, role });
+      // Their own role, changed as they handed over the company.
+      return selfChange(event)
+        ? t('{name} became {role}', { name, role })
+        : t('Made {name} {role}', { name, role });
   }
+}
+
+/** A change of the team made by the member it is about. */
+function selfChange(event: ChangeEvent): boolean {
+  return Boolean(event.actor) && event.actor === str(event.summary.user);
+}
+
+/** Whether a change of the team is said starting with the member it is about (see teamText). */
+function namedInText(event: ChangeEvent): boolean {
+  const reason = str(event.summary.reason);
+  if (reason === 'joined' || reason === 'succession') return true;
+  if (reason === 'ownership' || reason === 'permissions') return false;
+  return selfChange(event);
 }
 
 function settingsText(event: ChangeEvent, format?: ChangeFormat): string {
@@ -269,7 +290,13 @@ export function describeChange(event: ChangeEvent, format?: ChangeFormat): Chang
   else if (event.count > 1) text = foldText(event);
   else if (event.tbl === 'companies') text = settingsText(event, format);
   else text = actionText(event, str(event.summary.what), thing(event));
-  return { actor, text, detail: detailText(event, format), important: event.important };
+  return {
+    actor,
+    text,
+    detail: detailText(event, format),
+    important: event.important,
+    ...(event.kind === 'member' && namedInText(event) ? { named: true } : {}),
+  };
 }
 
 /** One person's changes, for an email: the important ones each, the rest counted by kind. */

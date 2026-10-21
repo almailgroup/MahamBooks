@@ -35,7 +35,7 @@ import {
   setDocumentStatus,
   waitsForNumber,
 } from '@/db/documents';
-import { requestApproval } from '@/db/approvals';
+import { approvalsOn, requestApproval } from '@/db/approvals';
 import { progressOf, type PartTarget } from '@/db/orders';
 import { activityByline, activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
@@ -337,23 +337,41 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   // anyone but an approver are sent for approval instead.
   const waits = approvals.waits(doc);
   const voidsInstead = approvals.voidsInstead(doc);
-  // Voided under the rules, money paid against it becomes the customer's credit.
-  const paidNote =
-    approvals.rules?.documentTypes?.includes(type) && moneyPaid
+  // Corrections by a new number (D12), once the owner has turned approvals or
+  // numbering on issue on: until then voiding is as it always was.
+  const correcting = approvalsOn(company) || company.defaults.numberOnIssue === true;
+  // Voided under the rules, or to issue it again, money paid against it
+  // becomes the customer's credit.
+  const freed = (again: boolean) =>
+    (again || approvals.rules?.documentTypes?.includes(type)) && moneyPaid
       ? t('Payments recorded against it will be kept as unapplied client credit.')
       : '';
-  const voidNote = [
-    t('A void document stays in your records for reference but no longer counts as owed.'),
-    creditsNote,
-    paidNote,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const voidNote = (again = false) =>
+    [
+      t('A void document stays in your records for reference but no longer counts as owed.'),
+      creditsNote,
+      freed(again),
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+  /** Voids it as it always was: asked, without a reason. */
+  const voidDoc = async () => {
+    const ok = await confirm({
+      title: t('Void {number}?', { number: doc.number }),
+      description: voidNote(),
+      confirmLabel: t('Void document'),
+      danger: true,
+    });
+    if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
+  };
 
   /** Voids it, with why; void and reissue then opens the copy issued in its place. */
   const voidWith = async (reason: string, again: boolean) => {
     try {
-      await setDocumentStatus(doc.id, 'void', undefined, reason ? { voidReason: reason } : {});
+      await setDocumentStatus(doc.id, 'void', undefined, reason ? { voidReason: reason } : {}, {
+        freePaid: again,
+      });
       if (again) opened(await reissueDocument(doc.id), true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
@@ -536,15 +554,17 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     } else {
       item('unvoid', <Undo2 />, t('Restore (un-void)'), () => void setStatus('sent'));
     }
-    if (REISSUED.includes(type) && !replacement) {
+    if (correcting && REISSUED.includes(type) && !replacement) {
       item('reissue', <Copy />, t('Issue again in its place'), () => void reissue());
     }
   } else if (booked && doc.status !== 'draft') {
     if (waits) {
       item('void', <Ban />, t('Request void'), () => setAsking('request-void'));
+    } else if (!correcting && !approvals.rules) {
+      item('void', <Ban />, t('Void document'), () => void voidDoc());
     } else {
       item('void', <Ban />, t('Void document'), () => setAsking('void'));
-      if (REISSUED.includes(type)) {
+      if (correcting && REISSUED.includes(type)) {
         item('void-reissue', <RotateCcw />, t('Void and reissue'), () => setAsking('void-reissue'));
       }
     }
@@ -917,8 +937,8 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           }
           description={
             asking === 'void'
-              ? voidNote
-              : `${voidNote} ${t('A new draft is made in its place, to correct and issue with a new number. It prints which invoice it replaces.')}`
+              ? voidNote()
+              : `${voidNote(true)} ${t('A new draft is made in its place, to correct and issue with a new number. It prints which invoice it replaces.')}`
           }
           label={t('Why it is voided')}
           required={Boolean(approvals.rules)}
@@ -942,7 +962,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                   number: doc.number,
                 })
               : asking === 'request-void'
-                ? `${voidNote} ${t('An approver decides. It is voided when they approve.')}`
+                ? `${voidNote()} ${t('An approver decides. It is voided when they approve.')}`
                 : t('An approver decides. It counts as owed again when they approve.')
           }
           confirmLabel={t('Send for approval')}

@@ -41,7 +41,12 @@ import { assertUnlocked, ensureSpecAccount } from './accounting';
 import { billAssetLines } from './assets';
 import { syncDocumentStock, withStockTables } from './inventory';
 import { withPosting } from './posting';
-import { assertApproved, voidsInsteadOfDeleting } from './approvals';
+import {
+  ApprovalRequiredError,
+  approverOf,
+  assertApproved,
+  voidsInsteadOfDeleting,
+} from './approvals';
 import { approvalRulesOf, rulesCoverDocument } from '@/cloud/roles';
 import type { CloudLink } from '@/cloud/types';
 
@@ -789,13 +794,17 @@ const statusTables = () =>
 
 /**
  * Changes a document's status. `patch` is stored with it (for example who
- * signed a delivery note).
+ * signed a delivery note). With `freePaid`, a document voided leaves the
+ * money paid against it as the customer's unapplied credit, as under the
+ * company's approval rules (Void and reissue: the copy issued in its place
+ * is what is owed now).
  */
 export async function setDocumentStatus(
   id: ID,
   status: DocumentStatus,
   message?: ActivityMessage,
   patch: Partial<InvoiceDocument> = {},
+  { freePaid = false }: { freePaid?: boolean } = {},
 ): Promise<void> {
   const reserved = await reserveIssueCounter(id, status);
   const found = Dexie.currentTransaction ? undefined : await db.documents.get(id);
@@ -835,8 +844,10 @@ export async function setDocumentStatus(
     const credited = leaving && company ? await takeOffCredits(doc, company) : [];
     // Voided under the company's rules: money paid against it becomes the
     // customer's unapplied credit, as when a document is deleted.
-    if (status === 'void' && doc.status !== 'void' && company && link) {
-      if (rulesCoverDocument(approvalRulesOf(company), doc.type)) await freePayments(id);
+    if (status === 'void' && doc.status !== 'void' && company) {
+      if (freePaid || (link && rulesCoverDocument(approvalRulesOf(company), doc.type))) {
+        await freePayments(id);
+      }
     }
     if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
     if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
@@ -922,9 +933,10 @@ export async function checkMarkSent(id: ID): Promise<void> {
 
 /**
  * Deletes a document. Payments that referenced it keep their money as
- * unapplied credit. Under the company's rules with "Void instead of delete",
- * an issued invoice or credit note is refused: it is voided instead, so its
- * number stays used (D12).
+ * unapplied credit. Under the company's rules an issued invoice or credit
+ * note is refused: with "Void instead of delete" it is voided instead, so
+ * its number stays used (D12), and anyone but an approver asks for a void
+ * (ApprovalRequiredError).
  */
 export async function deleteDocument(id: ID): Promise<void> {
   const found = Dexie.currentTransaction ? undefined : await db.documents.get(id);
@@ -945,6 +957,10 @@ export async function deleteDocument(id: ID): Promise<void> {
       if (!doc) return;
       const company = await db.companies.get(doc.companyId);
       if (voidsInsteadOfDeleting(company, link, doc)) {
+        // Anyone but an approver asks for a void instead.
+        if (!approverOf(link)) {
+          throw new ApprovalRequiredError('invoice_void', doc, { ...doc, status: 'void' });
+        }
         throw new DocumentChangeError(
           t('{number} is issued, so it is voided instead of deleted: its number stays used.', {
             number: doc.number,

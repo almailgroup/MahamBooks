@@ -171,6 +171,7 @@ function edits(c: string, id: string): [string, Record<string, unknown>][] {
     ['the civil ID', { ...base, cheque: { ...base.cheque, drawerCivilId: '290010112345' } }],
     ['the direction', { ...base, direction: 'in' }],
     ['the method', { ...base, method: 'bank_transfer', cheque: null }],
+    ['the account', { ...base, accountId: 'acc-petty-cash' }],
   ];
 }
 
@@ -339,6 +340,20 @@ describe('with cheques issued covered', () => {
       }
       expect(await stored(c, 'payments', id)).toMatchObject({ amount: 250 });
     }
+  });
+
+  it('refuses moving a confirmed cheque to another account, and lets one get its first', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    await push(t.owner, c, [pay(cheque(c, 'pay-1')), pay(cheque(c, 'pay-2', { accountId: null }))]);
+    await expect(
+      push(t.staff, c, [pay(cheque(c, 'pay-1', { accountId: 'acc-petty-cash' }))]),
+    ).rejects.toThrow(approvalRequired);
+    expect(await stored(c, 'payments', 'pay-1')).toMatchObject({ accountId: 'acc-2150' });
+    // Saved before it had an account, it gets one when it is saved again.
+    await push(t.staff, c, [pay(cheque(c, 'pay-2', { notes: 'Posted to the vendor' }))]);
+    expect(await stored(c, 'payments', 'pay-2')).toMatchObject({ accountId: 'acc-2150' });
   });
 
   it('refuses a new number unless the old leaf is recorded as spoiled', async () => {
@@ -571,6 +586,7 @@ describe('what a cheque says (cheque_content)', () => {
       { ...base, exchangeRate: null, direction: undefined },
       { ...base, cheque: { ...base.cheque, drawerCivilId: '' } },
       { ...base, cheque: null, method: 'cash' },
+      { ...base, accountId: null },
       {},
     ];
     for (const sample of samples) {
@@ -608,6 +624,9 @@ describe('what a cheque says (cheque_content)', () => {
       ]),
       ['new', null, base],
       ['deleted', base, null],
+      ['given its first account', { ...base, accountId: null }, base],
+      ['given its first account (none)', { ...base, accountId: undefined }, base],
+      ['moved off its account', base, { ...base, accountId: null }],
       ['new received', null, { ...base, direction: 'in' }],
       ['new transfer', null, { ...base, method: 'bank_transfer', cheque: null }],
     ];

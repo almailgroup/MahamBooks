@@ -7,7 +7,7 @@ import type { ApprovalRequest, Client, InvoiceDocument } from '@/db/types';
 import { useCompany } from '@/app/company';
 import { msg, t } from '@/i18n';
 import { Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
-import { useApprovalView, useMemberNames } from './hooks';
+import { useApprovalView, useCaughtUp, useMemberNames } from './hooks';
 import { ApprovalRequestCard } from './request-card';
 import { ChequeRequestCard } from './cheque-request-card';
 import { isChequeRequest } from '@/db/cheque-rules';
@@ -35,9 +35,10 @@ export function ApprovalsInbox() {
   const [tab, setTab] = useState<Tab>('waiting');
   const userId = view.link?.userId ?? null;
 
+  const caughtUp = useCaughtUp(company.id);
   useEffect(() => {
-    if (view.approver) void expirePending(company.id).catch(() => undefined);
-  }, [company.id, view.approver]);
+    if (view.approver && caughtUp) void expirePending(company.id).catch(() => undefined);
+  }, [company.id, view.approver, caughtUp]);
 
   const requests = useLiveQuery(
     () => db.approvals.where('companyId').equals(company.id).toArray(),

@@ -5,7 +5,7 @@ import { logActivity } from './activity';
 import { recalculateDocuments } from './documents';
 import { accountingSettings } from './chart-setup';
 import { assertUnlocked, createAccount } from './accounting';
-import { assertChequeConfirmed, rulesContext, waitingCheques } from './cheque-rules';
+import { assertChequeConfirmed, chequeWaits, rulesContext, waitingCheques } from './cheque-rules';
 import type {
   Account,
   ChequeDetails,
@@ -550,8 +550,14 @@ export async function savePayment(input: Payment): Promise<Payment> {
       const checked = await checkPayment(input);
       const { company, existing, docs, direction, precision, printed, spoiled } = checked;
       const out = direction === 'out';
-      // A cheque the company's rules keep for approvers: sent for confirmation instead.
-      assertChequeConfirmed(rules, 'payments', existing, checked.payment, () => ({
+      // A cheque the company's rules keep for approvers: sent for confirmation
+      // instead. A cheque's account is the cheques account whatever was sent
+      // (set below), so it is compared where it is booked now.
+      const asked =
+        existing?.method === 'cheque' && checked.payment.method === 'cheque'
+          ? { ...checked.payment, accountId: existing.accountId }
+          : checked.payment;
+      assertChequeConfirmed(rules, 'payments', existing, asked, () => ({
         action: 'save',
         table: 'payments',
         record: checked.payment,
@@ -568,6 +574,17 @@ export async function savePayment(input: Payment): Promise<Payment> {
       if (cheque) {
         const key = out ? 'chequesIssued' : 'chequesReceived';
         accountId = (await ensurePaymentAccount(company, key, accounts)).id;
+        // Whoever can't change what was confirmed on a cheque leaves it booked where it is.
+        if (
+          existing?.accountId &&
+          rules &&
+          chequeWaits(rules.company, rules.link, 'payments', existing, {
+            ...checked.payment,
+            accountId,
+          })
+        ) {
+          accountId = existing.accountId;
+        }
       } else {
         // Leaving the cheque method: the cheques account is not a money account.
         if (accountId && chequeAccounts.has(accountId)) accountId = null;

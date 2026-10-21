@@ -440,15 +440,22 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
                         <Copy /> {t('Copy link')}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        void act(() => api.revokeInvite(invite.id), t('Invitation cancelled'))
-                      }
-                    >
-                      {t('Cancel invitation')}
-                    </Button>
+                    {/* With the owner's switch on, an invitation as admin or accountant is the owner's to cancel. */}
+                    {(grantable as MemberRole[]).includes(invite.role) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          void act(() => api.revokeInvite(invite.id), t('Invitation cancelled'))
+                        }
+                      >
+                        {t('Cancel invitation')}
+                      </Button>
+                    ) : (
+                      <span className="self-center text-xs text-slate-500">
+                        {t('Only the owner cancels this invitation.')}
+                      </span>
+                    )}
                   </div>
                 </li>
               );

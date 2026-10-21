@@ -94,7 +94,31 @@ describe('a change in words', () => {
       subjectName: 'Made-up X',
       summary: { reason: 'left', user: 'user-x' },
     });
-    expect(describeChange(left).text).toBe('Made-up X left the team');
+    expect(describeChange(left)).toMatchObject({ text: 'Made-up X left the team', named: true });
+    // Their own role, as they handed the company over: said once.
+    const handedOver = change({
+      kind: 'member',
+      tbl: 'company_members',
+      actor: 'user-x',
+      subjectName: 'Made-up X',
+      summary: { reason: 'role', role: 'admin', before: 'owner', user: 'user-x' },
+    });
+    expect(describeChange(handedOver)).toMatchObject({
+      text: 'Made-up X became admin',
+      named: true,
+    });
+    const joined = change({
+      kind: 'member',
+      tbl: 'company_members',
+      actor: 'user-y',
+      subjectName: 'Made-up Y',
+      summary: { reason: 'joined', role: 'accountant', user: 'user-y' },
+    });
+    expect(describeChange(joined)).toMatchObject({
+      text: 'Made-up Y joined the team as accountant',
+      named: true,
+    });
+    expect(describeChange(role).named).toBeUndefined();
     const settings = change({
       kind: 'settings',
       tbl: 'companies',

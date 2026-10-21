@@ -443,6 +443,38 @@ function FileProblems({ companyId, tasks }: { companyId: string; tasks: FileTask
   );
 }
 
+/** Which of the changes made together stands for them: what was changed, before its log. */
+function rankOf(entry: OutboxEntry): number {
+  if (canSendForApproval(entry) || canSendForConfirmation(entry)) return 0;
+  if (entry.table === 'activities') return 3;
+  return entry.table === 'documents' || entry.table === 'payments' ? 1 : 2;
+}
+
+/**
+ * Refused changes, once per record, and once for the records changed
+ * together in one go (they are sent, refused and undone together): by the
+ * one that stands for them, with how many more wait with it.
+ */
+function shownOnce(entries: OutboxEntry[]): { entry: OutboxEntry; withIt: number }[] {
+  const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
+  const together = new Map<string, OutboxEntry[]>();
+  const shown: { entry: OutboxEntry; withIt: number }[] = [];
+  for (const entry of unique) {
+    if (!entry.group) {
+      shown.push({ entry, withIt: 0 });
+      continue;
+    }
+    const group = together.get(entry.group);
+    if (group) group.push(entry);
+    else together.set(entry.group, [entry]);
+  }
+  for (const group of together.values()) {
+    const [first, ...rest] = group.sort((a, b) => rankOf(a) - rankOf(b) || a.seq! - b.seq!);
+    shown.push({ entry: first, withIt: rest.length });
+  }
+  return shown.sort((a, b) => a.entry.seq! - b.entry.seq!);
+}
+
 function Problems({
   companyId,
   entries,
@@ -460,7 +492,7 @@ function Problems({
   const [asking, setAsking] = useState<OutboxEntry | null>(null);
   // A cheque the rules keep for an approver's confirmation, to send for it (#9).
   const [confirming, setConfirming] = useState<OutboxEntry | null>(null);
-  const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
+  const unique = shownOnce(entries);
 
   /** Takes the cloud's copy back; a record the cloud never had is only deleted once agreed. */
   const undo = async (entry: OutboxEntry, ctx: SyncContext) => {
@@ -506,7 +538,7 @@ function Problems({
         </Button>
       </div>
       <ul className="mt-2 divide-y divide-red-600/10">
-        {unique.map((entry) => (
+        {unique.map(({ entry, withIt }) => (
           <li key={entry.seq} className="flex flex-wrap items-center gap-2 py-2 text-sm">
             <span className="min-w-0 flex-1">
               <span className="font-medium text-slate-900">
@@ -518,6 +550,9 @@ function Problems({
                   PARKED_REASONS[entry.error as keyof typeof PARKED_REASONS] ??
                     msg('The cloud did not accept it.'),
                 )}
+                {withIt > 0
+                  ? ` ${tp(withIt, '{count} change made with it waits with it.', '{count} changes made with it wait with it.')}`
+                  : ''}
                 {entry.retryAt !== undefined && canEdit(role)
                   ? ` ${t('This device tries again by itself.')}`
                   : ''}

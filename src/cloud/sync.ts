@@ -344,7 +344,9 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
       touched,
     );
     await reconcile(companyId, touched);
-    // Reconciling may have corrected something here: send that too.
+    // Decisions the cloud took from this device are carried out now, as it keeps them.
+    await settleDecisions(companyId, sync);
+    // Reconciling (and carrying out) may have changed something here: send that too.
     await pushAll(companyId, sync, result);
     await refreshFeatures(companyId, sync);
     await refreshPermissions(companyId, sync, result.parked > 0);
@@ -403,6 +405,8 @@ const PUSH_ORDER: Partial<Record<DataTable, number>> = {
 interface Outgoing {
   change: PushChange;
   seqs: number[];
+  /** The transactions its changes were made in (OutboxEntry.group). */
+  groups?: string[];
   /** Attachment content uploaded with this change. */
   file?: { storagePath: string; contentHash: string };
   /** The company record: this device's copy, kept as the base of its later changes. */
@@ -553,6 +557,58 @@ async function releaseHeld(companyId: string): Promise<void> {
     });
 }
 
+/** Changes made in more records at once than this (an import, say) are sent one by one. */
+const CHANGE_GROUP_LIMIT = 20;
+
+/**
+ * The batch without the records at its end whose transaction has changes
+ * left out of it, unless nothing else would be left to send.
+ */
+function withWholeChanges(batch: Outgoing[], entries: OutboxEntry[]): Outgoing[] {
+  const sent = new Set(batch.flatMap((item) => item.seqs));
+  const cut = new Set(
+    entries.filter((e) => e.group && !sent.has(e.seq!)).map((e) => e.group as string),
+  );
+  if (cut.size === 0) return batch;
+  const kept = [...batch];
+  while (kept.length > 0 && (kept[kept.length - 1].groups ?? []).some((g) => cut.has(g))) {
+    kept.pop();
+  }
+  return kept.length > 0 ? kept : batch;
+}
+
+/**
+ * The batch in the parts the cloud takes or refuses whole: the records
+ * changed in one local transaction together (a void and the payments it
+ * freed), so a refused change doesn't leave what it changed with it in the
+ * cloud. Large transactions are taken record by record.
+ */
+function changesOf(batch: Outgoing[]): Outgoing[][] {
+  const sizes = new Map<string, number>();
+  for (const item of batch) {
+    for (const g of item.groups ?? []) sizes.set(g, (sizes.get(g) ?? 0) + 1);
+  }
+  const parent = batch.map((_, i) => i);
+  const root = (i: number): number => (parent[i] === i ? i : (parent[i] = root(parent[i])));
+  const first = new Map<string, number>();
+  batch.forEach((item, i) => {
+    for (const g of item.groups ?? []) {
+      if ((sizes.get(g) ?? 0) > CHANGE_GROUP_LIMIT) continue;
+      const j = first.get(g);
+      if (j === undefined) first.set(g, i);
+      else parent[root(i)] = root(j);
+    }
+  });
+  const parts = new Map<number, Outgoing[]>();
+  batch.forEach((item, i) => {
+    const r = root(i);
+    const part = parts.get(r);
+    if (part) part.push(item);
+    else parts.set(r, [item]);
+  });
+  return [...parts.values()];
+}
+
 async function buildBatch(
   companyId: string,
   entries: OutboxEntry[],
@@ -563,21 +619,31 @@ async function buildBatch(
 ): Promise<Plan> {
   const groups = new Map<
     string,
-    { table: string; id: string; seqs: number[]; last: OutboxEntry }
+    { table: string; id: string; seqs: number[]; last: OutboxEntry; made: Set<string> }
   >();
   for (const entry of entries) {
     const key = `${entry.table}/${entry.id}`;
     let group = groups.get(key);
-    if (!group)
-      groups.set(key, (group = { table: entry.table, id: entry.id, seqs: [], last: entry }));
+    if (!group) {
+      groups.set(
+        key,
+        (group = { table: entry.table, id: entry.id, seqs: [], last: entry, made: new Set() }),
+      );
+    }
     group.seqs.push(entry.seq!);
+    if (entry.group) group.made.add(entry.group);
     if (entry.seq! >= group.last.seq!) group.last = entry;
   }
+  const madeOf = (made: Set<string>) => (made.size ? { groups: [...made] } : {});
   const privateOwners = await privateOwnerIds(companyId);
   const plan: Plan = { batch: [], company: null, progressed: false };
   let bytes = 0;
+  let full = false;
   for (const group of groups.values()) {
-    if (plan.batch.length >= PUSH_BATCH) break;
+    if (plan.batch.length >= PUSH_BATCH) {
+      full = true;
+      break;
+    }
     if (!SYNCED.has(group.table)) {
       // Not something the cloud keeps: drop it.
       await db.outbox.bulkDelete(group.seqs);
@@ -600,6 +666,7 @@ async function buildBatch(
       const item: Outgoing = {
         change: { tbl: group.table, id: group.id, deleted: true, base_rev: base },
         seqs: group.seqs,
+        ...madeOf(group.made),
       };
       bytes += JSON.stringify(item.change).length;
       plan.batch.push(item);
@@ -629,6 +696,7 @@ async function buildBatch(
     const item: Outgoing = {
       change: { tbl: group.table, id: group.id, data, base_rev: base },
       seqs: group.seqs,
+      ...madeOf(group.made),
     };
     if (group.table === 'attachments') {
       try {
@@ -648,10 +716,16 @@ async function buildBatch(
       if (item.file) Object.assign(data, { dataUrl: '', ...item.file });
     }
     const size = JSON.stringify(item.change).length;
-    if (plan.batch.length > 0 && bytes + size > PUSH_BYTES) break;
+    if (plan.batch.length > 0 && bytes + size > PUSH_BYTES) {
+      full = true;
+      break;
+    }
     bytes += size;
     plan.batch.push(item);
   }
+  // A change made with others goes with them: what the batch had no room
+  // for waits, with the rest of its transaction, for the next one.
+  if (full) plan.batch = withWholeChanges(plan.batch, entries);
   plan.batch.sort(
     (a, b) =>
       (PUSH_ORDER[a.change.tbl as DataTable] ?? 5) - (PUSH_ORDER[b.change.tbl as DataTable] ?? 5),
@@ -820,18 +894,73 @@ async function sendBatch(
   } catch (error) {
     const e = cloudError(error);
     if (e.retryable || e.code === 'not_member' || e.code === 'resync') throw e;
-    // The server refused something in the batch: find it by halves and park it.
-    if (batch.length === 1) {
-      await park(batch[0].seqs, e);
-      result.parked += 1;
+    // The server refused something in the batch: find it by halves and park
+    // it, with whatever was changed with it (see changesOf).
+    const parts = changesOf(batch);
+    if (parts.length === 1) {
+      await park(
+        batch.flatMap((item) => item.seqs),
+        e,
+      );
+      result.parked += batch.length;
       return;
     }
-    const half = Math.ceil(batch.length / 2);
-    await sendBatch(companyId, batch.slice(0, half), ctx, result);
-    await sendBatch(companyId, batch.slice(half), ctx, result);
+    const half = Math.ceil(parts.length / 2);
+    await sendBatch(companyId, parts.slice(0, half).flat(), ctx, result);
+    await sendBatch(companyId, parts.slice(half).flat(), ctx, result);
     return;
   }
   await confirm(companyId, batch, results, ctx, result);
+}
+
+/** Decisions on approval requests that change something once the cloud has them. */
+const DECISIONS = new Set(['approved', 'rejected', 'cancelled']);
+
+/**
+ * Decisions on approval requests this device sent and the cloud took, by
+ * company: carried out (or tidied up) after the cloud's copy is back here,
+ * whatever the cloud kept (see settleDecisions).
+ */
+const decidedHere = new Map<string, Set<string>>();
+
+/**
+ * Notes a decision on an approval request among the changes the cloud just
+ * took: one made on this device (a company uploaded whole sends its requests
+ * as they are, to carry out nothing).
+ */
+function noteDecision(companyId: string, { change, groups }: Outgoing) {
+  if (change.tbl !== 'approvals' || change.deleted || !groups?.length) return;
+  const status = (change.data as Record<string, unknown> | undefined)?.status;
+  if (typeof status !== 'string' || !DECISIONS.has(status)) return;
+  let ids = decidedHere.get(companyId);
+  if (!ids) decidedHere.set(companyId, (ids = new Set()));
+  ids.add(change.id);
+}
+
+/**
+ * Carries out the approvals this device sent, now the cloud's copy of each
+ * is here: only those the cloud still has as approved (a request taken back
+ * or decided on another device first stays as the cloud keeps it), and
+ * tidies up after requests for new cheques that ended without one (see
+ * carryOutDecided). Never stops the sync.
+ */
+async function settleDecisions(companyId: string, ctx: SyncContext): Promise<void> {
+  const ids = decidedHere.get(companyId);
+  if (!ids?.size) return;
+  decidedHere.delete(companyId);
+  try {
+    const { carryOutDecided } = await import('@/db/approvals');
+    await carryOutDecided(companyId, ids, async (tbl, id) => {
+      try {
+        return (await ctx.api.getRecord(companyId, tbl, id)) !== null;
+      } catch {
+        // Can't tell: the files stay.
+        return true;
+      }
+    });
+  } catch {
+    // Carried out again from the request itself.
+  }
 }
 
 /** The server has these changes: forget them here, note their versions and conflicts. */
@@ -878,6 +1007,7 @@ async function confirm(
     }
   });
   result.pushed += batch.length;
+  for (const item of batch) noteDecision(companyId, item);
   if (removedFiles.length) await removeFiles(companyId, removedFiles, ctx);
   for (const item of conflicts) {
     if (await logConflict(companyId, item.change)) result.conflicts += 1;
@@ -1566,6 +1696,55 @@ const STOCK_TABLES = [
   'companies',
 ];
 
+/** Codes of a change the cloud refused for good, not for want of a newer server. */
+const REFUSED = new Set(['permission', 'approval_required']);
+
+/** How often a device works out again the same document the cloud's changes brought, at most. */
+const CORRECTIONS = 3;
+const CORRECTION_WINDOW_MS = 30 * MINUTE;
+
+/** When this device last worked out again a document from the cloud, by company and document. */
+const corrections = new Map<string, number[]>();
+
+function noteCorrection(companyId: string, id: string) {
+  const key = `${companyId}/${id}`;
+  const now = Date.now();
+  const recent = (corrections.get(key) ?? []).filter((at) => now - at < CORRECTION_WINDOW_MS);
+  recent.push(now);
+  corrections.set(key, recent);
+}
+
+function correctedTooOften(companyId: string, id: string): boolean {
+  const now = Date.now();
+  const recent = (corrections.get(`${companyId}/${id}`) ?? []).filter(
+    (at) => now - at < CORRECTION_WINDOW_MS,
+  );
+  return recent.length >= CORRECTIONS;
+}
+
+/**
+ * Documents whose balances stay as the cloud's copy says instead of being
+ * worked out again here: those a payment the cloud refused pays (only this
+ * device has it, so every other device works them out without it), and
+ * those this device keeps working out again only for the cloud to bring
+ * them back as they were (a device with an older version counts a payment
+ * the cloud refused it): sending them again would never end.
+ */
+async function keptAsInCloud(companyId: string, ids: string[]): Promise<Set<string>> {
+  const held = new Set(ids.filter((id) => correctedTooOften(companyId, id)));
+  const refused = (await parkedEntries(companyId)).filter(
+    (e) => e.table === 'payments' && e.op === 'put' && REFUSED.has(e.error ?? ''),
+  );
+  if (refused.length === 0) return held;
+  const payments = await db.payments.bulkGet([...new Set(refused.map((e) => e.id))]);
+  for (const payment of payments) {
+    if (!payment) continue;
+    for (const id of payment.documentIds ?? []) held.add(id);
+    if (payment.creditId) held.add(payment.creditId);
+  }
+  return held;
+}
+
 /**
  * Stock levels and costs, document balances and order progress are stored
  * with the records they come from. After changes from the cloud they are
@@ -1587,9 +1766,16 @@ async function reconcile(companyId: string, touched: Touched): Promise<void> {
   }
   if (touched.documents.size) {
     const ids = [...touched.documents];
+    const held = await keptAsInCloud(companyId, ids);
+    const worked = ids.filter((id) => !held.has(id));
+    const before = await db.documents.bulkGet(worked);
     await db.transaction('rw', [db.documents, db.clients, db.payments], () =>
-      recalculateDocuments(ids),
+      recalculateDocuments(worked),
     );
+    const after = await db.documents.bulkGet(worked);
+    worked.forEach((id, i) => {
+      if (!sameData(before[i], after[i])) noteCorrection(companyId, id);
+    });
     await refreshOrdersFor(ids);
   }
   if (touched.deletedPayments?.size) {
@@ -1921,13 +2107,37 @@ export async function retryParked(companyId: string): Promise<void> {
  * has it. A record the cloud never had would be deleted from this device, so
  * that only happens with `deleteNew` (the person agreed to it); without it
  * nothing changes and the answer is 'not_in_cloud'. The company record itself
- * is never deleted this way.
+ * is never deleted this way. What was changed with it, and held back with it
+ * (see changesOf), goes back as the cloud has it too: records made with it
+ * leave this device.
  */
 export async function discardParked(
   companyId: string,
   entry: Pick<OutboxEntry, 'table' | 'id'>,
   ctx: SyncContext,
   { deleteNew = false }: { deleteNew?: boolean } = {},
+): Promise<'undone' | 'not_in_cloud'> {
+  const made = new Set(
+    (await db.outbox.where('[table+id]').equals([entry.table, entry.id]).toArray())
+      .filter((e) => e.parked === 1 && e.group)
+      .map((e) => e.group as string),
+  );
+  const outcome = await discardOne(companyId, entry, ctx, deleteNew);
+  if (outcome !== 'undone' || made.size === 0) return outcome;
+  const withIt = (await parkedEntries(companyId)).filter(
+    (e) => e.group && made.has(e.group) && e.table !== 'companies',
+  );
+  const others = new Map(withIt.map((e) => [`${e.table}/${e.id}`, e]));
+  others.delete(`${entry.table}/${entry.id}`);
+  for (const other of others.values()) await discardOne(companyId, other, ctx, true);
+  return outcome;
+}
+
+async function discardOne(
+  companyId: string,
+  entry: Pick<OutboxEntry, 'table' | 'id'>,
+  ctx: SyncContext,
+  deleteNew: boolean,
 ): Promise<'undone' | 'not_in_cloud'> {
   let remote: { data: Record<string, unknown>; rev: number } | null;
   try {

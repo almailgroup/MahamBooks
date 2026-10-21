@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { beforeAll, describe, expect, it } from 'vitest';
 import { startDatabase, type Harness } from './sql-harness';
-import { INVOICE_CONTENT_FIELDS, invoiceContent, type MemberRole } from './roles';
+import {
+  guardApprovalWrite,
+  INVOICE_CONTENT_FIELDS,
+  invoiceContent,
+  type MemberRole,
+} from './roles';
 import { FakeCloud } from './testing/fake-cloud';
 
 /**
@@ -193,18 +198,51 @@ describe('with the rules off', () => {
     expect(await push(t.staff, c, batch)).toHaveLength(4);
   });
 
-  it('keeps approval requests as they are sent, and lets them be deleted as before', async () => {
+  it('keeps approval requests honest and kept even before the rules are on', async () => {
     const t = await team();
     const c = t.company;
-    const request = { id: 'ap-1', companyId: c, kind: 'invoice_edit', status: 'pending' };
-    // Staff may ask now (approval requests were closed to them before).
-    await push(t.staff, c, [{ tbl: 'approvals', id: 'ap-1', data: request }]);
-    expect(await stored(c, 'approvals', 'ap-1')).toEqual(request);
-    await push(t.admin, c, [{ tbl: 'approvals', id: 'ap-1', deleted: true }]);
-    expect(await stored(c, 'approvals', 'ap-1')).toBeUndefined();
+    // A request made up as decided: asked by the accountant, approved by the owner.
+    const forged = {
+      id: 'ap-1',
+      companyId: c,
+      kind: 'cheque_create',
+      subjectTbl: 'payments',
+      subjectId: 'pay-1',
+      after: { method: 'cheque', direction: 'out', amount: 9000 },
+      status: 'approved',
+      requestedBy: t.accountant,
+      decidedBy: t.owner,
+      decidedAt: '2026-10-01T08:00:00.000Z',
+      decisionNote: 'Fine.',
+      resultId: 'pay-1',
+    };
+    // Staff may ask now (approval requests were closed to them before)…
+    await push(t.staff, c, [{ tbl: 'approvals', id: 'ap-1', data: forged }]);
+    // …but only ask: the server stamps it as theirs, waiting.
+    const saved = await stored(c, 'approvals', 'ap-1');
+    expect(saved).toMatchObject({
+      status: 'pending',
+      requestedBy: t.staff,
+      decidedBy: null,
+      decidedAt: null,
+      decisionNote: '',
+    });
+    expect(saved).not.toHaveProperty('resultId');
+    // Nobody but an approver decides it, and nobody deletes it, the owner included.
+    await expect(
+      push(t.staff, c, [{ tbl: 'approvals', id: 'ap-1', data: forged }]),
+    ).rejects.toThrow(/almail:permission/);
+    for (const user of [t.owner, t.admin, t.accountant, t.staff]) {
+      await expect(
+        push(user, c, [{ tbl: 'approvals', id: 'ap-1', deleted: true }]),
+      ).rejects.toThrow(/permission/);
+    }
+    // The owner turns the rules on: it still waits for a decision.
+    await rulesOn(t, { cheques: { issued: true } });
+    expect(await stored(c, 'approvals', 'ap-1')).toMatchObject({ status: 'pending' });
     // Viewers still change nothing.
     await expect(
-      push(t.viewer, c, [{ tbl: 'approvals', id: 'ap-2', data: { ...request, id: 'ap-2' } }]),
+      push(t.viewer, c, [{ tbl: 'approvals', id: 'ap-2', data: { ...forged, id: 'ap-2' } }]),
     ).rejects.toThrow(/row-level security/);
   });
 
@@ -366,10 +404,34 @@ describe('with the rules on: issued invoices', () => {
       await push(user, c, [{ tbl: 'documents', id: draft, deleted: true }]);
       expect(await stored(c, 'documents', draft)).toBeUndefined();
     }
-    // Without Void instead of delete, issued invoices may be deleted again.
+    // Without Void instead of delete, approvers may delete issued invoices,
+    // and nobody else: they ask for a void instead.
     await rulesOn(t, { documentTypes: ['invoice'] });
-    await push(t.staff, c, [{ tbl: 'documents', id: 'del-0', deleted: true }]);
+    for (const user of [t.admin, t.accountant, t.staff]) {
+      await expect(
+        push(user, c, [{ tbl: 'documents', id: 'del-0', deleted: true }]),
+      ).rejects.toThrow(/permission/);
+    }
+    await push(t.owner, c, [{ tbl: 'documents', id: 'del-0', deleted: true }]);
     expect(await stored(c, 'documents', 'del-0')).toBeUndefined();
+  });
+
+  it('refuses deleting an issued invoice and sending it again changed, in one push', async () => {
+    const t = await team();
+    const c = t.company;
+    for (const voidInsteadOfDelete of [false, true]) {
+      await rulesOn(t, { documentTypes: ['invoice', 'credit'], voidInsteadOfDelete });
+      const id = `inv-${voidInsteadOfDelete}`;
+      await push(t.staff, c, [doc(invoice(c, id))]);
+      const cheaper = invoice(c, id, { items: [{ ...invoice(c, id).items[0], unitPrice: 15 }] });
+      await expect(push(t.staff, c, [doc(cheaper)])).rejects.toThrow(approvalRequired);
+      await expect(
+        push(t.staff, c, [{ tbl: 'documents', id, deleted: true }, doc(cheaper)]),
+      ).rejects.toThrow(/permission/);
+      expect(await stored(c, 'documents', id)).toMatchObject({
+        items: [expect.objectContaining({ unitPrice: 150 })],
+      });
+    }
   });
 
   it('turned off (no types left), changes nothing for documents', async () => {
@@ -526,6 +588,92 @@ describe('with the rules on: approval requests', () => {
     }
   });
 
+  it('stamps a decided request sent up new by a deputy as theirs, and keeps the owner’s', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    await h.rpc(t.owner, 'set_member_permissions', {
+      p_company: c,
+      p_user: t.admin,
+      p_permissions: json({}),
+      p_can_approve: true,
+    });
+    // The admin makes up a request the staff member asked for and the owner approved.
+    await push(t.admin, c, [
+      ask(
+        request(c, 'ap-2', {
+          status: 'applied',
+          requestedBy: t.staff,
+          requestedAt: '2026-10-01T08:00:00.000Z',
+          decidedBy: t.owner,
+          decidedAt: '2026-10-01T09:00:00.000Z',
+          decisionNote: 'Owner approved',
+        }),
+      ),
+    ]);
+    const saved = await stored(c, 'approvals', 'ap-2');
+    expect(saved).toMatchObject({
+      status: 'applied',
+      requestedBy: t.admin,
+      decidedBy: t.admin,
+    });
+    expect(saved).not.toHaveProperty('requestedByName');
+    expect(Date.now() - Date.parse(String(saved?.decidedAt))).toBeLessThan(60_000);
+    // The owner sending their company up again keeps their copy as it is.
+    const own = request(c, 'ap-3', {
+      status: 'rejected',
+      requestedBy: t.staff,
+      decidedBy: t.owner,
+      decidedAt: '2026-10-01T09:00:00.000Z',
+    });
+    await push(t.owner, c, [ask(own)]);
+    expect(await stored(c, 'approvals', 'ap-3')).toMatchObject({
+      requestedBy: t.staff,
+      decidedBy: t.owner,
+      decidedAt: '2026-10-01T09:00:00.000Z',
+    });
+  });
+
+  it('lets nobody but an approver add to a request, and an approver only what the decision makes', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    await push(t.accountant, c, [ask(request(c, 'ap-5'))]);
+    const first = await stored(c, 'approvals', 'ap-5');
+    // Staff mark someone else's waiting request expired and point it at another payment.
+    await push(t.staff, c, [
+      ask(request(c, 'ap-5', { expired: true, resultId: 'pay-evil', extra: 'x' })),
+    ]);
+    expect(await stored(c, 'approvals', 'ap-5')).toEqual(first);
+    // The accountant takes it back: nothing else of their copy is kept.
+    await push(t.accountant, c, [
+      ask(request(c, 'ap-5', { status: 'cancelled', resultId: 'pay-evil', note: 'x' })),
+    ]);
+    const cancelled = await stored(c, 'approvals', 'ap-5');
+    expect(cancelled).toMatchObject({ status: 'cancelled', decidedBy: t.accountant });
+    expect(cancelled).not.toHaveProperty('resultId');
+    expect(cancelled).not.toHaveProperty('note');
+    // An approver's copy says what was made only when it is carried out,
+    // and expired only when a waiting request is cancelled.
+    await push(t.staff, c, [ask(request(c, 'ap-6'))]);
+    await push(t.owner, c, [ask(request(c, 'ap-6', { status: 'approved', resultId: 'pay-x' }))]);
+    expect(await stored(c, 'approvals', 'ap-6')).not.toHaveProperty('resultId');
+    await push(t.owner, c, [
+      ask(request(c, 'ap-6', { status: 'applied', resultId: 'pay-1', expired: true })),
+    ]);
+    const applied = await stored(c, 'approvals', 'ap-6');
+    expect(applied).toMatchObject({ status: 'applied', resultId: 'pay-1' });
+    expect(applied).not.toHaveProperty('expired');
+    await push(t.owner, c, [ask(request(c, 'ap-6', { status: 'applied', resultId: 'pay-2' }))]);
+    expect(await stored(c, 'approvals', 'ap-6')).toMatchObject({ resultId: 'pay-1' });
+    await push(t.staff, c, [ask(request(c, 'ap-7'))]);
+    await push(t.owner, c, [ask(request(c, 'ap-7', { status: 'cancelled', expired: true }))]);
+    expect(await stored(c, 'approvals', 'ap-7')).toMatchObject({
+      status: 'cancelled',
+      expired: true,
+    });
+  });
+
   it('keeps requests about payroll from staff, and lets staff not write them', async () => {
     const t = await team();
     const c = t.company;
@@ -545,6 +693,56 @@ describe('with the rules on: approval requests', () => {
     const ids = seen.map((r) => r.id);
     expect(ids).toContain('ap-inv');
     expect(ids).not.toContain('ap-pay');
+  });
+});
+
+describe('invoices numbered when they are issued', () => {
+  const numbering = (c: string, numberOnIssue: boolean) =>
+    companyRecord(c, { defaults: { numberOnIssue } });
+
+  it('refuses issuing a draft without its number (an older app), whoever sends it', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: numbering(c, true) }]);
+    for (const [n, user] of [t.owner, t.admin, t.accountant, t.staff].entries()) {
+      for (const type of ['invoice', 'credit']) {
+        const id = `draft-${type}-${n}`;
+        const draft = invoice(c, id, { type, status: 'draft', number: '' });
+        await push(user, c, [doc(draft)]);
+        await push(user, c, [doc({ ...draft, notes: 'Changed' })]);
+        await expect(push(user, c, [doc({ ...draft, status: 'sent' })])).rejects.toMatchObject({
+          code: '42501',
+          message: expect.stringMatching(/almail:invalid/),
+        });
+        // A new one issued at once without a number is refused the same way.
+        await expect(
+          push(user, c, [doc(invoice(c, `${id}-new`, { type, number: ' ' }))]),
+        ).rejects.toMatchObject({ code: '42501' });
+        await push(user, c, [doc({ ...draft, status: 'sent', number: `N-${n}` })]);
+        expect(await stored(c, 'documents', id)).toMatchObject({ status: 'sent' });
+      }
+    }
+    // Quotes and other documents, voids and drafts staying drafts are not looked at.
+    await push(t.staff, c, [doc(invoice(c, 'q-1', { type: 'quote', number: '' }))]);
+    await push(t.staff, c, [doc(invoice(c, 'v-1', { status: 'void', number: '' }))]);
+  });
+
+  it('changes nothing with the switch off, as today', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: numbering(c, false) }]);
+    const draft = invoice(c, 'd-1', { status: 'draft', number: '' });
+    await push(t.staff, c, [doc(draft)]);
+    await push(t.staff, c, [doc({ ...draft, status: 'sent' })]);
+    expect(await stored(c, 'documents', 'd-1')).toMatchObject({ status: 'sent', number: '' });
+  });
+
+  it('leaves an invoice issued without a number before alone when payments change it', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.staff, c, [doc(invoice(c, 'old-1', { number: '' }))]);
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: numbering(c, true) }]);
+    await push(t.staff, c, [doc(invoice(c, 'old-1', { number: '', status: 'paid' }))]);
   });
 });
 
@@ -584,6 +782,130 @@ describe('what a document says (invoice_content)', () => {
   });
 });
 
+describe('the app’s copy of the rules for requests (guardApprovalWrite)', () => {
+  it('stores what the server stores, and refuses what it refuses, rules on or off', async () => {
+    const t = await team();
+    const c = t.company;
+    await h.rpc(t.owner, 'set_member_permissions', {
+      p_company: c,
+      p_user: t.admin,
+      p_permissions: json({}),
+      p_can_approve: true,
+    });
+    const users: [string, string, boolean][] = [
+      ['owner', t.owner, true],
+      ['deputy', t.admin, true],
+      ['accountant', t.accountant, false],
+      ['requester', t.staff, false],
+    ];
+    const asked = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      companyId: c,
+      kind: 'invoice_void',
+      subjectTbl: 'documents',
+      subjectId: 'inv-1',
+      subjectNumber: 'INV-1',
+      before: { status: 'sent' },
+      after: { status: 'void' },
+      reason: 'Entered twice.',
+      status: 'pending',
+      requestedBy: t.staff,
+      requestedByName: 'Made-up Staff',
+      requestedAt: '2026-10-02T08:00:00.000Z',
+      decidedBy: null,
+      decidedAt: null,
+      decisionNote: '',
+      createdAt: '2026-10-02T08:00:00.000Z',
+      updatedAt: '2026-10-02T08:00:00.000Z',
+      ...extra,
+    });
+    const afters: [string, Record<string, unknown>][] = [
+      ['sent again', { expired: true, resultId: 'pay-x', extra: 'x' }],
+      ['taken back', { status: 'cancelled', resultId: 'pay-x', note: 'x' }],
+      ['expired', { status: 'cancelled', expired: true }],
+      ['approved', { status: 'approved', decisionNote: 'Fine.', resultId: 'pay-x' }],
+      ['applied', { status: 'applied', resultId: 'pay-1', expired: true }],
+      ['rejected', { status: 'rejected', decisionNote: 'No.' }],
+      ['waiting again', { status: 'pending', decidedBy: t.staff }],
+      ['unknown', { status: 'maybe' }],
+      ['forged', { requestedBy: t.owner, after: { status: 'draft' }, decidedBy: t.owner }],
+    ];
+    // Timestamps the server takes from its clock, the same on both sides.
+    const recent = (row: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [
+          key,
+          typeof value === 'string' &&
+          /At$/.test(key) &&
+          Math.abs(Date.now() - Date.parse(value)) < 120_000
+            ? 'now'
+            : value,
+        ]),
+      );
+    const answer = async (user: string, data: Record<string, unknown>) =>
+      push(user, c, [{ tbl: 'approvals', id: String(data.id), data }]).then(
+        async () => recent((await stored(c, 'approvals', String(data.id)))!),
+        (e: Error) => (/almail:invalid/.test(e.message) ? 'invalid' : 'permission'),
+      );
+    const expected = (
+      before: Record<string, unknown> | undefined,
+      data: Record<string, unknown>,
+      user: string,
+      approver: boolean,
+    ) => {
+      const write = guardApprovalWrite(before, data, {
+        userId: user,
+        approver,
+        owner: user === t.owner,
+        now: new Date().toISOString(),
+      });
+      return 'refused' in write ? write.refused : recent(JSON.parse(json(write.data)));
+    };
+    let n = 0;
+    for (const rules of [null, RULES]) {
+      if (rules) await rulesOn(t, rules);
+      for (const [who, user, approver] of users) {
+        for (const start of ['pending', 'approved', 'applied']) {
+          for (const [label, change] of afters) {
+            n += 1;
+            const id = `g-${n}`;
+            await push(t.staff, c, [{ tbl: 'approvals', id, data: asked(id) }]);
+            if (start !== 'pending') {
+              await push(t.owner, c, [
+                { tbl: 'approvals', id, data: asked(id, { status: start }) },
+              ]);
+            }
+            const before = await stored(c, 'approvals', id);
+            const data = asked(id, { status: before?.status, ...change });
+            const want = expected(before, data, user, approver);
+            const got = await answer(user, data);
+            expect({ case: `${rules ? 'on' : 'off'} ${who} ${start} ${label}`, got }).toEqual({
+              case: `${rules ? 'on' : 'off'} ${who} ${start} ${label}`,
+              got: want,
+            });
+          }
+        }
+        // Sent up new: waiting, or decided already.
+        for (const status of ['pending', 'approved', 'applied']) {
+          n += 1;
+          const data = asked(`g-${n}`, {
+            status,
+            decidedBy: t.owner,
+            decidedAt: '2026-10-02T09:00:00.000Z',
+            resultId: 'pay-x',
+          });
+          const want = expected(undefined, data, user, approver);
+          const got = await answer(user, data);
+          expect({ case: `${rules ? 'on' : 'off'} ${who} new ${status}`, got }).toEqual({
+            case: `${rules ? 'on' : 'off'} ${who} new ${status}`,
+            got: want,
+          });
+        }
+      }
+    }
+  }, 120_000);
+});
+
 describe('the app’s stand-in for the cloud', () => {
   it('answers pushes as the server does', async () => {
     const t = await team();
@@ -618,7 +940,7 @@ describe('the app’s stand-in for the cloud', () => {
     };
     const seen = new Set<string>();
     let n = 0;
-    for (const rules of [null, RULES]) {
+    for (const rules of [null, RULES, { ...RULES, voidInsteadOfDelete: false }]) {
       if (rules) {
         const data = companyRecord(c, { approvalRules: rules });
         expect(await both(t.owner, [{ tbl: 'companies', id: c, data }])).toBe('ok ok');
@@ -646,8 +968,9 @@ describe('the app’s stand-in for the cloud', () => {
         for (const [label, changes] of cases) {
           const answer = await both(user, changes);
           const [fakeAnswer, sqlAnswer] = answer.split(' ');
-          expect(`${role} ${rules ? 'on' : 'off'} ${label}: ${fakeAnswer}`).toBe(
-            `${role} ${rules ? 'on' : 'off'} ${label}: ${sqlAnswer}`,
+          const when = rules ? `on ${rules.voidInsteadOfDelete ? 'void' : 'delete'}` : 'off';
+          expect(`${role} ${when} ${label}: ${fakeAnswer}`).toBe(
+            `${role} ${when} ${label}: ${sqlAnswer}`,
           );
           seen.add(sqlAnswer);
           // Back as it was, for the next case.
@@ -667,5 +990,5 @@ describe('the app’s stand-in for the cloud', () => {
       }
     }
     expect(seen).toEqual(new Set(['ok', 'approval', 'refused']));
-  }, 60_000);
+  }, 120_000);
 });

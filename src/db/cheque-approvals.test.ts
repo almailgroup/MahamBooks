@@ -22,14 +22,27 @@ import {
   returnCheque,
   saveSecurityCheque,
 } from './cheques';
-import { ApprovalError, cancelApproval, decideApproval, pendingRequests } from './approvals';
+import {
+  ApprovalError,
+  applyApproval,
+  cancelApproval,
+  carryOutDecided,
+  decideApproval,
+  pendingRequests,
+} from './approvals';
 import {
   ChequeConfirmationRequiredError,
   chequeWaits,
   waitingCheques,
   type ChequeAsk,
 } from './cheque-rules';
-import { mergePaymentEdit, paymentParts, requestChequeConfirmation } from './cheque-approvals';
+import {
+  applyChequeRequest,
+  madeBy,
+  mergePaymentEdit,
+  paymentParts,
+  requestChequeConfirmation,
+} from './cheque-approvals';
 import { chequePayments } from '@/lib/cheques';
 import { CloudPermissionError } from '@/cloud/outbox';
 import type { MemberRole } from '@/cloud/roles';
@@ -67,6 +80,19 @@ async function signedInAs(company: Company, role: MemberRole, approver = false) 
     lastErrorAt: null,
     ...(approver ? { approver: true } : {}),
   });
+}
+
+/**
+ * An approver's decision as it goes in a company kept in the cloud: saved
+ * here, taken by the cloud as sent, then carried out by the sync that sent
+ * it (see carryOutDecided). `paid`: whether the cloud has the payment a new
+ * cheque would become.
+ */
+async function decided(id: ID, decision: 'approved' | 'rejected', note = '', paid = false) {
+  expect(await decideApproval(id, decision, note)).toBe(false);
+  await db.outbox.where('[table+id]').equals(['approvals', id]).delete();
+  const request = (await db.approvals.get(id))!;
+  await carryOutDecided(request.companyId, [id], async () => paid);
 }
 
 async function setup(rules: ApprovalRules | null = RULES) {
@@ -251,7 +277,7 @@ describe('a cheque issued by staff', () => {
     await signedInAs(company, 'staff');
     const request = await ask(savePayment(chequeFor(company, bill)));
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved', 'Fine');
+    await decided(request.id, 'approved', 'Fine');
     const payment = await db.payments.get(request.subjectId);
     expect(payment).toMatchObject({
       date: '2026-10-05',
@@ -291,7 +317,10 @@ describe('a cheque issued by staff', () => {
       createdAt: '2026-10-05T08:00:00.000Z',
     } as never);
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'rejected', 'Pay by transfer');
+    // Not while the cloud may still have a payment for it (confirmed on another device).
+    await decided(request.id, 'rejected', 'Pay by transfer', true);
+    expect(await db.attachments.get('scan-1')).toBeDefined();
+    await carryOutDecided(company.id, [request.id], async () => false);
     expect(await db.payments.count()).toBe(0);
     expect(await db.attachments.get('scan-1')).toBeUndefined();
     expect(await db.approvals.get(request.id)).toMatchObject({
@@ -326,7 +355,9 @@ describe('a cheque issued by staff', () => {
         allocations: [{ documentId: bill.id, amount: 200 }],
       }),
     );
-    const error = await refusal(decideApproval(request.id, 'approved'));
+    // Carried out by the sync, it stays approved; carrying it out again says why.
+    await decided(request.id, 'approved');
+    const error = await refusal(applyApproval(request.id));
     expect(error).toBeInstanceOf(ApprovalError);
     expect((error as Error).message).toMatch(/paid meanwhile: only .*50.* is left/);
     expect(await db.payments.get(request.subjectId)).toBeUndefined();
@@ -343,7 +374,8 @@ describe('a cheque issued by staff', () => {
     const request = await ask(savePayment(chequeFor(company, bill)));
     await signedInAs(company, 'owner');
     await saveLockDate(company, '2026-10-31');
-    await expect(decideApproval(request.id, 'approved')).rejects.toThrow(LockedPeriodError);
+    await decided(request.id, 'approved');
+    await expect(applyApproval(request.id)).rejects.toThrow(LockedPeriodError);
     expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
     expect(await db.payments.count()).toBe(0);
   });
@@ -400,7 +432,7 @@ describe('a confirmed cheque', () => {
     // Meanwhile a note is added.
     await savePayment({ ...(await db.payments.get(payment.id))!, notes: 'Called the vendor' });
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     expect(await db.payments.get(payment.id)).toMatchObject({
       amount: 200,
       notes: 'Called the vendor',
@@ -415,7 +447,7 @@ describe('a confirmed cheque', () => {
     expect(request.kind).toBe('cheque_delete');
     expect(await db.payments.get(payment.id)).toBeDefined();
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     expect(await db.payments.get(payment.id)).toBeUndefined();
   });
 
@@ -441,12 +473,17 @@ describe('a confirmed cheque', () => {
     expect(request).toMatchObject({ kind: 'cheque_replace', subjectId: received.id });
     expect(await waitingCheques(company.id)).toMatchObject([{ number: '000701' }]);
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     const done = await db.approvals.get(request.id);
     const replacement = await db.payments.get(done!.resultId!);
     expect(replacement).toMatchObject({ date: '2026-10-25', cheque: { number: '000701' } });
     expect((await db.payments.get(received.id))!.cheque?.replacedById).toBe(replacement!.id);
     expect(await balance(invoice.id)).toBe(0);
+    // The same payment whichever approver's device carries it out, and only once.
+    expect(replacement).toMatchObject({ id: madeBy(request), approvalId: request.id });
+    const count = await db.payments.count();
+    expect(await applyChequeRequest({ ...done!, status: 'approved' })).toBe(replacement!.id);
+    expect(await db.payments.count()).toBe(count);
   });
 
   it('merges only what the request changed', () => {
@@ -490,7 +527,7 @@ describe('security cheques', () => {
     expect(await db.securityCheques.count()).toBe(0);
     await saveSecurityCheque({ ...given, id: 'in-1', direction: 'in' });
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     expect(await db.securityCheques.get(given.id)).toMatchObject({ number: '000555' });
     // Deleting it waits too.
     await signedInAs(company, 'staff');
@@ -520,9 +557,13 @@ describe('security cheques', () => {
     expect(request).toMatchObject({ kind: 'security_cheque_cash', subjectId: given.id });
     expect((await db.securityCheques.get(given.id))!.status).toBe('held');
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     expect((await db.securityCheques.get(given.id))!.status).toBe('cashed');
     expect(await balance(bill.id)).toBe(0);
+    expect((await db.securityCheques.get(given.id))!.paymentId).toBe(madeBy(request));
+    const count = await db.payments.count();
+    await applyChequeRequest({ ...(await db.approvals.get(request.id))!, status: 'approved' });
+    expect(await db.payments.count()).toBe(count);
   });
 });
 

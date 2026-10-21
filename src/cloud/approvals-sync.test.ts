@@ -109,9 +109,15 @@ describe('approvals through the cloud', () => {
     // This device doesn't know yet: it saves the edit.
     await saveDocument(edited((await db.documents.get(invoice.id))!));
     const result = await syncCompany(companyId, ctx(STAFF));
-    expect(result.parked).toBe(1);
-    const parked = (await db.outbox.toArray()).filter((e) => e.parked === 1);
-    expect(parked.map((e) => `${e.table} ${e.error}`)).toEqual(['documents approval_required']);
+    // The edit, and the line of its log written with it, wait together.
+    expect(result.parked).toBe(2);
+    const parked = (await db.outbox.toArray())
+      .filter((e) => e.parked === 1)
+      .sort((a, b) => a.table.localeCompare(b.table));
+    expect(parked.map((e) => `${e.table} ${e.error}`)).toEqual([
+      'activities approval_required',
+      'documents approval_required',
+    ]);
     expect(server.record(companyId, 'documents', invoice.id)).toMatchObject({
       terms: invoice.terms,
     });
@@ -120,14 +126,15 @@ describe('approvals through the cloud', () => {
 
     const request = await sendParkedForApproval(
       companyId,
-      parked[0],
+      parked[1],
       ctx(STAFF),
       'Price changed before the rules',
     );
     expect(request).toMatchObject({ kind: 'invoice_edit', status: 'pending' });
     expect(request.after).toMatchObject({ terms: 'Cash on delivery.' });
-    // Back to the cloud's copy here, and the request goes up.
+    // Back to the cloud's copy here, with its log, and the request goes up.
     expect(await db.documents.get(invoice.id)).toMatchObject({ terms: invoice.terms });
+    expect(await db.activities.get(parked[0].id)).toBeUndefined();
     expect((await syncCompany(companyId, ctx(STAFF))).parked).toBe(0);
     expect(server.record(companyId, 'approvals', request.id)).toMatchObject({
       status: 'pending',

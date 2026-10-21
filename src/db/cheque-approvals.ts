@@ -31,7 +31,7 @@ import type {
 import { sameData } from '@/cloud/roles';
 import { formatMoney } from '@/lib/format';
 import { currencyPrecision, dec, round, toMinor } from '@/lib/money';
-import { newId } from '@/lib/ids';
+import { newId, stableId } from '@/lib/ids';
 import { t } from '@/i18n';
 
 /**
@@ -397,6 +397,14 @@ async function assertStillOpen(
 const cannot = () => new ApprovalError(t('This version of the app can’t carry out this request.'));
 
 /**
+ * The id of the payment a replacement or cashing makes: it follows from the
+ * request, so two approvers' devices carrying it out make the one payment.
+ */
+export function madeBy(request: Pick<ApprovalRequest, 'id'>): ID {
+  return stableId(`approval-payment:${request.id}`);
+}
+
+/**
  * Carries out a confirmed cheque request on this (the approver's) device,
  * with the normal payment and cheque functions: the payment is numbered and
  * posted now, dated as asked. Returns what it made (the payment, or the
@@ -441,7 +449,13 @@ export async function applyChequeRequest(request: ApprovalRequest): Promise<ID |
     if (request.kind === 'cheque_replace') {
       const input = after.input as ReplacementInput | undefined;
       if (!input || typeof after.sourceId !== 'string') throw cannot();
-      const replacement = await replaceCheque(after.sourceId, input);
+      // Made already (carried out on another device of an approver).
+      const paymentId = madeBy(request);
+      if (await db.payments.get(paymentId)) return paymentId;
+      const replacement = await replaceCheque(after.sourceId, input, {
+        paymentId,
+        approvalId: request.id,
+      });
       return replacement.id;
     }
     throw cannot();
@@ -475,7 +489,12 @@ export async function applyChequeRequest(request: ApprovalRequest): Promise<ID |
     if (request.kind === 'security_cheque_cash') {
       const input = after.input as CashInput | undefined;
       if (!input || typeof after.sourceId !== 'string') throw cannot();
-      const payment = await cashSecurityCheque(after.sourceId, input);
+      const paymentId = madeBy(request);
+      if (await db.payments.get(paymentId)) return paymentId;
+      const payment = await cashSecurityCheque(after.sourceId, input, {
+        paymentId,
+        approvalId: request.id,
+      });
       return payment.id;
     }
   }

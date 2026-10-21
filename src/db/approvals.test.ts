@@ -22,6 +22,7 @@ import {
   ApprovalRequiredError,
   applyApproval,
   cancelApproval,
+  carryOutDecided,
   changedSinceAsked,
   decideApproval,
   expirePending,
@@ -31,7 +32,7 @@ import {
   requestApproval,
   waitsForApproval,
 } from './approvals';
-import { CloudPermissionError } from '@/cloud/outbox';
+import { CloudPermissionError, markRemote } from '@/cloud/outbox';
 import type { MemberRole } from '@/cloud/roles';
 import type { ApprovalRules, Client, Company, InvoiceDocument } from './types';
 
@@ -96,6 +97,18 @@ async function pay(company: Company, doc: InvoiceDocument, amount: number) {
   );
 }
 
+/**
+ * An approver's decision as it goes in a company kept in the cloud: saved
+ * here, taken by the cloud as sent, then carried out by the sync that sent
+ * it (see carryOutDecided).
+ */
+async function decided(id: string, decision: 'approved' | 'rejected', note = '') {
+  expect(await decideApproval(id, decision, note)).toBe(false);
+  await db.outbox.where('[table+id]').equals(['approvals', id]).delete();
+  const request = (await db.approvals.get(id))!;
+  await carryOutDecided(request.companyId, [id], async () => false);
+}
+
 async function catchError(work: Promise<unknown>): Promise<unknown> {
   try {
     await work;
@@ -123,6 +136,55 @@ describe('without the rules', () => {
     await setDocumentStatus(invoice.id, 'sent');
     await deleteDocument(invoice.id);
     expect(await db.documents.get(invoice.id)).toBeUndefined();
+  });
+
+  it('keeps approval requests honest on this device even so, as the cloud does', async () => {
+    const { company } = await setup(null);
+    await signedInAs(company, 'staff');
+    const request = {
+      id: 'ap-1',
+      companyId: company.id,
+      kind: 'invoice_void' as const,
+      subjectTbl: 'documents',
+      subjectId: 'inv-1',
+      subjectNumber: 'INV-1',
+      before: { status: 'sent' },
+      after: { status: 'void' },
+      reason: 'Twice',
+      status: 'pending' as const,
+      requestedBy: 'user-accountant',
+      requestedAt: '2026-10-01T08:00:00.000Z',
+      decidedBy: null,
+      decidedAt: null,
+      decisionNote: '',
+      createdAt: '2026-10-01T08:00:00.000Z',
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    };
+    await db.transaction('rw', db.approvals, async () => {
+      markRemote();
+      await db.approvals.add(request);
+    });
+    expect(
+      await catchError(db.approvals.put({ ...request, status: 'approved', decidedBy: 'x' })),
+    ).toBeInstanceOf(CloudPermissionError);
+    expect(await catchError(db.approvals.delete('ap-1'))).toBeInstanceOf(CloudPermissionError);
+  });
+
+  it('never issues an invoice without its number while drafts wait for theirs', async () => {
+    const { company, client } = await setup(null);
+    const numbered = await saveCompany({
+      ...company,
+      defaults: { ...company.defaults, numberOnIssue: true },
+    });
+    await signedInAs(numbered, 'staff');
+    const draft = await saveDocument(await draftDocument(numbered, 'invoice', client));
+    expect(draft.number).toBe('');
+    // As an older version would: marked as sent without a number.
+    expect(await catchError(db.documents.put({ ...draft, status: 'sent' }))).toBeInstanceOf(
+      CloudPermissionError,
+    );
+    await markSent(draft.id);
+    expect((await db.documents.get(draft.id))?.number).toBeTruthy();
   });
 
   it('never applies to a company kept on this device only', async () => {
@@ -177,13 +239,27 @@ describe('with the rules on, for someone who is not an approver', () => {
   it('voids issued invoices instead of deleting them, for everyone; drafts are still deleted', async () => {
     const { company, client } = await setup();
     const invoice = await issue(company, client);
-    for (const role of ['owner', 'staff'] as const) {
-      await signedInAs(company, role);
-      expect(await catchError(deleteDocument(invoice.id))).toBeInstanceOf(DocumentChangeError);
-    }
+    await signedInAs(company, 'owner');
+    expect(await catchError(deleteDocument(invoice.id))).toBeInstanceOf(DocumentChangeError);
+    // Anyone else asks for a void instead.
+    await signedInAs(company, 'staff');
+    const asked = await catchError(deleteDocument(invoice.id));
+    expect(asked).toBeInstanceOf(ApprovalRequiredError);
+    expect(asked).toMatchObject({ kind: 'invoice_void' });
     const draft = await saveDocument(await draftDocument(company, 'invoice', client));
     await deleteDocument(draft.id);
     expect(await db.documents.get(draft.id)).toBeUndefined();
+  });
+
+  it('keeps issued invoices from being deleted by anyone but an approver without Void instead of delete', async () => {
+    const { company, client } = await setup({ documentTypes: ['invoice'] });
+    const invoice = await issue(company, client);
+    await signedInAs(company, 'staff');
+    expect(await catchError(deleteDocument(invoice.id))).toMatchObject({ kind: 'invoice_void' });
+    expect(await db.documents.get(invoice.id)).toBeDefined();
+    await signedInAs(company, 'owner');
+    await deleteDocument(invoice.id);
+    expect(await db.documents.get(invoice.id)).toBeUndefined();
   });
 
   it('lets payments, payment links and conversions change invoices as before', async () => {
@@ -314,6 +390,13 @@ describe('requests', () => {
     await expect(decideApproval(request.id, 'approved')).rejects.toBeInstanceOf(ApprovalError);
     await signedInAs(company, 'accountant', true);
     await decideApproval(request.id, 'approved', 'Fine.');
+    // Carried out once the cloud has taken the decision, never before.
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    expect((await db.documents.get(invoice.id))?.terms).not.toBe('Cash on delivery.');
+    await carryOutDecided(company.id, [request.id], async () => false);
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+    await db.outbox.where('[table+id]').equals(['approvals', request.id]).delete();
+    await carryOutDecided(company.id, [request.id], async () => false);
     expect(await db.approvals.get(request.id)).toMatchObject({
       status: 'applied',
       decidedBy: 'user-accountant',
@@ -325,13 +408,28 @@ describe('requests', () => {
     });
   });
 
+  it('is never carried out when the cloud kept another decision', async () => {
+    const { company, invoice, request } = await asked();
+    await signedInAs(company, 'owner');
+    expect(await decideApproval(request.id, 'approved')).toBe(false);
+    // Taken back before the decision reached the cloud: it comes back as the cloud keeps it.
+    await db.transaction('rw', [db.approvals, db.outbox], async () => {
+      markRemote();
+      await db.outbox.where('[table+id]').equals(['approvals', request.id]).delete();
+      await db.approvals.put({ ...(await db.approvals.get(request.id))!, status: 'cancelled' });
+    });
+    await carryOutDecided(company.id, [request.id], async () => false);
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'cancelled' });
+    expect((await db.documents.get(invoice.id))?.totals.total).toBe(300);
+  });
+
   it('carries an edit onto the invoice as it is now: payments made since stay', async () => {
     const { company, invoice, request } = await asked();
     await pay(company, invoice, 100);
     const current = (await db.documents.get(invoice.id))!;
     expect(changedSinceAsked(request, current)).toBe(false);
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     expect(await db.documents.get(invoice.id)).toMatchObject({
       status: 'partial',
       totals: expect.objectContaining({ total: 240, paid: 100, balance: 140 }),
@@ -383,7 +481,7 @@ describe('requests', () => {
       reason: 'Issued to the wrong customer',
     });
     await signedInAs(company, 'owner');
-    await decideApproval(request.id, 'approved');
+    await decided(request.id, 'approved');
     const voided = await db.documents.get(invoice.id);
     expect(voided).toMatchObject({
       status: 'void',
@@ -403,7 +501,7 @@ describe('requests', () => {
       reason: 'Voided by mistake',
     });
     await signedInAs(company, 'owner');
-    await decideApproval(back.id, 'approved');
+    await decided(back.id, 'approved');
     expect(await db.documents.get(invoice.id)).toMatchObject({ status: 'sent', voidedAt: null });
   });
 
@@ -413,9 +511,13 @@ describe('requests', () => {
     await db.syncState.clear();
     await db.documents.delete(invoice.id);
     await signedInAs(company, 'owner');
-    await expect(decideApproval(request.id, 'approved')).rejects.toThrow(/no longer exists/);
+    await decided(request.id, 'approved');
     expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
     await expect(applyApproval(request.id)).rejects.toThrow(/no longer exists/);
+    // Kept on this device only, an approval is carried out at once.
+    await db.syncState.clear();
+    await db.approvals.update(request.id, { status: 'pending' });
+    await expect(decideApproval(request.id, 'approved')).rejects.toThrow(/no longer exists/);
   });
 
   it('are cancelled after the days the rules allow, on an approver’s device', async () => {
@@ -496,5 +598,25 @@ describe('numbers are never reused (D12)', () => {
     // The new draft deleted: the void one can be issued again.
     await deleteDocument(copy.id);
     expect((await db.documents.get(invoice.id))?.replacedById).toBeNull();
+  });
+
+  it('frees the money paid on an invoice voided to be issued again, and only then without the rules', async () => {
+    const { company, client } = await setup(null);
+    const kept = await issue(company, client);
+    const keptPayment = await pay(company, kept, 300);
+    // Voided as it always was: the payment stays on it.
+    await setDocumentStatus(kept.id, 'void');
+    expect((await db.payments.get(keptPayment.id))?.allocations).toEqual([
+      { documentId: kept.id, amount: 300 },
+    ]);
+    // Voided to be issued again: the copy is what is owed, the money is the customer's credit.
+    const invoice = await issue(company, client);
+    const payment = await pay(company, invoice, 300);
+    await setDocumentStatus(invoice.id, 'void', undefined, {}, { freePaid: true });
+    expect((await db.payments.get(payment.id))?.allocations).toEqual([]);
+    const copy = await reissueDocument(invoice.id);
+    await markSent(copy.id);
+    expect((await db.documents.get(copy.id))?.totals.balance).toBe(300);
+    expect((await db.documents.get(invoice.id))?.totals.paid).toBe(0);
   });
 });

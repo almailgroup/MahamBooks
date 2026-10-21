@@ -580,7 +580,9 @@ describe('changes by the team ("notify")', () => {
     expect(email.body.text).toContain('Staff (1)');
     expect(email.body.text).toContain('Voided invoice INV-LATE · Gulf Hotel');
     expect(email.body.text).not.toContain('by-the-owner');
-    expect(email.body.html).toContain('href="https://books.example.com/#/notifications"');
+    expect(email.body.html).toContain(
+      `href="https://books.example.com/#/notifications?company=${encodeURIComponent(c.id)}"`,
+    );
     expect(email.headers['idempotency-key']).toMatch(/^changes\/2026-10-06\/[0-9a-f-]{36}$/);
     expect(await state(c.id, c.owner)).toMatchObject({
       emailed_upto: await newest(c.id),

@@ -78,6 +78,13 @@ export interface OutboxEntry {
   at: string;
   /** 1 when the server refused the change; it waits for a retry or an undo. */
   parked: 0 | 1;
+  /**
+   * The local transaction that made the change: a change and what it changed
+   * with it (the payments an invoice's void freed, say) are sent, refused
+   * and undone together (see sendBatch). Missing on changes queued by an
+   * earlier version or an upload.
+   */
+  group?: string;
   /** Error code (permission, too_large, invalid…) of a parked change. */
   error?: string;
   /** The server's own explanation. */

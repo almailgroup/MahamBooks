@@ -459,12 +459,31 @@ export function checkReplacement(old: Payment, input: ReplacementInput): void {
   if (!(amount > 0)) throw new ChequeError(t('Enter the amount of the new cheque.'));
 }
 
+/** What carrying out a confirmed request gives the payment it makes (cheque-approvals.ts). */
+export interface MadeFor {
+  /** The payment's id, the same on every approver's device, so it is never made twice. */
+  paymentId?: ID;
+  /** The request it was confirmed by. */
+  approvalId?: ID;
+}
+
+function madeFields(made: MadeFor): Partial<Payment> {
+  return {
+    ...(made.paymentId ? { id: made.paymentId } : {}),
+    ...(made.approvalId ? { approvalId: made.approvalId } : {}),
+  };
+}
+
 /**
  * Records the cheque that replaces a returned (or still unpresented) one.
  * The old cheque is cancelled first when it is still open. The new payment
  * pays the same documents, as far as they are still open.
  */
-export async function replaceCheque(oldPaymentId: ID, input: ReplacementInput): Promise<Payment> {
+export async function replaceCheque(
+  oldPaymentId: ID,
+  input: ReplacementInput,
+  made: MadeFor = {},
+): Promise<Payment> {
   const rules = await rulesFor('payments', oldPaymentId);
   return db.transaction('rw', TABLES(), async () => {
     const { payment: old, company } = await load(oldPaymentId);
@@ -500,6 +519,7 @@ export async function replaceCheque(oldPaymentId: ID, input: ReplacementInput): 
     }
     const replacement = await savePayment(
       createPayment(company.id, {
+        ...madeFields(made),
         direction: old.direction ?? 'in',
         clientId: old.clientId,
         date: input.date,
@@ -671,7 +691,11 @@ export async function returnSecurityCheque(id: ID, date: ISODate): Promise<Secur
  * deposited on the given date, optionally paying the contact's open
  * invoices (or bills), oldest first.
  */
-export async function cashSecurityCheque(id: ID, input: CashInput): Promise<Payment> {
+export async function cashSecurityCheque(
+  id: ID,
+  input: CashInput,
+  made: MadeFor = {},
+): Promise<Payment> {
   const rules = await rulesFor('securityCheques', id);
   return db.transaction('rw', TABLES(), async () => {
     const cheque = await db.securityCheques.get(id);
@@ -717,6 +741,7 @@ export async function cashSecurityCheque(id: ID, input: CashInput): Promise<Paym
     }
     const payment = await savePayment(
       createPayment(cheque.companyId, {
+        ...madeFields(made),
         direction: cheque.direction,
         clientId,
         date: input.date,

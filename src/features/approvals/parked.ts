@@ -5,11 +5,21 @@ import { recalculateDocuments } from '@/db/documents';
 import type { ApprovalRequest, InvoiceDocument, Payment, SecurityCheque } from '@/db/types';
 import { discardParked, type SyncContext } from '@/cloud/sync';
 import type { OutboxEntry } from '@/cloud/types';
+import { approvalRulesOf, rulesCoverDocument } from '@/cloud/roles';
 import { t } from '@/i18n';
 
-/** A change the cloud refused because it needs an approver, which can be sent for approval. */
-export function canSendForApproval(entry: Pick<OutboxEntry, 'table' | 'error'>): boolean {
-  return entry.table === 'documents' && entry.error === 'approval_required';
+/**
+ * A change the cloud refused because it needs an approver, which can be sent
+ * for approval: also an issued document deleted, which the rules void
+ * instead (the cloud refuses that as any delete it doesn't allow).
+ */
+export function canSendForApproval(
+  entry: Pick<OutboxEntry, 'table' | 'error'> & Partial<Pick<OutboxEntry, 'op'>>,
+): boolean {
+  if (entry.table !== 'documents') return false;
+  return (
+    entry.error === 'approval_required' || (entry.op === 'delete' && entry.error === 'permission')
+  );
 }
 
 /**
@@ -26,18 +36,30 @@ export async function sendParkedForApproval(
   byName?: string,
 ): Promise<ApprovalRequest> {
   if (!reason.trim()) throw new ApprovalError(t('Say why, for the approver.'));
+  if (entry.table !== 'documents') throw new ApprovalError(t('Nothing to send for approval.'));
+  // Deleted here when there is none: an issued document is asked to be voided instead.
   const proposal = await db.documents.get(entry.id);
-  if (entry.table !== 'documents' || !proposal) {
-    throw new ApprovalError(t('Nothing to send for approval.'));
-  }
-  if (await pendingRequestFor(entry.id)) {
-    throw new ApprovalError(
-      t('A request on {number} is already waiting for approval.', { number: proposal.number }),
-    );
-  }
   // What the cloud has: the change is asked for against it.
   const remote = await ctx.api.getRecord(companyId, 'documents', entry.id).catch(() => null);
-  const kind = remote ? changeKind(remote.data as unknown as InvoiceDocument, proposal) : null;
+  const cloudCopy = remote ? (remote.data as unknown as InvoiceDocument) : null;
+  if (!proposal && !cloudCopy) throw new ApprovalError(t('Nothing to send for approval.'));
+  if (await pendingRequestFor(entry.id)) {
+    throw new ApprovalError(
+      t('A request on {number} is already waiting for approval.', {
+        number: (proposal ?? cloudCopy)!.number,
+      }),
+    );
+  }
+  const company = await db.companies.get(companyId);
+  const kind = !cloudCopy
+    ? null
+    : proposal
+      ? changeKind(cloudCopy, proposal)
+      : cloudCopy.status !== 'draft' &&
+          cloudCopy.status !== 'void' &&
+          rulesCoverDocument(approvalRulesOf(company), cloudCopy.type)
+        ? 'invoice_void'
+        : null;
   if (!kind) {
     throw new ApprovalError(t('This change can’t be sent for approval. Undo it instead.'));
   }
@@ -46,7 +68,7 @@ export async function sendParkedForApproval(
   }
   const subject = await db.documents.get(entry.id);
   if (!subject) throw new ApprovalError(t('Nothing to send for approval.'));
-  return requestApproval({ kind, subject, proposal, reason, byName });
+  return requestApproval({ kind, subject, ...(proposal ? { proposal } : {}), reason, byName });
 }
 
 /** A cheque the cloud refused because it needs an approver's confirmation, which can be sent for it. */

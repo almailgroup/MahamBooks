@@ -89,9 +89,13 @@ describe('the owner’s limits on this device', () => {
     server.setAccess(company.id, ACCOUNTANT, { apps: { books: 'view' } });
     await saveClient(createClient(company.id, { name: 'Made before the limit' }));
     const result = await syncCompany(company.id, accountant);
-    expect(result.parked).toBe(1);
+    // The customer, and the line of its log written with it, wait together.
+    expect(result.parked).toBe(2);
     const parked = (await db.outbox.toArray()).filter((e) => e.parked === 1);
-    expect(parked.map((e) => `${e.table} ${e.error}`)).toEqual(['clients permission']);
+    expect(parked.map((e) => `${e.table} ${e.error}`).sort()).toEqual([
+      'activities permission',
+      'clients permission',
+    ]);
     expect(server.rows(company.id, 'clients').map((r) => r.data.name)).toEqual([
       'Made-up Customer',
     ]);
