@@ -529,6 +529,7 @@ function Editor({
                             name: product.name,
                             nameAr: product.nameAr ?? '',
                             unit: product.unit,
+                            unitId: product.unitId,
                             // Purchase orders print it in the SKU column when the design shows one.
                             sku: product.sku.trim() || undefined,
                             unitPrice: product.costPrice || item.unitPrice,

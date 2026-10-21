@@ -6,7 +6,7 @@ import { linkHasFeature, type ServerFeature } from './features';
 import type { MemberRole } from './roles';
 import { useCloud } from './store';
 import { useOnline, useRuntimeStatus } from './status';
-import { failedFileRemovals, numberProblems } from './problems';
+import { failedFileRemovals, numberProblems, skuProblems } from './problems';
 import type { SyncProgress } from './sync';
 import type { CloudLink } from './types';
 
@@ -79,12 +79,14 @@ export function useCloudStatus(companyId: string | null | undefined): CloudStatu
             // Documents sharing a number, and deleted files the cloud still has.
             numberProblems(companyId).then((groups) => groups.length),
             failedFileRemovals(companyId).then((tasks) => tasks.length),
+            // Items sharing a code.
+            skuProblems(companyId).then((groups) => groups.length),
           ])
-        : [0, 0, 0, 0],
+        : [0, 0, 0, 0, 0],
     [companyId],
-  ) ?? [0, 0, 0, 0];
-  const [pending, refused, duplicates, unremoved] = counts;
-  const parked = refused + duplicates + unremoved;
+  ) ?? [0, 0, 0, 0, 0];
+  const [pending, refused, duplicates, unremoved, skus] = counts;
+  const parked = refused + duplicates + unremoved + skus;
   const base = { link, pending, parked, progress: runtime.progress };
   if (!link) return { ...base, kind: 'local' };
   if (link.status === 'removed') return { ...base, kind: 'removed' };

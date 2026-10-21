@@ -21,6 +21,7 @@ import { normalizeHex } from '@/lib/color';
 import { bankFromIban, formatHijri, formatIban, isValidIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { amountInWords } from '@/lib/words';
 import { isISODate, today } from '@/lib/dates';
+import { unitText } from '@/lib/units';
 import { issuedStatus } from '@/lib/status';
 import type { FontId } from './fonts';
 import { documentLabels, isRtlLanguage, type LabelKey, type Labels } from './labels';
@@ -558,7 +559,9 @@ export function buildRenderModel(
     }
     const line = result.lines[i];
     const quantity = formatQuantity(item.quantity, locale);
-    const unit = clean(item.unit);
+    // A unit picked from the list prints its Arabic name on Arabic and
+    // bilingual documents; one typed by hand prints as it was typed.
+    const unit = clean(unitText(company, item, language));
     const taxes = exempt ? [] : item.taxes.filter((t) => clean(t.name) !== '');
     const serial = clean(item.serialNumber);
     const condition = item.condition === 'new' || item.condition === 'used' ? item.condition : null;

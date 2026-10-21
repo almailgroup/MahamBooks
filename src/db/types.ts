@@ -81,8 +81,16 @@ export type DocumentStatus =
 /** How much of a sales order has been delivered (signed delivery notes). */
 export type DeliveryStatus = 'not_delivered' | 'partially_delivered' | 'delivered';
 
+/** `product`: item codes (SKUs), given only when Company.items.autoSku is on. */
 export type NumberedEntity =
-  DocumentType | 'payment' | 'payment_made' | 'client' | 'journal' | 'expense' | 'employee';
+  | DocumentType
+  | 'payment'
+  | 'payment_made'
+  | 'client'
+  | 'journal'
+  | 'expense'
+  | 'employee'
+  | 'product';
 
 export type CounterReset = 'never' | 'yearly' | 'monthly';
 
@@ -590,8 +598,35 @@ export interface Company {
   links?: CompanyLink[];
   /** Receipt and payment vouchers; missing prints them as before. */
   vouchers?: VoucherSettings;
+  /** Units from a list and automatic item codes; missing types them by hand, as before. */
+  items?: ItemSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * A unit of the company's own, besides the built-in ones (lib/units.ts). It
+ * is kept when archived, so lines that have it still print its Arabic name.
+ */
+export interface CustomUnit {
+  id: ID;
+  name: string;
+  nameAr: string;
+  archived?: boolean;
+}
+
+/**
+ * How items are set up. Only owners, admins and accountants change it (it is
+ * part of the company record). Missing settings keep units and codes typed by
+ * hand.
+ */
+export interface ItemSettings {
+  /** Units are picked from a list (built-in and the company's own) with Arabic names. */
+  units?: boolean;
+  /** A new item saved without an SKU gets the next item code (numbering.product). */
+  autoSku?: boolean;
+  /** The company's own units. */
+  customUnits?: CustomUnit[];
 }
 
 /** A signature line at the foot of a voucher, labelled in both languages. */
@@ -765,7 +800,13 @@ export interface Product {
   description: string;
   descriptionAr?: string;
   unitPrice: number;
+  /** The unit as printed on documents. */
   unit: string;
+  /**
+   * The unit picked from the list (lib/units.ts), when units come from one:
+   * Arabic documents print its Arabic name. Missing for units typed by hand.
+   */
+  unitId?: ID;
   taxRateIds: ID[];
   /** Income account for sales of this item; null uses the company's sales account. */
   incomeAccountId?: ID | null;
@@ -795,6 +836,8 @@ export interface LineItem {
   description: string;
   quantity: number;
   unit: string;
+  /** The item's unit from the list (Product.unitId): Arabic documents print its Arabic name. */
+  unitId?: ID;
   unitPrice: number;
   discount: number;
   discountType: DiscountType;

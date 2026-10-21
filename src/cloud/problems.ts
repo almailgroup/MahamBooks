@@ -1,5 +1,5 @@
 import { db } from '@/db/db';
-import type { InvoiceDocument } from '@/db/types';
+import type { InvoiceDocument, Product } from '@/db/types';
 import type { FileTask } from './types';
 
 /**
@@ -28,6 +28,23 @@ export async function numberProblems(companyId: string): Promise<InvoiceDocument
     if (same.length > 1) groups.set(key, same);
   }
   return [...groups.values()];
+}
+
+/**
+ * Items of a company that gives item codes and that share an SKU with
+ * another item, grouped by SKU: codes given on two devices at once without
+ * the cloud. Nothing is changed by itself: labels may have been printed.
+ */
+export async function skuProblems(companyId: string): Promise<Product[][]> {
+  const company = await db.companies.get(companyId);
+  if (!company?.items?.autoSku) return [];
+  const groups = new Map<string, Product[]>();
+  for (const product of await db.products.where('companyId').equals(companyId).toArray()) {
+    const key = product.sku.trim().toLowerCase();
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), product]);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
 }
 
 /** Removals of the company's files that kept failing: their records are deleted, the files not. */

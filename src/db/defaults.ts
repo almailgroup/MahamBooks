@@ -43,6 +43,8 @@ export function defaultNumbering(): Record<NumberedEntity, NumberingRule> {
     sales_order: rule('SO-{year}-{counter}'),
     purchase_order: rule('PO-{year}-{counter}'),
     delivery_note: rule('DN-{year}-{counter}'),
+    // Item codes: used only when Company.items.autoSku is on.
+    product: rule('SKU-{counter}', 5),
   };
 }
 

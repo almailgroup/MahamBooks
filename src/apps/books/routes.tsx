@@ -13,6 +13,7 @@ const ClientList = lazy(() => import('./pages/clients/list'));
 const ClientDetail = lazy(() => import('./pages/clients/detail'));
 const ClientFormPage = lazy(() => import('./pages/clients/form'));
 const Products = lazy(() => import('./pages/products'));
+const ItemLabelsPrint = lazy(() => import('./pages/products/item-labels-print'));
 const Inventory = lazy(() => import('./pages/inventory/index'));
 const StockEntryForm = lazy(() => import('./pages/inventory/entry-form'));
 const StockEntryView = lazy(() => import('./pages/inventory/entry-view'));
@@ -75,7 +76,7 @@ const paymentRoutes = (path: string, direction: 'in' | 'out') => [
   { path: `${path}/:id/edit`, element: <PaymentForm key={direction} direction={direction} /> },
 ];
 
-/** Print views: vouchers, the cheque register and the count sheet, without the navigation. */
+/** Print views: vouchers, the cheque register, the count sheet and item labels, without the navigation. */
 export const booksPrintRoutes: RouteObject[] = [
   {
     path: 'payments/:id/voucher',
@@ -114,6 +115,14 @@ export const booksPrintRoutes: RouteObject[] = [
     element: (
       <Bare>
         <StockCountPrint />
+      </Bare>
+    ),
+  },
+  {
+    path: 'products/labels',
+    element: (
+      <Bare>
+        <ItemLabelsPrint />
       </Bare>
     ),
   },

@@ -41,11 +41,17 @@ export function ItemNameInput({
     const q = value.trim().toLowerCase();
     const live = products.filter((p) => !p.archived);
     if (!q) return live.slice(0, 8);
+    // A scanned SKU or barcode (typed in by the scanner) comes first, so Enter picks it.
+    const exact = (p: Product) =>
+      p.sku.trim().toLowerCase() === q || (p.barcode ?? '').trim().toLowerCase() === q;
     return live
       .filter((p) =>
-        `${p.name} ${p.nameAr ?? ''} ${p.sku} ${p.description}`.toLowerCase().includes(q),
+        `${p.name} ${p.nameAr ?? ''} ${p.sku} ${p.barcode ?? ''} ${p.description}`
+          .toLowerCase()
+          .includes(q),
       )
       .filter((p) => p.name.toLowerCase() !== q)
+      .sort((a, b) => Number(exact(b)) - Number(exact(a)))
       .slice(0, 8);
   }, [products, value]);
 

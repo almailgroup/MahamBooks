@@ -5,6 +5,7 @@ import { deleteDocument, draftDocument, saveDocument, setDocumentStatus } from '
 import { saveClient, saveCompany, setupCompany } from './records';
 import { loadLedger, LockedPeriodError } from './accounting';
 import {
+  assignItemCodes,
   deleteItem,
   InventoryError,
   recordStockEntry,
@@ -15,6 +16,7 @@ import {
   voidLandedCost,
   voidStockEntry,
   rebuildStock,
+  suggestItemCode,
 } from './inventory';
 import type { Client, Company, DocumentType, InvoiceDocument, Product } from './types';
 import { stockLevels } from '@/lib/inventory/costing';
@@ -479,5 +481,90 @@ describe('items', () => {
     const { byCode } = await balances(company);
     expect(byCode('1200')).toBe(6000);
     expect(byCode('3900')).toBe(-6000);
+  });
+});
+
+describe('item codes (SKU)', () => {
+  async function coding(on = true): Promise<Company> {
+    const company = await setupCompany({ name: 'Gulf Trading' });
+    return saveCompany({ ...company, items: on ? { autoSku: true } : undefined });
+  }
+  const item = (company: Company, name: string, extra: Partial<Product> = {}) =>
+    saveItem(createProduct(company.id, { name, ...extra }));
+
+  it('gives new items without one the next code, and keeps one typed by hand', async () => {
+    const company = await coding();
+    expect(await suggestItemCode(company)).toBe('SKU-00001');
+    expect((await item(company, 'Gloves')).sku).toBe('SKU-00001');
+    expect((await item(company, 'Helmet')).sku).toBe('SKU-00002');
+    expect((await item(company, 'Boots', { sku: ' BT-44 ' })).sku).toBe('BT-44');
+    expect((await db.companies.get(company.id))?.numbering.product).toMatchObject({ next: 3 });
+  });
+
+  it('skips codes typed by hand', async () => {
+    const company = await coding();
+    await item(company, 'Vest', { sku: 'sku-00001' });
+    expect((await item(company, 'Gloves')).sku).toBe('SKU-00002');
+  });
+
+  it('works for companies made before item codes (no rule yet)', async () => {
+    const company = await coding();
+    const { product: _none, ...numbering } = company.numbering;
+    await db.companies.put({ ...company, numbering: numbering as Company['numbering'] });
+    expect((await item(company, 'Gloves')).sku).toBe('SKU-00001');
+    expect((await db.companies.get(company.id))?.numbering.product).toMatchObject({
+      pattern: 'SKU-{counter}',
+      padding: 5,
+      next: 2,
+    });
+  });
+
+  it('gives no code while codes are off, and none to items saved again', async () => {
+    const off = await coding(false);
+    expect((await item(off, 'Gloves')).sku).toBe('');
+    const company = await coding();
+    const old = await item(company, 'Helmet', { sku: '' });
+    expect(old.sku).toBe('SKU-00001');
+    // An older item without a code keeps having none when archived or edited.
+    const before = createProduct(company.id, { name: 'Rope' });
+    await db.products.put(before);
+    expect((await saveItem({ ...before, archived: true })).sku).toBe('');
+  });
+
+  it('refuses an SKU another item has, new or changed, but not one kept', async () => {
+    const company = await coding(false);
+    const gloves = await item(company, 'Gloves', { sku: 'GL-01' });
+    await expect(item(company, 'Gloves XL', { sku: ' gl-01' })).rejects.toThrow(InventoryError);
+    const helmet = await item(company, 'Helmet', { sku: 'HM-01' });
+    await expect(saveItem({ ...helmet, sku: 'GL-01' })).rejects.toThrow(/GL-01/);
+    // Two items that already share an SKU (another device gave it) still save.
+    await db.products.put({ ...helmet, sku: 'GL-01' });
+    await expect(saveItem({ ...gloves, unitPrice: 2 })).resolves.toMatchObject({ sku: 'GL-01' });
+    await expect(saveItem({ ...helmet, sku: 'GL-01', name: 'Hard hat' })).resolves.toMatchObject({
+      sku: 'GL-01',
+    });
+  });
+
+  it('gives codes to the items without one, oldest first, archived ones left', async () => {
+    const company = await coding();
+    const first = createProduct(company.id, { name: 'Rope', createdAt: '2026-01-01T00:00:00Z' });
+    const second = createProduct(company.id, { name: 'Bag', createdAt: '2026-02-01T00:00:00Z' });
+    const archived = createProduct(company.id, { name: 'Old', archived: true });
+    await db.products.bulkPut([second, first, archived]);
+    await item(company, 'Gloves', { sku: 'SKU-00002' });
+    expect(await assignItemCodes(company.id)).toBe(2);
+    expect((await db.products.get(first.id))?.sku).toBe('SKU-00001');
+    expect((await db.products.get(second.id))?.sku).toBe('SKU-00003');
+    expect((await db.products.get(archived.id))?.sku).toBe('');
+    expect((await item(company, 'Helmet')).sku).toBe('SKU-00004');
+    expect(await assignItemCodes(company.id)).toBe(0);
+  });
+
+  it('keeps the unit picked from the list, and drops an empty one', async () => {
+    const company = await coding(false);
+    const box = await item(company, 'Paper', { unit: 'box', unitId: 'box' });
+    expect((await db.products.get(box.id))?.unitId).toBe('box');
+    const typed = await item(company, 'Rope', { unit: 'roll', unitId: '' });
+    expect('unitId' in (await db.products.get(typed.id))!).toBe(false);
   });
 });

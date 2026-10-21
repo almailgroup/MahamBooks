@@ -4,22 +4,10 @@ import type { Client, Company, DocumentLanguage } from '@/db/types';
 import { buildRenderModel, qrLinkOf, type RenderableDocument, type RenderModel } from '@/pdf/model';
 import { renderPdf } from '@/pdf/client';
 import { documentTemplate } from '@/pdf/template-resolve';
+import { qrDataUrl } from '@/lib/qr';
 
-const qrCache = new Map<string, string>();
-
-export async function qrDataUrl(link: string): Promise<string | null> {
-  if (!link) return null;
-  const cached = qrCache.get(link);
-  if (cached) return cached;
-  try {
-    const QRCode = (await import('qrcode')).default;
-    const url = await QRCode.toDataURL(link, { margin: 0, width: 240, errorCorrectionLevel: 'M' });
-    qrCache.set(link, url);
-    return url;
-  } catch {
-    return null;
-  }
-}
+// Drawn in lib/qr.ts, which item labels use too.
+export { qrDataUrl } from '@/lib/qr';
 
 /**
  * Builds the render model, including the QR code (of the payment link: the

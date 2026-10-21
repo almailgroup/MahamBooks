@@ -14,7 +14,7 @@ import {
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { deleteCompany, UnsentChangesError } from '@/db/records';
-import type { Company, InvoiceDocument } from '@/db/types';
+import type { Company, InvoiceDocument, Product } from '@/db/types';
 import { DOCUMENT_LABELS, DOCUMENT_ROUTES, useCompanyContext, useFormat } from '@/app/company';
 import { msg, t, tp } from '@/i18n';
 import { tr } from '@/i18n/provider';
@@ -38,7 +38,7 @@ import {
   retryParked,
   type SyncContext,
 } from '@/cloud/sync';
-import { failedFileRemovals, numberProblems } from '@/cloud/problems';
+import { failedFileRemovals, numberProblems, skuProblems } from '@/cloud/problems';
 import { withSyncLock } from '@/cloud/lock';
 import type { FileTask, OutboxEntry } from '@/cloud/types';
 import { LastSynced, SyncStatusLine } from '@/features/cloud/sync-status';
@@ -112,6 +112,7 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
     [company.id],
   );
   const numbers = useLiveQuery(() => numberProblems(company.id), [company.id]);
+  const skus = useLiveQuery(() => skuProblems(company.id), [company.id]);
   const unremoved = useLiveQuery(() => failedFileRemovals(company.id), [company.id]);
   const keepInCloud = useKeepInCloud();
   const [busy, setBusy] = useState<string | null>(null);
@@ -297,6 +298,7 @@ function CompanyCloud({ company, current = false }: { company: Company; current?
         <Problems companyId={company.id} entries={parked} role={link?.role} />
       ) : null}
       {numbers && numbers.length > 0 ? <NumberProblems groups={numbers} current={current} /> : null}
+      {skus && skus.length > 0 ? <SkuProblems groups={skus} current={current} /> : null}
       {unremoved && unremoved.length > 0 ? (
         <FileProblems companyId={company.id} tasks={unremoved} />
       ) : null}
@@ -347,6 +349,51 @@ function NumberProblems({ groups, current }: { groups: InvoiceDocument[][]; curr
                   </span>
                 ),
               )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Items that share an SKU, given on several devices at once without the
+ * cloud. Nothing is changed by itself: the person gives one a new code.
+ */
+function SkuProblems({ groups, current }: { groups: Product[][]; current: boolean }) {
+  return (
+    <div className="rounded-lg bg-amber-50/70 p-3 ring-1 ring-amber-600/20">
+      <p className="text-sm font-medium text-amber-900">
+        {tp(
+          groups.length,
+          '{count} SKU is used by more than one item',
+          '{count} SKUs are each used by more than one item',
+        )}
+      </p>
+      <p className="mt-1 text-sm text-amber-900/80">
+        {t(
+          'The codes were given on several devices at once, without the cloud. Give one of the items a new SKU, and print its labels again.',
+        )}
+      </p>
+      <ul className="mt-2 divide-y divide-amber-600/10">
+        {groups.map((items) => (
+          <li key={items[0].id} className="py-2 text-sm">
+            {current ? (
+              <Link
+                to={`/products?q=${encodeURIComponent(items[0].sku.trim())}`}
+                className="text-primary-700 font-medium hover:underline"
+                dir="ltr"
+              >
+                {items[0].sku.trim()}
+              </Link>
+            ) : (
+              <span className="font-medium text-slate-900" dir="ltr">
+                {items[0].sku.trim()}
+              </span>
+            )}
+            <span className="block text-slate-600">
+              {items.map((item) => localName(item)).join(' · ')}
             </span>
           </li>
         ))}

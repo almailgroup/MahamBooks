@@ -98,6 +98,13 @@ and the compliance calendar (Maham Compliance).
 - Stock items, warehouses and transfers, weighted average cost, landed costs
   (customs duty, freight, clearing), cost of sales, stock count sheets and a
   low-stock report that leads to purchase orders.
+- Units from a list with Arabic names (قطعة, علبة, كرتون…) plus the company's
+  own, printed in Arabic on Arabic documents, and item codes given
+  automatically (SKU-00001, set in Settings → Numbering), both switched on in
+  Settings → Items and units. Each SKU has a QR code that any scanner types
+  into item search; Products prints labels (A4 sheets of 24 or 50 × 25 mm
+  thermal labels, with a test page and an offset kept on the device), the
+  product list and a price list.
 
 ### People and payroll
 

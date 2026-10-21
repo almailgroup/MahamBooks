@@ -615,3 +615,34 @@ describe('buildRenderModel: designs per type and layout', () => {
     expect(on.items.map((i) => i.image)).toEqual([PICTURE, null, null, null, null]);
   });
 });
+
+describe('buildRenderModel: units from the list', () => {
+  const goods = () => {
+    const [printer, folder, rolls] = sampleGoods();
+    return [
+      { ...printer, unit: 'pcs', unitId: 'pcs' },
+      // Typed by hand: no id.
+      { ...folder, unit: 'pcs' },
+      { ...rolls, unit: 'roll', unitId: 'u-roll' },
+    ];
+  };
+  const own: Company = {
+    ...company,
+    items: { units: true, customUnits: [{ id: 'u-roll', name: 'roll', nameAr: 'لفة' }] },
+  };
+
+  it('print the Arabic name on Arabic and bilingual documents', () => {
+    for (const language of ['ar', 'ar-en'] as const) {
+      const m = model(language, { items: goods() }, { company: own });
+      expect(m.items.map((i) => i.unit)).toEqual(['قطعة', 'pcs', 'لفة']);
+    }
+  });
+
+  it('print the unit as stored in English, and as before without an id', () => {
+    const m = model('en', { items: goods() }, { company: own });
+    expect(m.items.map((i) => i.unit)).toEqual(['pcs', 'pcs', 'roll']);
+    // An id the company no longer has (or an older copy of it): the text.
+    const plain = model('ar', { items: goods() });
+    expect(plain.items.map((i) => i.unit)).toEqual(['قطعة', 'pcs', 'roll']);
+  });
+});

@@ -142,6 +142,8 @@ const SUITE_PATHS = [
   '/crm/prospects',
   // Payment vouchers for expenses (#24).
   '/expenses/:id/voucher',
+  // Item labels (#28).
+  '/products/labels',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */
@@ -154,6 +156,7 @@ const SAMPLE_URLS = [
   '/quotes/new',
   '/payments-made/p1/voucher',
   '/expenses/x1/voucher',
+  '/products/labels?ids=p1,p2&layout=thermal-50x25',
   '/payroll/runs/r1/payslips',
   '/payroll/settlements/s1/print',
   '/employees/e1/settlement',

@@ -2,7 +2,7 @@ import Dexie, { type Table } from 'dexie';
 import { db } from './db';
 import { logActivity } from './activity';
 import { accountingSettings } from './chart-setup';
-import { nowStamp } from './defaults';
+import { defaultNumbering, nowStamp } from './defaults';
 import { assertUnlocked, ensureSpecAccount, LockedPeriodError, roleMap } from './accounting';
 import { freezeLockedPostings, sellsProduct } from './posting';
 import type {
@@ -36,6 +36,14 @@ import {
 } from '@/lib/inventory/sources';
 import { currencyPrecision, round } from '@/lib/money';
 import { newId, shortId, stableId } from '@/lib/ids';
+import { today } from '@/lib/dates';
+import {
+  allocateFrom,
+  allocateNumber,
+  canReserveCounters,
+  reserveCounter,
+  type ReservedCounter,
+} from '@/lib/numbering';
 import { msg, t } from '@/i18n';
 
 /**
@@ -466,20 +474,83 @@ export async function hasStockHistory(product: Pick<Product, 'id' | 'companyId'>
   return movements + entries > 0;
 }
 
+/** SKUs compare without case or spaces at the ends. */
+const skuKey = (sku: string | null | undefined) => (sku ?? '').trim().toLowerCase();
+
+/** The SKUs of the company's other items, as compared. */
+async function takenSkus(companyId: ID, exceptId?: ID): Promise<Set<string>> {
+  const products = await db.products.where('companyId').equals(companyId).toArray();
+  return new Set(
+    products
+      .filter((p) => p.id !== exceptId)
+      .map((p) => skuKey(p.sku))
+      .filter(Boolean),
+  );
+}
+
+/** The rule item codes are built with; companies made before it have none yet. */
+export function itemCodeRule(company: Pick<Company, 'numbering'>) {
+  return company.numbering.product ?? defaultNumbering().product;
+}
+
+/** The code a new item saved now without an SKU would get, for display before saving. */
+export async function suggestItemCode(company: Company): Promise<string> {
+  const taken = await takenSkus(company.id);
+  return allocateNumber(itemCodeRule(company), today(), (n) => taken.has(skuKey(n))).number;
+}
+
+/**
+ * For a new item without an SKU in a company that gives codes, kept in the
+ * cloud: the next counter taken on the server while online, so two devices
+ * never give the same code. Null to number on this device. A save that is
+ * going to be refused takes none.
+ */
+async function reserveItemCounter(
+  input: Product,
+  opening: OpeningStockInput | null | undefined,
+): Promise<ReservedCounter | null> {
+  if (!canReserveCounters() || input.sku.trim() || Dexie.currentTransaction) return null;
+  if (!input.name.trim() || (input.costPrice ?? 0) < 0 || (input.reorderLevel ?? 0) < 0) {
+    return null;
+  }
+  if (await db.products.get(input.id)) return null;
+  const company = await db.companies.get(input.companyId);
+  if (!company?.items?.autoSku) return null;
+  if (productKind(input) === 'stock' && opening && opening.quantity > 0) {
+    try {
+      assertUnlocked(company, opening.date);
+    } catch {
+      return null;
+    }
+  }
+  const taken = await takenSkus(company.id, input.id);
+  const local = allocateNumber(itemCodeRule(company), today(), (n) => taken.has(skuKey(n)));
+  return reserveCounter({
+    companyId: company.id,
+    kind: 'product',
+    date: today(),
+    min: local.rule.next - 1,
+  });
+}
+
 /**
  * Saves an item. A service or non-stock item that becomes a stock item
  * starts moving stock on its issued documents (none may be in a locked
  * period); a stock item with history stays one. A new stock item can get its
- * opening stock at the same time.
+ * opening stock at the same time. A new item without an SKU gets the next
+ * item code when the company gives codes (items.autoSku). An SKU another item
+ * has is refused when it is new or changed; an item saved again with the SKU
+ * it had is never refused (another device may have given it too).
  */
 export async function saveItem(
   input: Product,
   options: { opening?: OpeningStockInput | null } = {},
 ): Promise<Product> {
+  const reserved = await reserveItemCounter(input, options.opening);
   return db.transaction('rw', [...stockTables(), db.taxRates], async () => {
     const name = input.name.trim();
     if (!name) throw new InventoryError(t('Enter a name for the item.'));
-    const company = await db.companies.get(input.companyId);
+    let company = await db.companies.get(input.companyId);
     if (!company) throw new InventoryError(t('Company not found'));
     const existing = await db.products.get(input.id);
     const kind = productKind(input);
@@ -501,10 +572,27 @@ export async function saveItem(
     if ((input.reorderLevel ?? 0) < 0) {
       throw new InventoryError(t('The reorder level can’t be negative.'));
     }
+    let sku = input.sku.trim();
+    const taken = await takenSkus(company.id, input.id);
+    if (sku && taken.has(skuKey(sku)) && !(existing && skuKey(existing.sku) === skuKey(sku))) {
+      throw new InventoryError(t('Another item already has the SKU {sku}.', { sku }));
+    }
+    if (!sku && !existing && company.items?.autoSku) {
+      const allocated = allocateFrom(
+        itemCodeRule(company),
+        today(),
+        (n) => taken.has(skuKey(n)),
+        '',
+        reserved,
+      );
+      sku = allocated.number;
+      company = { ...company, numbering: { ...company.numbering, product: allocated.rule } };
+      await db.companies.put(company);
+    }
     const product: Product = {
       ...input,
       name,
-      sku: input.sku.trim(),
+      sku,
       kind,
       costPrice: round(input.costPrice ?? 0, 6),
       barcode: input.barcode?.trim() ?? '',
@@ -512,6 +600,8 @@ export async function saveItem(
       reorderLevel: kind === 'stock' ? (input.reorderLevel ?? null) : null,
       updatedAt: nowStamp(),
     };
+    // A unit typed by hand has no id.
+    if (!product.unitId) delete product.unitId;
     if (!existing) product.createdAt = product.updatedAt;
     if (existing && (existing.incomeAccountId ?? null) !== (product.incomeAccountId ?? null)) {
       // Sales of a closed period keep the income account they were posted to.
@@ -578,6 +668,80 @@ export async function saveItem(
         : { text: msg('Item {name} created'), vars: { name } },
     );
     return product;
+  });
+}
+
+/** The company's items that have no SKU and aren't archived, oldest first. */
+function uncodedItems(products: Product[]): Product[] {
+  return products
+    .filter((p) => !p.archived && !p.sku.trim())
+    .sort(
+      (a, b) =>
+        (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.name.localeCompare(b.name),
+    );
+}
+
+/**
+ * For codes given to many items at once in a company kept in the cloud: the
+ * first counter of the block, taken on the server, which then moves its
+ * counter past the whole block so no other device gives one of them. Null
+ * to number on this device.
+ */
+async function reserveItemCodes(companyId: ID): Promise<ReservedCounter | null> {
+  if (!canReserveCounters() || Dexie.currentTransaction) return null;
+  const company = await db.companies.get(companyId);
+  if (!company) return null;
+  const products = await db.products.where('companyId').equals(companyId).toArray();
+  const count = uncodedItems(products).length;
+  if (count === 0) return null;
+  const taken = new Set(products.map((p) => skuKey(p.sku)).filter(Boolean));
+  const date = today();
+  const local = allocateNumber(itemCodeRule(company), date, (n) => taken.has(skuKey(n)));
+  const first = await reserveCounter({
+    companyId,
+    kind: 'product',
+    date,
+    min: local.rule.next - 1,
+  });
+  if (first && count > 1) {
+    await reserveCounter({ companyId, kind: 'product', date, min: first.counter + count - 1 });
+  }
+  return first;
+}
+
+/**
+ * Gives the next item codes to the company's items that have no SKU and
+ * aren't archived, oldest first, in one go. Returns how many got one.
+ */
+export async function assignItemCodes(companyId: ID): Promise<number> {
+  const reserved = await reserveItemCodes(companyId);
+  return db.transaction('rw', [db.companies, db.products, db.activities], async () => {
+    const company = await db.companies.get(companyId);
+    if (!company) throw new InventoryError(t('Company not found'));
+    const products = await db.products.where('companyId').equals(companyId).toArray();
+    const missing = uncodedItems(products);
+    if (missing.length === 0) return 0;
+    const taken = new Set(products.map((p) => skuKey(p.sku)).filter(Boolean));
+    const isTaken = (n: string) => taken.has(skuKey(n));
+    let rule = itemCodeRule(company);
+    const stamp = nowStamp();
+    const date = today();
+    for (const [index, product] of missing.entries()) {
+      // The first code from the cloud's counter, when there is one; the rest follow it.
+      const allocated =
+        index === 0
+          ? allocateFrom(rule, date, isTaken, '', reserved)
+          : allocateNumber(rule, date, isTaken);
+      rule = allocated.rule;
+      taken.add(skuKey(allocated.number));
+      await db.products.put({ ...product, sku: allocated.number, updatedAt: stamp });
+    }
+    await db.companies.put({ ...company, numbering: { ...company.numbering, product: rule } });
+    await logActivity(companyId, 'company', companyId, 'item_codes', {
+      text: msg('Item codes given to {count} items'),
+      vars: { count: missing.length },
+    });
+    return missing.length;
   });
 }
 

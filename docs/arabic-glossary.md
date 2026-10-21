@@ -233,6 +233,10 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Stock adjustment | تسوية المخزون   |
 | Barcode          | الباركود        |
 | SKU              | رمز الصنف       |
+| Item codes (SKU) | رموز الأصناف    |
+| Label            | ملصق            |
+| Print labels     | طباعة الملصقات  |
+| Price list       | قائمة الأسعار   |
 
 ## App
 

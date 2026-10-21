@@ -1388,6 +1388,40 @@ describe('document numbers taken in the cloud (reserve_number)', () => {
     await expect(reserve(t.viewer, c, '2027-01-02')).rejects.toThrow(/almail:permission/);
     await expect(reserve(t.owner, c, 'tomorrow')).rejects.toThrow(/almail:invalid/);
   });
+
+  it('give item codes (product) once the company has their rule, staff’s too', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: companyRecord(c) }]);
+    const codes = async (user: string, min = 1) =>
+      (await reserve(user, c, '2026-10-05', min, 'product')).map((r) => Number(r.counter));
+    // No rule yet (codes are off, or switched on by an older copy): given on the device.
+    expect(await codes(t.staff)).toEqual([]);
+    // Staff giving the first code add its rule: a counter, which staff may change.
+    const sku = { pattern: 'SKU-{counter}', next: 2, padding: 5, reset: 'never', period: '' };
+    const [{ data }] = await pull(t.staff, c).then((rows) =>
+      rows.filter((r) => r.tbl === 'companies'),
+    );
+    await push(t.staff, c, [
+      {
+        tbl: 'companies',
+        id: c,
+        data: { ...data, numbering: { ...(data.numbering as object), product: sku } },
+      },
+    ]);
+    expect((await companyRow(c)).data).toMatchObject({ numbering: { product: { next: 2 } } });
+    // From then on the cloud gives them, to anyone who may add items.
+    expect(await codes(t.staff)).toEqual([2]);
+    expect(await codes(t.owner)).toEqual([3]);
+    expect(await codes(t.accountant, 10)).toEqual([10]);
+    expect(await codes(t.staff)).toEqual([11]);
+    expect((await companyRow(c)).data).toMatchObject({
+      numbering: { product: { next: 12, period: '' }, invoice: { next: 5 } },
+    });
+    await expect(reserve(t.viewer, c, '2026-10-05', 1, 'product')).rejects.toThrow(
+      /almail:permission/,
+    );
+  });
 });
 
 describe('deleting a company, files first (begin_delete_company)', () => {

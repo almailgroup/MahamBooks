@@ -94,6 +94,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['accounting', msg('Accounting')],
   ['openingBalances', msg('Opening balances')],
   ['links', msg('Links in the sidebar')],
+  ['items', msg('Items and units')],
 ];
 
 /** The settings fields of the company record belong to, each once (English keys). */
