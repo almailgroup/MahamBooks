@@ -170,6 +170,7 @@ export async function recordChequePrinted(
         number: payment.cheque.number.trim(),
         bank: payment.cheque.bank.trim().toUpperCase(),
         ...(payment.clientId ? { vendorId: payment.clientId } : {}),
+        ...(payment.cheque.drawer.trim() ? { typedPayee: true } : {}),
       },
     };
     if (input.crossed) cheque.crossed = true;

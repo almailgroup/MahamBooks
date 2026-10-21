@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChequeDetails, Payment } from '@/db/types';
+import type { ChequeDetails, ChequePrintedText, Payment } from '@/db/types';
 import {
   chequeDate,
   chequeFace,
@@ -245,21 +245,24 @@ describe('which cheques print', () => {
 
 describe('a printed cheque changed by an older version of the app', () => {
   // As this build records a print: with the leaf's number, bank and vendor.
+  const byVendorText: ChequePrintedText = {
+    date: '15/11/2026',
+    payee: 'Example Supplies Co.',
+    words: ['a', 'b'],
+    figures: 'KD **1,250.750**',
+    layoutVersion: 1,
+    number: '100045',
+    bank: 'BRGN',
+    vendorId: 'v-1',
+  };
+  // Printed to the name typed in Pay to.
+  const typedText: ChequePrintedText = { ...byVendorText, typedPayee: true };
   const printed = (cheque: Partial<ChequeDetails> = {}, payment: Partial<Payment> = {}) =>
     issued(
       {
         printedAt: '2026-10-21T08:00:00.000Z',
         printedLayoutId: 'preset-BRGN',
-        printedText: {
-          date: '15/11/2026',
-          payee: 'Example Supplies Co.',
-          words: ['a', 'b'],
-          figures: 'KD **1,250.750**',
-          layoutVersion: 1,
-          number: '100045',
-          bank: 'BRGN',
-          vendorId: 'v-1',
-        },
+        printedText: typedText,
         ...cheque,
       },
       payment,
@@ -291,11 +294,26 @@ describe('a printed cheque changed by an older version of the app', () => {
   });
 
   it('printed with the vendor’s name, changes with another vendor', () => {
-    const byVendor = printed({ drawer: '' });
+    const byVendor = printed({ drawer: '', printedText: byVendorText });
     expect(printedLeafChanged(byVendor)).toBe(false);
     expect(printedLeafChanged({ ...byVendor, clientId: 'v-2' })).toBe(true);
     // With Pay to typed, the vendor isn't what was printed.
     expect(printedLeafChanged({ ...printed(), clientId: 'v-2' })).toBe(false);
+    // Pay to typed afterwards: the leaf says the vendor's name.
+    expect(printedLeafChanged(printed({ printedText: byVendorText }))).toBe(false);
+    expect(printedLeafChanged(printed({ drawer: 'Another Co.', printedText: byVendorText }))).toBe(
+      true,
+    );
+  });
+
+  it('printed to Pay to, changes when Pay to is cleared', () => {
+    // The payee is the vendor's name now, not the name on the leaf.
+    const cleared = printed({ drawer: '' });
+    expect(printedLeafChanged(cleared)).toBe(true);
+    expect(printRefusal(cleared)).toBe('changed');
+    expect(printedLeafChanged(printed({ drawer: '  ' }))).toBe(true);
+    // Only spaces around it changed: the leaf still says it.
+    expect(printedLeafChanged(printed({ drawer: '  Example Supplies Co. ' }))).toBe(false);
   });
 
   it('can’t be compared with a print recorded without its text', () => {

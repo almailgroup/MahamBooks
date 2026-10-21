@@ -258,7 +258,8 @@ function printedAmount(figures: string): number | null {
  * print record as it was while it changes the number, bank, date, amount,
  * currency or payee. What was printed is compared with the cheque as it is
  * now, as printedFaceChanged compares them: a payee printed from the
- * vendor's name changes with another vendor, not with the vendor's name.
+ * vendor's name changes with another vendor, not with the vendor's name,
+ * and one printed from Pay to changes when Pay to is cleared.
  */
 export function printedLeafChanged(
   payment: Pick<Payment, 'cheque' | 'amount' | 'currency' | 'clientId'>,
@@ -280,6 +281,8 @@ export function printedLeafChanged(
   if (amount !== null && toMinor(amount, 3) !== toMinor(round(payment.amount, 3), 3)) return true;
   const typed = cheque.drawer.trim();
   if (typed) return text.payee.trim() !== typed;
+  // Printed to the name typed in Pay to, which was cleared: the payee is now the vendor's name.
+  if (text.typedPayee) return true;
   return text.vendorId !== undefined && text.vendorId !== payment.clientId;
 }
 

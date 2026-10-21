@@ -28,6 +28,8 @@ export default {
     'التذكيرات والمواعيد النهائية، ورخص قيادة السائقين، والعقود ووثائق العملاء والمركبات في السجل، وصفحة الملفات مع الملفات والوثائق في البحث، ولمهام بوكس أيضًا.',
   'Switched on': 'مفعّل',
   'Switched off': 'متوقف',
+  'Owners, admins and accountants change the compliance settings.':
+    'يغيّر المالكون والمسؤولون والمحاسبون إعدادات الامتثال.',
   'Reminders and deadlines, drivers’ licences, the register’s contracts, customers’ papers and vehicles, and the document finder for every app.':
     'التذكيرات والمواعيد النهائية، ورخص قيادة السائقين، وعقود السجل ووثائق العملاء والمركبات، والبحث في الوثائق لكل التطبيقات.',
 } satisfies Dictionary;

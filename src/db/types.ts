@@ -1160,6 +1160,8 @@ export interface ChequePrintedText {
   bank?: string;
   /** The vendor it was printed for: the payee is the vendor's name when Pay to is left empty. */
   vendorId?: ID;
+  /** Pay to was typed when it was printed (missing when the payee was the vendor's name). */
+  typedPayee?: boolean;
 }
 
 /** A cheque leaf that was spoiled: printed wrongly, printed before a change, or printed again. */

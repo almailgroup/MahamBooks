@@ -17,7 +17,7 @@ import {
 } from './cheque-print';
 import type { ChequePrintedText, Company, Payment } from './types';
 import { layoutFor, presetLayout } from '@/lib/cheque-layouts';
-import { printRefusal } from '@/lib/cheque-print';
+import { chequeFace, chequePayee, printedText, printRefusal } from '@/lib/cheque-print';
 
 beforeEach(async () => {
   await db.delete();
@@ -405,6 +405,43 @@ describe('a printed cheque changed by an older version of the app', () => {
     await expect(
       recordSpoiledLeaf(other.id, { reason: 'x', nextNumber: '100045' }),
     ).rejects.toThrow('Leaf 100045 is spoiled: enter the next one.');
+  });
+
+  it('printed to Pay to, shows that its leaf no longer matches once Pay to is cleared', async () => {
+    const c = await company();
+    const payment = await issued(c);
+    const typed = await savePayment({
+      ...payment,
+      cheque: { ...payment.cheque!, drawer: '  Example Payee ' },
+    });
+    // As the print page prints it.
+    const layout = presetLayout('BRGN', c.id)!;
+    const vendor = await db.clients.get(typed.clientId);
+    const face = chequeFace(
+      {
+        amount: typed.amount,
+        date: typed.cheque!.date,
+        payee: chequePayee(typed.cheque!, vendor, 'en'),
+      },
+      layout,
+    );
+    const printed = await recordChequePrinted(typed.id, {
+      layout,
+      text: printedText(face, ['a', 'b'], layout),
+      crossed: false,
+    });
+    expect(printed.cheque?.printedText).toMatchObject({
+      payee: 'Example Payee',
+      vendorId: typed.clientId,
+      typedPayee: true,
+    });
+    expect(printRefusal(printed)).toBe('printed');
+    // Cleared on a device that doesn't know about printing: the vendor's name is the payee now.
+    const cleared = await olderBuildSaves(printed, { cheque: { ...printed.cheque!, drawer: '' } });
+    expect(printRefusal(cleared)).toBe('changed');
+    // Printed with the vendor's name, nothing says Pay to was typed.
+    const other = await print(await issued(c, '100060'));
+    expect(other.cheque?.printedText?.typedPayee).toBeUndefined();
   });
 
   it('logs leaves no longer recorded on a payment, once', async () => {

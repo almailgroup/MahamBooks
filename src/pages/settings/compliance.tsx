@@ -6,6 +6,7 @@ import { checksDrivingLicences, registerExtrasOn } from '@/lib/compliance';
 import { usePeopleSettings } from '@/features/people/hooks';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { ComplianceSettingsDialog } from '@/features/renewals/settings-dialog';
+import { appAccess, canEdit } from '@/suite/apps';
 import { Button } from '@/components/ui/button';
 import { t } from '@/i18n';
 import { SettingsSection } from './shared';
@@ -15,18 +16,24 @@ import { SettingsSection } from './shared';
  * settings (the document finder, the register's extras, drivers' licences)
  * can be found from Settings and from search. They reach Books too: the
  * finder lists every Books file, and the extras add papers to customers.
- * They are changed in the same dialog as in Compliance.
+ * They are changed in the same dialog as in Compliance, by the roles that
+ * change Compliance (staff and viewers only look at it).
  */
 export default function ComplianceSettingsPage() {
   const company = useCompany();
   const settings = usePeopleSettings();
-  const { readOnly, known } = useRoleView();
+  const { readOnly, known, role, peopleHidden } = useRoleView();
   const [open, setOpen] = useState(false);
+  // As in Compliance, where staff and viewers can't open its settings.
+  const canChange = known && !readOnly.readOnly && canEdit(appAccess('compliance', role, known));
   const state = (on: boolean) => (on ? t('Switched on') : t('Switched off'));
   const rows = [
     { label: t('Find files and papers'), on: fileFinderOn(company) },
     { label: t('Contracts, customers and vehicles'), on: registerExtrasOn(company) },
-    { label: t('Check drivers’ licences'), on: checksDrivingLicences(settings) },
+    // Kept with the People settings, which don't reach those who don't see People.
+    ...(peopleHidden
+      ? []
+      : [{ label: t('Check drivers’ licences'), on: checksDrivingLicences(settings) }]),
   ];
 
   return (
@@ -38,7 +45,7 @@ export default function ComplianceSettingsPage() {
           'Reminders and deadlines, drivers’ licences, contracts, customers’ papers and vehicles in the register, and the Files page with files and papers in search, for Books too.',
         )}
         actions={
-          known && !readOnly.readOnly ? (
+          canChange ? (
             <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={!settings}>
               <Settings2 /> {t('Compliance settings')}
             </Button>
@@ -48,6 +55,10 @@ export default function ComplianceSettingsPage() {
         {readOnly.readOnly ? (
           <p className="text-sm text-slate-500">
             {t('You can view this company but not change it.')}
+          </p>
+        ) : known && !canChange ? (
+          <p className="text-sm text-slate-500">
+            {t('Owners, admins and accountants change the compliance settings.')}
           </p>
         ) : null}
         <dl className="divide-y divide-slate-100 text-sm">
@@ -61,7 +72,7 @@ export default function ComplianceSettingsPage() {
           ))}
         </dl>
       </SettingsSection>
-      {open && settings ? (
+      {open && settings && canChange ? (
         <ComplianceSettingsDialog settings={settings} onClose={() => setOpen(false)} />
       ) : null}
     </div>

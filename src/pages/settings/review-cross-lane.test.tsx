@@ -122,6 +122,34 @@ describe('Settings → Compliance and files', () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Compliance settings' })).toBeNull();
   });
+
+  it('can’t be changed by staff, who only look at Compliance', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await saveCompany({ ...company, fileFinder: true });
+    await inTheCloud(company, 'staff');
+    renderPage(<ComplianceSettingsPage />);
+    expect(
+      await screen.findByText('Owners, admins and accountants change the compliance settings.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Compliance settings' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The company's switches reach staff; the People settings don't.
+    const finder = screen.getByText('Find files and papers').parentElement!;
+    expect(within(finder).getByText('Switched on')).toBeInTheDocument();
+    expect(screen.queryByText('Check drivers’ licences')).toBeNull();
+  });
+
+  it('are changed by accountants', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await inTheCloud(company, 'accountant');
+    renderPage(<ComplianceSettingsPage />);
+    const open = await screen.findByRole('button', { name: 'Compliance settings' });
+    await waitEnabled(open);
+    expect(screen.getByText('Check drivers’ licences')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Owners, admins and accountants change the compliance settings.'),
+    ).toBeNull();
+  });
 });
 
 async function waitEnabled(element: HTMLElement) {
