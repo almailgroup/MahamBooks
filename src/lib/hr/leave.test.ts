@@ -366,31 +366,96 @@ describe('the company’s leave policy', () => {
   it('loses unused days over the cap when a new year starts, from the policy’s date', () => {
     const capped = policy({ annualDays: [{ from: '2026-01-01', days: 30 }], carryForwardMax: 10 });
     expect(leavePolicyStart(capped)).toBe('2026-01-01');
-    expect(annualLeaveBalance([], '2025-01-01', '2025-12-31', null, capped)).toMatchObject({
-      balance: 30,
-    });
-    // 30 days at the end of 2025, 10 of them carried into 2026.
-    expect(annualLeaveBalance([], '2025-01-01', '2026-01-31', null, capped)).toMatchObject({
+    // Hired with the policy: 30 days at the end of 2026, 10 of them carried into 2027.
+    expect(annualLeaveBalance([], '2026-01-01', '2026-12-31', null, capped).balance).toBe(30);
+    expect(annualLeaveBalance([], '2026-01-01', '2027-01-31', null, capped)).toMatchObject({
       accrued: 32.5,
       forfeited: 20,
       balance: 12.5,
     });
-    // 35 days at the end of 2026 after 5 taken in March: 25 more lost.
-    const taken = [record({ start: '2026-03-01', end: '2026-03-05', days: 5 })];
-    expect(annualLeaveBalance(taken, '2025-01-01', '2027-01-31', null, capped)).toMatchObject({
+    // 35 days at the end of 2027 after 5 taken in March: 25 more lost.
+    const taken = [record({ start: '2027-03-01', end: '2027-03-05', days: 5 })];
+    expect(annualLeaveBalance(taken, '2026-01-01', '2028-01-31', null, capped)).toMatchObject({
       accrued: 62.5,
       taken: 5,
       forfeited: 45,
       balance: 12.5,
     });
-    expect(annualLeaveBalance(taken, '2025-01-01', '2027-01-31').balance).toBe(57.5);
-    // A policy from June 2026 leaves the start of 2026 alone.
+    expect(annualLeaveBalance(taken, '2026-01-01', '2028-01-31').balance).toBe(57.5);
+    // From an opening balance on or after the policy's date: its days are the policy's.
+    const opening = [record({ kind: 'opening', start: '2026-03-01', end: '2026-03-01', days: 40 })];
+    expect(annualLeaveBalance(opening, '2020-01-01', '2027-01-31', null, capped)).toMatchObject({
+      forfeited: 55,
+      balance: 12.5,
+    });
+  });
+
+  it('never caps the days earned under the law before the policy’s date', () => {
+    // Hired in 2025: the 30 days held when the policy starts are never lost.
+    const capped = policy({ annualDays: [{ from: '2026-01-01', days: 30 }], carryForwardMax: 10 });
+    expect(annualLeaveBalance([], '2025-01-01', '2025-12-31', null, capped).balance).toBe(30);
+    const january = annualLeaveBalance([], '2025-01-01', '2026-01-31', null, capped);
+    expect(january).toMatchObject({ accrued: 32.5, balance: 32.5 });
+    expect(january).not.toHaveProperty('forfeited');
+    // 2026's own 30 days: 10 carried into 2027, with the law's 30 kept.
+    expect(annualLeaveBalance([], '2025-01-01', '2027-01-31', null, capped)).toMatchObject({
+      forfeited: 20,
+      balance: 42.5,
+    });
+    // Leave taken uses the law's days first: of the 25 left of them, none lost.
+    const taken = [record({ start: '2026-03-01', end: '2026-03-05', days: 5 })];
+    expect(annualLeaveBalance(taken, '2025-01-01', '2027-01-31', null, capped)).toMatchObject({
+      taken: 5,
+      forfeited: 20,
+      balance: 37.5,
+    });
+    // Hired in 2020 with no leave taken, a policy from November 2026 at a cap of 10:
+    // the 205 days held on 31 October stay, the 5 earned since are under the cap.
+    const november = policy({
+      annualDays: [{ from: '2026-11-01', days: 30 }],
+      carryForwardMax: 10,
+    });
+    expect(annualLeaveBalance([], '2020-01-01', '2026-12-31', null, november).balance).toBe(210);
+    expect(annualLeaveBalance([], '2020-01-01', '2027-01-01', null, november)).toMatchObject({
+      balance: 210,
+    });
+    // At the end of 2027, 35 days are the policy's: 25 of them lost.
+    expect(annualLeaveBalance([], '2020-01-01', '2028-01-01', null, november)).toMatchObject({
+      forfeited: 25,
+      balance: 215,
+    });
+    // 100 days taken in 2027 come out of the law's days: 105 of them left, and 10 carried.
+    const long = [record({ start: '2027-06-01', end: '2027-10-31', days: 100 })];
+    expect(annualLeaveBalance(long, '2020-01-01', '2028-01-01', null, november)).toMatchObject({
+      forfeited: 25,
+      balance: 115,
+    });
+    // A policy from June 2026 leaves the start of 2026 alone, and the 42.5 days held then.
     const june = policy({ annualDays: [{ from: '2026-06-01', days: 30 }], carryForwardMax: 10 });
     expect(annualLeaveBalance([], '2025-01-01', '2026-01-31', null, june).balance).toBe(32.5);
     expect(annualLeaveBalance([], '2025-01-01', '2027-01-31', null, june)).toMatchObject({
-      forfeited: 50,
-      balance: 12.5,
+      forfeited: 7.5,
+      balance: 55,
     });
+  });
+
+  it('counts an employee’s own days from their date, the company’s before it', () => {
+    // 325 days on 31 October 2026 for a guard hired in 2016; 45 days from 1 November.
+    const guard = { id: 'g', hireDate: '2016-01-01', annualLeaveDays: 45 };
+    const dated = { ...guard, annualLeaveDaysFrom: '2026-11-01' };
+    expect(
+      employeeLeaveBalance({ ...guard, annualLeaveDays: null }, [], '2026-10-31').balance,
+    ).toBe(325);
+    expect(employeeLeaveBalance(dated, [], '2026-10-31').balance).toBe(325);
+    expect(employeeLeaveBalance(dated, [], '2026-12-31').balance).toBe(332.5);
+    // Without a date, from the hire date.
+    expect(employeeLeaveBalance(guard, [], '2026-10-31').balance).toBe(487.5);
+    expect(annualDaysOn('2026-10-31', null, 45, '2026-11-01')).toBe(30);
+    expect(annualDaysOn('2026-11-01', null, 45, '2026-11-01')).toBe(45);
+    // A policy's later date doesn't replace the employee's own days.
+    const fifty = policy({ annualDays: [{ from: '2027-01-01', days: 50 }] });
+    expect(annualDaysOn('2027-06-01', fifty, 45, '2026-11-01')).toBe(45);
+    expect(annualDaysOn('2026-06-01', fifty, 45, '2026-11-01')).toBe(30);
   });
 
   it('sets the months before the first leave and how annual leave is counted', () => {

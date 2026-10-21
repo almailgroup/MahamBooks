@@ -48,6 +48,9 @@ export const PARKED_REASONS: Partial<Record<CloudErrorCode, string>> = {
   permission: msg('Your role can’t make this change.'),
   too_large: msg('Too large to sync.'),
   invalid: msg('The cloud did not accept it.'),
+  server_outdated: msg(
+    'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+  ),
 };
 
 /**

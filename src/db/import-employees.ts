@@ -450,6 +450,15 @@ export function planEmployeeRows(
         summary.nationalities.mapped += 1;
         if (category !== 'domestic') category = categoryForNationality(code);
         stateless = false;
+      } else if (isStatelessText(cells.nationality) && existing && !stateless) {
+        // An employee already here isn't made stateless by an import (their
+        // residency would leave the register): it is chosen on their page.
+        summary.nationalities.unknown += 1;
+        note(
+          t(
+            'Stateless (Bedoon) in the file: not changed for an employee already here. Choose it on their page.',
+          ),
+        );
       } else if (isStatelessText(cells.nationality) && category !== 'domestic') {
         patch.nationality = '';
         summary.nationalities.stateless += 1;
@@ -512,6 +521,27 @@ export function planEmployeeRows(
       if (cells.centralCardNumber) patch.centralCardNumber = collapse(cells.centralCardNumber);
       const card = readDate('centralCardExpiry', cells.centralCardExpiry, issues);
       if (card) patch.centralCardExpiry = card;
+      // Stateless staff hold no residency: a residency (or a file's single
+      // "Document Expiry") is taken as their review card, never dropped.
+      const asCard: string[] = [];
+      if (!card && residencyExpiry) {
+        patch.centralCardExpiry = residencyExpiry;
+        asCard.push(fmtDate(residencyExpiry));
+      }
+      if (!cells.centralCardNumber && cells.residencyNumber) {
+        patch.centralCardNumber = collapse(cells.residencyNumber);
+        asCard.push(patch.centralCardNumber);
+      }
+      if (asCard.length) {
+        note(
+          t(
+            'Stateless staff hold a review card, not a residency: {values} kept as the review card.',
+            {
+              values: asCard.join(', '),
+            },
+          ),
+        );
+      }
     }
     const licenceExpiry = readDate('drivingLicenceExpiry', cells.drivingLicenceExpiry, issues);
     const licenceNumber = collapse(cells.drivingLicenceNumber);

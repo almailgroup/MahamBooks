@@ -27,7 +27,12 @@ import {
   type CategoryFilter,
 } from '@/lib/hr/employees';
 import { departmentChoices, departmentLabel } from '@/lib/hr/departments';
-import { expiryStatus, type ExpiryInfo, type RegisterEntry } from '@/lib/compliance';
+import {
+  checksDrivingLicences,
+  expiryStatus,
+  type ExpiryInfo,
+  type RegisterEntry,
+} from '@/lib/compliance';
 import { downloadCsv } from '@/lib/csv';
 import { countryName } from '@/lib/geo';
 import { currencyPrecision, dec, round } from '@/lib/money';
@@ -485,9 +490,12 @@ export default function EmployeeListPage() {
                   <tbody className="divide-y divide-slate-100">
                     {filtered.map((e) => {
                       const doc = worst.get(e.id);
-                      // No licence at all; an expired one is among the documents.
+                      // No licence at all, or one without an expiry date; an
+                      // expired one is among the documents.
+                      const licence = licences.get(e.id)?.reason;
                       const noLicence =
-                        licences.get(e.id)?.reason === 'missing' && doc?.info.status !== 'expired';
+                        (licence === 'missing' || licence === 'undated') &&
+                        doc?.info.status !== 'expired';
                       const job = localName({ name: e.jobTitle, nameAr: e.jobTitleAr });
                       return (
                         <tr
@@ -551,7 +559,11 @@ export default function EmployeeListPage() {
                           <td className="px-5 py-3 text-end">
                             {noLicence ? (
                               <span className="inline-flex flex-col items-end gap-0.5">
-                                <Badge tone="red">{t('Missing')}</Badge>
+                                {licence === 'undated' ? (
+                                  <Badge tone="amber">{t('No expiry date')}</Badge>
+                                ) : (
+                                  <Badge tone="red">{t('Missing')}</Badge>
+                                )}
                                 <span className="text-xs text-slate-500">
                                   {t('Driving licence')}
                                 </span>
@@ -581,7 +593,12 @@ export default function EmployeeListPage() {
         <ComplianceSettingsDialog settings={settings} onClose={() => setSettingsOpen(false)} />
       ) : null}
       {bulk ? (
-        <BulkDocumentsDialog kind={bulk} employees={employees} onClose={() => setBulk(null)} />
+        <BulkDocumentsDialog
+          kind={bulk}
+          employees={employees}
+          drivingLicences={checksDrivingLicences(settings)}
+          onClose={() => setBulk(null)}
+        />
       ) : null}
       {dialog === 'departments' ? (
         <DepartmentsDialog

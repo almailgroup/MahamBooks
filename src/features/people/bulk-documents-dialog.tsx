@@ -13,7 +13,7 @@ import {
 } from '@/db/people';
 import { fileDrivingLicence } from '@/db/renewals';
 import type { Employee } from '@/db/types';
-import { currentDrivingLicence } from '@/lib/compliance';
+import { drivingLicenceToFileOn } from '@/lib/compliance';
 import { documentKind, matchDocuments, type DocumentMatch } from '@/lib/hr/document-match';
 import { photoFromFile, receiptFromFile } from '@/lib/image';
 import { cn } from '@/lib/cn';
@@ -57,17 +57,21 @@ function FileIcon({ file }: { file: File }) {
  * ("… 424.pdf" goes to employee 000424) or by their whole name ("Ali
  * Hassan.jpg"). Files that don't match can be given an employee by hand;
  * files over 10 MB are refused, and so is anything but photos and PDF files
- * (photos only, for photos). Documents go to the personnel files, or
- * to the employees' driving licences in the register ("File as driving
- * licence"); photos become the employees' photos.
+ * (photos only, for photos). Documents go to the personnel files, or,
+ * when the company checks drivers' licences, to the employees' driving
+ * licences in the register ("File as driving licence"); photos become the
+ * employees' photos.
  */
 export function BulkDocumentsDialog({
   kind = 'documents',
   employees,
+  drivingLicences = false,
   onClose,
 }: {
   kind?: BulkKind;
   employees: Employee[];
+  /** The company checks drivers' licences (PeopleSettings.drivingLicences): scans may be filed as licences. */
+  drivingLicences?: boolean;
   onClose: () => void;
 }) {
   const company = useCompany();
@@ -79,7 +83,7 @@ export function BulkDocumentsDialog({
   const [dragging, setDragging] = useState(false);
   /** Scans go to the employees' driving licences instead of their personnel files. */
   const [asLicence, setAsLicence] = useState(false);
-  const licences = !photos && asLicence;
+  const licences = !photos && drivingLicences && asLicence;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const byId = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const sorted = useMemo(
@@ -127,7 +131,7 @@ export function BulkDocumentsDialog({
       if (licences) {
         const ids = [...new Set(pairs.map(([id]) => id))];
         const docs = await db.complianceDocuments.where('employeeId').anyOf(ids).toArray();
-        const licenceOf = new Map(ids.map((id) => [id, currentDrivingLicence(docs, id)?.id]));
+        const licenceOf = new Map(ids.map((id) => [id, drivingLicenceToFileOn(docs, id)?.id]));
         ownerOf = (employeeId) => licenceOf.get(employeeId);
       }
       const lookups = pairs.flatMap(([id, name]) => {
@@ -335,7 +339,7 @@ export function BulkDocumentsDialog({
                 : t('Or drop them here. Photos and PDF files up to 10 MB each.')}
             </span>
           </button>
-          {photos ? null : (
+          {photos || !drivingLicences ? null : (
             <Checkbox
               checked={asLicence}
               disabled={busy}

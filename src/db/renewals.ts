@@ -24,7 +24,7 @@ import type {
 import {
   checksDrivingLicences,
   complianceCalendar,
-  currentDrivingLicence,
+  drivingLicenceToFileOn,
   CUSTOMER_DOCUMENT_TYPES,
   documentTypeInfo,
   EMPLOYEE_EXPIRY_FIELDS,
@@ -188,6 +188,9 @@ export const DOCUMENT_TABLES = () => [
   db.vehicles,
   db.activities,
   db.syncState,
+  // Made confidential: the fees of its renewals lose its details.
+  db.renewals,
+  db.expenses,
 ];
 
 /**
@@ -219,12 +222,31 @@ export async function saveComplianceDocument(
   return db.transaction('rw', DOCUMENT_TABLES(), async () => {
     const existing = await db.complianceDocuments.get(input.id);
     const { company, doc } = await preparedDocument(input, existing);
+    // A customer's cost sheet (guards' pay) is kept confidential: never added
+    // where the mark can't be kept yet.
+    if (doc.type === 'customer_cost' && existing?.type !== 'customer_cost') {
+      await cloudKeepingConfidential(company.id);
+    }
     if (doc.confidential && existing?.confidential !== true) {
       const link = await cloudKeepingConfidential(company.id);
       if (link && existing) {
         throw new ComplianceError(
           t('This document is in the cloud already: make it confidential from its form.'),
         );
+      }
+      // Fees already recorded for it lose its name, number and note, as a
+      // confidential document's are recorded: expenses aren't private.
+      if (existing) {
+        const renewals = await db.renewals
+          .where('documentKey')
+          .equals(recordKey(existing.id))
+          .filter((r) => r.companyId === existing.companyId)
+          .toArray();
+        await scrubFees(renewals, [
+          existing.number,
+          doc.number,
+          ...renewals.map((r) => r.number ?? ''),
+        ]);
       }
     }
     await db.complianceDocuments.put(doc);
@@ -246,8 +268,9 @@ export async function saveComplianceDocument(
 
 /**
  * Files a scan as the employee's driving licence: on their licence in the
- * register (the one that expires last), or on a new one without dates when
- * they have none, whose expiry is then filled in by hand. Nothing is logged:
+ * register (one still without dates, else the one that expires last), or on
+ * a new one without dates when they have none, whose expiry is then filled
+ * in by hand; until then the driver stays flagged. Nothing is logged:
  * "Add documents" logs the files it filed at once.
  */
 export async function fileDrivingLicence(
@@ -259,7 +282,7 @@ export async function fileDrivingLicence(
     if (!employee) throw new ComplianceError(t('Choose the employee the document belongs to.'));
     const held = await db.complianceDocuments.where('employeeId').equals(employeeId).toArray();
     const licence =
-      currentDrivingLicence(held, employeeId) ??
+      drivingLicenceToFileOn(held, employeeId) ??
       (await saveComplianceDocument(
         createComplianceDocument(employee.companyId, {
           type: 'driving_licence',
@@ -345,101 +368,102 @@ export class FilesNotHereError extends ComplianceError {}
  * (a record that turned private would stay there, since the cloud only
  * filters what it sends). Fees already recorded for it lose its name, number
  * and note, as a confidential document's fees are recorded. Every file must
- * be on this device (FilesNotHereError otherwise). Returns the document as
- * saved.
+ * be on this device (FilesNotHereError otherwise). `removedFiles` are its
+ * files taken off its form: they are not copied, and are deleted with the
+ * rest once every check has passed (in a company kept on this device the
+ * form removes them after). Returns the document as saved.
  */
 export async function makeDocumentConfidential(
   input: ComplianceDocument,
+  options: { removedFiles?: readonly ID[] } = {},
 ): Promise<ComplianceDocument> {
-  return db.transaction(
-    'rw',
-    [...DOCUMENT_TABLES(), db.renewals, db.attachments, db.expenses],
-    async () => {
-      const existing = await db.complianceDocuments.get(input.id);
-      const link = await cloudKeepingConfidential(input.companyId);
-      // Not in the cloud, or never saved: nothing of it is anywhere else.
-      if (!existing || existing.confidential === true || !link) {
-        return saveComplianceDocument({ ...input, confidential: true });
-      }
-      const oldKey = recordKey(existing.id);
-      const renewals = await db.renewals
-        .where('documentKey')
-        .equals(oldKey)
-        .filter((r) => r.companyId === existing.companyId)
-        .toArray();
-      const ids = new Map<ID, ID>([
-        [existing.id, newId()],
-        ...renewals.map((r) => [r.id, newId()] as [ID, ID]),
-      ]);
-      const files = await db.attachments
-        .where('ownerId')
-        .anyOf([...ids.keys()])
-        .toArray();
-      if (files.some((f) => !f.dataUrl)) {
-        throw new FilesNotHereError(
-          t('Some of its files are not on this device yet. Open them once, then try again.'),
-        );
-      }
-      const activities = await db.activities
-        .where('entityId')
-        .anyOf([...ids.keys()])
-        .filter((a) => a.entity === 'compliance' && a.companyId === existing.companyId)
-        .toArray();
+  return db.transaction('rw', [...DOCUMENT_TABLES(), db.attachments], async () => {
+    const existing = await db.complianceDocuments.get(input.id);
+    const link = await cloudKeepingConfidential(input.companyId);
+    // Not in the cloud, or never saved: nothing of it is anywhere else.
+    if (!existing || existing.confidential === true || !link) {
+      return saveComplianceDocument({ ...input, confidential: true });
+    }
+    const oldKey = recordKey(existing.id);
+    const renewals = await db.renewals
+      .where('documentKey')
+      .equals(oldKey)
+      .filter((r) => r.companyId === existing.companyId)
+      .toArray();
+    const ids = new Map<ID, ID>([
+      [existing.id, newId()],
+      ...renewals.map((r) => [r.id, newId()] as [ID, ID]),
+    ]);
+    const removed = new Set(options.removedFiles ?? []);
+    const stored = await db.attachments
+      .where('ownerId')
+      .anyOf([...ids.keys()])
+      .toArray();
+    const files = stored.filter((f) => !(f.ownerId === existing.id && removed.has(f.id)));
+    if (files.some((f) => !f.dataUrl)) {
+      throw new FilesNotHereError(
+        t('Some of its files are not on this device yet. Open them once, then try again.'),
+      );
+    }
+    const activities = await db.activities
+      .where('entityId')
+      .anyOf([...ids.keys()])
+      .filter((a) => a.entity === 'compliance' && a.companyId === existing.companyId)
+      .toArray();
 
-      const id = ids.get(existing.id)!;
-      const { company, doc } = await preparedDocument(
-        { ...input, id, confidential: true, createdAt: existing.createdAt },
-        existing,
-      );
-      doc.createdAt = existing.createdAt;
-      await db.complianceDocuments.put(doc);
-      await db.renewals.bulkPut(
-        renewals.map((r) => ({
-          ...r,
-          id: ids.get(r.id)!,
-          documentKey: recordKey(id),
-          documentId: id,
-        })),
-      );
-      await db.attachments.bulkPut(
-        files.map((f) => {
-          const copy: Attachment = { ...f, id: newId(), ownerId: ids.get(f.ownerId)! };
-          // The new copy is uploaded under its own id.
-          delete copy.storagePath;
-          delete copy.contentHash;
-          delete copy.contentMissing;
-          if (f.docKey === oldKey) copy.docKey = recordKey(id);
-          return copy;
-        }),
-      );
-      await db.activities.bulkPut(
-        activities.map((a): Activity => ({
-          ...a,
-          id: newId(),
-          entityId: ids.get(a.entityId)!,
-          confidential: true,
-        })),
-      );
-      await scrubFees(renewals, [existing.number, ...renewals.map((r) => r.number ?? '')]);
+    const id = ids.get(existing.id)!;
+    const { company, doc } = await preparedDocument(
+      { ...input, id, confidential: true, createdAt: existing.createdAt },
+      existing,
+    );
+    doc.createdAt = existing.createdAt;
+    await db.complianceDocuments.put(doc);
+    await db.renewals.bulkPut(
+      renewals.map((r) => ({
+        ...r,
+        id: ids.get(r.id)!,
+        documentKey: recordKey(id),
+        documentId: id,
+      })),
+    );
+    await db.attachments.bulkPut(
+      files.map((f) => {
+        const copy: Attachment = { ...f, id: newId(), ownerId: ids.get(f.ownerId)! };
+        // The new copy is uploaded under its own id.
+        delete copy.storagePath;
+        delete copy.contentHash;
+        delete copy.contentMissing;
+        if (f.docKey === oldKey) copy.docKey = recordKey(id);
+        return copy;
+      }),
+    );
+    await db.activities.bulkPut(
+      activities.map((a): Activity => ({
+        ...a,
+        id: newId(),
+        entityId: ids.get(a.entityId)!,
+        confidential: true,
+      })),
+    );
+    await scrubFees(renewals, [existing.number, ...renewals.map((r) => r.number ?? '')]);
 
-      await db.activities.bulkDelete(activities.map((a) => a.id));
-      await db.attachments.bulkDelete(files.map((f) => f.id));
-      await db.renewals.bulkDelete(renewals.map((r) => r.id));
-      await db.complianceDocuments.delete(existing.id);
-      await logActivity(
-        company.id,
-        'compliance',
-        id,
-        'updated',
-        {
-          text: msg('Document {title} made confidential'),
-          vars: { title: doc.title || documentTypeInfo(doc.type).label },
-        },
-        { employeeId: doc.employeeId, confidential: true },
-      );
-      return doc;
-    },
-  );
+    await db.activities.bulkDelete(activities.map((a) => a.id));
+    await db.attachments.bulkDelete(stored.map((f) => f.id));
+    await db.renewals.bulkDelete(renewals.map((r) => r.id));
+    await db.complianceDocuments.delete(existing.id);
+    await logActivity(
+      company.id,
+      'compliance',
+      id,
+      'updated',
+      {
+        text: msg('Document {title} made confidential'),
+        vars: { title: doc.title || documentTypeInfo(doc.type).label },
+      },
+      { employeeId: doc.employeeId, confidential: true },
+    );
+    return doc;
+  });
 }
 
 /** The fees of these renewals as a confidential document's are recorded: without its name, number or note. */

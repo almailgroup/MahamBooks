@@ -51,6 +51,11 @@ export interface PeopleCompanies {
   eligible: Company[];
   /** Of those, the ones switched on: their employees are found from every company. */
   included: Company[];
+  /**
+   * Companies kept in the cloud left out only because nobody is signed in
+   * (their role would show employees): signing in brings them back.
+   */
+  signedOut?: number;
 }
 
 /**
@@ -67,7 +72,13 @@ export function peopleCompanies(
   const linkOf = new Map(links.map((link) => [link.companyId, link]));
   const on = new Set(settings.filter((s) => s?.groupSearch === true).map((s) => s!.companyId));
   const eligible = companies.filter((c) => seesPeopleIn(linkOf.get(c.id), userId));
-  return { eligible, included: eligible.filter((c) => on.has(c.id)) };
+  const signedOut = userId
+    ? 0
+    : companies.filter((c) => {
+        const link = linkOf.get(c.id);
+        return link && link.status !== 'removed' && canSeePeople(link.role);
+      }).length;
+  return { eligible, included: eligible.filter((c) => on.has(c.id)), signedOut };
 }
 
 export type EmployeeView = 'current' | 'left' | 'all';

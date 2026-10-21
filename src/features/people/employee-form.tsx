@@ -172,6 +172,7 @@ export function EmployeeForm({
   departmentList,
   drivingLicences = false,
   leavePolicy,
+  saved,
   files,
 }: {
   value: Employee;
@@ -189,6 +190,8 @@ export function EmployeeForm({
    * days a year are asked.
    */
   leavePolicy?: LeavePolicy;
+  /** The employee as saved, when editing one: a change to their own days that reaches back is flagged. */
+  saved?: Pick<Employee, 'annualLeaveDays' | 'annualLeaveDaysFrom'> | null;
   files: {
     files: AttachedFile[];
     add: (file: AttachedFile) => void;
@@ -222,6 +225,17 @@ export function EmployeeForm({
     value.contractEnd > toISODate(addYears(parseISODate(value.hireDate), 5));
 
   const companyLeaveDays = annualDaysOn(today(), leavePolicy);
+  // Their own days, saved or changed, count from their date (or from the hire
+  // date): a change from a date that has passed changes their balance from it.
+  const ownDaysFrom = (e: Pick<Employee, 'annualLeaveDays' | 'annualLeaveDaysFrom'>) =>
+    e.annualLeaveDays ? e.annualLeaveDaysFrom || value.hireDate || '' : null;
+  const ownDaysChanged =
+    Boolean(saved) &&
+    ((saved?.annualLeaveDays ?? null) !== (value.annualLeaveDays ?? null) ||
+      ownDaysFrom(saved ?? {}) !== ownDaysFrom(value));
+  const ownDaysBackdated =
+    ownDaysChanged &&
+    [ownDaysFrom(saved ?? {}), ownDaysFrom(value)].some((d) => d !== null && d <= today());
   const stateless = isStateless(value);
   const category: CategoryFilter = stateless ? 'stateless' : value.category;
   // Stateless staff are expatriates with the flag, and no country.
@@ -702,15 +716,24 @@ export function EmployeeForm({
             )}
           </Field>
         ) : null}
-        {leavePolicy || value.annualLeaveDays ? (
+        {leavePolicy || value.annualLeaveDays || saved?.annualLeaveDays ? (
           <Field
             label={t('Annual leave days')}
             optional
             error={errors.annualLeaveDays}
-            hint={t(
-              'Days a year in their contract, in place of the company’s {days}. Their balance is counted at this rate from their hire date or opening balance.',
-              { days: fmt.quantity(companyLeaveDays) },
-            )}
+            hint={
+              ownDaysBackdated && !value.annualLeaveDays ? (
+                <Warning>
+                  {t(
+                    'This date has passed: balances from it change, and the next approved pay run’s leave provision takes in the difference.',
+                  )}
+                </Warning>
+              ) : (
+                t('Days a year in their contract, in place of the company’s {days}.', {
+                  days: fmt.quantity(companyLeaveDays),
+                })
+              )
+            }
           >
             {(id) => (
               <NumberInput
@@ -721,6 +744,33 @@ export function EmployeeForm({
                 blankZero
                 placeholder={fmt.quantity(companyLeaveDays)}
                 aria-invalid={Boolean(errors.annualLeaveDays)}
+              />
+            )}
+          </Field>
+        ) : null}
+        {value.annualLeaveDays ? (
+          <Field
+            label={t('Annual leave days from')}
+            optional
+            hint={
+              ownDaysBackdated ? (
+                <Warning>
+                  {t(
+                    'This date has passed: balances from it change, and the next approved pay run’s leave provision takes in the difference.',
+                  )}
+                </Warning>
+              ) : (
+                t(
+                  'Their balance is counted at these days from this date, at the company’s before it. Leave it empty to count them from the hire date or opening balance.',
+                )
+              )
+            }
+          >
+            {(id) => (
+              <DateField
+                id={id}
+                value={value.annualLeaveDaysFrom ?? ''}
+                onChange={(iso) => set({ annualLeaveDaysFrom: iso || null })}
               />
             )}
           </Field>

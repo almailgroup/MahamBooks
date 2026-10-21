@@ -192,6 +192,10 @@ export async function saveEmployee(
           employee.annualLeaveDays = round(Math.min(366, days), 2);
         }
       }
+      // The date they apply from, only with days of their own.
+      if (employee.annualLeaveDaysFrom !== undefined && !employee.annualLeaveDays) {
+        employee.annualLeaveDaysFrom = null;
+      }
 
       const others = (await db.employees.where('companyId').equals(company.id).toArray()).filter(
         (e) => e.id !== employee.id,

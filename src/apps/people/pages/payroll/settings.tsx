@@ -19,6 +19,7 @@ import type {
   PayrollSettings,
 } from '@/db/types';
 import { useCompany, useFormat } from '@/app/company';
+import { useCloudLink } from '@/cloud/hooks';
 import { GCC_COUNTRIES } from '@/lib/hr/employees';
 import {
   ANNUAL_LEAVE_DAYS,
@@ -136,14 +137,25 @@ function LeavePolicyCard({
   policy,
   saved,
   countingLocked,
+  inCloud,
   onChange,
 }: {
   policy: LeavePolicy | undefined;
   saved: LeavePolicy | undefined;
   countingLocked: boolean;
+  /** The company is kept in the cloud: other devices may still run an older version. */
+  inCloud: boolean;
   onChange: (policy: LeavePolicy) => void;
 }) {
   const id = useId();
+  // Older versions count leave as the law does, whatever the policy says.
+  const olderVersions = inCloud ? (
+    <p className="text-sm text-amber-700">
+      {t(
+        'Update the app on every device that records leave or approves pay runs first: older versions count annual leave as the law does.',
+      )}
+    </p>
+  ) : null;
   if (!policy) {
     return (
       <Card>
@@ -159,6 +171,7 @@ function LeavePolicyCard({
               'Set a policy for more days a year, contract entitlements, a cap on the days carried forward, or leave counted in calendar days. Balances before the date it applies from don’t change.',
             )}
           </p>
+          {olderVersions}
           <Button variant="outline" onClick={() => onChange(newLeavePolicy())}>
             <Plus /> {t('Set the company’s leave policy')}
           </Button>
@@ -174,6 +187,10 @@ function LeavePolicyCard({
   const unsaved = (r: AnnualLeaveDays) =>
     !saved?.annualDays.some((x) => x.from === r.from && x.days === r.days);
   const on = today();
+  // A saved date that has passed, removed or moved: balances from it change too.
+  const pastRemoved = (saved?.annualDays ?? []).some(
+    (x) => x.from <= on && !policy.annualDays.some((r) => r.from === x.from),
+  );
   return (
     <Card>
       <CardHeader
@@ -183,6 +200,7 @@ function LeavePolicyCard({
         )}
       />
       <CardBody className="space-y-5">
+        {olderVersions}
         <div>
           <div className="hidden grid-cols-[11rem_1fr_auto] gap-2 text-xs font-medium text-slate-500 sm:grid">
             <span>{t('From')}</span>
@@ -235,6 +253,13 @@ function LeavePolicyCard({
               </li>
             ))}
           </ul>
+          {pastRemoved ? (
+            <p className="mt-1 text-xs text-amber-700">
+              {t(
+                'A date that has passed was removed or moved: balances from it change, and the next approved pay run’s leave provision takes in the difference.',
+              )}
+            </p>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -325,6 +350,7 @@ export default function PayrollSettingsPage() {
   const saved = usePayrollSettings();
   const accounts = useAccounts();
   const leave = useLeaveRecords();
+  const link = useCloudLink(company.id);
   const [draft, setDraft] = useState<PayrollSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const value = draft ?? saved;
@@ -601,6 +627,7 @@ export default function PayrollSettingsPage() {
           policy={value.leavePolicy}
           saved={saved.leavePolicy}
           countingLocked={annualLeaveRecorded(leave)}
+          inCloud={Boolean(link)}
           onChange={(leavePolicy) => set({ leavePolicy })}
         />
 

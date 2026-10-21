@@ -24,19 +24,22 @@ export function normalizeLinkUrl(input: string): string | null {
   return url.href;
 }
 
-// A parameter's name, word by word: "api_key", "accessToken", "apikey".
+// A parameter's name, word by word: "api_key", "accessToken", "apikey", and
+// the names signed links and tokens go by ("sig", "jwt").
 const SECRET_WORD =
-  /^(?:api|access|auth|client|private|secret|session)?(?:token|key|secret|password|pwd|signature)s?$/;
+  /^(?:(?:api|access|auth|client|private|secret|session|refresh|id)?(?:token|key|secret|password|passwd|pwd|signature)s?|sig|sas|auth|jwt|bearer|otp)$/;
 
 /**
- * Whether a web address carries what looks like a key in its parameters
- * (?token=…, #access_token=…). Links reach everyone in the company and every
- * backup, so a key in one is no longer a secret.
+ * Whether a web address carries what looks like a key: a name and password
+ * in the address itself (https://name:password@…), or in its parameters
+ * (?token=…, #access_token=…, ?sig=…). Links reach everyone in the company
+ * and every backup, so a key in one is no longer a secret.
  */
 export function hasSecretParameter(input: string): boolean {
   const href = normalizeLinkUrl(input);
   if (!href) return false;
-  const { search, hash } = new URL(href);
+  const { search, hash, username, password } = new URL(href);
+  if (username || password) return true;
   const names = [search, hash].flatMap((part) => [
     ...new URLSearchParams(part.replace(/^[?#]/, '')).keys(),
   ]);
@@ -97,6 +100,68 @@ export function presetLink(preset: LinkPreset): CompanyLink {
 export function linkApps(link: Pick<CompanyLink, 'apps'>, apps: readonly string[]): string[] {
   const chosen = Array.isArray(link.apps) ? apps.filter((id) => link.apps!.includes(id)) : [];
   return chosen.length ? chosen : [...apps];
+}
+
+/** The apps whose Show in box is ticked: where the link shows, or none while none is chosen. */
+const tickedApps = (link: Pick<CompanyLink, 'apps'>, apps: readonly string[]) =>
+  // Every box unticked (which the form refuses): none.
+  Array.isArray(link.apps) && link.apps.length === 0 ? [] : linkApps(link, apps);
+
+/** Whether an app's sidebar shows the link, as linkApps decides: what its Show in box says. */
+export function linkShowsIn(
+  link: Pick<CompanyLink, 'apps'>,
+  app: string,
+  apps: readonly string[],
+): boolean {
+  return tickedApps(link, apps).includes(app);
+}
+
+/** The link was chosen only for apps this build doesn't have (a newer build's): it shows in every app here. */
+export function chosenElsewhereOnly(
+  link: Pick<CompanyLink, 'apps'>,
+  apps: readonly string[],
+): boolean {
+  return (
+    Array.isArray(link.apps) && link.apps.length > 0 && !link.apps.some((id) => apps.includes(id))
+  );
+}
+
+/**
+ * The apps chosen once one of this build's `apps` is ticked or unticked,
+ * from where the link shows now. A newer build's apps chosen stay chosen;
+ * missing again (every app) when every app here is ticked and no newer
+ * build's choice is kept. Unticking every app here leaves none chosen.
+ */
+export function toggleLinkApp(
+  link: Pick<CompanyLink, 'apps'>,
+  app: string,
+  on: boolean,
+  apps: readonly string[],
+): string[] | undefined {
+  const newer = Array.isArray(link.apps) ? link.apps.filter((id) => !apps.includes(id)) : [];
+  const shown = tickedApps(link, apps);
+  const next = on ? [...shown, app] : shown.filter((id) => id !== app);
+  const here = apps.filter((id) => next.includes(id));
+  if (here.length === 0) return [];
+  if (here.length === apps.length && newer.length === 0) return undefined;
+  // This build's apps in their order, then those of a newer build.
+  return [...here, ...newer];
+}
+
+/**
+ * The link as kept: trimmed names and the full address. A choice set back
+ * to today's (the list of links, every app) is left out; what a newer
+ * build wrote and this one doesn't show stays.
+ */
+export function cleanLink({ section, apps, ...link }: CompanyLink): CompanyLink {
+  return {
+    ...link,
+    label: link.label.trim(),
+    labelAr: link.labelAr?.trim() ?? '',
+    url: normalizeLinkUrl(link.url) ?? link.url,
+    ...(section !== undefined ? { section } : {}),
+    ...(apps !== undefined ? { apps } : {}),
+  };
 }
 
 /** Where links show: the sidebar of one app, or the home for the apps someone may open. */

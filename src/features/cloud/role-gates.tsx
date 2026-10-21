@@ -4,7 +4,7 @@ import { Eye, Info, Lock } from 'lucide-react';
 import { useCompany } from '@/app/company';
 import { t } from '@/i18n';
 import { buttonClass } from '@/components/ui/button';
-import { Card, EmptyState } from '@/components/ui/misc';
+import { Card, EmptyState, Spinner } from '@/components/ui/misc';
 import type { ReadOnlyState } from '@/components/ui/read-only';
 import { cn } from '@/lib/cn';
 import { useCloudLink } from '@/cloud/hooks';
@@ -75,8 +75,27 @@ export function PeopleGate({ children }: { children: ReactNode }) {
 export function AnyCompanyPeopleGate({ children }: { children: ReactNode }) {
   const group = usePeopleCompanies();
   // Nothing until the links and the account are known.
-  if (!group) return null;
+  if (!group) return <Spinner className="py-24" label={t('Loading…')} />;
   if (group.eligible.length > 0) return <>{children}</>;
+  // Companies kept in the cloud count once their account is signed in.
+  if (group.signedOut) {
+    return (
+      <Card className="mx-auto max-w-xl">
+        <EmptyState
+          icon={<Lock />}
+          title={t('Sign in to include the companies kept in the cloud')}
+          description={t(
+            'Their employees are shown once you are signed in with the account they are kept with.',
+          )}
+          action={
+            <Link to="/settings/cloud" className={buttonClass('outline')}>
+              {t('Sign in')}
+            </Link>
+          }
+        />
+      </Card>
+    );
+  }
   return (
     <Card className="mx-auto max-w-xl">
       <EmptyState

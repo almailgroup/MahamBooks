@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -109,8 +109,13 @@ export default function ChequeRegisterPage() {
   const [params, setParams] = useSearchParams();
   const tab = registerTab(params.get('tab'));
   const filter = registerFilter(params.get('filter'));
-  // "?q=" from search opens the register searched for one cheque ("&all=1": not only those held).
-  const [query, setQuery] = useState(() => params.get('q') ?? '');
+  // "?q=" from search opens the register searched for one cheque ("&all=1": not
+  // only those held), also when the register is open already: taken into the
+  // search box each time it comes, then dropped from the address (below).
+  const linkedQuery = params.get('q');
+  const linkedAll = params.get('all') === '1';
+  const [query, setQuery] = useState(() => linkedQuery ?? '');
+  const [applied, setApplied] = useState(linkedQuery);
   const [action, setAction] = useState<{ action: ChequeAction; payment: ChequePayment } | null>(
     null,
   );
@@ -120,7 +125,25 @@ export default function ChequeRegisterPage() {
     | { kind: 'cash'; cheque: SecurityCheque }
     | null
   >(null);
-  const [showAllSecurity, setShowAllSecurity] = useState(() => params.get('all') === '1');
+  const [showAllSecurity, setShowAllSecurity] = useState(linkedAll);
+  if (linkedQuery !== applied) {
+    setApplied(linkedQuery);
+    if (linkedQuery !== null) {
+      setQuery(linkedQuery);
+      setShowAllSecurity(linkedAll);
+    }
+  }
+  useEffect(() => {
+    if (linkedQuery === null) return;
+    setParams(
+      (p) => {
+        p.delete('q');
+        p.delete('all');
+        return p;
+      },
+      { replace: true },
+    );
+  }, [linkedQuery, setParams]);
 
   const payments = useLiveQuery(
     () => db.payments.where('companyId').equals(company.id).toArray(),

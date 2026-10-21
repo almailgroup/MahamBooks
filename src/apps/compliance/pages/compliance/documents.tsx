@@ -168,6 +168,18 @@ export default function DocumentsRegisterPage() {
     );
   });
 
+  // Drivers are employees: found by their name, number or job title.
+  const shownDrivers = drivers.filter((m) => {
+    const employee = byEmployee.get(m.employeeId);
+    return textMatches(query, [
+      employee?.name,
+      employee?.nameAr,
+      employee?.number,
+      employee?.jobTitle,
+      employee?.jobTitleAr,
+    ]);
+  });
+
   const add = () =>
     setEditing({
       doc: createComplianceDocument(company.id, owner ? { ownerType: owner } : {}),
@@ -251,7 +263,7 @@ export default function DocumentsRegisterPage() {
               ]}
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {customers.length ? (
+              {customers.length && status !== 'drivers' ? (
                 <Select
                   value={shownCustomer}
                   onChange={(e) => setCustomer(e.target.value)}
@@ -266,19 +278,22 @@ export default function DocumentsRegisterPage() {
                   ))}
                 </Select>
               ) : null}
-              <Select
-                value={owner}
-                onChange={(e) => setOwner(e.target.value as DocumentOwnerType | '')}
-                aria-label={t('Belongs to')}
-                className="sm:w-44"
-              >
-                <option value="">{t('Everyone')}</option>
-                {OWNERS.map((o) => (
-                  <option key={o} value={o}>
-                    {t(OWNER_LABELS[o])}
-                  </option>
-                ))}
-              </Select>
+              {/* Drivers are all employees: neither filter has anything to choose there. */}
+              {status === 'drivers' ? null : (
+                <Select
+                  value={owner}
+                  onChange={(e) => setOwner(e.target.value as DocumentOwnerType | '')}
+                  aria-label={t('Belongs to')}
+                  className="sm:w-44"
+                >
+                  <option value="">{t('Everyone')}</option>
+                  {OWNERS.map((o) => (
+                    <option key={o} value={o}>
+                      {t(OWNER_LABELS[o])}
+                    </option>
+                  ))}
+                </Select>
+              )}
               <div className="relative sm:w-64">
                 <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -297,13 +312,20 @@ export default function DocumentsRegisterPage() {
               <p className="px-6 py-12 text-center text-sm text-slate-500">
                 {t('Every driver holds a valid driving licence.')}
               </p>
+            ) : shownDrivers.length === 0 ? (
+              <p className="px-6 py-12 text-center text-sm text-slate-500">
+                {t('No employees match.')}
+              </p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {drivers.map((missing) => {
+                {shownDrivers.map((missing) => {
                   const employee = byEmployee.get(missing.employeeId);
-                  const entry = missing.document
-                    ? recordEntry(missing.document, register.reminderDays)
-                    : null;
+                  const entry =
+                    missing.document && missing.reason === 'expired'
+                      ? recordEntry(missing.document, register.reminderDays)
+                      : null;
+                  // A licence without an expiry date: opened to enter its dates.
+                  const undated = missing.reason === 'undated' ? missing.document : null;
                   const name = employee ? localName(employee) : '';
                   const job = employee
                     ? localName({ name: employee.jobTitle, nameAr: employee.jobTitleAr })
@@ -331,10 +353,21 @@ export default function DocumentsRegisterPage() {
                               date: fmt.date(entry.expiryDate),
                             })}
                           </span>
+                        ) : undated ? (
+                          <Badge tone="amber">{t('No expiry date')}</Badge>
                         ) : (
                           <Badge tone="red">{t('Driving licence missing')}</Badge>
                         )}
-                        {readOnly ? null : entry ? (
+                        {readOnly ? null : undated ? (
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setEditing({ doc: undated, isNew: false })}
+                            aria-label={t('Edit {document}', { document: entryTitle(undated) })}
+                          >
+                            <Pencil /> {t('Edit')}
+                          </Button>
+                        ) : entry ? (
                           <Button
                             variant="outline"
                             size="xs"

@@ -187,11 +187,18 @@ describe('employees', () => {
     await expect(saveEmployee({ ...plain, annualLeaveDays: 25 })).rejects.toThrow(
       /less than 30 days/,
     );
-    const own = await saveEmployee({ ...plain, annualLeaveDays: 42.505 });
-    expect(own.annualLeaveDays).toBe(42.51);
-    // Cleared on the form: the company's policy again.
+    const own = await saveEmployee({
+      ...plain,
+      annualLeaveDays: 42.505,
+      annualLeaveDaysFrom: '2026-11-01',
+    });
+    expect(own).toMatchObject({ annualLeaveDays: 42.51, annualLeaveDaysFrom: '2026-11-01' });
+    // Cleared on the form: the company's policy again, and no date for days it doesn't have.
     const cleared = await saveEmployee({ ...own, annualLeaveDays: null });
-    expect((await db.employees.get(cleared.id))?.annualLeaveDays).toBeNull();
+    expect(await db.employees.get(cleared.id)).toMatchObject({
+      annualLeaveDays: null,
+      annualLeaveDaysFrom: null,
+    });
     expect((await saveEmployee({ ...cleared, annualLeaveDays: 0 })).annualLeaveDays).toBeNull();
   });
 });

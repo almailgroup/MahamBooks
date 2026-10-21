@@ -32,6 +32,14 @@ export const SALARY_FILE_COLUMNS: Record<SalaryFileColumn, { label: string; head
   reference: { label: msg('Reference'), header: 'Reference' },
 };
 
+/**
+ * The number the bank's salary file gives a pay line: the Civil ID, or for
+ * a stateless employee without one, their review card number.
+ */
+export function salaryFileCivilId(line: { civilId: string; centralCardNumber?: string }): string {
+  return line.civilId || line.centralCardNumber || '';
+}
+
 export const SALARY_FILE_COLUMN_ORDER = Object.keys(SALARY_FILE_COLUMNS) as SalaryFileColumn[];
 
 export interface SalaryFilePreset {

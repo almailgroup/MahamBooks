@@ -246,6 +246,19 @@ describe('drivers’ licences', () => {
     await expect(fileDrivingLicence('nobody', scan('x.jpg'))).rejects.toThrow(ComplianceError);
   });
 
+  it('keeps a driver flagged after a scan is filed as their licence, until its dates are in', async () => {
+    const { company } = await kuwaitCompany();
+    const someone = await driver(company.id);
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), drivingLicences: true });
+    // The scan makes a licence without dates: not a valid licence yet.
+    const filed = await fileDrivingLicence(someone.id, scan('any scan.jpg'));
+    expect((await loadRegister(company.id)).missing).toMatchObject([
+      { employeeId: someone.id, reason: 'undated', document: { id: filed.id } },
+    ]);
+    await saveComplianceDocument({ ...filed, expiryDate: inDays(365) });
+    expect((await loadRegister(company.id)).missing).toEqual([]);
+  });
+
   it('logs the scans filed at once, as people data', async () => {
     const { company } = await kuwaitCompany();
     const filed = () =>
@@ -587,6 +600,39 @@ describe('the register’s extras', () => {
     expect(await db.complianceDocuments.count()).toBe(0);
   });
 
+  it('add a customer’s cost sheet only where it can be kept confidential', async () => {
+    const { company } = await kuwaitCompany();
+    const client = await customer(company.id);
+    const sheet = createComplianceDocument(company.id, {
+      ownerType: 'other',
+      clientId: client.id,
+      type: 'customer_cost',
+      title: 'Guards cost sheet',
+    });
+    // A server without the migration would give it to staff and viewers.
+    await inTheCloud(company.id, []);
+    await expect(saveComplianceDocument(sheet)).rejects.toThrow(
+      'The cloud needs the latest database script first.',
+    );
+    const contract = await saveComplianceDocument({ ...sheet, type: 'client_contract' });
+    await expect(saveComplianceDocument({ ...contract, type: 'customer_cost' })).rejects.toThrow(
+      'The cloud needs the latest database script first.',
+    );
+    // Once it has the migration, it is added (the form ticks Confidential for it).
+    await inTheCloud(company.id, ['tables_v16']);
+    const another = createComplianceDocument(company.id, {
+      ownerType: 'other',
+      clientId: client.id,
+      type: 'customer_cost',
+      title: 'Guards cost sheet',
+      confidential: true,
+    });
+    await expect(saveComplianceDocument(another)).resolves.toMatchObject({
+      type: 'customer_cost',
+      confidential: true,
+    });
+  });
+
   it('keep purposes in both languages, archived and never removed', async () => {
     const { company } = await kuwaitCompany();
     const tenders = await addDocumentPurpose(company.id, {
@@ -680,10 +726,18 @@ describe('making a document confidential', () => {
 
   it('only marks it in a company kept on this device', async () => {
     const { company } = await kuwaitCompany();
-    const { doc, renewal } = await withHistory(company.id);
+    const { doc, renewal, expense } = await withHistory(company.id);
+    expect(expense).toMatchObject({ reference: 'CS-0001', notes: 'For the new site' });
     const saved = await makeDocumentConfidential({ ...doc, notes: 'Guard salaries' });
     expect(saved).toMatchObject({ id: doc.id, confidential: true, notes: 'Guard salaries' });
     expect(await db.renewals.get(renewal.id)).toBeDefined();
+    // Its fees lose its name, number and note there too: expenses aren't private.
+    expect(await db.expenses.get(expense.id)).toMatchObject({
+      description: 'Document renewal fee',
+      reference: '',
+      notes: '',
+      amount: 25,
+    });
   });
 
   it('saves it again under new ids in the cloud, with its renewals, files and activity', async () => {
@@ -745,6 +799,32 @@ describe('making a document confidential', () => {
       [`attachments/${scan.id}`, `complianceDocuments/${doc.id}`, `renewals/${renewal.id}`].sort(),
     );
     expect(deleted.filter((e) => e.table === 'activities')).toHaveLength(2);
+  });
+
+  it('removes the files taken off its form only once it is saved', async () => {
+    const { company } = await kuwaitCompany();
+    const { doc, scan } = await withHistory(company.id);
+    const extra = await addAttachment(company.id, doc.id, {
+      name: 'old page.png',
+      type: 'image/png',
+      dataUrl: PNG,
+    });
+    await inTheCloud(company.id, ['tables_v16']);
+    // A check fails: nothing is removed, and the document stays as it was.
+    await expect(
+      makeDocumentConfidential(
+        { ...doc, purposeId: 'no-such-purpose' },
+        { removedFiles: [extra.id] },
+      ),
+    ).rejects.toThrow('Choose a purpose from the list.');
+    expect(await db.attachments.get(extra.id)).toBeDefined();
+    expect(await db.attachments.get(scan.id)).toBeDefined();
+    // Saved: the file taken off isn't copied, and is gone with the old record.
+    const saved = await makeDocumentConfidential(doc, { removedFiles: [extra.id] });
+    const files = await db.attachments.where('ownerId').equals(saved.id).toArray();
+    expect(files.map((f) => f.name)).toEqual(['cost-sheet.png']);
+    expect(await db.attachments.get(extra.id)).toBeUndefined();
+    expect(await db.attachments.get(scan.id)).toBeUndefined();
   });
 
   it('waits for the server, and for files kept in the cloud only', async () => {

@@ -88,7 +88,7 @@ export default function AllCompaniesPage() {
       <CardHeader
         title={t('Companies searched')}
         description={t(
-          'Switch on the companies whose employees you want to find here and in search.',
+          'For everyone in each company who sees employees: switch on the companies whose employees can be found here and in search.',
         )}
       />
       <CardBody>

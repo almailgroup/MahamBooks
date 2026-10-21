@@ -53,12 +53,15 @@ export function EmployeeDocuments({
     ...employeeDocuments(employee, reminderDays),
     ...records.filter((d) => !d.archived).map((d) => recordEntry(d, reminderDays)),
   ];
-  // An expired licence shows as expired on its own row; one never added has none.
-  const licenceMissing =
-    drivingLicences &&
-    missingDocuments({ employees: [employee], documents: records, on, vehicles }).some(
-      (m) => m.type === 'driving_licence' && m.reason === 'missing',
-    );
+  // An expired licence shows as expired on its own row; one never added has
+  // none; one without an expiry date is marked on its row until it's entered.
+  const missing = drivingLicences
+    ? missingDocuments({ employees: [employee], documents: records, on, vehicles }).filter(
+        (m) => m.type === 'driving_licence',
+      )
+    : [];
+  const licenceMissing = missing.some((m) => m.reason === 'missing');
+  const undatedLicence = missing.find((m) => m.reason === 'undated')?.document?.id;
   const add = (type: ComplianceDocument['type']) =>
     setEditing({
       doc: createComplianceDocument(company.id, {
@@ -135,7 +138,11 @@ export function EmployeeDocuments({
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {current ? <ExpiryBadge info={info} /> : null}
+                  {current && record && record.id === undatedLicence ? (
+                    <Badge tone="amber">{t('No expiry date')}</Badge>
+                  ) : current ? (
+                    <ExpiryBadge info={info} />
+                  ) : null}
                   {current ? (
                     <Button variant="outline" size="xs" onClick={() => setRenewing(entry)}>
                       <RefreshCw /> {t('Renew')}

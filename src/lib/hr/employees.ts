@@ -25,18 +25,26 @@ export function categoryForNationality(nationality: string): Exclude<EmployeeCat
   return 'expat';
 }
 
-/** A category, or an employee, whose stateless flag counts too. */
-export type CategoryOf = EmployeeCategory | Pick<Employee, 'category' | 'stateless'>;
+/** A category, or an employee, whose stateless flag (and country) counts too. */
+export type CategoryOf =
+  | EmployeeCategory
+  | (Pick<Employee, 'category' | 'stateless'> & Partial<Pick<Employee, 'nationality'>>);
 
 const categoryOf = (who: CategoryOf): EmployeeCategory =>
   typeof who === 'string' ? who : who.category;
 
 /**
- * Stateless (Bedoon): the flag on an expatriate. An older version that
- * changed the category leaves the flag behind; the category wins.
+ * Stateless (Bedoon): the flag on an expatriate without a country. An older
+ * version that changed the category, or chose a country, leaves the flag
+ * behind; the category and the country win (stateless staff are saved with
+ * no country, and choosing one clears the flag).
  */
-export function isStateless(employee: Partial<Pick<Employee, 'category' | 'stateless'>>): boolean {
-  return employee.stateless === true && employee.category === 'expat';
+export function isStateless(
+  employee: Partial<Pick<Employee, 'category' | 'stateless' | 'nationality'>>,
+): boolean {
+  return (
+    employee.stateless === true && employee.category === 'expat' && !employee.nationality?.trim()
+  );
 }
 
 /**

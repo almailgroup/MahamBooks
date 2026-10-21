@@ -28,8 +28,20 @@ interface CompanyContextValue {
 
 const CompanyContext = createContext<CompanyContextValue | null>(null);
 
-/** Callers of showCompany, until their company is the one shown. */
-let waiting: { id: ID; done: () => void }[] = [];
+/**
+ * Callers of showCompany, until their company is the one shown: only the
+ * latest one waits. An earlier one gives way to it (CompanySuperseded), as
+ * does one whose company left the device meanwhile.
+ */
+let waiting: { id: ID; done: () => void; fail: (error: Error) => void }[] = [];
+
+/** Another company was shown in the meantime (or this one is gone): nothing to open. */
+export class CompanySuperseded extends Error {
+  constructor() {
+    super('Another company was opened in the meantime.');
+    this.name = 'CompanySuperseded';
+  }
+}
 
 /**
  * Loads the companies and the active one. Renders `fallback` while loading and
@@ -54,7 +66,8 @@ export function CompanyProvider({
   const showCompany = useCallback(
     (id: string) =>
       new Promise<void>((resolve, reject) => {
-        waiting.push({ id, done: resolve });
+        for (const w of waiting) w.fail(new CompanySuperseded());
+        waiting = [{ id, done: resolve, fail: reject }];
         setCurrentCompanyId(id).catch((error: unknown) => {
           waiting = waiting.filter((w) => w.done !== resolve);
           reject(error instanceof Error ? error : new Error(String(error)));
@@ -71,11 +84,14 @@ export function CompanyProvider({
 
   const shownId = value?.company.id;
   useEffect(() => {
-    if (!shownId || !waiting.length) return;
+    if (!shownId || !waiting.length || !companies) return;
+    const here = new Set(companies.map((c) => c.id));
     const ready = waiting.filter((w) => w.id === shownId);
-    waiting = waiting.filter((w) => w.id !== shownId);
+    const gone = waiting.filter((w) => w.id !== shownId && !here.has(w.id));
+    waiting = waiting.filter((w) => w.id !== shownId && here.has(w.id));
     for (const w of ready) w.done();
-  }, [shownId]);
+    for (const w of gone) w.fail(new CompanySuperseded());
+  }, [shownId, companies]);
 
   if (companies === undefined || currentId === undefined) return <>{fallback}</>;
   if (!value) return <>{onboarding}</>;
@@ -121,7 +137,13 @@ export function useOpenInCompany(): (companyId: ID, to: string) => Promise<boole
         if (!ok) return false;
         discardUnsavedChanges();
       }
-      await showCompany(companyId);
+      try {
+        await showCompany(companyId);
+      } catch (error) {
+        // Another company was opened meanwhile: its page wins.
+        if (error instanceof CompanySuperseded) return false;
+        throw error;
+      }
       navigate(to);
       toast.success(t('{company} is open now.', { company: localName(target) }));
       return true;

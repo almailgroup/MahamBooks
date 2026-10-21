@@ -61,7 +61,11 @@ export function LeaveTab({ employee }: { employee: Employee }) {
   const on = today();
   const year = Number(on.slice(0, 4));
   const balance = employeeLeaveBalance(employee, records, on, policy);
-  const days = annualDaysOn(on, policy, employee.annualLeaveDays);
+  const days = annualDaysOn(on, policy, employee.annualLeaveDays, employee.annualLeaveDaysFrom);
+  // Their own days, once in force.
+  const ownDays =
+    Boolean(employee.annualLeaveDays) &&
+    (!employee.annualLeaveDaysFrom || employee.annualLeaveDaysFrom <= on);
   const yearly = { days: fmt.quantity(days), monthly: fmt.quantity(round(days / 12, 2)) };
   const sick = sickDaysByTier(records, year, dayOff);
   const list = [...records].sort(
@@ -113,7 +117,7 @@ export function LeaveTab({ employee }: { employee: Employee }) {
           <CardHeader
             title={t('Annual leave')}
             description={
-              employee.annualLeaveDays
+              ownDays
                 ? t(
                     '{days} days a year in their contract, {monthly} days for each month of service.',
                     yearly,

@@ -129,8 +129,14 @@ is asked of the server.
   Central Agency review card (`centralCardNumber`, `centralCardExpiry`) is
   tracked and renewed in Compliance like the other papers on file
   (`central_agency_card`). An import reads Bedoon, بدون and غير محدد الجنسية
-  as stateless. The bank's salary file uses the card number when there is no
-  Civil ID.
+  (never a bare غير محدد, "not specified") as stateless for new employees;
+  a residency number or expiry on such a row (or a single "Document Expiry")
+  is kept as the review card, with a note. An employee already here is never
+  made stateless by an import: the row says to choose it on their page. A
+  country chosen by an older version wins over the flag. The bank's salary
+  file uses the card number when there is no Civil ID
+  (`PayLine.centralCardNumber`); the payslip shows it as the review card,
+  never as a Civil ID.
 
 ## Drivers' licences
 
@@ -149,14 +155,18 @@ is asked of the server.
   missing (archived ones don't count) or expired (`missingDocuments`): a
   _Driving licence missing_ row on their page, whose _Add document_ then
   starts with the licence, and a _Drivers without a valid licence_ filter on
-  Employees and in the documents register. A licence without an expiry date
-  counts as valid, as everywhere in the register. The morning email follows
-  with #18.
-- **The licence** has an optional class (`licenceClass`, فئة الرخصة).
+  Employees and in the documents register (searched by name, number or job
+  title there). A licence without an expiry date doesn't count as valid for
+  a driver: it shows _No expiry date_ until its dates are entered, and a
+  dated licence always comes before an undated one, so an expired licence is
+  never hidden by one. The morning email follows with #18.
+- **The licence** has an optional class (`licenceClass`, فئة الرخصة), asked
+  while the check is on (or shown once stored). With the check on,
   Employees → Add documents can file the scans as the employees' driving
-  licences: each goes on the licence that expires last, or a new one without
-  dates, instead of the personnel file. Licences, their scans and the
-  setting are people data, private as before.
+  licences: each goes on their licence still waiting for its dates, else
+  the one that expires last, or a new one without dates, instead of the
+  personnel file. Licences, their scans and the setting are people data,
+  private as before.
 
 ## Annual leave policy
 
@@ -176,17 +186,25 @@ is asked of the server.
   the unused days carried into a new calendar year (none by default; it
   applies from the first new year on or after the policy's first date, and
   the days lost show as _Over the carry-forward cap_ on the employee's leave
-  tab), and whether annual leave counts working or calendar days. The
+  tab). The days held the day before the policy's first date were earned
+  under the law and are never lost: leave taken uses them first, and the cap
+  applies to what is held above them. Removing or moving a saved date that
+  has passed is flagged like adding one. Also whether annual leave counts
+  working or calendar days. The
   counting can't change once annual leave has been recorded, since each
   record keeps the days it was saved with; the card disables it and saving
   refuses it.
 - **Employees' own days.** Once the company has a policy, the employee's
   form asks _Annual leave days_ (`Employee.annualLeaveDays`, at least 30,
-  the company's days as the placeholder). It replaces the company's days
-  for that employee, from their hire date or opening balance.
+  the company's days as the placeholder) and the date they apply from
+  (`Employee.annualLeaveDaysFrom`; empty: from the hire date or opening
+  balance). Before that date the company's days count. A change that
+  reaches a date already past is flagged on the form, as on the policy.
 - The Leave page, the employee's leave tab and the leave dialog take their
-  texts from the policy. Both fields are payroll and employee data, private
-  as before; older versions ignore them and keep the law's figures.
+  texts from the policy. The fields are payroll and employee data, private
+  as before; older versions ignore them and keep the law's figures and
+  working days, so in a company kept in the cloud the card asks for every
+  device that records leave or approves pay runs to be updated first.
 
 ## Contracts, customers and vehicles
 
@@ -226,14 +244,20 @@ is asked of the server.
 - **Confidential** (سري), offered to owners, admins and accountants only, and
   ticked for a new cost sheet: the document, its files, renewals and
   activity are then people data, which staff and viewers never receive, and
-  its renewal fees are recorded without its name, number or note. A
+  its renewal fees are recorded without its name, number or note (fees
+  recorded before it was marked lose them too, wherever it is kept). A
   document never in the cloud is simply marked. One that staff may already
   hold is saved again under new ids with its renewals, files and activity
   (`makeDocumentConfidential`), and the old ones are deleted, so the
   deletion is what reaches their devices. Its files must be on the device
-  first (the form fetches them). It can't be undone, and in the cloud it
-  waits for the version 16 script too. The home page's alerts for staff
-  leave confidential documents out.
+  first (the form fetches them); files taken off its form go only once it is
+  saved. It can't be undone, and in the cloud it waits for the version 16
+  script too, as does a new customer cost sheet (the type isn't offered
+  until then). A company kept on this device and then uploaded, or a backup
+  merged, to a server without that script sends no confidential document,
+  renewal of one or vehicle: they wait in Settings → Cloud ("The cloud needs
+  the latest database script first") and go by themselves once it is run.
+  The home page's alerts for staff leave confidential documents out.
 - Staff and viewers still only look at the register; files stay PDFs and
   images up to 10 MB. The demo company has the extras on, with its pickup as
   a vehicle, a contract with the Ministry and a confidential cost sheet.

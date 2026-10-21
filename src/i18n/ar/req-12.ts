@@ -7,6 +7,10 @@ export default {
   'Central Agency review card': 'بطاقة المراجعة (الجهاز المركزي)',
   'Review card number': 'رقم بطاقة المراجعة',
   'Review card expiry': 'تاريخ انتهاء بطاقة المراجعة',
+  'Stateless (Bedoon) in the file: not changed for an employee already here. Choose it on their page.':
+    'غير محدد الجنسية (بدون) في الملف: لا يتغير لموظف موجود مسبقًا. اختره من صفحته.',
+  'Stateless staff hold a review card, not a residency: {values} kept as the review card.':
+    'يحمل غير محددي الجنسية بطاقة مراجعة لا إقامة: حُفظ {values} كبطاقة المراجعة.',
   'Not insured with PIFSS. No residency needed: they hold a Central Agency review card. A work permit is optional.':
     'غير مشمول بالتأمينات الاجتماعية. لا يحتاج إلى إقامة: يحمل بطاقة المراجعة من الجهاز المركزي. إذن العمل اختياري.',
   'Stateless staff hold a review card instead of a residency. The work permit is optional.':
@@ -112,4 +116,5 @@ export default {
   '{count} employees moved to {department}': 'تم نقل {count} موظفين إلى {department}',
   '{count} employee taken out of their department': 'تم إخراج {count} موظف من قسمه',
   '{count} employees taken out of their department': 'تم إخراج {count} موظفين من أقسامهم',
+  'Take them out of their department': 'إخراجهم من أقسامهم',
 } satisfies Dictionary;

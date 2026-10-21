@@ -113,14 +113,24 @@ interface AccrualRate {
 }
 
 /**
- * The days a year an employee earns from each date: their own entitlement
- * throughout, or the law's 30 until the policy's first date and then the
- * policy's.
+ * The days a year an employee earns from each date: the law's 30 until the
+ * policy's first date and then the policy's; with an entitlement of their
+ * own, its days from its date on (the company's before it), or throughout
+ * when it has no date.
  */
-function accrualRates(policy: LeavePolicy, entitlement?: number | null): AccrualRate[] {
-  if (entitlement && entitlement > 0) return [{ from: null, days: entitlement }];
+function accrualRates(
+  policy: LeavePolicy,
+  entitlement?: number | null,
+  entitlementFrom?: ISODate | null,
+): AccrualRate[] {
   const dated = [...policy.annualDays].sort((a, b) => a.from.localeCompare(b.from));
-  return [{ from: null, days: ANNUAL_LEAVE_DAYS }, ...dated];
+  const company: AccrualRate[] = [{ from: null, days: ANNUAL_LEAVE_DAYS }, ...dated];
+  if (!entitlement || entitlement <= 0) return company;
+  if (!entitlementFrom) return [{ from: null, days: entitlement }];
+  return [
+    ...company.filter((r) => r.from === null || r.from < entitlementFrom),
+    { from: entitlementFrom, days: entitlement },
+  ];
 }
 
 function rateOn(rates: AccrualRate[], date: ISODate): number {
@@ -129,13 +139,17 @@ function rateOn(rates: AccrualRate[], date: ISODate): number {
   return days;
 }
 
-/** Days of annual leave a year on a date: the employee's own entitlement, or the policy's. */
+/**
+ * Days of annual leave a year on a date: the employee's own entitlement
+ * (from its date on, when it has one), or the policy's.
+ */
 export function annualDaysOn(
   date: ISODate,
   policy?: LeavePolicy | null,
   entitlement?: number | null,
+  entitlementFrom?: ISODate | null,
 ): number {
-  return rateOn(accrualRates(policy ?? DEFAULT_LEAVE_POLICY, entitlement), date);
+  return rateOn(accrualRates(policy ?? DEFAULT_LEAVE_POLICY, entitlement, entitlementFrom), date);
 }
 
 /** Sick leave in a calendar year: days at each share of pay, in order (art. 69). */
@@ -423,6 +437,11 @@ const earliestFirst = (a: Opening, b: Opening) => a.date.localeCompare(b.date) |
  * what the balance on 31 December was above the cap, from the first new year
  * on or after the policy's first date (earlier years are the law's, which
  * carries every day forward). Leave counts in the year it starts.
+ *
+ * Days held the day before the policy's first date were earned under the
+ * law and are never lost: leave taken from then on uses them first, and the
+ * cap applies to what is held above those left. (A balance that starts on or
+ * after the first date, an opening balance entered then, is the policy's.)
  */
 function forfeitedDays(
   from: ISODate,
@@ -439,18 +458,24 @@ function forfeitedDays(
     records
       .filter((r) => r.kind === kind && r.start <= until)
       .reduce((total, r) => total + r.days, 0);
+  const heldOn = (date: ISODate, lostBefore: number) =>
+    twoPlaces(
+      opening +
+        earnedDays(from, date, rates) +
+        sum('adjustment', date) -
+        sum('leave', date) -
+        lostBefore,
+    );
+  // The law's days, held the day before the policy starts.
+  const dayBefore = addDaysISO(start, -1);
+  const lawDays = from < start ? Math.max(0, heldOn(dayBefore, 0)) : 0;
   let lost = 0;
   for (let year = Number(from.slice(0, 4)); `${year}-12-31` < on; year++) {
     const yearEnd = `${year}-12-31`;
     if (`${year + 1}-01-01` < start) continue;
-    const held = twoPlaces(
-      opening +
-        earnedDays(from, yearEnd, rates) +
-        sum('adjustment', yearEnd) -
-        sum('leave', yearEnd) -
-        lost,
-    );
-    if (held > cap) lost += held - cap;
+    const held = heldOn(yearEnd, lost);
+    const kept = Math.max(0, lawDays - (sum('leave', yearEnd) - sum('leave', dayBefore)));
+    if (held - kept > cap) lost += held - kept - cap;
   }
   return twoPlaces(lost);
 }
@@ -471,7 +496,8 @@ function forfeitedDays(
  * and less the adjustments made then, never below 0.
  *
  * `policy` is the company's leave policy (the law's when missing) and
- * `entitlement` the employee's own days a year, in place of the policy's.
+ * `entitlement` the employee's own days a year, in place of the policy's
+ * from `entitlementFrom` on (throughout when it has no date).
  */
 export function annualLeaveBalance(
   records: LeaveRecord[],
@@ -480,9 +506,10 @@ export function annualLeaveBalance(
   brought: LeaveOpening | null = null,
   policy: LeavePolicy | null = null,
   entitlement: number | null = null,
+  entitlementFrom: ISODate | null = null,
 ): LeaveBalance {
   const rules = policy ?? DEFAULT_LEAVE_POLICY;
-  const rates = accrualRates(rules, entitlement);
+  const rates = accrualRates(rules, entitlement, entitlementFrom);
   const annual = records.filter((r) => r.type === 'annual' && r.status === 'approved');
   const eligibleFrom = hireDate
     ? toISODate(addMonths(parseISODate(hireDate), rules.firstYearMonths))
@@ -546,7 +573,10 @@ export function annualLeaveBalance(
  * leave policy (the law's when missing).
  */
 export function employeeLeaveBalance(
-  employee: Pick<Employee, 'id' | 'hireDate' | 'leaveOpening' | 'annualLeaveDays'>,
+  employee: Pick<
+    Employee,
+    'id' | 'hireDate' | 'leaveOpening' | 'annualLeaveDays' | 'annualLeaveDaysFrom'
+  >,
   records: LeaveRecord[],
   on: ISODate,
   policy?: LeavePolicy | null,
@@ -558,6 +588,7 @@ export function employeeLeaveBalance(
     employee.leaveOpening ?? null,
     policy ?? null,
     employee.annualLeaveDays ?? null,
+    employee.annualLeaveDaysFrom ?? null,
   );
 }
 

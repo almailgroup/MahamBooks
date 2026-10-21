@@ -1355,6 +1355,11 @@ export interface Employee {
    * company's (at least 30). Missing or null: the company's leave policy.
    */
   annualLeaveDays?: number | null;
+  /**
+   * The date annualLeaveDays apply from: before it the company's days count.
+   * Missing or null: from the hire date (or opening balance).
+   */
+  annualLeaveDaysFrom?: ISODate | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -2034,8 +2039,13 @@ export interface PayLine {
   department?: string;
   category: EmployeeCategory;
   nationality: string;
-  /** For the bank's salary file: the Civil ID, or a stateless employee's review card number without one. */
+  /** The Civil ID (printed on the payslip, used by the bank's salary file). */
   civilId: string;
+  /**
+   * A stateless employee's review card number: the bank's salary file uses it
+   * when there is no Civil ID. Older runs don't have it.
+   */
+  centralCardNumber?: string;
   iban: string;
   /** Account or salary card number, for staff paid without an IBAN (older runs don't have it). */
   accountNumber?: string;

@@ -524,12 +524,11 @@ describe('planning an employee file', () => {
         isStatelessText,
       ),
     ).toEqual([true, true, true, true, true, true]);
-    expect(['Non-Kuwaiti', 'غير كويتي', 'Indian', ''].map(isStatelessText)).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ]);
+    expect(
+      ['Non-Kuwaiti', 'غير كويتي', 'Indian', '', 'غير محدد', 'غير محددة'].map(isStatelessText),
+    ).toEqual([false, false, false, false, false, false]);
+    // "Not specified" is no nationality: noted, as before.
+    expect(nationalityCode('غير محدد')).toBeNull();
 
     const c = await company();
     const rows = [
@@ -587,6 +586,51 @@ describe('planning an employee file', () => {
     const kuwaiti = await saved('1');
     expect(kuwaiti).toMatchObject({ category: 'kuwaiti', nationality: 'KW' });
     expect(kuwaiti.stateless).toBeUndefined();
+  });
+
+  it('keeps a stateless row’s residency as the review card, and never makes staff here stateless', async () => {
+    const c = await company();
+    // A file's single "Document Expiry" is read as the residency's.
+    const rows = [
+      ['Employee Number', 'Name', 'Nationality', 'Residency Number', 'Document Expiry'],
+      ['1', 'Saad Test', 'Bedoon', '18/1', '01/12/2026'],
+    ];
+    const result = await plan(c, rows);
+    expect(on(result, 2)).toMatchObject({
+      stateless: true,
+      centralCardNumber: '18/1',
+      centralCardExpiry: '2026-12-01',
+      residencyExpiry: null,
+    });
+    expect(notesOn(result, 2)).toContain(
+      'Stateless staff hold a review card, not a residency: 2026-12-01, 18/1 kept as the review card.',
+    );
+
+    // Already here as an expatriate with a residency: the import leaves them as they are.
+    await saveEmployee(
+      createEmployee(c.id, {
+        number: '2',
+        name: 'Nasser Test',
+        category: 'expat',
+        nationality: '',
+        residencyNumber: '18/2',
+        residencyExpiry: '2026-12-01',
+      }),
+    );
+    const again = await plan(
+      c,
+      [
+        ['Employee Number', 'Name', 'Nationality', 'Residency Expiry'],
+        ['2', 'Nasser Test', 'Bedoon', '01/12/2026'],
+      ],
+      { updateExisting: true },
+    );
+    const kept = on(again, 2);
+    expect(kept).toMatchObject({ category: 'expat', residencyExpiry: '2026-12-01' });
+    expect(kept.stateless).toBeFalsy();
+    expect(notesOn(again, 2)).toContain(
+      'Stateless (Bedoon) in the file: not changed for an employee already here. Choose it on their page.',
+    );
   });
 
   it('notes duplicate Civil IDs in the file and rows without a name', async () => {

@@ -157,7 +157,7 @@ function EmployeeSearch() {
       id="employee-search"
       title={t('Employee search across companies')}
       description={t(
-        'Find the employees of the companies switched on here from any of them: on People → All companies and in search. Salaries, IBANs and Civil IDs aren’t shown there.',
+        'Find the employees of the companies switched on here from any of them: on People → All companies and in search. Each switch is the company’s, for everyone in it who sees employees. Salaries, IBANs and Civil IDs aren’t shown there.',
       )}
       actions={
         people.included.length > 1 ? (

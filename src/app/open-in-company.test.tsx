@@ -12,7 +12,7 @@ import { db } from '@/db/db';
 import { getCurrentCompanyId, setCurrentCompanyId, setupCompany } from '@/db/records';
 import { ConfirmProvider } from '@/components/ui/overlay';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
-import { CompanyProvider, useCompany, useOpenInCompany } from './company';
+import { CompanyProvider, useCompany, useCompanyContext, useOpenInCompany } from './company';
 
 beforeEach(async () => {
   await db.delete();
@@ -61,7 +61,44 @@ async function twoCompanies() {
   return { first, second };
 }
 
+/** The provider's own functions, for calling them in a row. */
+function withContext(seen: { ctx?: ReturnType<typeof useCompanyContext> }) {
+  function Probe() {
+    seen.ctx = useCompanyContext();
+    return <h1>Open: {seen.ctx.company.name}</h1>;
+  }
+  render(
+    <ConfirmProvider>
+      <CompanyProvider fallback={null} onboarding={null}>
+        <Probe />
+      </CompanyProvider>
+    </ConfirmProvider>,
+  );
+}
+
 describe('opening a page of another company', () => {
+  it('lets an earlier open give way to a later one, never finishing it later', async () => {
+    const { first, second } = await twoCompanies();
+    const third = await setupCompany({ name: 'Made-up Third Co' });
+    await setCurrentCompanyId(first.id);
+    const seen: { ctx?: ReturnType<typeof useCompanyContext> } = {};
+    withContext(seen);
+    await screen.findByRole('heading', { name: 'Open: Made-up First Co' });
+    const outcome: string[] = [];
+    const b = seen.ctx!.showCompany(second.id).then(
+      () => outcome.push('second shown'),
+      (e: Error) => outcome.push(e.name),
+    );
+    const c = seen.ctx!.showCompany(third.id).then(() => outcome.push('third shown'));
+    await Promise.all([b, c]);
+    expect(outcome).toEqual(['CompanySuperseded', 'third shown']);
+    await screen.findByRole('heading', { name: 'Open: Made-up Third Co' });
+    // Switching to the second later doesn't finish the open given up.
+    await seen.ctx!.switchCompany(second.id);
+    await screen.findByRole('heading', { name: 'Open: Made-up Second Co' });
+    expect(outcome).toEqual(['CompanySuperseded', 'third shown']);
+  });
+
   it('switches the company first, then opens the page', async () => {
     const { second } = await twoCompanies();
     const seen: string[] = [];

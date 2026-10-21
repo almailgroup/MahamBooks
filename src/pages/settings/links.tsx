@@ -5,10 +5,14 @@ import { newId } from '@/lib/ids';
 import {
   LINK_PRESETS,
   MAX_LINKS,
+  chosenElsewhereOnly,
+  cleanLink,
   hasSecretParameter,
   linkPreset,
+  linkShowsIn,
   normalizeLinkUrl,
   presetLink,
+  toggleLinkApp,
 } from '@/lib/links';
 import { APPS, appTitle } from '@/suite/apps';
 import { localName } from '@/i18n/names';
@@ -28,38 +32,6 @@ function linkProblem(link: CompanyLink): string {
     return t('Choose at least one app for the link.');
   }
   return '';
-}
-
-/** Whether the sidebar of an app shows the link: every app's unless some were chosen. */
-const showsIn = (link: CompanyLink, app: string) =>
-  !Array.isArray(link.apps) || link.apps.includes(app);
-
-/** The apps chosen once one is ticked or unticked; missing again when every app is. */
-function toggleApp(link: CompanyLink, app: string, on: boolean): string[] | undefined {
-  const chosen = Array.isArray(link.apps) ? link.apps : APP_IDS;
-  const next = on ? [...chosen, app] : chosen.filter((id) => id !== app);
-  if (APP_IDS.every((id) => next.includes(id))) return undefined;
-  // This build's apps in their order, then those of a newer build, kept.
-  return [
-    ...APP_IDS.filter((id) => next.includes(id)),
-    ...next.filter((id) => !APP_IDS.includes(id)),
-  ];
-}
-
-/**
- * The link as kept: trimmed names and the full address. A choice set back
- * to today's (the list of links, every app) is left out; what a newer
- * build wrote and this one doesn't show stays.
- */
-function cleanLink({ section, apps, ...link }: CompanyLink): CompanyLink {
-  return {
-    ...link,
-    label: link.label.trim(),
-    labelAr: link.labelAr?.trim() ?? '',
-    url: normalizeLinkUrl(link.url) ?? link.url,
-    ...(section !== undefined ? { section } : {}),
-    ...(apps !== undefined ? { apps } : {}),
-  };
 }
 
 /**
@@ -203,14 +175,21 @@ export default function LinkSettings() {
                         {APPS.map((app) => (
                           <Checkbox
                             key={app.id}
-                            checked={showsIn(link, app.id)}
+                            checked={linkShowsIn(link, app.id, APP_IDS)}
                             onChange={(e) =>
-                              change(link.id, { apps: toggleApp(link, app.id, e.target.checked) })
+                              change(link.id, {
+                                apps: toggleLinkApp(link, app.id, e.target.checked, APP_IDS),
+                              })
                             }
                             label={appTitle(app, language)}
                           />
                         ))}
                       </div>
+                      {chosenElsewhereOnly(link, APP_IDS) ? (
+                        <p className="text-xs text-slate-500">
+                          {t('Chosen in a newer version of the app: it shows in every app here.')}
+                        </p>
+                      ) : null}
                     </fieldset>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

@@ -207,12 +207,15 @@ test('the Leave page and employees’ balances follow the company’s leave poli
 
   // Their contract gives them 60 days a year; never fewer than 30.
   await page.goto(`${employeePage}/edit`);
-  const own = page.getByLabel('Annual leave days');
+  const own = page.getByLabel(/^Annual leave days(?! from)/);
   await expect(own).toHaveAttribute('placeholder', '45');
   await own.fill('20');
   await page.getByRole('button', { name: 'Save employee' }).first().click();
   await expect(page.getByText('At least 30 days a year (art. 70).')).toBeVisible();
   await own.fill('60');
+  // From the hire date, as no date is given: their balance changes, which the form says.
+  await expect(page.getByLabel('Annual leave days from')).toHaveValue('');
+  await expect(page.getByText(/^This date has passed: balances from it change/)).toBeVisible();
   await page.getByRole('button', { name: 'Save employee' }).first().click();
   await expect(page).toHaveURL(/#\/employees\/[0-9a-f-]{36}$/);
   await page.goto(`${employeePage}?tab=leave`);

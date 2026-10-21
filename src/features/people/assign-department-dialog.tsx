@@ -5,7 +5,7 @@ import { assignDepartment } from '@/db/people';
 import type { Department, ID } from '@/db/types';
 import { hasDepartmentList } from '@/lib/hr/departments';
 import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/form';
+import { Checkbox, Field, Input } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { t, tp } from '@/i18n';
 import { DepartmentSelect } from './department-select';
@@ -32,18 +32,21 @@ export function AssignDepartmentDialog({
   const company = useCompany();
   const suggestions = useId();
   const [department, setDepartment] = useState('');
-  // Nothing is saved before a choice: "No department" takes everyone out of theirs.
+  // Nothing is saved before a choice: a department, or everyone out of theirs
+  // (ticked on its own, since "No department" is where the list starts).
   const [chosen, setChosen] = useState(false);
+  const [out, setOut] = useState(false);
   const [saving, setSaving] = useState(false);
   const choose = (name: string) => {
     setDepartment(name);
     setChosen(true);
+    setOut(false);
   };
 
   const save = async () => {
     setSaving(true);
     try {
-      const changed = await assignDepartment(company.id, employeeIds, department);
+      const changed = await assignDepartment(company.id, employeeIds, out ? '' : department);
       toast.success(
         changed
           ? tp(changed, '{count} employee moved', '{count} employees moved')
@@ -91,12 +94,17 @@ export function AssignDepartmentDialog({
               )
             }
           </Field>
+          <Checkbox
+            checked={out}
+            onChange={(e) => setOut(e.target.checked)}
+            label={t('Take them out of their department')}
+          />
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t('Cancel')}
           </Button>
-          <Button onClick={() => void save()} loading={saving} disabled={!chosen}>
+          <Button onClick={() => void save()} loading={saving} disabled={!chosen && !out}>
             {t('Save')}
           </Button>
         </DialogFooter>

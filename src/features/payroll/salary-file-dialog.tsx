@@ -10,6 +10,7 @@ import {
   SALARY_FILE_COLUMN_ORDER,
   SALARY_FILE_COLUMNS,
   SALARY_FILE_PRESETS,
+  salaryFileCivilId,
 } from '@/lib/hr/salary-file';
 import { downloadCsv } from '@/lib/csv';
 import { payRunTotals } from '@/lib/hr/payroll';
@@ -49,7 +50,7 @@ export function SalaryFileDialog({
         run.lines.map((l) => ({
           employeeId: l.employeeId,
           employeeNumber: l.number,
-          civilId: l.civilId,
+          civilId: salaryFileCivilId(l),
           nameEn: l.name,
           nameAr: l.nameAr,
           iban: l.iban,

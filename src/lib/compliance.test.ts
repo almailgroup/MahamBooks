@@ -3,6 +3,7 @@ import {
   checksDrivingLicences,
   complianceCalendar,
   currentDrivingLicence,
+  drivingLicenceToFileOn,
   dayOfMonthAfter,
   documentTypeInfo,
   employeeDocuments,
@@ -325,28 +326,69 @@ describe('driving licences of drivers', () => {
     ]);
   });
 
-  it('counts a licence valid on its expiry date and without one, and follows the override', () => {
+  it('counts a licence valid on its expiry date, and follows the override', () => {
     const today = driver();
-    const undated = driver();
     const guard = createEmployee('co', { jobTitle: 'Guard', drivingLicenceRequired: true });
     const notDriving = driver({ drivingLicenceRequired: false });
     expect(
       missing({
-        employees: [today, undated, guard, notDriving],
-        documents: [licence(today.id, { expiryDate: on }), licence(undated.id)],
+        employees: [today, guard, notDriving],
+        documents: [licence(today.id, { expiryDate: on })],
         on,
       }),
     ).toEqual([`${guard.id} missing -`]);
   });
 
-  it('files on the licence that expires last', () => {
+  it('keeps a driver flagged while their licence has no expiry date', () => {
+    // A scan filed as a licence makes one without dates: it doesn't clear the flag.
+    const undated = driver();
+    const placeholder = licence(undated.id);
+    expect(missing({ employees: [undated], documents: [placeholder], on })).toEqual([
+      `${undated.id} undated ${placeholder.id}`,
+    ]);
+    // Once its expiry date is entered, the driver holds a valid licence.
+    expect(
+      missing({
+        employees: [undated],
+        documents: [{ ...placeholder, expiryDate: '2028-01-01' }],
+        on,
+      }),
+    ).toEqual([]);
+  });
+
+  it('never lets an undated licence hide one that has expired, or one still valid', () => {
+    const someone = driver();
+    const placeholder = licence(someone.id);
+    const lapsed = licence(someone.id, { expiryDate: '2026-10-01' });
+    expect(missing({ employees: [someone], documents: [placeholder, lapsed], on })).toEqual([
+      `${someone.id} expired ${lapsed.id}`,
+    ]);
+    const valid = licence(someone.id, { expiryDate: '2028-01-01' });
+    expect(missing({ employees: [someone], documents: [placeholder, lapsed, valid], on })).toEqual(
+      [],
+    );
+  });
+
+  it('picks the licence that expires last, a dated one before an undated one', () => {
     const someone = driver();
     const old = licence(someone.id, { expiryDate: '2025-01-01' });
     const renewed = licence(someone.id, { expiryDate: '2028-01-01' });
     const archived = licence(someone.id, { expiryDate: '2030-01-01', archived: true });
+    const placeholder = licence(someone.id);
     expect(currentDrivingLicence([old, renewed, archived], someone.id)?.id).toBe(renewed.id);
-    expect(currentDrivingLicence([old, licence(someone.id)], someone.id)?.expiryDate).toBeNull();
+    expect(currentDrivingLicence([placeholder, old], someone.id)?.id).toBe(old.id);
+    expect(currentDrivingLicence([placeholder], someone.id)?.id).toBe(placeholder.id);
     expect(currentDrivingLicence([archived], someone.id)).toBeNull();
+  });
+
+  it('files a scan on the licence waiting for its dates, else the one that expires last', () => {
+    const someone = driver();
+    const old = licence(someone.id, { expiryDate: '2025-01-01' });
+    const renewed = licence(someone.id, { expiryDate: '2028-01-01' });
+    const archived = licence(someone.id, { expiryDate: '2030-01-01', archived: true });
+    expect(drivingLicenceToFileOn([old, renewed, archived], someone.id)?.id).toBe(renewed.id);
+    expect(drivingLicenceToFileOn([old, licence(someone.id)], someone.id)?.expiryDate).toBeNull();
+    expect(drivingLicenceToFileOn([archived], someone.id)).toBeNull();
   });
 });
 

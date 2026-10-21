@@ -428,43 +428,71 @@ export function requiresDrivingLicence(
   return isDriverTitle(employee);
 }
 
-/** Latest expiry first; a licence without an expiry date counts as the latest. */
-const byExpiryDesc = (a: ComplianceDocument, b: ComplianceDocument) =>
-  (b.expiryDate ?? '9999').localeCompare(a.expiryDate ?? '9999');
-
-/**
- * The employee's driving licence in the register, the one that expires
- * last; archived ones don't count. Null when they have none.
- */
-export function currentDrivingLicence(
-  documents: readonly ComplianceDocument[],
-  employeeId: ID,
-): ComplianceDocument | null {
-  const held = documents.filter(
+/** The employee's driving licences in the register; archived ones don't count. */
+const heldLicences = (documents: readonly ComplianceDocument[], employeeId: ID) =>
+  documents.filter(
     (d) =>
       d.type === 'driving_licence' &&
       !d.archived &&
       d.ownerType === 'employee' &&
       d.employeeId === employeeId,
   );
-  return held.sort(byExpiryDesc)[0] ?? null;
+
+/**
+ * The employee's driving licence in the register, the one that expires
+ * last; archived ones don't count. A licence without an expiry date (such
+ * as one filed from a scan, waiting for its dates) comes after every dated
+ * one, so it never hides a licence that has expired. Null when they have none.
+ */
+export function currentDrivingLicence(
+  documents: readonly ComplianceDocument[],
+  employeeId: ID,
+): ComplianceDocument | null {
+  return (
+    heldLicences(documents, employeeId).sort(
+      (a, b) =>
+        Number(!a.expiryDate) - Number(!b.expiryDate) ||
+        (b.expiryDate ?? '').localeCompare(a.expiryDate ?? ''),
+    )[0] ?? null
+  );
+}
+
+/**
+ * The licence a scan of the employee's driving licence is filed on: one
+ * still waiting for its expiry date first (the newest record, as a scan
+ * filed earlier made it), then the one that expires last. Null when they
+ * have none.
+ */
+export function drivingLicenceToFileOn(
+  documents: readonly ComplianceDocument[],
+  employeeId: ID,
+): ComplianceDocument | null {
+  return (
+    heldLicences(documents, employeeId).sort((a, b) =>
+      (b.expiryDate ?? '9999').localeCompare(a.expiryDate ?? '9999'),
+    )[0] ?? null
+  );
 }
 
 /** A document a current employee needs and doesn't hold valid. */
 export interface MissingDocument {
   employeeId: ID;
   type: ComplianceDocumentType;
-  /** None on file (archived ones don't count), or only expired ones. */
-  reason: 'missing' | 'expired';
-  /** The one that expired last, to renew it; null when there is none. */
+  /**
+   * None on file (archived ones don't count), only expired ones, or only
+   * ones without an expiry date (filed from a scan, its dates not entered).
+   */
+  reason: 'missing' | 'expired' | 'undated';
+  /** The one that expired last (or the undated one), to renew or complete it; null when there is none. */
   document: ComplianceDocument | null;
 }
 
 /**
  * What current employees need and don't hold valid, by employee: for now a
  * driving licence for those who drive for work. A licence is valid until
- * the day after its expiry date, and without an expiry date (as in the
- * register). Employees who have left need nothing.
+ * the day after its expiry date. One without an expiry date doesn't count
+ * as valid: a scan filed as a licence makes one, and its dates have to be
+ * entered. Employees who have left need nothing.
  */
 export function missingDocuments(input: {
   employees: Employee[];
@@ -481,12 +509,12 @@ export function missingDocuments(input: {
   for (const employee of input.employees) {
     if (!isCurrent(employee) || !requiresDrivingLicence(employee, input.vehicles)) continue;
     const licence = currentDrivingLicence(licences.get(employee.id) ?? [], employee.id);
-    // The one expiring last is valid (or has no expiry date): nothing is missing.
-    if (licence && (!licence.expiryDate || licence.expiryDate >= input.on)) continue;
+    // The one expiring last is valid: nothing is missing.
+    if (licence?.expiryDate && licence.expiryDate >= input.on) continue;
     out.push({
       employeeId: employee.id,
       type: 'driving_licence',
-      reason: licence ? 'expired' : 'missing',
+      reason: !licence ? 'missing' : licence.expiryDate ? 'expired' : 'undated',
       document: licence,
     });
   }

@@ -219,7 +219,11 @@ describe('backup', () => {
       },
     });
     const guard = await saveEmployee(
-      createEmployee(a.id, { name: 'Made-up Supervisor', annualLeaveDays: 45 }),
+      createEmployee(a.id, {
+        name: 'Made-up Supervisor',
+        annualLeaveDays: 45,
+        annualLeaveDaysFrom: '2026-12-01',
+      }),
     );
     const text = JSON.stringify(await exportBackup(a.id));
     await db.delete();
@@ -231,7 +235,10 @@ describe('backup', () => {
       carryForwardMax: 40,
       counting: 'working',
     });
-    expect((await db.employees.get(guard.id))?.annualLeaveDays).toBe(45);
+    expect(await db.employees.get(guard.id)).toMatchObject({
+      annualLeaveDays: 45,
+      annualLeaveDaysFrom: '2026-12-01',
+    });
   });
 
   it('merges without deleting existing data', async () => {

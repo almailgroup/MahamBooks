@@ -93,6 +93,9 @@ describe('the companies searched across', () => {
     expect(peopleCompanies(companies, links, null, everyOneOn).included.map((c) => c.id)).toEqual([
       'device',
     ]);
+    // Those left out until someone signs in: the owner's, admin's, accountant's and switched off.
+    expect(peopleCompanies(companies, links, null, everyOneOn).signedOut).toBe(5);
+    expect(peopleCompanies(companies, links, ME, everyOneOn).signedOut).toBe(0);
   });
 
   it('judge each company by its own link, not by an unknown role', () => {
@@ -171,6 +174,7 @@ describe('finding employees across companies', () => {
       name: 'Test Person Six',
       category: 'expat',
       stateless: true,
+      nationality: '',
     });
     const all = [...people, stateless];
     expect(ids(findEmployees(all, companies, { category: 'stateless' }))).toEqual(['e5']);

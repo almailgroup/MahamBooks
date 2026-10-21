@@ -1009,8 +1009,11 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     department: employee.department.trim(),
     category: employee.category,
     nationality: employee.nationality,
+    civilId: employee.civilId,
     // The bank's salary file names stateless staff without a Civil ID by their review card.
-    civilId: employee.civilId || (isStateless(employee) ? (employee.centralCardNumber ?? '') : ''),
+    ...(isStateless(employee) && employee.centralCardNumber
+      ? { centralCardNumber: employee.centralCardNumber }
+      : {}),
     iban: employee.iban,
     accountNumber: employee.accountNumber ?? '',
     hireDate: employee.hireDate,

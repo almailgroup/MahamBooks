@@ -28,7 +28,7 @@ import {
 } from './payroll';
 import type { Company, Employee, LeavePolicy, ManualJournal } from './types';
 import { DEFAULT_LEAVE_POLICY } from '@/lib/hr/leave';
-import { buildSalaryFile } from '@/lib/hr/salary-file';
+import { buildSalaryFile, salaryFileCivilId } from '@/lib/hr/salary-file';
 import { eosProvisionFor } from '@/lib/hr/payroll';
 import { toMinor } from '@/lib/money';
 
@@ -183,14 +183,19 @@ describe('pay runs', () => {
     const line = (name: string) => run.lines.find((l) => l.name === name)!;
     const [huda, saad] = [line('Huda Testing'), line('Saad Testing')];
     expect(huda).toMatchObject({ department: 'Head Office', civilId: '290010112345' });
-    // Not insured with PIFSS, as an expatriate; the card stands in for the Civil ID.
+    // Not insured with PIFSS, as an expatriate; the card stands in for the Civil ID
+    // in the bank's salary file only, never as one on the payslip.
     expect(saad).toMatchObject({
       department: 'Security',
-      civilId: 'RC-2041',
+      civilId: '',
+      centralCardNumber: 'RC-2041',
       pifssEmployee: 0,
       pifssEmployer: 0,
       net: 300,
     });
+    expect(salaryFileCivilId(saad)).toBe('RC-2041');
+    expect(salaryFileCivilId(huda)).toBe('290010112345');
+    expect(huda).not.toHaveProperty('centralCardNumber');
   });
 
   it('are paid from the bank, and reopened by reversing their entries', async () => {

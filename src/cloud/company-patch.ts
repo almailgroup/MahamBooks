@@ -22,6 +22,13 @@ const keysOf = (...objects: Json[]) => [...new Set(objects.flatMap((o) => Object
 
 const COUNTER = new Set(['next', 'period']);
 
+/**
+ * Settings that are one value though they are objects: the company type is
+ * a reference ({id, name, nameAr}) whose names belong to its id, so it
+ * travels whole and two devices' types never mix.
+ */
+const WHOLE = new Set(['companyType']);
+
 /** Fields whose changes on two devices are never a conflict: counters merge, the time is the time. */
 function quiet(path: string[]): boolean {
   return path[0] === 'numbering' || path[0] === 'updatedAt';
@@ -34,12 +41,16 @@ function op(path: string[], value: unknown, base: unknown): CompanyOp {
   return change;
 }
 
-/** What changed from `base` to `local`: the leaves of nested objects; arrays as a whole. */
+/**
+ * What changed from `base` to `local`: the leaves of nested objects; arrays
+ * and the settings that are one value (WHOLE) as a whole.
+ */
 export function companyOps(base: Json, local: Json): CompanyOp[] {
   const ops: CompanyOp[] = [];
   const walk = (before: unknown, after: unknown, path: string[]) => {
     if (sameData(before, after)) return;
-    if (isObject(before) && isObject(after)) {
+    const whole = path.length === 1 && WHOLE.has(path[0]);
+    if (isObject(before) && isObject(after) && !whole) {
       const rule = path.length === 2 && path[0] === 'numbering';
       if (rule && (!sameData(before.next, after.next) || !sameData(before.period, after.period))) {
         // A counter means nothing without its period: they go together.

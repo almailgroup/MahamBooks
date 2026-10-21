@@ -15,6 +15,10 @@ export default {
   'This date has passed: balances from it change, and the next approved pay run’s leave provision takes in the difference.':
     'هذا التاريخ قد مضى: تتغير الأرصدة اعتبارًا منه، ويشمل مخصص الإجازات في مسير الرواتب المعتمد التالي الفرق.',
   'Change the days from a date': 'تغيير الأيام اعتبارًا من تاريخ',
+  'A date that has passed was removed or moved: balances from it change, and the next approved pay run’s leave provision takes in the difference.':
+    'حُذف تاريخ قد مضى أو نُقل: تتغير الأرصدة اعتبارًا منه، ويشمل مخصص الإجازات في مسير الرواتب المعتمد التالي الفرق.',
+  'Update the app on every device that records leave or approves pay runs first: older versions count annual leave as the law does.':
+    'حدِّث التطبيق أولًا على كل جهاز يُسجِّل الإجازات أو يعتمد مسيرات الرواتب: فالإصدارات الأقدم تحتسب الإجازة السنوية كما في القانون.',
   'Months before the first leave': 'الأشهر قبل أول إجازة',
   'Nine under the Labour Law (art. 70); fewer lets new staff take leave sooner.':
     'تسعة أشهر وفق قانون العمل (المادة 70)؛ والأقل يتيح للموظفين الجدد أخذ الإجازة مبكرًا.',
@@ -56,6 +60,9 @@ export default {
 
   // The employee's form
   'Annual leave days': 'أيام الإجازة السنوية',
-  'Days a year in their contract, in place of the company’s {days}. Their balance is counted at this rate from their hire date or opening balance.':
-    'الأيام في السنة بحسب عقده، بدلًا من {days} يومًا للشركة. يُحتسب رصيده بهذا المعدل من تاريخ تعيينه أو من رصيده الافتتاحي.',
+  'Days a year in their contract, in place of the company’s {days}.':
+    'الأيام في السنة بحسب عقده، بدلًا من {days} يومًا للشركة.',
+  'Annual leave days from': 'أيام الإجازة السنوية اعتبارًا من',
+  'Their balance is counted at these days from this date, at the company’s before it. Leave it empty to count them from the hire date or opening balance.':
+    'يُحتسب رصيده بهذه الأيام اعتبارًا من هذا التاريخ، وبأيام الشركة قبله. اتركه فارغًا لاحتسابها من تاريخ تعيينه أو من رصيده الافتتاحي.',
 } satisfies Dictionary;

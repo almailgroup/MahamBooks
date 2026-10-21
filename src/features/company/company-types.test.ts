@@ -98,6 +98,23 @@ describe('company types', () => {
     expect(resolveCompanyType(newCompanyType(''), known)).toBeUndefined();
   });
 
+  it('keep a type that shares only one name, and correct the Arabic name of a known one', () => {
+    const known = companyTypeOptions([{ companyType: guarding }]);
+    // Another English name with the same Arabic: another type, as typed.
+    const events = newCompanyType('Event security', 'الحراسة');
+    expect(resolveCompanyType(events, known)).toEqual(events);
+    // The same English name with another Arabic: the known type, its Arabic corrected.
+    expect(resolveCompanyType(newCompanyType('Guarding', 'الحراسة الأمنية'), known)).toEqual({
+      id: 'type-guarding',
+      name: 'Guarding',
+      nameAr: 'الحراسة الأمنية',
+    });
+    // A built-in type keeps its own names.
+    expect(resolveCompanyType(newCompanyType('General trading', 'تجارة'), known)).toEqual(
+      COMPANY_TYPES.find((t) => t.id === 'trading'),
+    );
+  });
+
   it('are tidied with the legal form when a form saves the company', () => {
     const company = createCompany({
       name: 'Made-up Services',

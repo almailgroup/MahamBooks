@@ -3,13 +3,17 @@ import { APPS as SUITE_APPS } from '@/suite/apps';
 import {
   LINK_PRESETS,
   PRESET_APPS,
+  chosenElsewhereOnly,
+  cleanLink,
   hasSecretParameter,
   linkApps,
+  linkShowsIn,
   linkPreset,
   linkSections,
   normalizeLinkUrl,
   presetLink,
   sidebarLinks,
+  toggleLinkApp,
 } from './links';
 
 describe('sidebar links', () => {
@@ -128,6 +132,15 @@ describe('integrations and where links show', () => {
       'https://pay.example.com/?ClientSecret=abc',
       'https://pay.example.com/#access_token=abc',
       'https://pay.example.com/?user=a&password=b',
+      // A name and password in the address, and signed links and tokens.
+      'https://admin:Secret123@portal.example.com/',
+      'https://admin@portal.example.com/',
+      'https://files.example.com/a.pdf?sv=2024&sig=abc',
+      'https://pay.example.com/?auth=abc',
+      'https://pay.example.com/?jwt=abc',
+      'https://pay.example.com/?refreshToken=abc',
+      'https://pay.example.com/?refreshtoken=abc',
+      'https://pay.example.com/?otp=123456',
     ]) {
       expect(hasSecretParameter(url), url).toBe(true);
     }
@@ -135,11 +148,66 @@ describe('integrations and where links show', () => {
       'https://pay.example.com/merchant',
       'https://pay.example.com/?keyword=invoices&lang=ar',
       'https://pay.example.com/?monkey=1',
+      'https://pay.example.com/?author=me&signup=1&design=a',
       'https://pay.example.com/token/settings',
       'javascript:alert(1)?token=1',
       '',
     ]) {
       expect(hasSecretParameter(url), url).toBe(false);
     }
+  });
+
+  it('tick the apps a link really shows in, and keep a newer build’s choice', () => {
+    const every = { apps: undefined };
+    // Unticked then ticked again: every app, as before.
+    const narrowed = toggleLinkApp(every, 'people', false, APPS);
+    expect(narrowed).toEqual(APPS.filter((id) => id !== 'people'));
+    expect(toggleLinkApp({ apps: narrowed }, 'people', true, APPS)).toBeUndefined();
+    // Every app unticked: none chosen, which the form refuses.
+    let apps: string[] | undefined = undefined;
+    for (const id of APPS) apps = toggleLinkApp({ apps }, id, false, APPS);
+    expect(apps).toEqual([]);
+    expect(APPS.some((id) => linkShowsIn({ apps }, id, APPS))).toBe(false);
+    // Ticked again from there: that app only.
+    expect(toggleLinkApp({ apps: [] }, 'books', true, APPS)).toEqual(['books']);
+    // Chosen only for a newer build's app: it shows in every app here, and the boxes say so.
+    const newer = { apps: ['inventory'] };
+    expect(chosenElsewhereOnly(newer, APPS)).toBe(true);
+    expect(APPS.every((id) => linkShowsIn(newer, id, APPS))).toBe(true);
+    // The first box unticked narrows from every app here, and keeps the newer build's choice.
+    expect(toggleLinkApp(newer, 'books', false, APPS)).toEqual([
+      ...APPS.filter((id) => id !== 'books'),
+      'inventory',
+    ]);
+    // Every app here ticked with a newer build's app kept: the list stays, so what it left out stays out.
+    expect(toggleLinkApp({ apps: ['books', 'inventory'] }, 'crm', true, APPS)).toEqual([
+      'books',
+      'crm',
+      'inventory',
+    ]);
+    const all = APPS.filter((id) => id !== 'crm');
+    expect(toggleLinkApp({ apps: [...all, 'sales'] }, 'crm', true, APPS)).toEqual([
+      ...APPS,
+      'sales',
+    ]);
+    expect(chosenElsewhereOnly({ apps: ['books', 'inventory'] }, APPS)).toBe(false);
+    expect(chosenElsewhereOnly({}, APPS)).toBe(false);
+  });
+
+  it('keep a link’s section and apps, and leave out a choice set back', () => {
+    const base = { id: 'l', label: ' Deema ', labelAr: ' ديما ', url: 'pay.example.com' };
+    expect(cleanLink({ ...base, preset: 'deema', section: 'payments' as 'integrations' })).toEqual({
+      id: 'l',
+      label: 'Deema',
+      labelAr: 'ديما',
+      url: 'https://pay.example.com/',
+      preset: 'deema',
+      section: 'payments',
+    });
+    const kept = cleanLink({ ...base, apps: ['books', 'inventory'] });
+    expect(kept.apps).toEqual(['books', 'inventory']);
+    const reset = cleanLink({ ...base, section: undefined, apps: undefined });
+    expect(reset).not.toHaveProperty('section');
+    expect(reset).not.toHaveProperty('apps');
   });
 });

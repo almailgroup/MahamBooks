@@ -108,6 +108,19 @@ describe('company changes by field', () => {
     expect(staffCompanyChangeOk(typed, { ...typed, numbering: numbered.numbering })).toBe(true);
   });
 
+  it('carry a company type as a whole, so two devices’ types never mix', () => {
+    const guarding = { id: 'x', name: 'Guarding' };
+    const before = { ...base, companyType: guarding };
+    const events = { id: 'z', name: 'Events', nameAr: 'فعاليات' };
+    const patrol = { id: 'y', name: 'Patrol' };
+    const ops = companyOps(before, { ...before, companyType: patrol });
+    expect(ops).toEqual([{ path: ['companyType'], value: patrol, base: guarding }]);
+    // Another device saved Events meanwhile: this device's type replaces it, names and all.
+    const { data, conflicts } = rebaseCompany({ ...before, companyType: events }, ops);
+    expect(data.companyType).toEqual(patrol);
+    expect(conflicts).toEqual([['companyType']]);
+  });
+
   it('make the objects on the way and remove fields', () => {
     const { data } = rebaseCompany({ id: 'co-1' }, [
       { path: ['bankAccount', 'iban'], value: 'KW00TEST0000000000000000000000' },

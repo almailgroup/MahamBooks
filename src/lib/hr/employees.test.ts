@@ -52,6 +52,12 @@ describe('employee categories', () => {
     const kuwaiti = { category: 'kuwaiti' as const, stateless: true };
     expect(isStateless(kuwaiti)).toBe(false);
     expect(categoryLabel(kuwaiti)).toBe('Kuwaiti');
+    // A country chosen by an older version, which keeps the flag: an expatriate with a residency.
+    const olderEdit = { category: 'expat' as const, stateless: true, nationality: 'IN' };
+    expect(isStateless(olderEdit)).toBe(false);
+    expect(needsResidency(olderEdit)).toBe(true);
+    expect(categoryLabel(olderEdit)).toBe('Expatriate');
+    expect(isStateless({ ...olderEdit, nationality: '' })).toBe(true);
     expect(needsResidency({ category: 'expat', stateless: false })).toBe(true);
     // "Expatriate" lists leave the stateless out; they have their own filter.
     expect(inCategory(stateless, 'expat')).toBe(false);

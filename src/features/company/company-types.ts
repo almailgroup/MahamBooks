@@ -75,8 +75,12 @@ export function companyTypeOptions(
 /**
  * The type to save, given the types already known (`companyTypeOptions`):
  * a built-in type with its own names, a known type as it is, and a new type
- * named like a known one (in either language) as that known type, so the
- * same line of business isn't spelt two ways.
+ * named like a known one as that known type, so the same line of business
+ * isn't spelt two ways. Only when every name typed is the known type's (the
+ * other language left empty): a type that shares one name but not the other
+ * is another type. Typed with a known type's English name and another
+ * Arabic name, it is that type with its Arabic name corrected (a built-in
+ * type keeps its own).
  */
 export function resolveCompanyType(
   type: CompanyType | null | undefined,
@@ -87,11 +91,20 @@ export function resolveCompanyType(
   const fixed = builtIn(tidied.id);
   if (fixed) return { ...fixed };
   if (known.some((k) => k.id === tidied.id)) return tidied;
-  const names = (t: CompanyType) =>
-    [t.name, t.nameAr ?? ''].map((n) => normalizeSearch(n)).filter(Boolean);
-  const mine = names(tidied);
-  const same = known.find((k) => names(k).some((n) => mine.includes(n)));
-  return same ? (normalizeCompanyType(same) ?? tidied) : tidied;
+  const names = (t: Partial<CompanyType>) =>
+    [tidy(t.name), tidy(t.nameAr)].map((n) => normalizeSearch(n)).filter(Boolean);
+  const typed = names(type ?? {});
+  const same = known.find((k) => typed.every((n) => names(k).includes(n)));
+  if (same) return normalizeCompanyType(same) ?? tidied;
+  const english = normalizeSearch(tidy(type?.name));
+  const nameAr = tidy(type?.nameAr);
+  const renamed =
+    english && nameAr ? known.find((k) => normalizeSearch(tidy(k.name)) === english) : undefined;
+  if (renamed) {
+    const own = builtIn(renamed.id);
+    return own ? { ...own } : { id: renamed.id, name: tidy(renamed.name), nameAr };
+  }
+  return tidied;
 }
 
 /**

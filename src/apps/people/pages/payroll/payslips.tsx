@@ -29,6 +29,7 @@ const L = {
   number: msg('Employee number'),
   job: msg('Job title'),
   civilId: msg('Civil ID number'),
+  card: msg('Review card number'),
   iban: msg('IBAN'),
   days: msg('Days paid'),
   payDate: msg('Pay date'),
@@ -108,7 +109,12 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
           <Detail label={L.job} value={job} />
         </dl>
         <dl>
-          <Detail label={L.civilId} value={line.civilId} />
+          {/* A stateless employee without a Civil ID: their review card, under its own name. */}
+          {!line.civilId && line.centralCardNumber ? (
+            <Detail label={L.card} value={line.centralCardNumber} />
+          ) : (
+            <Detail label={L.civilId} value={line.civilId} />
+          )}
           <Detail label={L.iban} value={line.iban ? formatIban(line.iban) : ''} />
           <Detail label={L.days} value={`${line.daysWorked} / ${line.daysInMonth}`} />
           <Detail

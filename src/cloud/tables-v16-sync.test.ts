@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, DATA_TABLES } from '@/db/db';
 import { deleteCompany, setupCompany } from '@/db/records';
 import { addAttachment } from '@/db/purchases';
+import { createVehicle, saveVehicle } from '@/db/vehicles';
 import {
   createComplianceDocument,
   deleteComplianceDocument,
@@ -444,6 +445,57 @@ describe('a confidential register document', () => {
     // Nothing of it is deleted in the cloud.
     expect(await db.outbox.count()).toBe(0);
     expect(server.record(company.id, 'complianceDocuments', doc.id)).toBeDefined();
+  });
+});
+
+describe('a server without the tables of version 16', () => {
+  it('gets no confidential document, its renewals or vehicles until the migration is run', async () => {
+    server.features = [];
+    // Kept on this device only, where confidential documents and vehicles are allowed.
+    const company = await setupCompany({ name: 'Test Trading' });
+    const doc = await saveComplianceDocument(
+      createComplianceDocument(company.id, {
+        type: 'other',
+        title: 'Guards cost sheet',
+        confidential: true,
+        expiryDate: '2026-12-31',
+      }),
+    );
+    const { renewal } = await renewDocument({
+      companyId: company.id,
+      key: `doc:${doc.id}`,
+      renewedOn: '2026-10-20',
+      newExpiry: '2027-12-31',
+    });
+    const open = await saveComplianceDocument(
+      createComplianceDocument(company.id, { type: 'other', title: 'Open paper' }),
+    );
+    const vehicle = await saveVehicle(createVehicle(company.id, { plate: 'TEST-1' }));
+
+    // Then kept in the cloud, on a server where the migration hasn't been run.
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'complianceDocuments', open.id)).toBeDefined();
+    expect(server.record(company.id, 'complianceDocuments', doc.id)).toBeUndefined();
+    expect(server.record(company.id, 'renewals', renewal.id)).toBeUndefined();
+    expect(server.record(company.id, 'vehicles', vehicle.id)).toBeUndefined();
+    const parked = await db.outbox.where('[companyId+parked]').equals([company.id, 1]).toArray();
+    expect(parked.map((e) => `${e.table} ${e.error}`).sort()).toEqual([
+      'complianceDocuments server_outdated',
+      'renewals server_outdated',
+      'vehicles server_outdated',
+    ]);
+    expect((await db.syncState.get(company.id))?.status).toBe('ready');
+
+    // The owner runs it: they go with the next syncs.
+    server.features = ['tables_v16'];
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + FEATURES_RECHECK_MS + 1000);
+    await syncCompany(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'complianceDocuments', doc.id)?.confidential).toBe(true);
+    expect(server.record(company.id, 'renewals', renewal.id)).toBeDefined();
+    expect(server.record(company.id, 'vehicles', vehicle.id)).toBeDefined();
+    expect(await db.outbox.count()).toBe(0);
   });
 });
 

@@ -40,6 +40,8 @@ export default {
   'New vehicle': 'مركبة جديدة',
   'The cloud needs the latest database script before vehicles can be added.':
     'تحتاج السحابة إلى أحدث نص لقاعدة البيانات قبل إضافة المركبات.',
+  'Customer cost sheets can be added once the owner of the company runs the latest database script.':
+    'يمكن إضافة كشوف تكاليف العملاء بعد أن يشغّل مالك الشركة أحدث نص لقاعدة البيانات.',
   Confidential: 'سري',
   'Only owners, admins and accountants see it, with its files, renewals and activity.':
     'لا يراها إلا الملاك والمديرون والمحاسبون، مع ملفاتها وتجديداتها وسجل نشاطها.',

@@ -16,6 +16,7 @@ import {
   type RecordKey,
 } from './api';
 import { companyOps, onlyCounters, rebaseCompany } from './company-patch';
+import { linkHasFeature } from './features';
 import { blobToDataUrl, contentHash, dataUrlToBlob, filePath } from './files';
 import { companySettingLabels, inArabic } from './labels';
 import { syncStarted, withSyncLock } from './lock';
@@ -323,6 +324,9 @@ export async function syncCompany(companyId: string, ctx: SyncContext): Promise<
   const run = syncStarted(companyId);
   const sync: SyncContext = { ...ctx, api: guardedApi(ctx, run.stop) };
   try {
+    // What the server has decides what may be sent (see heldForServer): asked
+    // first when it isn't known yet, as for a company just uploaded.
+    if (!link.features) await refreshFeatures(companyId, sync);
     await retryRefusedFiles(companyId, link.role);
     await processFileQueue(sync);
     await pushAll(companyId, sync, result);
@@ -427,7 +431,14 @@ async function pushAll(companyId: string, ctx: SyncContext, result: SyncResult):
       .limit(PUSH_BATCH * 5)
       .toArray();
     if (entries.length === 0) return;
-    const plan = await buildBatch(companyId, entries, ctx, result, link?.role);
+    const plan = await buildBatch(
+      companyId,
+      entries,
+      ctx,
+      result,
+      link?.role,
+      await heldForServer(companyId),
+    );
     // The company may have left this device while the batch was prepared.
     if (!(await stillLinked(companyId, ctx))) return;
     if (plan.company) await sendCompany(companyId, plan.company, ctx, result);
@@ -493,12 +504,55 @@ async function retryRefusedFiles(companyId: string, role: MemberRole): Promise<v
     });
 }
 
+/**
+ * Records a server without the tables of version 16 must not get: their
+ * tables (it would refuse them), and confidential register documents and
+ * their renewals (its rules would give them to staff and viewers, private
+ * only when they have an employee). Until the owner runs the migration they
+ * wait in the outbox, parked with that reason, whichever way they were
+ * queued (saved here, the whole company uploaded, a backup merged); the
+ * migration found, they go (see releaseHeld).
+ */
+async function heldForServer(
+  companyId: string,
+): Promise<(name: string, record: Record<string, unknown>) => boolean> {
+  const link = await db.syncState.get(companyId);
+  if (!link || linkHasFeature(link, 'tables_v16')) return () => false;
+  const confidential = new Set(
+    (
+      await db.complianceDocuments
+        .where('companyId')
+        .equals(companyId)
+        .filter((d) => d.confidential === true)
+        .primaryKeys()
+    ).map(String),
+  );
+  return (name, record) =>
+    V16_TABLES.includes(name) ||
+    (name === 'complianceDocuments' && record.confidential === true) ||
+    (name === 'renewals' && confidential.has(renewedDocumentId(record) ?? ''));
+}
+
+/** Puts parked for want of the migration go back in the queue once the server has it. */
+async function releaseHeld(companyId: string): Promise<void> {
+  await db.outbox
+    .where('[companyId+parked]')
+    .equals([companyId, 1])
+    .filter((entry) => entry.error === 'server_outdated')
+    .modify((entry) => {
+      entry.parked = 0;
+      delete entry.error;
+      delete entry.detail;
+    });
+}
+
 async function buildBatch(
   companyId: string,
   entries: OutboxEntry[],
   ctx: SyncContext,
   result: SyncResult,
   role: MemberRole | undefined,
+  held: (name: string, record: Record<string, unknown>) => boolean = () => false,
 ): Promise<Plan> {
   const groups = new Map<
     string,
@@ -542,6 +596,15 @@ async function buildBatch(
       };
       bytes += JSON.stringify(item.change).length;
       plan.batch.push(item);
+      continue;
+    }
+    if (group.last.op !== 'delete' && held(group.table, record)) {
+      await park(
+        group.seqs,
+        new CloudError('server_outdated', t(CLOUD_ERROR_MESSAGES.server_outdated)),
+      );
+      result.parked += 1;
+      plan.progressed = true;
       continue;
     }
     if (group.table === 'companies') {
@@ -1406,6 +1469,7 @@ async function refreshFeatures(companyId: string, ctx: SyncContext): Promise<voi
     return;
   }
   await db.syncState.update(companyId, { features, featuresAt: new Date().toISOString() });
+  if (features.includes('tables_v16')) await releaseHeld(companyId);
 }
 
 /* -------------------------------------------------------------------------- */

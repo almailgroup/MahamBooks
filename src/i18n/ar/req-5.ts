@@ -12,4 +12,6 @@ export default {
   'Show under': 'تظهر تحت',
   'Show in': 'تظهر في',
   'Choose at least one app for the link.': 'اختر تطبيقاً واحداً على الأقل للرابط.',
+  'Chosen in a newer version of the app: it shows in every app here.':
+    'اختير في إصدار أحدث من التطبيق: يظهر هنا في كل التطبيقات.',
 } satisfies Dictionary;

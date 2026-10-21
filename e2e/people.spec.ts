@@ -366,12 +366,19 @@ test('departments are a list with Arabic names, renamed with their employees and
   await expect(selection).toContainText('2 selected');
   await selection.getByRole('button', { name: 'Department' }).click();
   const assign = page.getByRole('dialog', { name: 'Department', exact: true });
-  await assign.getByLabel('Department').selectOption({ label: 'Head Office' });
+  await assign.getByLabel('Department', { exact: true }).selectOption({ label: 'Head Office' });
   await assign.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('2 employees moved')).toBeVisible();
   await expect(selection).toBeHidden();
   await expect(page.getByRole('row', { name: /Fahad Testing/ })).toContainText('Head Office');
   await expect(page.getByRole('row', { name: /Noura Testing/ })).toContainText('Head Office');
+  // And one taken out of it again, chosen on its own.
+  await page.getByRole('checkbox', { name: 'Select Fahad Testing' }).check();
+  await selection.getByRole('button', { name: 'Department' }).click();
+  await assign.getByLabel('Take them out of their department').check();
+  await assign.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('1 employee moved')).toBeVisible();
+  await expect(page.getByRole('row', { name: /Fahad Testing/ })).not.toContainText('Head Office');
 
   // The form chooses from the list, or "Other…" to type one.
   await page.goto('#/employees/new');
@@ -485,15 +492,20 @@ test('drivers without a valid driving licence are flagged once the company check
   await bulk.getByRole('button', { name: 'Add 1 file' }).click();
   await expect(bulk).toBeHidden();
   await expect(page.getByText('1 scan filed as a driving licence')).toBeVisible();
-  await expect(page.getByText('No employees match.')).toBeVisible();
+  // The licence filed has no expiry date yet: the driver stays flagged until it's entered.
+  await expect(page.getByRole('row', { name: /Guard Testing/ })).toContainText('No expiry date');
   await page.getByRole('button', { name: 'Drivers without a valid licence' }).click();
   await page.getByRole('link', { name: 'Guard Testing' }).click();
   await expect(page.getByText('Licence 502.pdf')).toHaveCount(0);
   await page.getByRole('button', { name: 'Edit Driving licence' }).click();
-  await expect(page.getByRole('dialog', { name: 'Edit document' })).toContainText(
-    'Licence 502.pdf',
-  );
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  const filed = page.getByRole('dialog', { name: 'Edit document' });
+  await expect(filed).toContainText('Licence 502.pdf');
+  await filed.getByLabel('Expiry date').fill(inDays(400));
+  await filed.getByRole('button', { name: 'Save' }).click();
+  await expect(filed).toBeHidden();
+  await page.goto('#/employees');
+  await page.getByRole('button', { name: 'Drivers without a valid licence' }).click();
+  await expect(page.getByText('No employees match.')).toBeVisible();
 
   // In Arabic.
   await page.goto('#/compliance/documents');

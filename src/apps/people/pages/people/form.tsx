@@ -164,6 +164,7 @@ function EmployeeFormPage() {
         departmentList={settings.departments}
         drivingLicences={checksDrivingLicences(settings)}
         leavePolicy={payroll.leavePolicy}
+        saved={id && original ? (JSON.parse(original) as Employee) : null}
         files={{
           ...files,
           // The photo is kept with the personnel file but changed on the employee's page.

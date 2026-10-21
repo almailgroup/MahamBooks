@@ -16,6 +16,7 @@ import { isCustomer } from '@/db/purchases';
 import type { ComplianceDocument, DocumentOwnerType, Employee, Vehicle } from '@/db/types';
 import { useCompany } from '@/app/company';
 import {
+  checksDrivingLicences,
   CUSTOMER_DOCUMENT_TYPES,
   DOCUMENT_TYPES,
   documentTypeInfo,
@@ -29,6 +30,7 @@ import { isKnown } from '@/lib/known';
 import { isCurrent } from '@/lib/hr/employees';
 import { normalizeDigits } from '@/lib/money';
 import { useRoleView } from '@/features/cloud/role-gates';
+import { usePeopleSettings } from '@/features/people/hooks';
 import { useDraftAttachments } from '@/features/purchases/attachments';
 import { FileList } from '@/features/people/file-list';
 import { Button } from '@/components/ui/button';
@@ -87,6 +89,8 @@ export function DocumentDialog({
   const { readOnly } = useReadOnly();
   const { peopleHidden } = useRoleView();
   const { on: extras, cloudReady } = useRegisterExtras();
+  // The licence class is asked once the company checks drivers' licences (or kept once stored).
+  const checksLicences = checksDrivingLicences(usePeopleSettings());
   const vehicles = useVehicles();
   const clients = useLiveQuery(
     () => (extras ? db.clients.where('companyId').equals(company.id).toArray() : []),
@@ -103,8 +107,12 @@ export function DocumentDialog({
   const ownerLabel = useId();
   const set = (patch: Partial<ComplianceDocument>) => setDraft((d) => ({ ...d, ...patch }));
 
-  // The document's own type stays on the list, whatever is offered now.
-  const offered = registerTypesFor(draft.ownerType, extras);
+  // The document's own type stays on the list, whatever is offered now. A
+  // customer's cost sheet waits for a cloud that keeps it confidential.
+  const offered = registerTypesFor(draft.ownerType, extras).filter(
+    (type) => cloudReady || type !== 'customer_cost',
+  );
+  const costSheetsWait = extras && !cloudReady && draft.ownerType === 'other';
   const types =
     offered.includes(draft.type) || !isKnown(DOCUMENT_TYPES, draft.type)
       ? offered
@@ -169,7 +177,9 @@ export function DocumentDialog({
   };
 
   const setOwner = (ownerType: DocumentOwnerType) => {
-    const allowed = registerTypesFor(ownerType, extras);
+    const allowed = registerTypesFor(ownerType, extras).filter(
+      (type) => cloudReady || type !== 'customer_cost',
+    );
     setType(allowed.includes(draft.type) ? draft.type : allowed[0], { ownerType });
   };
 
@@ -214,8 +224,8 @@ export function DocumentDialog({
           const { attachmentContent } = await import('@/cloud/attachments');
           for (const file of missing) await attachmentContent(file.id);
         }
-        await files.removeNow();
-        saved = await makeDocumentConfidential(input);
+        // The files taken off the list go with the checks passed, never before.
+        saved = await makeDocumentConfidential(input, { removedFiles: files.removed });
         await files.commit(company.id, saved.id);
       } else {
         saved = await saveComplianceDocument(input);
@@ -384,7 +394,16 @@ export function DocumentDialog({
                   {draft.clientId ? null : ownerInput(t('Owner'), true)}
                 </>
               ) : null}
-              <Field label={t('Document type')}>
+              <Field
+                label={t('Document type')}
+                hint={
+                  costSheetsWait
+                    ? t(
+                        'Customer cost sheets can be added once the owner of the company runs the latest database script.',
+                      )
+                    : undefined
+                }
+              >
                 {(id) => (
                   <Select
                     id={id}
@@ -446,7 +465,7 @@ export function DocumentDialog({
                   />
                 )}
               </Field>
-              {draft.type === 'driving_licence' ? (
+              {draft.type === 'driving_licence' && (checksLicences || document.licenceClass) ? (
                 <Field label={t('Licence class')} optional hint={t('As written on the licence.')}>
                   {(id) => (
                     <Input

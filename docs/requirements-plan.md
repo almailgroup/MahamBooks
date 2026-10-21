@@ -331,6 +331,7 @@ Two parts. (a) A switchable app layout that splits Maham Books into Sales, Finan
 - An older build saving the quote may drop `costingId`; the costing's `quoteId` keeps the link.
 - Before the migration, pushes of the tbl are refused and parked; the costing switch shows only once the server has it (D4). D2's cursor reset lets older builds receive the rows after they update.
 - Moving document pages to a shared layer isn't needed (routes are flat); skip that large diff.
+- Links chosen for apps (#5, `CompanyLink.apps`) keep the ids of the four apps: the integrations (Deema, Taly, Tahseel) are saved with `['books', 'crm']`, the owner's choice of "Finance (Books) and Sales". In the split layout `linkApps` (`src/lib/links.ts`) must read `books` as Finance _and_ Sales (and Inventory where it fits), or the stored lists be remapped when the split is switched on; otherwise every integration misses the Sales sidebar.
 
 **Decisions for the owner**
 

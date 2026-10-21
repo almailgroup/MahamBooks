@@ -278,7 +278,9 @@ export type CloudErrorCode =
   | 'invite_expired'
   | 'invite_wrong_email'
   | 'email_unconfirmed'
-  | 'server';
+  | 'server'
+  /** The company's server lacks a migration the record needs: it waits here until it is run. */
+  | 'server_outdated';
 
 /** A request the cloud refused or could not answer, with a code the app acts on. */
 export class CloudError extends Error {
@@ -318,6 +320,9 @@ export const CLOUD_ERROR_MESSAGES: Record<CloudErrorCode, string> = {
   invite_wrong_email: msg('This invitation is for another email address.'),
   email_unconfirmed: msg('Confirm your email address first.'),
   server: msg('The cloud is not answering right now. We will try again.'),
+  server_outdated: msg(
+    'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+  ),
 };
 
 const CODES = new Set<string>(Object.keys(CLOUD_ERROR_MESSAGES));
