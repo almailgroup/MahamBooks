@@ -21,7 +21,9 @@ import {
   markSent,
   saveDocument,
   suggestNumber,
+  waitsForNumber,
 } from '@/db/documents';
+import { ApprovalRequiredError, requestApproval } from '@/db/approvals';
 import type { DocumentType, InvoiceDocument, TaxLine } from '@/db/types';
 import {
   DOCUMENT_LABELS,
@@ -64,6 +66,8 @@ import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { StickyActions } from '@/components/ui/sticky-actions';
 import { isCustomer } from '@/db/purchases';
 import { DateField } from '@/components/ui/date-field';
+import { useApprovalView, useMyName } from '@/features/approvals/hooks';
+import { ReasonDialog } from '@/features/approvals/reason-dialog';
 
 const PAYMENT_TERMS = [0, 7, 14, 15, 30, 45, 60, 90];
 const QUOTE_VALIDITY = [7, 14, 30, 45, 60, 90];
@@ -115,6 +119,10 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
   const [showPreview, setShowPreview] = useState(true);
   const [mobilePreview, setMobilePreview] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  // An issued invoice the company's rules keep for approvers: the change to send for approval.
+  const [asking, setAsking] = useState<ApprovalRequiredError | null>(null);
+  const approvals = useApprovalView(company);
+  const myName = useMyName();
 
   const checkCredit = useCreditCheck();
 
@@ -181,9 +189,11 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
     [doc, client],
   );
 
+  // A draft numbered when it is issued shows no number until then.
+  const unnumbered = doc ? waitsForNumber(company, doc) : false;
   const previewDoc = useMemo(
-    () => (doc ? { ...doc, number: doc.number || numberHint } : null),
-    [doc, numberHint],
+    () => (doc ? { ...doc, number: doc.number || (unnumbered ? '' : numberHint) } : null),
+    [doc, numberHint, unnumbered],
   );
   const templateId = doc ? documentTemplate(doc, company) : company.branding.templateId;
   const pdf = useLivePdf(
@@ -275,20 +285,49 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         charges: doc.charges.filter((c) => c.label.trim() || c.amount !== 0),
       });
       if (intent === 'sent') await markSent(saved.id);
+      const issued = (await db.documents.get(saved.id)) ?? saved;
       toast.success(
-        t('{document} {number} saved', { document: t(labels.singular), number: saved.number }),
+        issued.number
+          ? t('{document} {number} saved', { document: t(labels.singular), number: issued.number })
+          : t('Draft {document} saved', { document: documentNoun(type) }),
       );
       allowNavigation();
       navigate(`${DOCUMENT_ROUTES[type]}/${saved.id}`, {
         state: intent === 'download' ? { download: true } : undefined,
       });
     } catch (error) {
+      setSaving(null);
+      // Kept for approvers: asked why, then sent for approval.
+      if (error instanceof ApprovalRequiredError && error.kind) {
+        setAsking(error);
+        return;
+      }
       if (error instanceof DuplicateNumberError)
         setErrors({ number: t('This number is already used.') });
       toast.error(error instanceof Error ? error.message : t('Could not save.'));
-      setSaving(null);
     }
   };
+
+  const sendForApproval = async (reason: string) => {
+    if (!asking?.kind) return;
+    try {
+      await requestApproval({
+        kind: asking.kind,
+        subject: asking.subject,
+        proposal: asking.proposal,
+        reason,
+        byName: myName,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Could not save.'));
+      throw error;
+    }
+    toast.success(t('Sent for approval'));
+    allowNavigation();
+    navigate(`${DOCUMENT_ROUTES[type]}/${asking.subject.id}`);
+  };
+  // Saving an issued invoice under the rules sends the change for approval.
+  const sendsForApproval = !isNew && approvals.waits(doc);
 
   // Vendors only show up once they are also marked as clients.
   const clientOptions = contactOptions(
@@ -367,7 +406,16 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
         ? null
         : t('Save and mark as sent');
 
-  const saveButtons = (
+  const saveButtons = sendsForApproval ? (
+    <div className="flex items-center gap-2">
+      <Button variant="ghost" onClick={() => navigate(-1)}>
+        {t('Cancel')}
+      </Button>
+      <Button onClick={() => save('save')} loading={saving === 'save'} disabled={saving !== null}>
+        <Send /> {t('Send for approval')}
+      </Button>
+    </div>
+  ) : (
     <div className="flex items-center gap-2">
       <Button variant="ghost" onClick={() => navigate(-1)}>
         {t('Cancel')}
@@ -466,13 +514,19 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
               <Field
                 label={t(labels.numberLabel)}
                 error={errors.number}
-                hint={isNew && !doc.number ? t('Assigned automatically when saved.') : undefined}
+                hint={
+                  unnumbered && !doc.number
+                    ? t('Given when it is issued, so a draft that is deleted uses up no number.')
+                    : isNew && !doc.number
+                      ? t('Assigned automatically when saved.')
+                      : undefined
+                }
               >
                 {(fid) => (
                   <Input
                     id={fid}
                     value={doc.number}
-                    placeholder={numberHint}
+                    placeholder={unnumbered ? '' : numberHint}
                     onChange={(e) => {
                       update({ number: e.target.value });
                       setErrors((x) => ({ ...x, number: undefined }));
@@ -791,6 +845,19 @@ export default function DocumentEditorPage({ type }: { type: DocumentType }) {
           company={company}
           initialName={clientDialog.name}
           onSaved={(saved) => selectClient(saved.id)}
+        />
+      ) : null}
+      {asking ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={t('Send the change of {number} for approval?', { number: doc.number })}
+          description={t(
+            '{number} has been issued, so an approver decides on this change. It stays as it is until they approve.',
+            { number: doc.number },
+          )}
+          confirmLabel={t('Send for approval')}
+          onConfirm={sendForApproval}
         />
       ) : null}
     </div>

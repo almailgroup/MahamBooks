@@ -920,7 +920,14 @@ const ENTITY: Partial<Record<DataTable, ActivityEntity>> = {
  * their own (the company record's real conflicts, fields both sides changed,
  * are noted by logCompanyConflicts).
  */
-const QUIET = new Set<string>(['companies', 'activities', 'stockMovements', 'syncRevs']);
+const QUIET = new Set<string>([
+  'companies',
+  'activities',
+  'stockMovements',
+  'syncRevs',
+  // The cloud keeps a decision made, whatever an older copy says (see guardApprovalWrite).
+  'approvals',
+]);
 
 async function logConflict(companyId: string, change: PushChange): Promise<boolean> {
   if (QUIET.has(change.tbl)) return false;

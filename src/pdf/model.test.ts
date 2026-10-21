@@ -646,3 +646,17 @@ describe('buildRenderModel: units from the list', () => {
     expect(plain.items.map((i) => i.unit)).toEqual(['قطعة', 'pcs', 'roll']);
   });
 });
+
+describe('buildRenderModel: an invoice issued in place of a void one (D12)', () => {
+  it('prints the number it replaces, and nothing for every other document', () => {
+    const en = model('en', { replacesNumber: 'INV-2026-0007' });
+    expect(en.meta).toContainEqual(
+      expect.objectContaining({ label: 'Replaces', value: 'INV-2026-0007' }),
+    );
+    const ar = model('ar', { replacesNumber: 'INV-2026-0007' });
+    expect(ar.meta).toContainEqual(
+      expect.objectContaining({ label: 'بدلاً من', value: ltr('INV-2026-0007') }),
+    );
+    expect(model('en').meta.some((m) => m.label === 'Replaces')).toBe(false);
+  });
+});

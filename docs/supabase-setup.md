@@ -41,9 +41,11 @@ has to be added to the app or to Vercel.
 9. Then the fifth script,
    [`supabase/migrations/20261116000000_super_admin_approvals.sql`](../supabase/migrations/20261116000000_super_admin_approvals.sql)
    (a new query, paste, **Run**), after the fourth. It adds the Super Admin's
-   controls in **Settings → Team** (see "The Super Admin" below). Running it
-   changes nothing by itself: every member keeps their role's access, and
-   admins keep inviting and changing roles until the owner switches that off.
+   controls in **Settings → Team** and the approval rules in **Settings →
+   Approvals** (see "The Super Admin" and "Approvals" below). Running it
+   changes nothing by itself: every member keeps their role's access, admins
+   keep inviting and changing roles until the owner switches that off, and
+   nothing waits for approval until the owner turns approvals on.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -212,6 +214,48 @@ In **Settings → Team**, the owner (badge **Owner (Super Admin)**, المالك
 If the owner's account is ever deleted, the longest-standing admin (or else
 accountant) becomes the owner, as before; the change is now recorded for the
 change notifications of a later release.
+
+## Approvals
+
+**Settings → Approvals** (الإعدادات ← الاعتمادات) holds the owner's rules. Only
+the owner changes them; everyone else sees them. Nothing waits for approval
+until the owner turns something on:
+
+- **Issued invoices need an approver to change** (تعديل الفواتير الصادرة يحتاج
+  إلى معتمِد) and the same for **credit notes**. With it on, a change to an
+  issued invoice (its customer, dates, lines, prices, wording, its number),
+  voiding it or bringing it back from void is made only by an approver: the
+  owner, or an admin or accountant with **Can approve** (Settings → Team).
+  Everyone else gets **Send for approval** (إرسال للاعتماد) instead of Save,
+  and **Request void** instead of Void, with a reason. Payments, payment
+  links, credit notes applied to it and retention releases go on as before.
+  Drafts and new invoices are anyone's.
+- **Void instead of delete** (الإبطال بدلاً من الحذف), on by default: issued
+  invoices and credit notes are voided, never deleted, so their numbers stay
+  used. They are under **Invoices → Void** (الفواتير الملغاة). Drafts can
+  still be deleted. A voided invoice that was paid leaves the money on the
+  payment as the customer's unapplied credit.
+- **Cancel requests still waiting after (days)**: 14 by default; 0 keeps them
+  waiting.
+
+Requests are in **Approvals** (الاعتمادات) in the Books sidebar (طلبات
+الاعتماد), and a count is on the home page for approvers. An approver opens a
+request, sees what would change and approves or rejects it; approving makes
+the change on their device, which syncs to everyone. Whoever asked can take a
+request back while it waits. The cloud stamps who asked, who decided and when,
+and a decision once made can't be undone by an older copy.
+
+**Void and reissue** (إبطال وإعادة إصدار), on any issued invoice or credit
+note, voids it and opens a new draft in its place, which prints "Replaces
+INV-…" and gets a new number when issued. Numbers are never reused. To avoid
+using up numbers on drafts, **Settings → Numbering → Number invoices and credit
+notes when they are issued** gives drafts their number only when they are sent.
+
+Before turning approvals on, update every device and let each one sync. A
+change an older version makes to an issued invoice is refused by the cloud and
+waits in **Settings → Cloud and sync**, with **Send for approval instead**.
+Companies kept on one device only have nobody to ask: the rules apply to cloud
+companies.
 
 ## Problems
 

@@ -68,6 +68,8 @@ export const STAFF_TABLES = [
   'landedCosts',
   'attachments',
   'activities',
+  // To ask for approval; see guardApprovalWrite.
+  'approvals',
 ] as const;
 
 /** Journals staff may make: the ones their own work creates. */
@@ -396,4 +398,203 @@ export function sameData(a: unknown, b: unknown): boolean {
   if (left.length !== right.length) return false;
   const lookup = new Map(right);
   return left.every(([key, value]) => lookup.has(key) && sameData(value, lookup.get(key)));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Approvals (20261116000000_super_admin_approvals.sql)                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The fields of a document that say what it is, as it is printed and sent:
+ * the same as almailbooks.invoice_content. What payments and the books write
+ * (totals, status, paid and sent times, retention releases, the posting
+ * snapshot), the payment link and the internal notes are not among them.
+ */
+export const INVOICE_CONTENT_FIELDS = [
+  'type',
+  'number',
+  'clientId',
+  'issueDate',
+  'dueDate',
+  'poNumber',
+  'vendorReference',
+  'currency',
+  'exchangeRate',
+  'items',
+  'discount',
+  'discountType',
+  'taxes',
+  'charges',
+  'pricesIncludeTax',
+  'deposit',
+  'depositDueDate',
+  'notes',
+  'terms',
+  'footer',
+  'intro',
+  'templateId',
+  'accentColor',
+  'deliveryDate',
+  'deliveryPlace',
+  'retentionPercent',
+  'retentionKind',
+  'replacesNumber',
+] as const;
+
+/** A record of any shape (the app's own types included). */
+type AnyRecord = object | null | undefined;
+const asRow = (record: AnyRecord) => record as Row;
+
+/** JSON without its nulls, at every level, as jsonb_strip_nulls. */
+function stripNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNulls);
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === null || v === undefined) continue;
+    out[key] = stripNulls(v);
+  }
+  return out;
+}
+
+/** What a document says (see INVOICE_CONTENT_FIELDS), as almailbooks.invoice_content. */
+export function invoiceContent(doc: AnyRecord): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const field of INVOICE_CONTENT_FIELDS) picked[field] = asRow(doc)?.[field];
+  return stripNulls(picked) as Record<string, unknown>;
+}
+
+/** The company's approval rules (Company.approvalRules), or null while they were never turned on. */
+export function approvalRulesOf(company: AnyRecord): Record<string, unknown> | null {
+  const rules = asRow(company)?.approvalRules;
+  return rules && typeof rules === 'object' && !Array.isArray(rules)
+    ? (rules as Record<string, unknown>)
+    : null;
+}
+
+/** Whether the rules cover issued documents of this type. */
+export function rulesCoverDocument(rules: AnyRecord, type: unknown): boolean {
+  const types = asRow(rules)?.documentTypes;
+  return Array.isArray(types) && types.includes(typeof type === 'string' ? type : '');
+}
+
+/** A document's stage: payments move an issued document within it only. */
+export function documentStage(status: unknown): 'draft' | 'void' | 'issued' {
+  return status === 'draft' || status === 'void' ? status : 'issued';
+}
+
+/**
+ * Whether storing `after` over `before` needs an approver, as records_guard:
+ * an issued document of a type the rules cover whose content changes, or
+ * that is voided, comes back from void or goes back to draft. New documents
+ * and drafts never do.
+ */
+export function documentChangeNeedsApproval(
+  rules: AnyRecord,
+  before: AnyRecord,
+  after: AnyRecord,
+): boolean {
+  const old = asRow(before);
+  const next = asRow(after);
+  if (!rules || !old || !next || old.status === 'draft') return false;
+  if (!rulesCoverDocument(rules, old.type) && !rulesCoverDocument(rules, next.type)) {
+    return false;
+  }
+  return (
+    !sameData(invoiceContent(old), invoiceContent(next)) ||
+    documentStage(old.status) !== documentStage(next.status)
+  );
+}
+
+/**
+ * Whether the rules keep a record from being deleted, as can_delete_record:
+ * approval requests always, and issued documents of the types the rules
+ * cover with "Void instead of delete".
+ */
+export function rulesKeepRecord(rules: AnyRecord, table: string, record: AnyRecord): boolean {
+  const ruled = asRow(rules);
+  const row = asRow(record);
+  if (!ruled) return false;
+  if (table === 'approvals') return true;
+  return (
+    table === 'documents' &&
+    ruled.voidInsteadOfDelete === true &&
+    rulesCoverDocument(ruled, row?.type) &&
+    row?.status !== 'draft'
+  );
+}
+
+/** Whether the approval rules differ between two copies of the company record (the owner's alone). */
+export function approvalRulesChanged(before: AnyRecord, after: AnyRecord): boolean {
+  return !sameData(asRow(before)?.approvalRules ?? null, asRow(after)?.approvalRules ?? null);
+}
+
+const APPROVAL_FIXED = [
+  'kind',
+  'subjectTbl',
+  'subjectId',
+  'subjectNumber',
+  'before',
+  'after',
+  'reason',
+  'requestedBy',
+  'requestedByName',
+  'requestedAt',
+  'createdAt',
+] as const;
+
+const DECIDED = new Set(['rejected', 'cancelled', 'applied']);
+const DECISIONS = new Set(['approved', 'rejected', 'cancelled', 'applied']);
+
+export type ApprovalWrite =
+  { data: Record<string, unknown> } | { refused: 'permission' | 'invalid' };
+
+/**
+ * What the cloud stores when someone writes an approval request
+ * (records_guard), or why it refuses: a new request waits, stamped with who
+ * asked and when; what was asked never changes; only an approver decides
+ * (whoever asked may take it back while it waits); a decision made stays
+ * made, whatever an older copy says. `now` is the server's time.
+ */
+export function guardApprovalWrite(
+  before: Row,
+  after: Record<string, unknown>,
+  who: { userId: string; approver: boolean; now: string },
+): ApprovalWrite {
+  if (!before) {
+    if (who.approver && (after.status ?? 'pending') !== 'pending') return { data: after };
+    return {
+      data: {
+        ...after,
+        status: 'pending',
+        requestedBy: who.userId,
+        requestedAt: who.now,
+        decidedBy: null,
+        decidedAt: null,
+        decisionNote: '',
+      },
+    };
+  }
+  const data: Record<string, unknown> = { ...after };
+  for (const key of APPROVAL_FIXED) {
+    if (key in before && before[key] !== undefined) data[key] = before[key];
+    else delete data[key];
+  }
+  const was = typeof before.status === 'string' ? before.status : 'pending';
+  const status = typeof after.status === 'string' ? after.status : was;
+  const kept = {
+    decidedBy: before.decidedBy ?? null,
+    decidedAt: before.decidedAt ?? null,
+    decisionNote: before.decisionNote ?? '',
+  };
+  // No decision now (an older copy that still waits, sent again), or one made before.
+  if (status === was || status === 'pending' || DECIDED.has(was)) {
+    return { data: { ...data, status: was, ...kept } };
+  }
+  if (!DECISIONS.has(status)) return { refused: 'invalid' };
+  const takenBack =
+    was === 'pending' && status === 'cancelled' && before.requestedBy === who.userId;
+  if (!who.approver && !takenBack) return { refused: 'permission' };
+  if (was === 'approved' && status === 'applied') return { data: { ...data, ...kept } };
+  return { data: { ...data, decidedBy: who.userId, decidedAt: who.now } };
 }

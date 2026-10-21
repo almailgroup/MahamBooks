@@ -35,7 +35,20 @@
 --     left, a new owner when the owner's account is deleted) in the change
 --     feed of a later release. Until that release creates the feed it does
 --     nothing, and it can never stop a team change.
---   * public.server_features() also answers 'super_admin'.
+--   * Approvals (Settings → Approvals, the owner's switch; nothing changes
+--     until the owner turns it on). Staff may ask for approval too. The
+--     server keeps the requests honest (records_guard): each is stamped with
+--     who asked and when, only an approver decides it, and a decision stays
+--     made even when an older copy is sent again. With the rules on, issued
+--     invoices and credit notes change, are voided or come back from void
+--     only through an approver; anyone else is refused with
+--     "almail:approval_required" (SQL state 42501, which older versions of
+--     the app keep aside as a permission problem). Payments, which change an
+--     invoice's balance and status, go through as before. Only the owner
+--     changes the rules. Requests are never deleted, and with "Void instead
+--     of delete" issued documents keep their numbers: they are voided, never
+--     deleted (drafts still are).
+--   * public.server_features() also answers 'super_admin' and 'approvals'.
 -- =============================================================================
 
 -- Columns ------------------------------------------------------------------------
@@ -640,16 +653,315 @@ begin
 end
 $$;
 
+-- Approvals ------------------------------------------------------------------------
+--
+-- The company's rules are kept on its own record (approvalRules, set in
+-- Settings → Approvals by the owner):
+--   {"documentTypes": ["invoice", "credit"], "voidInsteadOfDelete": true, "expireDays": 14}
+-- Without them (every company until the owner turns them on) nothing below
+-- changes anything: records are written and deleted as before.
+
+-- Staff may ask for approval: they write approval requests (records_guard
+-- keeps them to asking and to taking back their own). As in the first file
+-- otherwise.
+create or replace function almailbooks.staff_can_write(p_tbl text, p_data jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_tbl in (
+      'companies', 'clients', 'products', 'documents', 'payments', 'recurring',
+      'securityCheques', 'expenses', 'warehouses', 'stockMovements', 'stockEntries',
+      'landedCosts', 'attachments', 'activities', 'approvals'
+    )
+    or (
+      p_tbl = 'journals'
+      and coalesce(p_data ->> 'kind', '') in (
+        'transfer', 'cheque_clearing', 'cheque_return', 'retention_release'
+      )
+    )
+$$;
+
+-- The company's approval rules, or null while the owner has never turned
+-- them on.
+create or replace function almailbooks.approval_rules(p_company text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case
+    when jsonb_typeof(r.data -> 'approvalRules') = 'object' then r.data -> 'approvalRules'
+  end
+  from public.records r
+  where r.company_id = p_company and r.tbl = 'companies' and r.id = p_company
+$$;
+
+-- Whether the rules cover issued documents of this type (invoices, credit notes).
+create or replace function almailbooks.rules_cover_document(p_rules jsonb, p_type text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_typeof(p_rules -> 'documentTypes') = 'array'
+      and (p_rules -> 'documentTypes') ? coalesce(p_type, ''),
+    false
+  )
+$$;
+
+-- A document's stage: a draft, void, or issued (sent, partly paid, paid,
+-- applied). Payments move an issued document within its stage only.
+create or replace function almailbooks.document_stage(p_status text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select case when p_status in ('draft', 'void') then p_status else 'issued' end
+$$;
+
+-- What a document says, as it is printed and sent: the customer, the dates,
+-- the currency, the lines, discounts, taxes and charges, the deposit and
+-- retention asked for, the wording and the design. What payments and the
+-- books write (totals, status, when it was paid, retention releases, the
+-- posting snapshot) is not part of it, nor the payment link or the internal
+-- notes. Kept the same as invoiceContent in src/cloud/roles.ts.
+create or replace function almailbooks.invoice_content(p jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'type', p -> 'type',
+    'number', p -> 'number',
+    'clientId', p -> 'clientId',
+    'issueDate', p -> 'issueDate',
+    'dueDate', p -> 'dueDate',
+    'poNumber', p -> 'poNumber',
+    'vendorReference', p -> 'vendorReference',
+    'currency', p -> 'currency',
+    'exchangeRate', p -> 'exchangeRate',
+    'items', p -> 'items',
+    'discount', p -> 'discount',
+    'discountType', p -> 'discountType',
+    'taxes', p -> 'taxes',
+    'charges', p -> 'charges',
+    'pricesIncludeTax', p -> 'pricesIncludeTax',
+    'deposit', p -> 'deposit',
+    'depositDueDate', p -> 'depositDueDate',
+    'notes', p -> 'notes',
+    'terms', p -> 'terms',
+    'footer', p -> 'footer',
+    'intro', p -> 'intro',
+    'templateId', p -> 'templateId',
+    'accentColor', p -> 'accentColor',
+    'deliveryDate', p -> 'deliveryDate',
+    'deliveryPlace', p -> 'deliveryPlace',
+    'retentionPercent', p -> 'retentionPercent',
+    'retentionKind', p -> 'retentionKind',
+    'replacesNumber', p -> 'replacesNumber'
+  ))
+$$;
+
+-- What the server checks before a record is stored, after
+-- records_before_write (triggers of the same kind run in the order of their
+-- names). Only the company record, documents and approval requests are
+-- looked at; every other record passes at once, and so do all three while
+-- the company's rules are off (the approval rules themselves are the
+-- owner's either way). Refusals have the SQL state 42501.
+create or replace function almailbooks.records_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_rules jsonb;
+  v_approver boolean;
+  v_now jsonb;
+  v_status text;
+  v_was text;
+  v_key text;
+begin
+  -- The SQL editor and the server's own jobs are not members.
+  if new.tbl not in ('companies', 'documents', 'approvals') or auth.uid() is null then
+    return new;
+  end if;
+  -- An upsert runs this as an insert before it turns into an update: a
+  -- record that is already there is checked as the update.
+  if tg_op = 'INSERT' and exists (
+    select 1
+    from public.records r
+    where r.company_id = new.company_id and r.tbl = new.tbl and r.id = new.id
+  ) then
+    return new;
+  end if;
+
+  if new.tbl = 'companies' then
+    -- Only the owner changes the approval rules (by a push or patch_company).
+    if nullif(case when tg_op = 'UPDATE' then old.data -> 'approvalRules' end, 'null'::jsonb)
+        is distinct from nullif(new.data -> 'approvalRules', 'null'::jsonb)
+      and almailbooks.member_role(new.company_id) is distinct from 'owner' then
+      raise exception 'almail:permission Only the owner changes the approval rules.'
+        using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
+  v_rules := almailbooks.approval_rules(new.company_id);
+  if v_rules is null then
+    return new;
+  end if;
+  v_approver := almailbooks.is_approver(new.company_id);
+
+  if new.tbl = 'documents' then
+    -- New documents and drafts are anyone's to write, and approvers write anything.
+    if tg_op = 'INSERT' or v_approver or coalesce(old.data ->> 'status', '') = 'draft'
+      or not (
+        almailbooks.rules_cover_document(v_rules, old.data ->> 'type')
+        or almailbooks.rules_cover_document(v_rules, new.data ->> 'type')
+      ) then
+      return new;
+    end if;
+    if almailbooks.invoice_content(old.data) is distinct from almailbooks.invoice_content(new.data)
+      or almailbooks.document_stage(old.data ->> 'status')
+        <> almailbooks.document_stage(new.data ->> 'status') then
+      raise exception 'almail:approval_required This change to an issued document needs approval. Send it for approval instead.'
+        using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
+  -- Approval requests.
+  v_now := to_jsonb(to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  if tg_op = 'INSERT' then
+    -- An approver's own copy of a decision (a company sent up again) is kept.
+    if v_approver and coalesce(new.data ->> 'status', 'pending') <> 'pending' then
+      return new;
+    end if;
+    -- A new request waits for a decision, asked by whoever sends it, now.
+    new.data := new.data || jsonb_build_object(
+      'status', 'pending',
+      'requestedBy', auth.uid()::text,
+      'requestedAt', v_now,
+      'decidedBy', null,
+      'decidedAt', null,
+      'decisionNote', ''
+    );
+    return new;
+  end if;
+
+  -- What was asked, by whom and when, never changes.
+  foreach v_key in array array[
+    'kind', 'subjectTbl', 'subjectId', 'subjectNumber', 'before', 'after', 'reason',
+    'requestedBy', 'requestedByName', 'requestedAt', 'createdAt'
+  ] loop
+    if old.data ? v_key then
+      new.data := jsonb_set(new.data, array[v_key], old.data -> v_key);
+    else
+      new.data := new.data - v_key;
+    end if;
+  end loop;
+  v_was := coalesce(old.data ->> 'status', 'pending');
+  v_status := coalesce(new.data ->> 'status', v_was);
+  if v_status = v_was or v_status = 'pending' or v_was in ('rejected', 'cancelled', 'applied') then
+    -- No decision now (an older copy that still waits, sent again), or one
+    -- made before: an older copy can't undo it.
+    new.data := new.data || jsonb_build_object(
+      'status', v_was,
+      'decidedBy', old.data -> 'decidedBy',
+      'decidedAt', old.data -> 'decidedAt',
+      'decisionNote', coalesce(nullif(old.data -> 'decisionNote', 'null'::jsonb), to_jsonb(''::text))
+    );
+    return new;
+  end if;
+  if v_status not in ('approved', 'rejected', 'cancelled', 'applied') then
+    raise exception 'almail:invalid A decided request can''t wait again.' using errcode = '42501';
+  end if;
+  if not v_approver
+    and not (
+      v_was = 'pending'
+      and v_status = 'cancelled'
+      and old.data ->> 'requestedBy' = auth.uid()::text
+    ) then
+    -- Whoever asked may only take the request back while it waits.
+    raise exception 'almail:permission Only an approver decides approval requests.'
+      using errcode = '42501';
+  end if;
+  if v_was = 'approved' and v_status = 'applied' then
+    -- Carried out as approved: the decision stays the approver's.
+    new.data := new.data || jsonb_build_object(
+      'decidedBy', old.data -> 'decidedBy',
+      'decidedAt', old.data -> 'decidedAt',
+      'decisionNote', coalesce(nullif(old.data -> 'decisionNote', 'null'::jsonb), to_jsonb(''::text))
+    );
+  else
+    new.data := new.data || jsonb_build_object(
+      'decidedBy', auth.uid()::text,
+      'decidedAt', v_now
+    );
+  end if;
+  return new;
+end
+$$;
+
+drop trigger if exists records_guard on public.records;
+create trigger records_guard
+  before insert or update on public.records
+  for each row execute function almailbooks.records_guard();
+
+-- The company's own record is never deleted through sync: delete_company
+-- does that. With the company's rules on, approval requests stay (they are
+-- the record of who asked and who decided), and with "Void instead of
+-- delete" issued documents of the types the rules cover are voided, never
+-- deleted, so their numbers stay used; drafts may still go. As in the first
+-- file otherwise.
+create or replace function almailbooks.can_delete_record(p_company text, p_tbl text, p_data jsonb)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_rules jsonb;
+begin
+  if p_tbl = 'companies' or not almailbooks.can_write_record(p_company, p_tbl, p_data) then
+    return false;
+  end if;
+  if p_tbl not in ('approvals', 'documents') then
+    return true;
+  end if;
+  v_rules := almailbooks.approval_rules(p_company);
+  if v_rules is null then
+    return true;
+  end if;
+  if p_tbl = 'approvals' then
+    return false;
+  end if;
+  return not (
+    coalesce(v_rules ->> 'voidInsteadOfDelete', '') = 'true'
+    and almailbooks.rules_cover_document(v_rules, p_data ->> 'type')
+    and coalesce(p_data ->> 'status', '') <> 'draft'
+  );
+end
+$$;
+
 -- What this server has beyond the first files, so the app shows a feature
 -- only once the server has what it needs: tables_v16 is the fourth file,
--- super_admin this one.
+-- super_admin and approvals this one.
 create or replace function public.server_features()
 returns text[]
 language sql
 stable
 set search_path = ''
 as $$
-  select array['tables_v16', 'super_admin']::text[]
+  select array['tables_v16', 'super_admin', 'approvals']::text[]
 $$;
 
 -- Who may run what ------------------------------------------------------------------
@@ -659,12 +971,25 @@ revoke all on function
   almailbooks.is_approver(text),
   almailbooks.record_app(text, jsonb),
   almailbooks.company_members_before_write(),
-  almailbooks.company_members_audit()
+  almailbooks.company_members_audit(),
+  almailbooks.staff_can_write(text, jsonb),
+  almailbooks.approval_rules(text),
+  almailbooks.rules_cover_document(jsonb, text),
+  almailbooks.document_stage(text),
+  almailbooks.invoice_content(jsonb),
+  almailbooks.records_guard(),
+  almailbooks.can_delete_record(text, text, jsonb)
 from public, anon;
 grant execute on function
   almailbooks.senior_roles_owner_only(text),
   almailbooks.is_approver(text),
-  almailbooks.record_app(text, jsonb)
+  almailbooks.record_app(text, jsonb),
+  almailbooks.staff_can_write(text, jsonb),
+  almailbooks.approval_rules(text),
+  almailbooks.rules_cover_document(jsonb, text),
+  almailbooks.document_stage(text),
+  almailbooks.invoice_content(jsonb),
+  almailbooks.can_delete_record(text, text, jsonb)
 to authenticated;
 
 revoke all on function

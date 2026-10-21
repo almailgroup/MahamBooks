@@ -1,5 +1,5 @@
 import { db } from '@/db/db';
-import type { Company } from '@/db/types';
+import type { ApprovalRequest, Company } from '@/db/types';
 import {
   ALERT_TOPICS,
   collectAlerts,
@@ -122,4 +122,17 @@ export function alertPage(alert: Alert, people: boolean): string {
     case 'invoices':
       return `/invoices/${alert.doc.id}`;
   }
+}
+
+/**
+ * Approval requests that need the person: every waiting one for an approver,
+ * their own waiting ones for anyone else (who can only take them back).
+ */
+export function approvalsWaiting(
+  requests: readonly Pick<ApprovalRequest, 'status' | 'requestedBy'>[],
+  { approver, userId }: { approver: boolean; userId: string | null },
+): number {
+  return requests.filter(
+    (r) => r.status === 'pending' && (approver || (userId !== null && r.requestedBy === userId)),
+  ).length;
 }

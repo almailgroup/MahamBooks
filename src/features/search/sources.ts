@@ -97,6 +97,11 @@ const SUB_PAGES: {
   { label: msg('Your account'), to: '/settings/account', keywords: 'profile password sign out' },
   { label: msg('Team'), to: '/settings/team', keywords: 'members invite users roles' },
   {
+    label: msg('Approval settings'),
+    to: '/settings/approvals',
+    keywords: 'approve approval void delete super admin owner',
+  },
+  {
     label: msg('Cloud and sync'),
     to: '/settings/cloud',
     keywords: 'sync status offline cloud devices',
@@ -121,6 +126,7 @@ export function staticEntries(
     registerExtras = false,
     fileFinder = false,
     chequePrinting = false,
+    approvals = false,
   }: {
     access?: AccessMap;
     current?: AppId;
@@ -128,6 +134,7 @@ export function staticEntries(
     registerExtras?: boolean;
     fileFinder?: boolean;
     chequePrinting?: boolean;
+    approvals?: boolean;
   } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
@@ -168,7 +175,7 @@ export function staticEntries(
         boost: 35,
       }),
     );
-    for (const entry of visibleNav(app.nav, taxesOn, registerExtras, fileFinder)) {
+    for (const entry of visibleNav(app.nav, taxesOn, registerExtras, fileFinder, approvals)) {
       if (entry.kind === 'link') {
         page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
       } else {

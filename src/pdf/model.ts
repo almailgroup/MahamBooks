@@ -225,7 +225,12 @@ export type RenderableDocument = Pick<
   Partial<
     Pick<
       InvoiceDocument,
-      'retentionPercent' | 'retentionReleases' | 'posting' | 'accentColor' | 'intro'
+      | 'retentionPercent'
+      | 'retentionReleases'
+      | 'posting'
+      | 'accentColor'
+      | 'intro'
+      | 'replacesNumber'
     >
   > & {
     totals: Pick<InvoiceDocument['totals'], 'paid'>;
@@ -519,6 +524,11 @@ export function buildRenderModel(
   // A purchase order's own number is its PO number.
   if (clean(doc.poNumber) && type !== 'purchase_order') {
     meta.push(row('poNumber', clean(doc.poNumber)));
+  }
+  // Issued in place of a void one (D12): which number it replaces.
+  if (clean(doc.replacesNumber)) {
+    const replaced = clean(doc.replacesNumber);
+    meta.push(row('replaces', rtl ? ltr(replaced) : replaced));
   }
   // Delivery notes show the date large and the place as the "delivered to" address.
   if (doc.deliveryDate && !note) meta.push(row('deliveryDate', date(doc.deliveryDate)));

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { LucideIcon } from 'lucide-react';
@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CircleAlert,
   CircleCheck,
+  ClipboardCheck,
   FileBadge,
   FileText,
   HandCoins,
@@ -34,6 +35,8 @@ import { lookup } from '@/lib/known';
 import { Card, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
 import { useRoleView } from '@/features/cloud/role-gates';
+import { useApprovalView, usePendingRequests } from '@/features/approvals/hooks';
+import { expirePending } from '@/db/approvals';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { useAppAccess } from '../current-app';
@@ -41,6 +44,7 @@ import type { AppId } from '../types';
 import { Launcher } from './launcher';
 import {
   alertPage,
+  approvalsWaiting,
   homeAlerts,
   homeTopics,
   loadHomeAlertData,
@@ -149,6 +153,7 @@ export default function SuiteHome() {
           )}
         </Card>
         <div className="flex min-w-0 flex-col gap-5 lg:gap-6">
+          <ApprovalsCard />
           {access.books !== 'none' && data ? <Glance data={data} /> : null}
         </div>
       </div>
@@ -243,6 +248,40 @@ function AttentionList({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Approval requests that need the person (Settings → Approvals): those
+ * waiting for an approver's decision, or the person's own still waiting.
+ * Nothing for a company without them.
+ */
+function ApprovalsCard() {
+  const company = useCompany();
+  const fmt = useFormat();
+  const view = useApprovalView(company);
+  const requests = usePendingRequests(company.id);
+  const approver = view.approver && view.link !== null;
+  // Requests that waited longer than the rules allow are cancelled on approvers' devices.
+  useEffect(() => {
+    if (approver && view.rules?.expireDays) void expirePending(company.id).catch(() => undefined);
+  }, [approver, view.rules?.expireDays, company.id]);
+  if (!requests || !view.link) return null;
+  const count = approvalsWaiting(requests, { approver, userId: view.link.userId });
+  if (count === 0) return null;
+  return (
+    <Card>
+      <CardHeader title={t('Approval requests')} />
+      <ul className="divide-y divide-slate-100 px-5 py-1">
+        <GlanceRow
+          to="/approvals"
+          icon={ClipboardCheck}
+          label={approver ? t('Waiting for your approval') : t('Your requests still waiting')}
+        >
+          <span className="tabular">{fmt.quantity(count)}</span>
+        </GlanceRow>
+      </ul>
+    </Card>
   );
 }
 

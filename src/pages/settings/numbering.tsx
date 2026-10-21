@@ -3,7 +3,7 @@ import { NUMBER_PLACEHOLDERS, previewNumber } from '@/lib/numbering';
 import { defaultNumbering } from '@/db/defaults';
 import { today } from '@/lib/dates';
 import { msg, t } from '@/i18n';
-import { Field, Input, NumberInput, Select } from '@/components/ui/form';
+import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
 const ENTITIES: { key: NumberedEntity; label: string }[] = [
@@ -44,6 +44,21 @@ export default function NumberingSettings() {
 
   return (
     <div className="space-y-6">
+      <SettingsSection
+        title={t('When invoices get their number')}
+        description={t(
+          'Numbers are never given twice: a void invoice keeps its number, and an invoice issued in place of one gets a new number that says which it replaces.',
+        )}
+      >
+        <Switch
+          checked={draft.defaults.numberOnIssue ?? false}
+          onChange={(on) => update({ defaults: { ...draft.defaults, numberOnIssue: on } })}
+          label={t('Number invoices and credit notes when they are issued')}
+          description={t(
+            'Drafts have no number until they are sent, so a draft that is deleted never uses one up. In a company kept in the cloud, update every device first.',
+          )}
+        />
+      </SettingsSection>
       <SettingsSection
         title={t('Number formats')}
         description={t('How new numbers are built. Numbers already used are skipped.')}

@@ -11,6 +11,7 @@ import type {
   FixedAsset,
   ID,
   InvoiceDocument,
+  Payment,
   TaxLine,
 } from './types';
 import {
@@ -40,6 +41,9 @@ import { assertUnlocked, ensureSpecAccount } from './accounting';
 import { billAssetLines } from './assets';
 import { syncDocumentStock, withStockTables } from './inventory';
 import { withPosting } from './posting';
+import { assertApproved, voidsInsteadOfDeleting } from './approvals';
+import { approvalRulesOf, rulesCoverDocument } from '@/cloud/roles';
+import type { CloudLink } from '@/cloud/types';
 
 /** Activity log messages of each type (English keys, shown in the reader's language). */
 const LOG: Record<DocumentType, { created: string; updated: string; deleted: string }> = {
@@ -89,6 +93,56 @@ const LOG: Record<DocumentType, { created: string; updated: string; deleted: str
     deleted: msg('Delivery note {number} deleted'),
   },
 };
+
+/** Drafts not numbered yet (DocumentDefaults.numberOnIssue). */
+const DRAFT_LOG: Partial<
+  Record<DocumentType, { created: string; updated: string; deleted: string }>
+> = {
+  invoice: {
+    created: msg('Draft invoice created'),
+    updated: msg('Draft invoice updated'),
+    deleted: msg('Draft invoice deleted'),
+  },
+  credit: {
+    created: msg('Draft credit note created'),
+    updated: msg('Draft credit note updated'),
+    deleted: msg('Draft credit note deleted'),
+  },
+};
+
+/** What the log says a document had done to it, by its number or, without one, as a draft. */
+function logText(
+  doc: Pick<InvoiceDocument, 'type' | 'number'>,
+  what: 'created' | 'updated' | 'deleted',
+) {
+  const draft = !doc.number.trim() ? DRAFT_LOG[doc.type] : undefined;
+  return { text: (draft ?? LOG[doc.type])[what], vars: { number: doc.number } };
+}
+
+/** Types numbered when they are issued, with DocumentDefaults.numberOnIssue. */
+export const NUMBERED_ON_ISSUE: readonly DocumentType[] = ['invoice', 'credit'];
+
+/**
+ * Whether a document waits for its number: a draft invoice or credit note of
+ * a company that numbers them when they are issued (D12: a draft deleted
+ * never uses a number up).
+ */
+export function waitsForNumber(
+  company: Pick<Company, 'defaults'>,
+  doc: Pick<InvoiceDocument, 'type' | 'status'>,
+): boolean {
+  return (
+    company.defaults.numberOnIssue === true &&
+    NUMBERED_ON_ISSUE.includes(doc.type) &&
+    doc.status === 'draft'
+  );
+}
+
+/** The person's link to the cloud for a company, when it can be read (outside a transaction). */
+async function linkOutside(companyId: ID): Promise<CloudLink | null | undefined> {
+  if (Dexie.currentTransaction) return undefined;
+  return (await db.syncState.get(companyId)) ?? null;
+}
 
 const STATUS_LOG: Partial<Record<DocumentStatus, string>> = {
   sent: msg('{number} marked as sent'),
@@ -363,9 +417,36 @@ export async function isNumberTaken(
  */
 async function reserveDocumentCounter(input: InvoiceDocument): Promise<ReservedCounter | null> {
   if (!canReserveCounters() || input.number.trim() || Dexie.currentTransaction) return null;
-  if (await db.documents.get(input.id)) return null;
+  const existing = await db.documents.get(input.id);
   const company = await db.companies.get(input.companyId);
+  // A draft that gets its number when it is issued takes none now.
+  if (!company || waitsForNumber(company, input)) return null;
+  // Saved again: only a draft that waited for its number takes one, now it is issued.
+  if (existing && (existing.number.trim() || !waitsForNumber(company, existing))) return null;
+  return reserveFor(company, input);
+}
+
+/**
+ * For a draft that waits for its number (waitsForNumber), being issued: the
+ * next counter taken on the server, as reserveDocumentCounter does for a new
+ * document.
+ */
+async function reserveIssueCounter(
+  id: ID,
+  status: DocumentStatus,
+): Promise<ReservedCounter | null> {
+  if (!canReserveCounters() || Dexie.currentTransaction || status === 'draft') return null;
+  const doc = await db.documents.get(id);
+  if (!doc || doc.number.trim()) return null;
+  const company = await db.companies.get(doc.companyId);
   if (!company) return null;
+  return reserveFor(company, { ...doc, status });
+}
+
+async function reserveFor(
+  company: Company,
+  input: InvoiceDocument,
+): Promise<ReservedCounter | null> {
   // What saveDocument refuses in a new document before numbering it: a date
   // in the locked period (it says so itself).
   if (isPosted(input)) {
@@ -384,6 +465,32 @@ async function reserveDocumentCounter(input: InvoiceDocument): Promise<ReservedC
     date: input.issueDate,
     min: local.rule.next - 1,
   });
+}
+
+/**
+ * Gives a document the next number of its kind and moves the company's
+ * counter on (in the transaction running). Returns the company as saved.
+ */
+async function giveNumber(
+  company: Company,
+  doc: InvoiceDocument,
+  client: Pick<Client, 'number'> | null | undefined,
+  reserved: ReservedCounter | null,
+): Promise<Company> {
+  const taken = await takenNumbers(company.id, doc.type, doc.id);
+  // Companies created before a document type existed have no rule for it yet.
+  const rule = company.numbering[doc.type] ?? defaultNumbering()[doc.type];
+  const allocated = allocateFrom(
+    rule,
+    doc.issueDate,
+    (n) => taken.has(n.toLowerCase()),
+    client?.number ?? '',
+    reserved,
+  );
+  doc.number = allocated.number;
+  const saved = { ...company, numbering: { ...company.numbering, [doc.type]: allocated.rule } };
+  await db.companies.put(saved);
+  return saved;
 }
 
 /** Next number that would be assigned, for display before saving. */
@@ -587,6 +694,7 @@ async function takeOffCredits(doc: InvoiceDocument, company: Company): Promise<I
  */
 export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocument> {
   const reserved = await reserveDocumentCounter(input);
+  const link = await linkOutside(input.companyId);
   return db.transaction(
     'rw',
     withStockTables([
@@ -618,20 +726,8 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
 
       const taken = await takenNumbers(company.id, doc.type, doc.id);
       if (!doc.number) {
-        // Companies created before a document type existed have no rule for it yet.
-        const rule = company.numbering[doc.type] ?? defaultNumbering()[doc.type];
-        const allocated = allocateFrom(
-          rule,
-          doc.issueDate,
-          (n) => taken.has(n.toLowerCase()),
-          client?.number ?? '',
-          reserved,
-        );
-        doc.number = allocated.number;
-        await db.companies.put({
-          ...company,
-          numbering: { ...company.numbering, [doc.type]: allocated.rule },
-        });
+        // A draft numbered when it is issued keeps none until then.
+        if (!waitsForNumber(company, doc)) await giveNumber(company, doc, client, reserved);
       } else if (
         taken.has(doc.number.toLowerCase()) &&
         // Saved again with the number it has: never refused, even when
@@ -656,6 +752,8 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
           doc.type === 'bill' ? 'retentionsPayable' : 'retentionsReceivable',
         );
       }
+      // An issued invoice the company's rules keep for approvers: sent for approval instead.
+      if (existing) assertApproved(company, link, existing, doc);
       doc.updatedAt = nowStamp();
       if (!existing) doc.createdAt = doc.updatedAt;
       await db.documents.put(doc);
@@ -666,7 +764,7 @@ export async function saveDocument(input: InvoiceDocument): Promise<InvoiceDocum
         doc.type,
         doc.id,
         existing ? 'updated' : 'created',
-        { text: LOG[doc.type][existing ? 'updated' : 'created'], vars: { number: doc.number } },
+        logText(doc, existing ? 'updated' : 'created'),
         { clientId: doc.clientId || null, documentId: doc.id },
       );
       await refreshOrdersOf(doc);
@@ -699,10 +797,13 @@ export async function setDocumentStatus(
   message?: ActivityMessage,
   patch: Partial<InvoiceDocument> = {},
 ): Promise<void> {
+  const reserved = await reserveIssueCounter(id, status);
+  const found = Dexie.currentTransaction ? undefined : await db.documents.get(id);
+  const link = found ? await linkOutside(found.companyId) : undefined;
   await db.transaction('rw', statusTables(), async () => {
     const doc = await db.documents.get(id);
     if (!doc) return;
-    const company = await db.companies.get(doc.companyId);
+    let company = await db.companies.get(doc.companyId);
     const posted = isPosted({ type: doc.type, status });
     if (company && isPosted(doc) !== posted) {
       assertUnlocked(company, doc.issueDate);
@@ -710,12 +811,33 @@ export async function setDocumentStatus(
     if (hasActiveReleases(doc) && !posted) {
       throw releasesFirstError();
     }
+    let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
+    if (status === 'void' && doc.status !== 'void') {
+      // Who voided it and when (why comes in `patch`).
+      next.voidedAt = nowStamp();
+      next.voidedBy = link?.userId ?? null;
+    } else if (doc.status === 'void' && status !== 'void') {
+      next.voidedAt = null;
+      next.voidedBy = null;
+      delete next.voidReason;
+    }
+    // An issued invoice the company's rules keep for approvers: sent for approval instead.
+    assertApproved(company, link, doc, next);
+    // Issued now: a draft that waited for its number gets it.
+    if (company && status !== 'draft' && !next.number.trim()) {
+      const client = doc.clientId ? await db.clients.get(doc.clientId) : undefined;
+      company = await giveNumber(company, next, client, reserved);
+    }
     // Leaving the books: assets made from it are refused, credits applied
     // to (or from) it are taken off.
     const leaving = isPosted(doc) && !posted;
     if (leaving) await assertNoAssets(doc);
     const credited = leaving && company ? await takeOffCredits(doc, company) : [];
-    let next: InvoiceDocument = { ...doc, ...patch, status, updatedAt: nowStamp() };
+    // Voided under the company's rules: money paid against it becomes the
+    // customer's unapplied credit, as when a document is deleted.
+    if (status === 'void' && doc.status !== 'void' && company && link) {
+      if (rulesCoverDocument(approvalRulesOf(company), doc.type)) await freePayments(id);
+    }
     if (status === issuedStatus(doc.type) && !doc.sentAt) next.sentAt = nowStamp();
     if (postsToLedger(doc.type) && status !== 'void' && status !== 'draft') {
       // Let payments decide between sent / partial / paid.
@@ -745,12 +867,26 @@ export async function setDocumentStatus(
       doc.type,
       doc.id,
       `status:${status}`,
-      message ?? statusMessage(doc, status),
+      message ?? statusMessage({ ...doc, number: next.number }, status),
       { clientId: doc.clientId || null, documentId: doc.id },
     );
     // A confirmed order picks up the invoices already made from it.
     await refreshOrdersOf(next);
   });
+}
+
+/** Money paid against a document stays on its payments as unapplied credit. */
+async function freePayments(id: ID): Promise<Payment[]> {
+  const payments = await db.payments.where('documentIds').equals(id).toArray();
+  for (const p of payments) {
+    const allocations = p.allocations.filter((a) => a.documentId !== id);
+    await db.payments.put({
+      ...p,
+      allocations,
+      documentIds: allocations.map((a) => a.documentId),
+    });
+  }
+  return payments;
 }
 
 /**
@@ -784,8 +920,15 @@ export async function checkMarkSent(id: ID): Promise<void> {
   }
 }
 
-/** Deletes a document. Payments that referenced it keep their money as unapplied credit. */
+/**
+ * Deletes a document. Payments that referenced it keep their money as
+ * unapplied credit. Under the company's rules with "Void instead of delete",
+ * an issued invoice or credit note is refused: it is voided instead, so its
+ * number stays used (D12).
+ */
 export async function deleteDocument(id: ID): Promise<void> {
+  const found = Dexie.currentTransaction ? undefined : await db.documents.get(id);
+  const link = found ? await linkOutside(found.companyId) : undefined;
   await db.transaction(
     'rw',
     withStockTables([
@@ -801,6 +944,13 @@ export async function deleteDocument(id: ID): Promise<void> {
       const doc = await db.documents.get(id);
       if (!doc) return;
       const company = await db.companies.get(doc.companyId);
+      if (voidsInsteadOfDeleting(company, link, doc)) {
+        throw new DocumentChangeError(
+          t('{number} is issued, so it is voided instead of deleted: its number stays used.', {
+            number: doc.number,
+          }),
+        );
+      }
       if (company && isPosted(doc)) assertUnlocked(company, doc.issueDate);
       if (hasActiveReleases(doc)) throw releasesFirstError();
       await assertNoAssets(doc);
@@ -809,19 +959,16 @@ export async function deleteDocument(id: ID): Promise<void> {
       // off: the credit can be used again.
       const credited = company ? await takeOffCredits(doc, company) : [];
       // Money paid against it stays on the payment as unapplied credit.
-      const payments = await db.payments.where('documentIds').equals(id).toArray();
-      for (const p of payments) {
-        const allocations = p.allocations.filter((a) => a.documentId !== id);
-        await db.payments.put({
-          ...p,
-          allocations,
-          documentIds: allocations.map((a) => a.documentId),
-        });
-      }
+      await freePayments(id);
       await recalculateDocuments(credited);
       // Documents created from this one lose the link.
       for (const d of await documentsCreatedFrom(id)) {
         await db.documents.put({ ...d, sourceId: null });
+      }
+      // The void document it was to replace can be issued again.
+      const replaced = doc.replacesId ? await db.documents.get(doc.replacesId) : undefined;
+      if (replaced?.replacedById === doc.id) {
+        await db.documents.put({ ...replaced, replacedById: null, updatedAt: nowStamp() });
       }
       // A quote or proforma converted into this document can be converted again.
       const source = doc.sourceId ? await db.documents.get(doc.sourceId) : undefined;
@@ -835,14 +982,9 @@ export async function deleteDocument(id: ID): Promise<void> {
       }
       await db.documents.delete(id);
       await syncDocumentStock(doc.companyId, doc.id);
-      await logActivity(
-        doc.companyId,
-        doc.type,
-        doc.id,
-        'deleted',
-        { text: LOG[doc.type].deleted, vars: { number: doc.number } },
-        { clientId: doc.clientId || null },
-      );
+      await logActivity(doc.companyId, doc.type, doc.id, 'deleted', logText(doc, 'deleted'), {
+        clientId: doc.clientId || null,
+      });
       await refreshOrdersOf(doc);
     },
   );
@@ -890,6 +1032,37 @@ export async function duplicateDocument(
     ...overrides,
   };
   return saveDocument(copy);
+}
+
+/**
+ * Issues a new draft in place of a void invoice or credit note (D12: the void
+ * one keeps its number): a copy of it that prints "Replaces …" with the void
+ * one's number, linked both ways. Returns the new draft, to be corrected and
+ * issued with a number of its own.
+ */
+export async function reissueDocument(id: ID): Promise<InvoiceDocument> {
+  const source = await db.documents.get(id);
+  if (!source) throw new Error(t('Document not found'));
+  if (source.status !== 'void') {
+    throw new DocumentChangeError(t('Only a void document is issued again.'));
+  }
+  if (source.replacedById && (await db.documents.get(source.replacedById))) {
+    throw new DocumentChangeError(
+      t('{number} has already been issued again.', { number: source.number }),
+    );
+  }
+  const copy = await duplicateDocument(id, source.type, {
+    replacesId: source.id,
+    replacesNumber: source.number,
+    // The credit note of an invoice keeps pointing at that invoice.
+    sourceId: source.sourceId,
+    issueDate: today(),
+  });
+  const current = await db.documents.get(id);
+  if (current) {
+    await db.documents.put({ ...current, replacedById: copy.id, updatedAt: nowStamp() });
+  }
+  return copy;
 }
 
 /**
@@ -958,7 +1131,10 @@ export async function convertDocument(
     source.type,
     source.id,
     'converted',
-    { text: CONVERTED_LOG[to], vars: { number: source.number, target: linked.number } },
+    linked.number.trim()
+      ? { text: CONVERTED_LOG[to], vars: { number: source.number, target: linked.number } }
+      : // A draft invoice numbered when it is issued has no number yet.
+        { text: msg('{number} converted to a draft invoice'), vars: { number: source.number } },
     { clientId: source.clientId || null, documentId: source.id },
   );
   return linked;

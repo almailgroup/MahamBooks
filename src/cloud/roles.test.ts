@@ -166,12 +166,15 @@ describe('private records of database version 16', () => {
     const tables = ['chequeLayouts', 'vehicles', 'approvals', 'letterTemplates', 'employeeLetters'];
     for (const table of tables) {
       const record = { id: 'x', subjectTbl: 'documents' };
-      expect(canWriteRecord('staff', table, record, find), table).toBe(false);
+      // Staff ask for approval (20261116000000_super_admin_approvals.sql), of
+      // anything but payroll and people data.
+      expect(canWriteRecord('staff', table, record, find), table).toBe(table === 'approvals');
       expect(canWriteRecord('viewer', table, record, find), table).toBe(false);
       for (const role of ['owner', 'admin', 'accountant', null] as const) {
         expect(canWriteRecord(role, table, record, find), `${role} ${table}`).toBe(true);
       }
     }
+    expect(canWriteRecord('staff', 'approvals', { subjectTbl: 'payRuns' }, find)).toBe(false);
   });
 });
 

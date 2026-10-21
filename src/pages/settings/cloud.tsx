@@ -9,6 +9,7 @@ import {
   FolderX,
   RefreshCw,
   RotateCcw,
+  Send,
   Undo2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -45,6 +46,10 @@ import { LastSynced, SyncStatusLine } from '@/features/cloud/sync-status';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import type { DataTable } from '@/db/db';
+import { canSendForApproval, sendParkedForApproval } from '@/features/approvals/parked';
+import { ApprovalError } from '@/db/approvals';
+import { ReasonDialog } from '@/features/approvals/reason-dialog';
+import { useMyName } from '@/features/approvals/hooks';
 import { SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -443,7 +448,10 @@ function Problems({
 }) {
   const { user, api, manager } = useCloud();
   const confirm = useConfirm();
+  const myName = useMyName();
   const [busy, setBusy] = useState<string | null>(null);
+  // A change of an issued invoice the rules keep for approvers, to send for approval.
+  const [asking, setAsking] = useState<OutboxEntry | null>(null);
   const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
 
   /** Takes the cloud's copy back; a record the cloud never had is only deleted once agreed. */
@@ -528,9 +536,41 @@ function Problems({
                 <Undo2 /> {t('Undo my change')}
               </Button>
             ) : null}
+            {api && user && canSendForApproval(entry) ? (
+              <Button size="xs" variant="ghost" onClick={() => setAsking(entry)}>
+                <Send /> {t('Send for approval instead')}
+              </Button>
+            ) : null}
           </li>
         ))}
       </ul>
+      {asking && api && user ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={t('Send for approval instead')}
+          description={t(
+            'The document goes back to the cloud’s copy, and your change waits for an approver. It is made when they approve.',
+          )}
+          confirmLabel={t('Send for approval')}
+          onConfirm={async (reason) => {
+            try {
+              await sendParkedForApproval(
+                companyId,
+                asking,
+                { api, userId: user.id },
+                reason,
+                myName,
+              );
+              toast.success(t('Sent for approval'));
+              await manager?.syncNow(companyId).catch(() => undefined);
+            } catch (err) {
+              toast.error(err instanceof ApprovalError ? err.message : cloudErrorMessage(err));
+              throw err;
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -325,7 +325,9 @@ export type CloudErrorCode =
   | 'email_unconfirmed'
   | 'server'
   /** The company's server lacks a migration the record needs: it waits here until it is run. */
-  | 'server_outdated';
+  | 'server_outdated'
+  /** The company's approval rules: an approver must make this change (send it for approval). */
+  | 'approval_required';
 
 /** A request the cloud refused or could not answer, with a code the app acts on. */
 export class CloudError extends Error {
@@ -368,6 +370,7 @@ export const CLOUD_ERROR_MESSAGES: Record<CloudErrorCode, string> = {
   server_outdated: msg(
     'The cloud needs the latest database script first. Ask the owner of the company to run it.',
   ),
+  approval_required: msg('This change needs approval. Send it for approval instead.'),
 };
 
 const CODES = new Set<string>(Object.keys(CLOUD_ERROR_MESSAGES));

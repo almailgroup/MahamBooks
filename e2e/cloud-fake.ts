@@ -99,6 +99,65 @@ function recordApp(tbl: string, data: Record<string, unknown> | null): string | 
 
 const SENIOR: Role[] = ['admin', 'accountant'];
 
+/**
+ * What a document says, as almailbooks.invoice_content (and invoiceContent
+ * in src/cloud/roles.ts), as canonical JSON: keys sorted, nulls left out.
+ */
+const CONTENT = [
+  'type',
+  'number',
+  'clientId',
+  'issueDate',
+  'dueDate',
+  'poNumber',
+  'vendorReference',
+  'currency',
+  'exchangeRate',
+  'items',
+  'discount',
+  'discountType',
+  'taxes',
+  'charges',
+  'pricesIncludeTax',
+  'deposit',
+  'depositDueDate',
+  'notes',
+  'terms',
+  'footer',
+  'intro',
+  'templateId',
+  'accentColor',
+  'deliveryDate',
+  'deliveryPlace',
+  'retentionPercent',
+  'retentionKind',
+  'replacesNumber',
+];
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== null && v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+const content = (doc: Record<string, unknown>) =>
+  canonical(Object.fromEntries(CONTENT.map((key) => [key, doc[key]])));
+
+const stage = (status: unknown) => (status === 'draft' || status === 'void' ? status : 'issued');
+
+/** Refusals of almailbooks.records_guard, as PostgREST answers them. */
+const approvalRequired = () =>
+  new Refusal(403, {
+    code: '42501',
+    message:
+      'almail:approval_required This change to an issued document needs approval. Send it for approval instead.',
+  });
+
 export class FakeSupabase {
   users = new Map<string, FakeUser>();
   companies = new Map<
@@ -334,6 +393,94 @@ export class FakeSupabase {
     return limit === 'none' || limit === 'view';
   }
 
+  /**
+   * almailbooks.records_guard and the approval part of can_delete_record:
+   * what is stored for a change, or the refusal.
+   */
+  private guard(
+    company: string,
+    user: string,
+    role: Role | undefined,
+    change: { tbl: string; id: string; data?: Record<string, unknown>; deleted?: boolean },
+  ): Record<string, unknown> | null | Refusal {
+    const row = this.records.get(`${company}/${change.tbl}/${change.id}`);
+    const old = row && !row.deleted ? row.data : null;
+    const data = change.deleted ? null : (change.data ?? null);
+    const companyRow = this.records.get(`${company}/companies/${company}`);
+    const rules = (companyRow?.data?.approvalRules ?? null) as {
+      documentTypes?: string[];
+      voidInsteadOfDelete?: boolean;
+    } | null;
+    if (change.tbl === 'companies') {
+      const before = canonical(old?.approvalRules ?? null);
+      if (data && role !== 'owner' && before !== canonical(data.approvalRules ?? null)) {
+        return refuse('almail:permission Only the owner changes the approval rules.');
+      }
+      return data;
+    }
+    if (!rules || (change.tbl !== 'documents' && change.tbl !== 'approvals')) return data;
+    const covers = (doc: Record<string, unknown> | null) =>
+      Boolean(doc && rules.documentTypes?.includes(String(doc.type)));
+    if (!data) {
+      if (!old) return null;
+      if (change.tbl === 'approvals')
+        return refuse('almail:permission You cannot delete this record.');
+      if (rules.voidInsteadOfDelete && covers(old) && old.status !== 'draft') {
+        return refuse('almail:permission You cannot delete this record.');
+      }
+      return null;
+    }
+    const approver =
+      role === 'owner' ||
+      ((role === 'admin' || role === 'accountant') &&
+        Boolean(this.access.get(`${company} ${user}`)?.canApprove));
+    if (change.tbl === 'documents') {
+      if (!old || approver || old.status === 'draft' || !(covers(old) || covers(data))) return data;
+      return content(old) !== content(data) || stage(old.status) !== stage(data.status)
+        ? approvalRequired()
+        : data;
+    }
+    const now = new Date().toISOString();
+    if (!old) {
+      if (approver && (data.status ?? 'pending') !== 'pending') return data;
+      return {
+        ...data,
+        status: 'pending',
+        requestedBy: user,
+        requestedAt: now,
+        decidedBy: null,
+        decidedAt: null,
+        decisionNote: '',
+      };
+    }
+    const fixed = Object.fromEntries(
+      ['kind', 'subjectTbl', 'subjectId', 'subjectNumber', 'before', 'after', 'reason']
+        .concat(['requestedBy', 'requestedByName', 'requestedAt', 'createdAt'])
+        .filter((key) => key in old)
+        .map((key) => [key, old[key]]),
+    );
+    const was = String(old.status ?? 'pending');
+    const status = String(data.status ?? was);
+    const kept = {
+      decidedBy: old.decidedBy ?? null,
+      decidedAt: old.decidedAt ?? null,
+      decisionNote: old.decisionNote ?? '',
+    };
+    if (
+      status === was ||
+      status === 'pending' ||
+      ['rejected', 'cancelled', 'applied'].includes(was)
+    ) {
+      return { ...data, ...fixed, status: was, ...kept };
+    }
+    const takenBack = was === 'pending' && status === 'cancelled' && old.requestedBy === user;
+    if (!approver && !takenBack) {
+      return refuse('almail:permission Only an approver decides approval requests.');
+    }
+    if (was === 'approved' && status === 'applied') return { ...data, ...fixed, ...kept };
+    return { ...data, ...fixed, decidedBy: user, decidedAt: now };
+  }
+
   private rpc(fn: string, b: Record<string, unknown>, me: FakeUser): unknown {
     const company = String(b.p_company ?? '');
     const entry = this.companies.get(company);
@@ -383,13 +530,20 @@ export class FakeSupabase {
         if (blocked) {
           return refuse('new row violates row-level security policy for table "records"');
         }
-        return changes.map((change) => {
+        // Then the company's approval rules (records_guard, can_delete_record).
+        const stored: (Record<string, unknown> | null)[] = [];
+        for (const change of changes) {
+          const guarded = this.guard(company, me.id, mine, change);
+          if (guarded instanceof Refusal) return guarded;
+          stored.push(guarded);
+        }
+        return changes.map((change, i) => {
           this.rev += 1;
           this.records.set(`${company}/${change.tbl}/${change.id}`, {
             company,
             tbl: change.tbl,
             id: change.id,
-            data: change.deleted ? null : (change.data ?? null),
+            data: change.deleted ? null : stored[i],
             rev: this.rev,
             deleted: Boolean(change.deleted),
           });
@@ -418,7 +572,7 @@ export class FakeSupabase {
       case 'company_record_ids':
         return [];
       case 'server_features':
-        return ['tables_v16', 'super_admin'];
+        return ['tables_v16', 'super_admin', 'approvals'];
       case 'my_permissions': {
         const access = this.access.get(`${company} ${me.id}`);
         return [

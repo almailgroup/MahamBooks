@@ -156,6 +156,12 @@ export interface DocumentDefaults {
   qrContent?: QrContent;
   /** A few lines new quotes start with, printed above the items. Missing means none. */
   quoteIntro?: string;
+  /**
+   * Invoices and credit notes get their number when they are issued, not
+   * when a draft is first saved, so a draft deleted never uses one up.
+   * Missing or false: drafts are numbered when first saved, as before.
+   */
+  numberOnIssue?: boolean;
 }
 
 /** What a printed QR code opens. */
@@ -641,8 +647,33 @@ export interface Company {
   chequePrinting?: boolean;
   /** How the Books dashboard is laid out; missing shows it as before. */
   dashboard?: DashboardSettings;
+  /**
+   * The owner's approval rules (Settings → Approvals), for companies kept in
+   * the cloud. Missing (every company until the owner turns them on):
+   * nothing waits for approval, as before. Only the owner changes them.
+   */
+  approvalRules?: ApprovalRules;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * What needs an approver (the owner, or a member the owner allowed to
+ * approve). The cloud enforces it too (records_guard in
+ * 20261116000000_super_admin_approvals.sql). Kept once set: switched off,
+ * it covers no documents, and the requests made meanwhile stay decided.
+ */
+export interface ApprovalRules {
+  /**
+   * Types of document that, once issued, change, are voided or come back
+   * from void only through an approver; anyone else sends the change for
+   * approval. Missing or empty: none.
+   */
+  documentTypes?: DocumentType[];
+  /** Issued documents of those types are voided, never deleted, and keep their numbers. */
+  voidInsteadOfDelete?: boolean;
+  /** Requests still waiting after this many days are cancelled. Missing: they wait. */
+  expireDays?: number;
 }
 
 /** One of the company's purposes of documents (الغرض), chosen on a document in the register. */
@@ -1043,6 +1074,15 @@ export interface InvoiceDocument {
    * Documents issued before it existed have none and follow the settings.
    */
   posting?: PostingSnapshot;
+  /** When it was voided, by whom (the account, in the cloud) and why. Missing on earlier voids. */
+  voidedAt?: Timestamp | null;
+  voidedBy?: string | null;
+  voidReason?: string;
+  /** The void document this one was issued to replace, and its number (printed on it). */
+  replacesId?: ID | null;
+  replacesNumber?: string;
+  /** The document issued to replace this void one. */
+  replacedById?: ID | null;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -2602,11 +2642,15 @@ export interface ApprovalRequest {
   status: ApprovalStatus;
   /** The account that asked (the server sets it). */
   requestedBy: string;
+  /** Their name as the team knows it, to show where the team list can't be read. */
+  requestedByName?: string;
   requestedAt: Timestamp;
   /** The account that decided (the server sets it). */
   decidedBy: string | null;
   decidedAt: Timestamp | null;
   decisionNote: string;
+  /** Cancelled because it waited longer than the company's rules allow. */
+  expired?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

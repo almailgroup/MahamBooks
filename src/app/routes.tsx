@@ -18,6 +18,7 @@ import { complianceRoutes } from '@/apps/compliance/routes';
 const SuiteHome = lazy(() => import('@/suite/home/index'));
 const Settings = lazy(() => import('@/pages/settings/index'));
 const Files = lazy(() => import('@/pages/files'));
+const Approvals = lazy(() => import('@/pages/approvals'));
 const NotFound = lazy(() => import('@/pages/not-found'));
 const AuthPage = lazy(() => import('@/pages/account/auth'));
 const AuthCallback = lazy(() => import('@/pages/account/callback'));
@@ -101,6 +102,8 @@ export const routes: RouteObject[] = [
           ...complianceRoutes,
           // Every app's files, listed in Compliance (the document finder).
           { path: 'files', element: <Files /> },
+          // Approval requests of every app (Books now, People later).
+          { path: 'approvals', element: <Approvals /> },
           { path: 'settings/*', element: <Settings /> },
           { path: 'setup', element: <SetupPage /> },
           { path: '*', element: <NotFound /> },

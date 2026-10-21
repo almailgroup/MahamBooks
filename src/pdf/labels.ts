@@ -84,6 +84,7 @@ export const LABEL_KEYS = [
   'sku',
   'customerAcceptance',
   'acceptanceStatement',
+  'replaces',
 ] as const;
 
 export type LabelKey = (typeof LABEL_KEYS)[number];
@@ -181,6 +182,7 @@ const en: Labels = {
   sku: 'SKU',
   customerAcceptance: 'Customer acceptance',
   acceptanceStatement: 'We accept this offer and its terms.',
+  replaces: 'Replaces',
 };
 
 /** Arabic as printed on Kuwaiti invoices (see docs/arabic-glossary.md). */
@@ -268,6 +270,7 @@ const ar: Labels = {
   sku: 'رمز الصنف',
   customerAcceptance: 'قبول العميل',
   acceptanceStatement: 'نوافق على هذا العرض وشروطه.',
+  replaces: 'بدلاً من',
 };
 
 const translations: Record<LabelLanguage, Labels> = {
@@ -357,6 +360,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Réf.',
     customerAcceptance: 'Acceptation du client',
     acceptanceStatement: 'Nous acceptons cette offre et ses conditions.',
+    replaces: 'Remplace',
   },
   es: {
     invoice: 'Factura',
@@ -442,6 +446,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Ref.',
     customerAcceptance: 'Aceptación del cliente',
     acceptanceStatement: 'Aceptamos esta oferta y sus condiciones.',
+    replaces: 'Sustituye a',
   },
   de: {
     invoice: 'Rechnung',
@@ -527,6 +532,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Art.-Nr.',
     customerAcceptance: 'Annahme durch den Kunden',
     acceptanceStatement: 'Wir nehmen dieses Angebot und seine Bedingungen an.',
+    replaces: 'Ersetzt',
   },
   pt: {
     invoice: 'Fatura',
@@ -612,6 +618,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Ref.',
     customerAcceptance: 'Aceitação do cliente',
     acceptanceStatement: 'Aceitamos esta proposta e as suas condições.',
+    replaces: 'Substitui',
   },
   it: {
     invoice: 'Fattura',
@@ -697,6 +704,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Cod.',
     customerAcceptance: 'Accettazione del cliente',
     acceptanceStatement: 'Accettiamo questa offerta e le sue condizioni.',
+    replaces: 'Sostituisce',
   },
   nl: {
     invoice: 'Factuur',
@@ -782,6 +790,7 @@ const translations: Record<LabelLanguage, Labels> = {
     sku: 'Art.nr.',
     customerAcceptance: 'Akkoord van de klant',
     acceptanceStatement: 'Wij gaan akkoord met deze offerte en de voorwaarden.',
+    replaces: 'Vervangt',
   },
 };
 

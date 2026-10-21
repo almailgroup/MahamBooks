@@ -15,14 +15,19 @@ import {
   type TeamMember,
 } from '../api';
 import {
+  approvalRulesChanged,
+  approvalRulesOf,
   canChangeMember,
   canWriteRecord,
+  documentChangeNeedsApproval,
   grantableRoles,
+  guardApprovalWrite,
   isApprover,
   isPrivateRecord,
   limitBlocksWrite,
   MAX_APPROVERS,
   readPermissions,
+  rulesKeepRecord,
   sameData,
   staffCompanyChangeOk,
   type MemberPermissions,
@@ -140,6 +145,23 @@ export class FakeCloud {
   private ownerOnly(company: string): boolean {
     return this.seniorRolesOwnerOnly.has(company);
   }
+
+  /**
+   * The company's approval rules once the server has them
+   * (almailbooks.approval_rules); null without the migration or while they
+   * were never turned on.
+   */
+  private approvalRules(company: string): Record<string, unknown> | null {
+    if (!this.features.includes('approvals')) return null;
+    return approvalRulesOf(this.records.get(this.key(company, 'companies', company))?.data);
+  }
+
+  private approver(company: string, user: string): boolean {
+    return isApprover(this.role(company, user), this.access.get(`${company} ${user}`)?.canApprove);
+  }
+
+  /** The server's clock, as records_guard stamps requests and decisions. */
+  now = () => new Date().toISOString();
 
   /** Server-side view of a record. */
   record(company: string, tbl: string, id: string): Record<string, unknown> | undefined {
@@ -415,6 +437,7 @@ export class FakeCloud {
         if (!this.canWrite(company, user, 'companies', old.data)) throw fail('permission');
         const { data, conflicts } = rebaseCompany(old.data, ops);
         if (role === 'staff' && !staffCompanyChangeOk(old.data, data)) throw fail('permission');
+        this.guard(company, user, role, 'companies', old.data, data);
         if (sameData(data, old.data)) return { rev: old.rev, conflicts };
         const rev = ++this.rev;
         this.records.set(key, { ...old, data, rev });
@@ -678,6 +701,35 @@ export class FakeCloud {
     };
   }
 
+  /** Mirrors almailbooks.records_guard: what is stored, or the refusal. */
+  private guard(
+    company: string,
+    user: string,
+    role: MemberRole,
+    tbl: string,
+    old: Record<string, unknown> | undefined,
+    data: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (!this.features.includes('approvals')) return data;
+    if (tbl === 'companies') {
+      if (role !== 'owner' && approvalRulesChanged(old, data)) throw fail('permission');
+      return data;
+    }
+    if (tbl !== 'documents' && tbl !== 'approvals') return data;
+    const rules = this.approvalRules(company);
+    if (!rules) return data;
+    const approver = this.approver(company, user);
+    if (tbl === 'documents') {
+      if (old && !approver && documentChangeNeedsApproval(rules, old, data)) {
+        throw fail('approval_required');
+      }
+      return data;
+    }
+    const write = guardApprovalWrite(old, data, { userId: user, approver, now: this.now() });
+    if ('refused' in write) throw fail(write.refused);
+    return write.data;
+  }
+
   private applyChange(
     company: string,
     user: string,
@@ -695,7 +747,9 @@ export class FakeCloud {
         return { tbl: change.tbl, id: change.id, rev: marker?.rev ?? null, conflict: false };
       if (
         change.tbl === 'companies' ||
-        !this.canWrite(company, user, change.tbl, visibleOld.data)
+        !this.canWrite(company, user, change.tbl, visibleOld.data) ||
+        // As can_delete_record: what the approval rules keep.
+        rulesKeepRecord(this.approvalRules(company), change.tbl, visibleOld.data)
       ) {
         throw fail('permission');
       }
@@ -725,6 +779,7 @@ export class FakeCloud {
     if (change.tbl === 'companies' && role === 'staff') {
       if (!old || !staffCompanyChangeOk(old.data, data)) throw fail('permission');
     }
+    data = this.guard(company, user, role, change.tbl, old?.data, data);
     if (change.tbl === 'companies' && old) {
       const numbering = mergeNumbering(
         old.data.numbering as Record<string, never>,

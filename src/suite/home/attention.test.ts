@@ -5,7 +5,13 @@ import { createEmployee, saveEmployee } from '@/db/people';
 import { newId } from '@/lib/ids';
 import type { ComplianceDocument } from '@/db/types';
 import { accessMap } from '../apps';
-import { alertPage, homeAlerts, homeTopics, loadHomeAlertData } from './attention';
+import {
+  alertPage,
+  approvalsWaiting,
+  homeAlerts,
+  homeTopics,
+  loadHomeAlertData,
+} from './attention';
 
 beforeEach(async () => {
   await db.delete();
@@ -94,5 +100,22 @@ describe('what needs attention on the home', () => {
     const own = papers(all).find((a) => a.topic === 'documents' && a.entry.employeeId);
     expect(own && alertPage(own, true)).toBe(`/employees/${employee.id}`);
     expect(own && alertPage(own, false)).toBe('/compliance/documents');
+  });
+});
+
+describe('approval requests on the home page', () => {
+  const requests = [
+    { status: 'pending', requestedBy: 'user-staff' },
+    { status: 'pending', requestedBy: 'user-accountant' },
+    { status: 'applied', requestedBy: 'user-staff' },
+  ] as const;
+
+  it('counts every waiting request for an approver', () => {
+    expect(approvalsWaiting(requests, { approver: true, userId: 'user-owner' })).toBe(2);
+  });
+
+  it('counts only their own for anyone else', () => {
+    expect(approvalsWaiting(requests, { approver: false, userId: 'user-staff' })).toBe(1);
+    expect(approvalsWaiting(requests, { approver: false, userId: null })).toBe(0);
   });
 });

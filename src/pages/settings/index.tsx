@@ -4,6 +4,7 @@ import {
   BellRing,
   BookOpen,
   Building2,
+  ClipboardCheck,
   Cloud,
   UserRound,
   UsersRound,
@@ -40,6 +41,7 @@ const CompaniesSettings = lazy(() => import('./companies'));
 const AppearanceSettings = lazy(() => import('./appearance'));
 const AccountSettings = lazy(() => import('./account'));
 const TeamSettings = lazy(() => import('./team'));
+const ApprovalSettings = lazy(() => import('./approvals'));
 const CloudSettings = lazy(() => import('./cloud'));
 const LinkSettings = lazy(() => import('./links'));
 const AlertSettings = lazy(() => import('./alerts'));
@@ -61,6 +63,7 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
       { path: 'account', label: msg('Your account'), icon: <UserRound /> },
       { path: 'alerts', label: msg('Email alerts'), icon: <BellRing /> },
       { path: 'team', label: msg('Team'), icon: <UsersRound /> },
+      { path: 'approvals', label: msg('Approvals'), icon: <ClipboardCheck /> },
       { path: 'cloud', label: msg('Cloud and sync'), icon: <Cloud /> },
     ],
   },
@@ -173,6 +176,7 @@ export default function SettingsPage() {
               <Route path="appearance" element={<AppearanceSettings />} />
               <Route path="account" element={<AccountSettings />} />
               <Route path="team" element={<TeamSettings />} />
+              <Route path="approvals" element={<ApprovalSettings />} />
               <Route path="cloud" element={<CloudSettings />} />
               <Route path="links" element={<LinkSettings />} />
               <Route path="alerts" element={<AlertSettings />} />

@@ -97,6 +97,7 @@ const HUMAN: Record<LabelKey, string> = {
   sku: msg('SKU column'),
   customerAcceptance: msg('Customer acceptance box'),
   acceptanceStatement: msg('Acceptance wording on quotes'),
+  replaces: msg('Invoice it replaces'),
 };
 
 const HINTS: Partial<Record<LabelKey, string>> = {

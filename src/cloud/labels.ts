@@ -51,6 +51,7 @@ export const PARKED_REASONS: Partial<Record<CloudErrorCode, string>> = {
   server_outdated: msg(
     'The cloud needs the latest database script first. Ask the owner of the company to run it.',
   ),
+  approval_required: msg('This change needs approval.'),
 };
 
 /**
@@ -105,6 +106,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['vouchers', msg('Receipt and payment vouchers')],
   ['chequePrinting', msg('Cheque printing')],
   ['dashboard', msg('Books dashboard')],
+  ['approvalRules', msg('Approvals')],
 ];
 
 /** The settings fields of the company record belong to, each once (English keys). */

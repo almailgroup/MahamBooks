@@ -43,7 +43,16 @@ import {
 } from '@/components/ui/misc';
 import { Input } from '@/components/ui/form';
 
-type Filter = 'all' | DisplayStatus | 'unpaid';
+/** `approval`: documents with a change waiting for an approver. */
+type Filter = 'all' | DisplayStatus | 'unpaid' | 'approval';
+
+const WAITING = { value: 'approval', label: msg('Waiting for approval') } as const;
+
+/** What the list of void documents is called (the `?status=void` view). */
+const VOID_TITLES: Partial<Record<DocumentType, string>> = {
+  invoice: msg('Void invoices'),
+  credit: msg('Void credit notes'),
+};
 
 const ALL = { value: 'all', label: msg('All') } as const;
 const DRAFT = { value: 'draft', label: msg('Draft') } as const;
@@ -162,6 +171,11 @@ function DeliveryBadge({ doc }: { doc: InvoiceDocument }) {
   return <Badge tone={meta.tone}>{t(meta.label)}</Badge>;
 }
 
+/** A change of the document waits for an approver. */
+function WaitingBadge() {
+  return <Badge tone="amber">{t('Waiting for approval')}</Badge>;
+}
+
 export default function DocumentListPage({ type }: { type: DocumentType }) {
   const company = useCompany();
   const fmt = useFormat();
@@ -186,6 +200,24 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
     () => db.clients.where('companyId').equals(company.id).toArray(),
     [company.id],
   );
+  // Documents with a change waiting for an approver (Settings → Approvals).
+  const waiting = useLiveQuery(
+    async () =>
+      new Set(
+        (await db.approvals.where('[companyId+status]').equals([company.id, 'pending']).toArray())
+          .filter((r) => r.subjectTbl === 'documents')
+          .map((r) => r.subjectId),
+      ),
+    [company.id],
+  );
+  const awaiting = (id: string) => waiting?.has(id) ?? false;
+  const filters = useMemo(() => {
+    const own = FILTERS[type];
+    const shown =
+      (company.approvalRules?.documentTypes ?? []).includes(type) ||
+      Boolean(docs?.some((d) => waiting?.has(d.id)));
+    return shown ? [...own, WAITING] : own;
+  }, [type, company.approvalRules, docs, waiting]);
 
   const rows = useMemo(() => {
     if (!docs || !clients) return null;
@@ -202,17 +234,20 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
 
   const counts = useMemo(() => {
     const c: Partial<Record<Filter, number>> = {};
-    for (const f of FILTERS[type])
-      c[f.value] = rows?.filter((r) => matches(f.value, r.status)).length ?? 0;
+    for (const f of filters)
+      c[f.value] =
+        rows?.filter((r) =>
+          f.value === 'approval' ? waiting?.has(r.doc.id) : matches(f.value, r.status),
+        ).length ?? 0;
     return c;
-  }, [rows, type]);
+  }, [rows, filters, waiting]);
 
   const filtered = useMemo(() => {
     if (!rows) return [];
     const q = query.trim().toLowerCase();
     return rows.filter(
       (r) =>
-        matches(filter, r.status) &&
+        (filter === 'approval' ? Boolean(waiting?.has(r.doc.id)) : matches(filter, r.status)) &&
         (!q ||
           [
             r.doc.number,
@@ -226,7 +261,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
             .toLowerCase()
             .includes(q)),
     );
-  }, [rows, filter, query]);
+  }, [rows, filter, query, waiting]);
 
   const totalsByCurrency = useMemo(() => {
     const map = new Map<string, { total: number; balance: number }>();
@@ -289,7 +324,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
   return (
     <div>
       <PageHeader
-        title={t(labels.plural)}
+        title={filter === 'void' && VOID_TITLES[type] ? t(VOID_TITLES[type]) : t(labels.plural)}
         description={t(labels.description)}
         actions={
           <>
@@ -326,7 +361,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                 setLimit(50);
                 setParams(value === 'all' ? {} : { status: value }, { replace: true });
               }}
-              options={FILTERS[type].map((f) => ({
+              options={filters.map((f) => ({
                 value: f.value,
                 label: t(f.label),
                 count: counts[f.value],
@@ -386,7 +421,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                             onClick={(e) => e.stopPropagation()}
                             className="hover:text-primary-700"
                           >
-                            {doc.number || '—'}
+                            {doc.number || t('Draft')}
                           </Link>
                           {purchase && doc.vendorReference ? (
                             <span className="block text-xs font-normal text-slate-500">
@@ -421,6 +456,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                           <span className="inline-flex flex-wrap justify-end gap-1">
                             <StatusBadge status={status} />
                             <DeliveryBadge doc={doc} />
+                            {awaiting(doc.id) ? <WaitingBadge /> : null}
                           </span>
                         </td>
                       </tr>
@@ -441,7 +477,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                           {client ? localName(client) : '—'}
                         </p>
                         <p className="text-xs text-slate-500">
-                          <bdi>{doc.number}</bdi> · {fmt.date(doc.issueDate)}
+                          <bdi>{doc.number || t('Draft')}</bdi> · {fmt.date(doc.issueDate)}
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
@@ -453,6 +489,7 @@ export default function DocumentListPage({ type }: { type: DocumentType }) {
                         <span className="flex flex-wrap justify-end gap-1">
                           <StatusBadge status={status} />
                           <DeliveryBadge doc={doc} />
+                          {awaiting(doc.id) ? <WaitingBadge /> : null}
                         </span>
                       </div>
                     </Link>

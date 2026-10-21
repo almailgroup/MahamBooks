@@ -7,7 +7,18 @@ import Dexie, {
   type Middleware,
 } from 'dexie';
 import { t } from '@/i18n';
-import { canWriteRecord, limitBlocksWrite, sameData, staffCompanyChangeOk } from './roles';
+import {
+  approvalRulesChanged,
+  approvalRulesOf,
+  canWriteRecord,
+  documentChangeNeedsApproval,
+  guardApprovalWrite,
+  isApprover,
+  limitBlocksWrite,
+  rulesKeepRecord,
+  sameData,
+  staffCompanyChangeOk,
+} from './roles';
 import type { CloudLink, OutboxEntry } from './types';
 
 /**
@@ -20,9 +31,10 @@ import type { CloudLink, OutboxEntry } from './types';
  *
  * The capture also refuses, before anything is written, changes the person's
  * role does not allow (viewers change nothing; staff stay out of accounting
- * setup and payroll), or the owner's limits on them (an app made view only),
- * with a message they can act on. The server enforces the same rules on its
- * own.
+ * setup and payroll), the owner's limits on them (an app made view only) or
+ * the company's approval rules (an issued invoice only an approver may
+ * change), with a message they can act on. The server enforces the same
+ * rules on its own.
  */
 
 export class CloudPermissionError extends Error {
@@ -107,7 +119,73 @@ async function linksFor(
   return cache;
 }
 
-function refuse(link: CloudLink, table: string, change: Change): string | null {
+/** Tables whose changes the company's approval rules decide on (see refuseByRules). */
+const RULED = new Set(['documents', 'approvals']);
+
+/** The company records of these companies, as stored in this transaction. */
+async function companiesFor(
+  down: DBCore,
+  trans: DBCoreTransaction,
+  companyIds: string[],
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const ids = [...new Set(companyIds)];
+  const found = new Map<string, Record<string, unknown> | null>();
+  if (ids.length === 0) return found;
+  const rows = (await down.table('companies').getMany({ trans, keys: ids })) as (
+    Record<string, unknown> | undefined
+  )[];
+  ids.forEach((id, i) => found.set(id, rows[i] ?? null));
+  return found;
+}
+
+/**
+ * The company's approval rules, as the server applies them (records_guard,
+ * can_delete_record). `rules` are the company's, null while never turned on.
+ */
+function refuseByRules(
+  link: CloudLink,
+  table: string,
+  change: Change,
+  rules: Record<string, unknown> | null,
+): string | null {
+  if (table === 'companies') {
+    return link.role !== 'owner' &&
+      change.after !== undefined &&
+      approvalRulesChanged(change.before, change.after)
+      ? t('Only the owner changes the approval rules.')
+      : null;
+  }
+  if (!rules) return null;
+  if (!change.after) {
+    if (!change.before || !rulesKeepRecord(rules, table, change.before)) return null;
+    return table === 'approvals'
+      ? t('Approval requests are kept as the record of who asked and who decided.')
+      : t('Issued documents are voided, never deleted, so their numbers stay used.');
+  }
+  const approver = isApprover(link.role, link.approver);
+  if (table === 'documents') {
+    return !approver && documentChangeNeedsApproval(rules, change.before, change.after)
+      ? t('This change needs approval. Send it for approval instead.')
+      : null;
+  }
+  const write = guardApprovalWrite(change.before, change.after, {
+    userId: link.userId,
+    approver,
+    now: new Date().toISOString(),
+  });
+  return 'refused' in write ? t('Only an approver decides approval requests.') : null;
+}
+
+function refuse(
+  link: CloudLink,
+  table: string,
+  change: Change,
+  rules: Record<string, unknown> | null,
+): string | null {
+  return refuseByRole(link, table, change) ?? refuseByRules(link, table, change, rules);
+}
+
+function refuseByRole(link: CloudLink, table: string, change: Change): string | null {
   if (link.status === 'removed') {
     return t(
       'This company is no longer shared with you. Keep it as a company on this device or remove it.',
@@ -170,15 +248,23 @@ async function capture(
     const change = { key, before: before[i], after: after[i] };
     return { ...change, companyId: companyOf(name, change) };
   });
-  const links = await linksFor(
-    down,
-    trans,
-    changes.map((c) => c.companyId),
-  );
+  const companyIds = changes.map((c) => c.companyId);
+  // Both at once: Dexie keeps its transaction across only so many waits.
+  const [links, companies] = await Promise.all([
+    linksFor(down, trans, companyIds),
+    RULED.has(name) && down.schema.tables.some((t) => t.name === 'companies')
+      ? companiesFor(
+          down,
+          trans,
+          companyIds.filter((id): id is string => !!id),
+        )
+      : null,
+  ]);
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;
     if (!link) continue;
-    const reason = refuse(link, name, change);
+    const rules = approvalRulesOf(companies?.get(link.companyId));
+    const reason = refuse(link, name, change, rules);
     if (reason) throw new CloudPermissionError(reason, link.companyId);
   }
 
@@ -220,10 +306,16 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
     create(down) {
       const enabled = down.schema.tables.some((t) => t.name === 'outbox');
       if (!enabled) return {};
+      const withCompanies = down.schema.tables.some((t) => t.name === 'companies');
       return {
         transaction(stores, mode, options) {
           if (mode === 'readwrite' && stores.some((s) => synced.has(s))) {
-            const extra = ['outbox', 'syncState'].filter((s) => !stores.includes(s));
+            // The company record too where its approval rules decide on a change.
+            const wanted =
+              stores.some((s) => RULED.has(s)) && withCompanies
+                ? ['outbox', 'syncState', 'companies']
+                : ['outbox', 'syncState'];
+            const extra = wanted.filter((s) => !stores.includes(s));
             return down.transaction([...stores, ...extra], mode, options);
           }
           return down.transaction(stores, mode, options);

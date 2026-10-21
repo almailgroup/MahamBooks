@@ -16,7 +16,13 @@ export type ServerFeature =
    * 20261116000000_super_admin_approvals.sql: the owner's limits per member,
    * approvers, and the owner's switch for admins and accountants.
    */
-  | 'super_admin';
+  | 'super_admin'
+  /**
+   * The same file: approval requests staff may make, the rules that keep
+   * issued invoices and credit notes for approvers to change (Settings →
+   * Approvals) and Void instead of delete.
+   */
+  | 'approvals';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

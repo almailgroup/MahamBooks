@@ -305,11 +305,23 @@ describe('records of database version 16', () => {
     const kinds = ['chequeLayouts', 'vehicles', 'approvals', 'letterTemplates', 'employeeLetters'];
     for (const user of [t.staff, t.viewer]) {
       for (const tbl of kinds) {
+        // Staff ask for approval since 20261116000000_super_admin_approvals.sql.
+        if (tbl === 'approvals' && user === t.staff) continue;
         await expect(
           push(user, c, [{ tbl, id: `${tbl}-new`, data: rec(c, `${tbl}-new`) }]),
           tbl,
         ).rejects.toThrow(/row-level security|almail:permission/);
       }
+      // Nor ask for approval of payroll.
+      await expect(
+        push(user, c, [
+          {
+            tbl: 'approvals',
+            id: 'apr-new',
+            data: rec(c, 'apr-new', { subjectTbl: 'payRuns' }),
+          },
+        ]),
+      ).rejects.toThrow(/row-level security|almail:permission/);
       // Nor change or delete one that is there.
       await expect(
         push(user, c, [{ tbl: 'vehicles', id: 'veh-1', data: rec(c, 'veh-1', { plate: 'X' }) }]),

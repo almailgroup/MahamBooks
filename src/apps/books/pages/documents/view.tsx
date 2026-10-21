@@ -31,8 +31,11 @@ import {
   deleteDocument,
   duplicateDocument,
   markSent,
+  reissueDocument,
   setDocumentStatus,
+  waitsForNumber,
 } from '@/db/documents';
+import { requestApproval } from '@/db/approvals';
 import { progressOf, type PartTarget } from '@/db/orders';
 import { activityText } from '@/db/activity';
 import { paymentMethodLabel } from '@/db/payments';
@@ -79,6 +82,15 @@ import { PaymentStatusBadge } from '@/apps/books/features/payments/status-badge'
 import { PartDialog } from '@/apps/books/features/orders/part-dialog';
 import { DeliverDialog } from '@/apps/books/features/orders/deliver-dialog';
 import { OrderProgressCard, RelatedDocuments } from '@/apps/books/features/orders/related';
+import { DocumentApprovals } from '@/features/approvals/document-approvals';
+import { useApprovalView, useMyName, usePendingRequest } from '@/features/approvals/hooks';
+import { ReasonDialog } from '@/features/approvals/reason-dialog';
+
+/** What the reason dialog is open for. */
+type Asking = 'void' | 'void-reissue' | 'request-void' | 'request-unvoid';
+
+/** Documents a void one can be issued again in place of (D12). */
+const REISSUED: DocumentType[] = ['invoice', 'credit'];
 
 function SummaryRow({
   label,
@@ -162,6 +174,14 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
   const [part, setPart] = useState<PartTarget | null>(null);
   const [deliver, setDeliver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const approvals = useApprovalView(company);
+  const myName = useMyName();
+  const waiting = usePendingRequest(doc?.id);
+  const replacement = useLiveQuery(
+    async () => (doc?.replacedById ? ((await db.documents.get(doc.replacedById)) ?? null) : null),
+    [doc?.replacedById],
+  );
 
   const ready = doc && client !== undefined;
   const pdf = useLivePdf(
@@ -250,12 +270,28 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
 
   const opened = (created: InvoiceDocument, edit = false) => {
     toast.success(
-      t('{document} {number} created', {
-        document: t(DOCUMENT_LABELS[created.type].singular),
-        number: created.number,
-      }),
+      created.number
+        ? t('{document} {number} created', {
+            document: t(DOCUMENT_LABELS[created.type].singular),
+            number: created.number,
+          })
+        : t('Draft {document} created', { document: documentNoun(created.type) }),
     );
     navigate(`${DOCUMENT_ROUTES[created.type]}/${created.id}${edit ? '/edit' : ''}`);
+  };
+
+  // A draft numbered when it is issued is issued (and numbered) before it
+  // goes out, so the customer never gets a copy without its number.
+  const unnumbered = waitsForNumber(company, doc);
+  const issueFirst = (open: () => void) => {
+    if (!unnumbered) {
+      open();
+      return;
+    }
+    void run('issue', async () => {
+      await markSent(doc.id);
+      open();
+    });
   };
 
   const convert = (to: 'invoice' | 'proforma' | 'sales_order') =>
@@ -296,20 +332,45 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     });
   };
 
-  const voidDoc = async () => {
-    const ok = await confirm({
-      title: t('Void {number}?', { number: doc.number }),
-      description: [
-        t('A void document stays in your records for reference but no longer counts as owed.'),
-        creditsNote,
-      ]
-        .filter(Boolean)
-        .join(' '),
-      confirmLabel: t('Void document'),
-      danger: true,
-    });
-    if (ok) await run('void', () => setDocumentStatus(doc.id, 'void'));
+  // Under the company's approval rules, changes of an issued document by
+  // anyone but an approver are sent for approval instead.
+  const waits = approvals.waits(doc);
+  const voidsInstead = approvals.voidsInstead(doc);
+  // Voided under the rules, money paid against it becomes the customer's credit.
+  const paidNote =
+    approvals.rules?.documentTypes?.includes(type) && moneyPaid
+      ? t('Payments recorded against it will be kept as unapplied client credit.')
+      : '';
+  const voidNote = [
+    t('A void document stays in your records for reference but no longer counts as owed.'),
+    creditsNote,
+    paidNote,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  /** Voids it, with why; void and reissue then opens the copy issued in its place. */
+  const voidWith = async (reason: string, again: boolean) => {
+    try {
+      await setDocumentStatus(doc.id, 'void', undefined, reason ? { voidReason: reason } : {});
+      if (again) opened(await reissueDocument(doc.id), true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      throw error;
+    }
   };
+
+  const ask = async (kind: 'invoice_void' | 'invoice_unvoid', reason: string) => {
+    try {
+      await requestApproval({ kind, subject: doc, reason, byName: myName });
+      toast.success(t('Sent for approval'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      throw error;
+    }
+  };
+
+  const reissue = () => run('reissue', async () => opened(await reissueDocument(doc.id), true));
 
   const cancelLabel = type === 'sales_order' ? t('Cancel order') : t('Cancel delivery note');
   const cancelDoc = async () => {
@@ -392,7 +453,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         </Button>
       ),
       send: (
-        <Button onClick={() => setSend('document')}>
+        <Button loading={busy === 'issue'} onClick={() => issueFirst(() => setSend('document'))}>
           <Send /> {t('Send')}
         </Button>
       ),
@@ -406,7 +467,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
       </DropdownItem>,
     );
   if (emailed && (doc.status !== 'draft' || !primaryAction)) {
-    item('email', <Send />, t('Send by email'), () => setSend('document'));
+    item('email', <Send />, t('Send by email'), () => issueFirst(() => setSend('document')));
   }
   if (
     type === 'invoice' &&
@@ -469,9 +530,23 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     () => void run('duplicate', async () => opened(await duplicateDocument(doc.id), true)),
   );
   if (doc.status === 'void' && booked) {
-    item('unvoid', <Undo2 />, t('Restore (un-void)'), () => void setStatus('sent'));
+    if (waits) {
+      item('unvoid', <Undo2 />, t('Request restore'), () => setAsking('request-unvoid'));
+    } else {
+      item('unvoid', <Undo2 />, t('Restore (un-void)'), () => void setStatus('sent'));
+    }
+    if (REISSUED.includes(type) && !replacement) {
+      item('reissue', <Copy />, t('Issue again in its place'), () => void reissue());
+    }
   } else if (booked && doc.status !== 'draft') {
-    item('void', <Ban />, t('Void document'), () => void voidDoc());
+    if (waits) {
+      item('void', <Ban />, t('Request void'), () => setAsking('request-void'));
+    } else {
+      item('void', <Ban />, t('Void document'), () => setAsking('void'));
+      if (REISSUED.includes(type)) {
+        item('void-reissue', <RotateCcw />, t('Void and reissue'), () => setAsking('void-reissue'));
+      }
+    }
   }
   if (doc.status === 'cancelled') {
     item(
@@ -539,7 +614,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           {type === 'invoice' || type === 'quote' ? (
             <Button
               variant="outline"
-              onClick={() => setWhatsApp(true)}
+              onClick={() => issueFirst(() => setWhatsApp(true))}
               aria-label={t('Share on WhatsApp')}
             >
               <MessageCircle /> <span className="hidden sm:inline">{t('WhatsApp')}</span>
@@ -554,10 +629,15 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
             </DropdownTrigger>
             <DropdownContent>
               {menu}
-              <DropdownSeparator />
-              <DropdownItem icon={<Trash2 />} danger onSelect={() => void remove()}>
-                {t('Delete')}
-              </DropdownItem>
+              {/* Under the rules, issued documents are voided, never deleted (D12). */}
+              {voidsInstead ? null : (
+                <>
+                  <DropdownSeparator />
+                  <DropdownItem icon={<Trash2 />} danger onSelect={() => void remove()}>
+                    {t('Delete')}
+                  </DropdownItem>
+                </>
+              )}
             </DropdownContent>
           </DropdownMenu>
         </div>
@@ -571,6 +651,7 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         </div>
 
         <aside className="space-y-6">
+          <DocumentApprovals doc={doc} client={client ?? null} />
           <Card>
             <CardHeader title={t('Summary')} />
             <CardBody className="py-3">
@@ -632,7 +713,44 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                   value={fmt.dateTime(doc.sentAt)}
                 />
               ) : null}
+              {doc.status === 'void' && doc.voidedAt ? (
+                <SummaryRow label={t('Voided')} value={fmt.dateTime(doc.voidedAt)} />
+              ) : null}
+              {doc.replacesId ? (
+                <SummaryRow
+                  label={t('Replaces')}
+                  value={
+                    <Link
+                      to={`${base}/${doc.replacesId}`}
+                      className="text-primary-700 font-medium hover:underline"
+                    >
+                      <bdi>{doc.replacesNumber || t('Void document')}</bdi>
+                    </Link>
+                  }
+                />
+              ) : null}
+              {replacement ? (
+                <SummaryRow
+                  label={t('Replaced by')}
+                  value={
+                    <Link
+                      to={`${base}/${replacement.id}`}
+                      className="text-primary-700 font-medium hover:underline"
+                    >
+                      <bdi>{replacement.number || t('Draft')}</bdi>
+                    </Link>
+                  }
+                />
+              ) : null}
               <RelatedDocuments doc={doc} />
+              {doc.status === 'void' && doc.voidReason ? (
+                <p
+                  dir="auto"
+                  className="mt-3 rounded-md bg-slate-50 p-3 text-xs whitespace-pre-line text-slate-700"
+                >
+                  {t('Why it was voided: {reason}', { reason: doc.voidReason })}
+                </p>
+              ) : null}
               {doc.privateNotes ? (
                 <p
                   dir="auto"
@@ -783,6 +901,51 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
         />
       ) : null}
       {deliver ? <DeliverDialog open onOpenChange={setDeliver} doc={doc} /> : null}
+      {asking === 'void' || asking === 'void-reissue' ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={
+            asking === 'void'
+              ? t('Void {number}?', { number: doc.number })
+              : t('Void {number} and issue it again?', { number: doc.number })
+          }
+          description={
+            asking === 'void'
+              ? voidNote
+              : `${voidNote} ${t('A new draft is made in its place, to correct and issue with a new number. It prints which invoice it replaces.')}`
+          }
+          label={t('Why it is voided')}
+          required={Boolean(approvals.rules)}
+          confirmLabel={asking === 'void' ? t('Void document') : t('Void and reissue')}
+          danger
+          onConfirm={(reason) => voidWith(reason, asking === 'void-reissue')}
+        />
+      ) : null}
+      {asking === 'request-void' || asking === 'request-unvoid' ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={
+            asking === 'request-void'
+              ? t('Ask to void {number}?', { number: doc.number })
+              : t('Ask to restore {number}?', { number: doc.number })
+          }
+          description={
+            waiting
+              ? t('A request on {number} is already waiting for approval.', {
+                  number: doc.number,
+                })
+              : asking === 'request-void'
+                ? `${voidNote} ${t('An approver decides. It is voided when they approve.')}`
+                : t('An approver decides. It counts as owed again when they approve.')
+          }
+          confirmLabel={t('Send for approval')}
+          onConfirm={(reason) =>
+            ask(asking === 'request-void' ? 'invoice_void' : 'invoice_unvoid', reason)
+          }
+        />
+      ) : null}
     </div>
   );
 }

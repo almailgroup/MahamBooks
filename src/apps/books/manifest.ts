@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Boxes,
   ChartColumn,
+  ClipboardCheck,
   FileText,
   HandCoins,
   House,
@@ -135,6 +136,14 @@ export const BOOKS: SuiteApp = {
       ],
     },
     { kind: 'link', to: '/reports', label: msg('Reports'), icon: ChartColumn },
+    {
+      kind: 'link',
+      to: '/approvals',
+      label: msg('Approvals'),
+      icon: ClipboardCheck,
+      keywords: 'approval requests void',
+      approvalsOnly: true,
+    },
   ],
   footer: [
     { to: '/templates', label: msg('Templates'), icon: Palette },

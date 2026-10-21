@@ -11,7 +11,7 @@ second runs, the app notices its functions are missing and works as before.
 next: the records of the app's database version 16 and their privacy (see
 "Records of database version 16" below).
 `migrations/20261116000000_super_admin_approvals.sql` comes last: the Super
-Admin's controls (see "The Super Admin" below). Each file is run once, in this
+Admin's controls and approvals (see "The Super Admin" and "Approvals" below). Each file is run once, in this
 order; a release that needs more from the server adds a file, and only that
 one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
@@ -330,6 +330,46 @@ owner (`company_members_one_owner`); someone becomes Super Admin through
 - `server_features()` also answers `super_admin`.
 - `src/cloud/super-admin-sql.test.ts` checks all of it, and that the app's
   test cloud (`src/cloud/testing/fake-cloud.ts`) refuses the same changes.
+
+## Approvals
+
+The same file. The company's rules are `approvalRules` on its own record
+(`{"documentTypes": ["invoice", "credit"], "voidInsteadOfDelete": true,
+"expireDays": 14}`), set by the owner in Settings → Approvals;
+`almailbooks.approval_rules(company)` is null until then, and every rule below
+does nothing while it is null.
+
+- `staff_can_write` adds `approvals`: staff ask for approval (never of payroll
+  or people data: `record_is_private` of the fourth file still applies).
+- `records_guard`, BEFORE INSERT OR UPDATE on `public.records`, runs after
+  `records_before_write` (same kind, by name). It looks at the company record,
+  documents and approval requests only, and returns at once for the SQL editor
+  and the server's own jobs (no `auth.uid()`). An upsert of a record that is
+  there is checked as the update it becomes.
+  - `companies`: only the owner changes `approvalRules` (by a push or
+    `patch_company`).
+  - `documents` of a type the rules cover, not a draft: anyone but an approver
+    is refused when `almailbooks.invoice_content` changes (what is printed:
+    party, dates, currency, lines, discounts, taxes, charges, deposit,
+    retention terms, wording, design, number, `replacesNumber`) or the stage
+    changes (draft, issued, void). Totals, status within issued, paid and sent
+    times, retention releases, the posting snapshot, the payment link and
+    internal notes are written by payments and sync, and stay open. Refusal:
+    `almail:approval_required`, SQLSTATE 42501, which older versions of the app
+    park as a permission problem.
+  - `approvals`: a new request waits (`pending`), stamped with the server's
+    `requestedBy` and `requestedAt`; what was asked never changes; only an
+    approver decides (`approved`, `rejected`, `applied`, stamped
+    `decidedBy`/`decidedAt`); whoever asked may cancel while it waits; a
+    decision made stays made whatever an older copy says.
+- `can_delete_record` (now plpgsql): approval requests are never deleted, and
+  with `voidInsteadOfDelete` issued documents of the covered types are not
+  either. Counters are unchanged (numbers only move forward).
+- `server_features()` also answers `approvals`.
+- `src/cloud/approvals-sql.test.ts` checks rules off = as before, every role,
+  an older app's batch, upserts, deletes, that `invoice_content` matches the
+  app's `invoiceContent` (src/cloud/roles.ts) field by field, and that the
+  test clouds refuse the same changes.
 
 ## Email alerts
 
