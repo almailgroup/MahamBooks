@@ -248,3 +248,84 @@ export async function photoFromFile(file: File, size = 512): Promise<string> {
   ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out);
   return canvas.toDataURL('image/jpeg', 0.85);
 }
+
+/**
+ * A picture of an item: the whole picture (nothing cropped), at most `max`
+ * px on its longer side, as JPEG on white (about 200 KB at 1024 px).
+ */
+export async function productImageFromFile(file: File, max = 1024): Promise<string> {
+  if (file.size > MAX_PHOTO_INPUT_BYTES) {
+    throw new Error(t('Please choose a photo smaller than 10 MB.'));
+  }
+  if (file.type && !file.type.startsWith('image/')) {
+    throw new Error(t('Please choose a photo (JPG, PNG or WebP).'));
+  }
+  return jpegOf(await loadImage(await readAsDataUrl(file)), max);
+}
+
+/** The image drawn on white, at most `max` px on its longer side, as JPEG. */
+function jpegOf(img: HTMLImageElement, max: number, quality = 0.85): string {
+  const width = img.naturalWidth || img.width || max;
+  const height = img.naturalHeight || img.height || max;
+  const scale = Math.min(1, max / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error(t('Your browser cannot process images.'));
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
+/** The picture turned a quarter clockwise, as JPEG. */
+export async function rotateImage(src: string): Promise<string> {
+  const img = await loadImage(src);
+  const width = img.naturalWidth || img.width;
+  const height = img.naturalHeight || img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, height);
+  canvas.height = Math.max(1, width);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error(t('Your browser cannot process images.'));
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.translate(canvas.width, 0);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+const thumbnails = new Map<string, Promise<string>>();
+
+/**
+ * A small copy of a stored picture, for lists and printed documents, made
+ * once per picture and size (a changed picture is a new attachment, so a new
+ * key). Where pictures can't be drawn, the picture itself.
+ */
+export function imageThumbnail(key: string, src: string, size: number): Promise<string> {
+  const id = `${key}:${size}`;
+  let made = thumbnails.get(id);
+  if (!made) {
+    const canDraw = typeof document !== 'undefined' && canvasWorks();
+    made = canDraw ? loadImage(src).then((img) => jpegOf(img, size, 0.8)) : Promise.resolve(src);
+    made = made.catch(() => src);
+    thumbnails.set(id, made);
+  }
+  return made;
+}
+
+let canvasSupport: boolean | null = null;
+
+function canvasWorks(): boolean {
+  if (canvasSupport === null) {
+    try {
+      canvasSupport = Boolean(document.createElement('canvas').getContext('2d'));
+    } catch {
+      canvasSupport = false;
+    }
+  }
+  return canvasSupport;
+}

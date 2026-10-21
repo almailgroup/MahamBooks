@@ -598,7 +598,10 @@ export interface Company {
   links?: CompanyLink[];
   /** Receipt and payment vouchers; missing prints them as before. */
   vouchers?: VoucherSettings;
-  /** Units from a list and automatic item codes; missing types them by hand, as before. */
+  /**
+   * Units from a list, automatic item codes and item pictures; missing types
+   * units and codes by hand and gives items no pictures, as before.
+   */
   items?: ItemSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -627,6 +630,11 @@ export interface ItemSettings {
   autoSku?: boolean;
   /** The company's own units. */
   customUnits?: CustomUnit[];
+  /**
+   * Items can have pictures (Product.imageIds), shown in Products and the
+   * line picker, and printed on documents whose design shows item pictures.
+   */
+  images?: boolean;
 }
 
 /** A signature line at the foot of a voucher, labelled in both languages. */
@@ -821,6 +829,11 @@ export interface Product {
   barcode?: string;
   /** Harmonized System code used by customs. */
   hsCode?: string;
+  /**
+   * Pictures of the item, the main one first: attachments owned by the item
+   * (db/product-images.ts), at most five. Missing for items without any.
+   */
+  imageIds?: ID[];
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;

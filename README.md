@@ -105,6 +105,10 @@ and the compliance calendar (Maham Compliance).
   into item search; Products prints labels (A4 sheets of 24 or 50 × 25 mm
   thermal labels, with a test page and an offset kept on the device), the
   product list and a price list.
+- Item pictures (switched on in Settings → Items and units): up to five per
+  item, kept whole, with a main one shown in Products and the line picker;
+  they can be viewed full size, turned, replaced or removed, sync with the
+  item, and print beside each line when a design in Templates shows them.
 
 ### People and payroll
 

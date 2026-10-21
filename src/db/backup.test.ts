@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
-import { createClient } from './defaults';
+import { createClient, createProduct } from './defaults';
 import {
   backupFileName,
   exportBackup,
@@ -11,6 +11,8 @@ import {
 } from './backup';
 import { saveClient, setupCompany, getCurrentCompanyId } from './records';
 import { seedDemoCompany } from './demo';
+import { saveItem } from './inventory';
+import { addProductImages } from './product-images';
 
 beforeEach(async () => {
   await db.delete();
@@ -73,6 +75,25 @@ describe('backup', () => {
     await db.open();
     await importBackup(parseBackup(earlierBuild), 'replace');
     expect((await db.companies.get(a.id))?.name).toBe('A');
+  });
+
+  it('keeps item pictures, and restores items saved before items had them', async () => {
+    const a = await setupCompany({ name: 'A' });
+    const lamp = await saveItem(createProduct(a.id, { name: 'Desk lamp' }));
+    const plain = await saveItem(createProduct(a.id, { name: 'Chair' }));
+    const JPEG =
+      'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL';
+    const { imageIds } = await addProductImages(lamp.id, [{ name: 'front', dataUrl: JPEG }]);
+    const text = JSON.stringify(await exportBackup(a.id));
+    await db.delete();
+    await db.open();
+    await importBackup(parseBackup(text), 'replace');
+    expect((await db.products.get(lamp.id))?.imageIds).toEqual(imageIds);
+    expect(await db.attachments.get(imageIds![0])).toMatchObject({
+      ownerId: lamp.id,
+      dataUrl: JPEG,
+    });
+    expect('imageIds' in (await db.products.get(plain.id))!).toBe(false);
   });
 
   it('rejects files that are not backups', () => {

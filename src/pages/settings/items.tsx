@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Archive, ArchiveRestore, Plus, QrCode } from 'lucide-react';
+import { Archive, ArchiveRestore, ImagePlus, Plus, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import type { Company, CustomUnit, ItemSettings } from '@/db/types';
@@ -238,6 +238,35 @@ export default function ItemSettingsPage() {
               <QrCode /> {t('Give codes to items without one')}
             </Button>
           </div>
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection
+        id="pictures"
+        title={t('Item pictures')}
+        description={t(
+          'Pictures of your items, to tell them apart in lists and to show customers on quotes and invoices.',
+        )}
+        actions={
+          <ButtonLink to="/templates" variant="ghost" size="sm">
+            {t('Templates')}
+          </ButtonLink>
+        }
+      >
+        <Switch
+          checked={Boolean(items.images)}
+          disabled={locked}
+          onChange={(on) => setItems({ images: on || undefined })}
+          label={t('Give items pictures')}
+          description={t(
+            'Up to five pictures per item, the first one its main picture: shown in Products & services and when picking items, and printed on documents whose design shows item pictures (Templates).',
+          )}
+        />
+        {items.images ? (
+          <p className="flex items-start gap-2 text-sm text-slate-600">
+            <ImagePlus className="mt-0.5 size-4 shrink-0 text-slate-400" aria-hidden />
+            {t('Add pictures to each item in Products & services. Staff can add them too.')}
+          </p>
         ) : null}
       </SettingsSection>
       <SaveBar dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />

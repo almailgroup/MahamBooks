@@ -56,6 +56,7 @@ import {
   useUnitAmount,
 } from '@/apps/books/features/inventory/use-inventory';
 import { usePrint } from '@/apps/books/features/reports/report-toolbar';
+import { ProductThumb, useProductThumbs } from '@/apps/books/features/inventory/product-image';
 import { ItemDialog } from './item-dialog';
 import { ItemListPrint, type ItemListKind } from './item-list-print';
 
@@ -127,6 +128,10 @@ export default function ProductsPage() {
     return (p: Product) =>
       Boolean(company.items?.autoSku) && (seen.get(p.sku.trim().toLowerCase()) ?? 0) > 1;
   }, [products, company.items?.autoSku]);
+
+  // Items have pictures once the owner turns them on (Settings → Items and units).
+  const pictures = Boolean(company.items?.images);
+  const thumbs = useProductThumbs(filtered, pictures);
 
   if (!products || !inventory || !taxRates) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -453,35 +458,38 @@ export default function ProductsPage() {
                           <button
                             type="button"
                             onClick={() => setEditing(p)}
-                            className="block w-full min-w-0 text-start"
+                            className="flex w-full min-w-0 items-center gap-3 text-start"
                           >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate font-medium text-slate-900">
-                                {localName(p)}
+                            {pictures ? <ProductThumb src={thumbs.get(p.id)} /> : null}
+                            <span className="block min-w-0 flex-1">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate font-medium text-slate-900">
+                                  {localName(p)}
+                                </span>
+                                {sameSku(p) ? (
+                                  <Badge tone="amber">{t('Same SKU as another item')}</Badge>
+                                ) : null}
                               </span>
-                              {sameSku(p) ? (
-                                <Badge tone="amber">{t('Same SKU as another item')}</Badge>
-                              ) : null}
-                            </span>
-                            <span className="block truncate text-xs text-slate-500">
-                              {[
-                                p.sku,
-                                localName(p) === p.name ? p.nameAr : p.name,
-                                p.description,
-                                rateLabel(p),
-                              ]
-                                .filter(Boolean)
-                                .join(' · ') || t(KIND_LABELS[kind].label)}
-                            </span>
-                            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 sm:hidden">
-                              <span className="tabular">
-                                {unitAmount(p.unitPrice)}
-                                {unitOf(p) ? ` / ${unitOf(p)}` : ''}
+                              <span className="block truncate text-xs text-slate-500">
+                                {[
+                                  p.sku,
+                                  localName(p) === p.name ? p.nameAr : p.name,
+                                  p.description,
+                                  rateLabel(p),
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ') || t(KIND_LABELS[kind].label)}
                               </span>
-                              {quantity ? (
-                                <span>{t('{quantity} on hand', { quantity })}</span>
-                              ) : null}
-                              {isLow ? <Badge tone="red">{t('Low stock')}</Badge> : null}
+                              <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 sm:hidden">
+                                <span className="tabular">
+                                  {unitAmount(p.unitPrice)}
+                                  {unitOf(p) ? ` / ${unitOf(p)}` : ''}
+                                </span>
+                                {quantity ? (
+                                  <span>{t('{quantity} on hand', { quantity })}</span>
+                                ) : null}
+                                {isLow ? <Badge tone="red">{t('Low stock')}</Badge> : null}
+                              </span>
                             </span>
                           </button>
                         </td>

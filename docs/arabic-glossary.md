@@ -237,6 +237,8 @@ politely without "please" on every line. Buttons use the verbal noun (حفظ,
 | Label            | ملصق            |
 | Print labels     | طباعة الملصقات  |
 | Price list       | قائمة الأسعار   |
+| Item picture     | صورة الصنف      |
+| Main picture     | صورة رئيسية     |
 
 ## App
 

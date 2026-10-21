@@ -3,15 +3,44 @@ import { useEffect, useRef, useState } from 'react';
 import type { Client, Company, DocumentLanguage } from '@/db/types';
 import { buildRenderModel, qrLinkOf, type RenderableDocument, type RenderModel } from '@/pdf/model';
 import { renderPdf } from '@/pdf/client';
-import { documentTemplate } from '@/pdf/template-resolve';
+import { documentLayout, documentTemplate } from '@/pdf/template-resolve';
+import { mainProductImages } from '@/db/product-images';
+import { imageThumbnail } from '@/lib/image';
 import { qrDataUrl } from '@/lib/qr';
 
 // Drawn in lib/qr.ts, which item labels use too.
 export { qrDataUrl } from '@/lib/qr';
 
+/** Item pictures are printed from copies this size (px): sharp at the 30 pt they print at. */
+const ITEM_IMAGE_PX = 160;
+
+/**
+ * Small copies of the main pictures of the document's items, by item id,
+ * when the company's items have pictures and the document's design prints
+ * them. A picture this device doesn't have yet is left out, so it never
+ * holds up the PDF.
+ */
+async function itemImagesOf(
+  doc: RenderableDocument,
+  company: Company,
+): Promise<Record<string, string> | undefined> {
+  if (!company.items?.images || !documentLayout(doc, company).showItemImages) return undefined;
+  const ids = doc.items.flatMap((item) => (item.productId ? [item.productId] : []));
+  if (ids.length === 0) return undefined;
+  const files = await mainProductImages(ids);
+  const images = await Promise.all(
+    [...files].map(
+      async ([productId, file]) =>
+        [productId, await imageThumbnail(file.id, file.dataUrl, ITEM_IMAGE_PX)] as const,
+    ),
+  );
+  return Object.fromEntries(images);
+}
+
 /**
  * Builds the render model, including the QR code (of the payment link: the
- * document's own link, else the company's) when enabled.
+ * document's own link, else the company's) when enabled, and the items'
+ * pictures when the design prints them.
  */
 export async function prepareModel(
   doc: RenderableDocument,
@@ -21,8 +50,11 @@ export async function prepareModel(
   language?: DocumentLanguage,
 ): Promise<RenderModel> {
   const link = company.payment.showQrCode ? qrLinkOf(doc, company) : '';
-  const qrCode = link ? await qrDataUrl(link) : null;
-  return buildRenderModel(doc, company, client, { qrCode, accent, language });
+  const [qrCode, itemImages] = await Promise.all([
+    link ? qrDataUrl(link) : null,
+    itemImagesOf(doc, company),
+  ]);
+  return buildRenderModel(doc, company, client, { qrCode, accent, language, itemImages });
 }
 
 export async function generatePdf(

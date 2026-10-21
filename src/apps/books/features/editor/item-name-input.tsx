@@ -2,8 +2,10 @@ import { useMemo, useState, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Package } from 'lucide-react';
 import type { Product } from '@/db/types';
+import { useCompany } from '@/app/company';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
+import { ProductThumb, useProductThumbs } from '@/apps/books/features/inventory/product-image';
 
 /**
  * Text input for an item name that suggests matching products while typing.
@@ -56,6 +58,9 @@ export function ItemNameInput({
   }, [products, value]);
 
   const show = open && matches.length > 0;
+  // With item pictures on, each suggestion shows its item's main picture.
+  const pictures = Boolean(useCompany().items?.images);
+  const thumbs = useProductThumbs(show ? matches : undefined, pictures);
 
   const pick = (product: Product) => {
     onPick(product);
@@ -119,7 +124,11 @@ export function ItemNameInput({
                 i === active ? 'bg-slate-100' : '',
               )}
             >
-              <Package className="size-4 shrink-0 text-slate-400" />
+              {pictures ? (
+                <ProductThumb src={thumbs.get(p.id)} size="xs" />
+              ) : (
+                <Package className="size-4 shrink-0 text-slate-400" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-slate-900">
                   {p.name}

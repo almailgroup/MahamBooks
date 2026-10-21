@@ -303,11 +303,17 @@ export default function TemplatesPage() {
                 description={t('The code of each line picked from your items.')}
               />
               <Switch
-                checked={false}
-                onChange={() => undefined}
-                disabled
+                checked={Boolean(layout.showItemImages)}
+                onChange={(showItemImages) => setLayout({ showItemImages })}
+                // Items have pictures once the owner turns them on; a design
+                // that prints them can still be turned off.
+                disabled={!draft.items?.images && !layout.showItemImages}
                 label={t('Item pictures')}
-                description={t('A small picture beside each item, once items can have pictures.')}
+                description={
+                  draft.items?.images
+                    ? t('The main picture of each item that has one, beside it.')
+                    : t('Turn on item pictures in Settings → Items and units first.')
+                }
               />
               {type !== 'credit' ? (
                 <Switch

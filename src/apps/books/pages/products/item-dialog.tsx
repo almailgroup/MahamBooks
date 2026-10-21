@@ -4,6 +4,7 @@ import { Boxes, Package, Printer, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { saveItem, suggestItemCode, type OpeningStockInput } from '@/db/inventory';
+import { addProductImages, type NewProductImage } from '@/db/product-images';
 import { isVendor } from '@/db/purchases';
 import type { Product, ProductKind, TaxRate } from '@/db/types';
 import { useCompany } from '@/app/company';
@@ -21,6 +22,8 @@ import type { InventoryData } from '@/apps/books/features/inventory/use-inventor
 import { DateField } from '@/components/ui/date-field';
 import { UnitPicker } from '@/apps/books/features/inventory/unit-picker';
 import { ItemQr } from '@/apps/books/features/inventory/item-qr';
+import { ProductImageEditor } from '@/apps/books/features/inventory/product-image';
+import { useRoleView } from '@/features/cloud/role-gates';
 
 const KIND_ICONS: Record<ProductKind, typeof Package> = {
   service: Wrench,
@@ -57,6 +60,9 @@ export function ItemDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // A new item's pictures, stored once it is (a stored item's are saved at once).
+  const [pictures, setPictures] = useState<NewProductImage[]>([]);
+  const { readOnly } = useRoleView();
   const set = (patch: Partial<Product>) => setDraft((d) => ({ ...d, ...patch }));
   const isNew = !product.name;
   const kind = draft.kind ?? 'service';
@@ -103,8 +109,14 @@ export function ItemDialog({
         isNew && kind === 'stock' && opening.quantity > 0
           ? { ...opening, unitCost: draft.costPrice ?? 0 }
           : null;
-      await saveItem({ ...draft, kind }, { opening: openingStock });
+      const saved = await saveItem({ ...draft, kind }, { opening: openingStock });
       toast.success(t('{name} saved', { name: draft.name.trim() }));
+      if (isNew && pictures.length > 0) {
+        // The item is saved either way; its pictures can be added again.
+        await addProductImages(saved.id, pictures).catch((e: unknown) =>
+          toast.error(e instanceof Error ? e.message : t('Could not save the picture.')),
+        );
+      }
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('Could not save.'));
@@ -271,6 +283,15 @@ export function ItemDialog({
               )}
             </Field>
           </div>
+          {company.items?.images ? (
+            <ProductImageEditor
+              product={product}
+              saved={!isNew}
+              pending={pictures}
+              onPending={setPictures}
+              readOnly={readOnly.readOnly}
+            />
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label={t('Selling price')} hint={t('Up to 6 decimals, e.g. 0.537 per piece.')}>
               {(id) => (

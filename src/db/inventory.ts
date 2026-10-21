@@ -602,6 +602,11 @@ export async function saveItem(
     };
     // A unit typed by hand has no id.
     if (!product.unitId) delete product.unitId;
+    // Changed only in db/product-images.ts: a form opened before a picture
+    // was added doesn't take it away.
+    const imageIds = existing ? existing.imageIds : input.imageIds;
+    if (imageIds?.length) product.imageIds = imageIds;
+    else delete product.imageIds;
     if (!existing) product.createdAt = product.updatedAt;
     if (existing && (existing.incomeAccountId ?? null) !== (product.incomeAccountId ?? null)) {
       // Sales of a closed period keep the income account they were posted to.
@@ -745,17 +750,23 @@ export async function assignItemCodes(companyId: ID): Promise<number> {
   });
 }
 
-/** Deletes an item without stock history; documents keep their copy of it. */
+/**
+ * Deletes an item without stock history, with its pictures; documents keep
+ * their copy of it.
+ */
 export async function deleteItem(id: ID): Promise<void> {
   await db.transaction(
     'rw',
-    [db.products, db.stockMovements, db.stockEntries, db.activities],
+    [db.products, db.stockMovements, db.stockEntries, db.attachments, db.activities],
     async () => {
       const product = await db.products.get(id);
       if (!product) return;
       if (await hasStockHistory(product)) {
         throw new InventoryError(t('This item has stock history. Archive it instead.'));
       }
+      await db.attachments.bulkDelete(
+        await db.attachments.where('ownerId').equals(id).primaryKeys(),
+      );
       await db.products.delete(id);
       await logActivity(product.companyId, 'product', id, 'deleted', {
         text: msg('Item {name} deleted'),
