@@ -33,7 +33,7 @@ device without an account, or with an account that keeps your companies in the
 cloud (Supabase), on all your devices and with your team, and still works
 offline.
 
-**Open the app:** https://almail-books.vercel.app/
+**Open the app:** https://mahamone.com
 
 ![Invoice editor with live PDF preview](docs/images/editor.png)
 

@@ -66,9 +66,10 @@ broad one would open what the script keeps closed.
 ## 2. Sign-in settings
 
 1. **Authentication → URL Configuration**
-   - **Site URL**: `https://almail-books.vercel.app`
+   - **Site URL**: `https://mahamone.com`
    - **Redirect URLs** → **Add URL** for each:
-     - `https://almail-books.vercel.app/**`
+     - `https://mahamone.com/**`
+     - `https://www.mahamone.com/**`
      - `http://localhost:5173/**` (for testing on a computer)
    - Save.
 2. **Authentication → Sign In / Providers → Email**
@@ -92,7 +93,7 @@ your Supabase organisation, and only about **2 emails per hour**. Until you set
 up your own email service (step 4), test with the email address of your
 Supabase account.
 
-1. Open <https://almail-books.vercel.app> (with this version deployed).
+1. Open <https://mahamone.com> (with this version deployed).
 2. Click **Create an account**, enter your name, the email address of your
    Supabase account and a password of at least 8 characters.
 3. The app says **Check your email**. Open the email from Supabase on the
