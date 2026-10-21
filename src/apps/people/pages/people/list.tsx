@@ -296,8 +296,8 @@ export default function EmployeeListPage() {
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => setSettingsOpen(true)}
-                  aria-label={t('Set the Kuwaiti staff target')}
-                  title={t('Set the Kuwaiti staff target')}
+                  aria-label={t('Compliance settings')}
+                  title={t('Compliance settings')}
                 >
                   <Settings2 />
                 </Button>

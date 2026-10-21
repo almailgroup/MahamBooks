@@ -8,6 +8,7 @@ import {
   archiveChequeLayout,
   ChequePrintError,
   deviceChequeOffset,
+  logLostChequeLeaves,
   recordChequePrintAttempt,
   recordChequePrinted,
   recordSpoiledLeaf,
@@ -230,7 +231,7 @@ describe('a printed cheque changed in the form', () => {
         number: '100045',
         at: expect.any(String),
         reason: 'Changed after printing',
-        printedText: TEXT,
+        printedText: { ...TEXT, number: '100045', bank: 'BRGN', vendorId: printed.clientId },
       },
     ]);
     const log = await db.activities.where('entityId').equals(printed.id).toArray();
@@ -332,6 +333,92 @@ describe('a printed cheque changed in the form', () => {
     );
     expect(copy.cheque?.printedAt).toBeUndefined();
     expect(copy.cheque?.printCount).toBeUndefined();
+  });
+});
+
+describe('a printed cheque changed by an older version of the app', () => {
+  // An older build keeps the cheque's fields it doesn't know, print record included.
+  const olderBuildSaves = async (payment: Payment, patch: Partial<Payment>) => {
+    const next = { ...payment, ...patch, updatedAt: new Date().toISOString() };
+    await db.payments.put(next);
+    return next;
+  };
+  const recorded = (payment: Payment) => ({
+    ...TEXT,
+    number: '100045',
+    bank: 'BRGN',
+    vendorId: payment.clientId,
+  });
+
+  it('records the leaf it was printed on with the print', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    expect(printed.cheque?.printedText).toEqual(recorded(printed));
+    expect(printRefusal(printed)).toBe('printed');
+  });
+
+  it('shows that its leaf no longer matches, and the leaf is marked spoiled', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    // Corrected to KD 1,520.000 on a device that doesn't know about printing.
+    const changed = await olderBuildSaves(printed, { amount: 1520 });
+    expect(changed.cheque?.printedAt).toBe(printed.cheque?.printedAt);
+    expect(printRefusal(changed)).toBe('changed');
+    await expect(print(changed)).rejects.toThrow(/its leaf no longer matches it/);
+
+    const moved = await recordSpoiledLeaf(changed.id, {
+      reason: 'Changed on another device after printing',
+      nextNumber: '100046',
+    });
+    expect(moved.cheque).toMatchObject({ number: '100046', printCount: 1 });
+    expect(moved.cheque?.printedAt).toBeUndefined();
+    expect(moved.cheque?.spoiledLeaves).toEqual([
+      {
+        number: '100045',
+        at: expect.any(String),
+        reason: 'Changed on another device after printing',
+        printedText: recorded(printed),
+      },
+    ]);
+    expect(printRefusal(moved)).toBeNull();
+  });
+
+  it('given another number afterwards, spoils the leaf printed and may keep the new number', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    const renumbered = await olderBuildSaves(printed, {
+      cheque: { ...printed.cheque!, number: '100050' },
+    });
+    expect(printRefusal(renumbered)).toBe('changed');
+    const kept = await recordSpoiledLeaf(renumbered.id, {
+      reason: 'Changed',
+      nextNumber: '100050',
+    });
+    expect(kept.cheque?.number).toBe('100050');
+    expect(kept.cheque?.spoiledLeaves?.map((l) => l.number)).toEqual(['100045']);
+    const log = await db.activities.where('entityId').equals(printed.id).toArray();
+    expect(log.map((a) => a.message)).toContain(
+      `Cheque leaf 100045 spoiled; payment ${printed.number} is now on leaf 100050`,
+    );
+    // The leaf printed is never taken again.
+    const other = await issued(c, '100060');
+    await expect(
+      recordSpoiledLeaf(other.id, { reason: 'x', nextNumber: '100045' }),
+    ).rejects.toThrow('Leaf 100045 is spoiled: enter the next one.');
+  });
+
+  it('logs leaves no longer recorded on a payment, once', async () => {
+    const c = await company();
+    const printed = await print(await issued(c));
+    await logLostChequeLeaves(c.id, [{ payment: printed, numbers: ['100045'] }]);
+    await logLostChequeLeaves(c.id, [{ payment: printed, numbers: ['100045'] }]);
+    const lost = (await db.activities.where('entityId').equals(printed.id).toArray()).filter(
+      (a) => a.action === 'cheque_leaves_lost',
+    );
+    expect(lost.map((a) => a.message)).toEqual([
+      `Payment ${printed.number} was changed or deleted on another device, and with it the record of cheque leaves 100045. A printed leaf still in hand is a cheque: destroy it.`,
+    ]);
+    expect(lost[0].clientId).toBe(printed.clientId);
   });
 });
 

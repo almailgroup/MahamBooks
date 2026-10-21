@@ -2,7 +2,9 @@ import type { Table } from 'dexie';
 import { db, DATA_TABLES, type DataTable } from '@/db/db';
 import { forgetCloudLink } from '@/db/records';
 import { logActivity } from '@/db/activity';
-import type { ActivityEntity, Attachment, Company, DocumentType, ID } from '@/db/types';
+import type { ActivityEntity, Attachment, Company, DocumentType, ID, Payment } from '@/db/types';
+import type { LostChequeLeaves } from '@/db/cheque-print';
+import { lostChequeLeaves } from '@/lib/cheque-print';
 import { msg, t } from '@/i18n';
 import {
   CLOUD_ERROR_MESSAGES,
@@ -986,6 +988,31 @@ interface Touched {
   documents: Set<string>;
   /** Payments deleted by the cloud's changes: their scans go with them (see reconcile). */
   deletedPayments?: Set<string>;
+  /** Items deleted by the cloud's changes: their pictures go with them (see reconcile). */
+  deletedProducts?: Set<string>;
+  /** Payments whose record of cheque leaves the cloud's changes took away (see reconcile). */
+  lostLeaves?: LostChequeLeaves[];
+}
+
+/**
+ * Notes what a change from the cloud takes away with a record: the files of
+ * a deleted payment or item, and cheque leaves no longer recorded on a payment
+ * (a device on an older version of the app changed or deleted a printed cheque).
+ */
+function noteRemoved(
+  touched: Touched,
+  name: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown> | null,
+) {
+  if (name === 'payments') {
+    if (!after) (touched.deletedPayments ??= new Set()).add(String(before.id));
+    const numbers = lostChequeLeaves(before as unknown as Payment, after as unknown as Payment);
+    if (numbers.length) {
+      (touched.lostLeaves ??= []).push({ payment: before as unknown as Payment, numbers });
+    }
+  }
+  if (name === 'products' && !after) (touched.deletedProducts ??= new Set()).add(String(before.id));
 }
 
 /** What became of a page of changes. */
@@ -1116,7 +1143,7 @@ export async function applyRows(
         if (local) {
           noteTouched(touched, row.tbl, local);
           await store.delete(row.id);
-          if (row.tbl === 'payments') (touched.deletedPayments ??= new Set()).add(row.id);
+          noteRemoved(touched, row.tbl, local, null);
         }
         await db.syncRevs.delete([row.tbl, row.id]);
         continue;
@@ -1130,6 +1157,7 @@ export async function applyRows(
       }
       if (!sameData(local, data)) {
         if (local) noteTouched(touched, row.tbl, local);
+        if (local) noteRemoved(touched, row.tbl, local, data);
         noteTouched(touched, row.tbl, data);
         await store.put(data);
       }
@@ -1351,9 +1379,9 @@ async function fullResync(companyId: string, ctx: SyncContext, touched: Touched)
         (r) => !ids.has(`${name}/${String(r.id)}`) && !pending.has(`${name}/${String(r.id)}`),
       );
       if (gone.length === 0) continue;
-      for (const record of gone) noteTouched(touched, name, record);
-      if (name === 'payments') {
-        for (const record of gone) (touched.deletedPayments ??= new Set()).add(String(record.id));
+      for (const record of gone) {
+        noteTouched(touched, name, record);
+        noteRemoved(touched, name, record, null);
       }
       await table(name).bulkDelete(gone.map((r) => String(r.id)));
       await db.syncRevs.bulkDelete(gone.map((r) => [name, String(r.id)] as [string, string]));
@@ -1516,22 +1544,38 @@ async function reconcile(companyId: string, touched: Touched): Promise<void> {
     );
     await refreshOrdersFor(ids);
   }
-  if (touched.deletedPayments?.size) await removeScansOf(companyId, [...touched.deletedPayments]);
+  if (touched.deletedPayments?.size) {
+    await removeFilesOf(companyId, db.payments, [...touched.deletedPayments]);
+  }
+  if (touched.deletedProducts?.size) {
+    await removeFilesOf(companyId, db.products, [...touched.deletedProducts]);
+  }
+  if (touched.lostLeaves?.length) {
+    const { logLostChequeLeaves } = await import('@/db/cheque-print');
+    await logLostChequeLeaves(companyId, touched.lostLeaves).catch(() => undefined);
+  }
 }
 
 /**
- * The scans of payments deleted on another device, deleted here too and sent,
- * so their files go from the cloud as well. A payment deleted by an older
- * build (before #21) leaves its scans behind; this build deletes them with the
- * payment, and then nothing is left here to delete. Never stops the sync.
+ * The files of payments (scans) and items (pictures) deleted on another
+ * device, deleted here too and sent, so their files go from the cloud as
+ * well. A payment deleted by an older build (before #21), or an item (before
+ * #29), leaves its files behind; this build deletes them with the record,
+ * and then nothing is left here to delete. Never stops the sync.
  */
-async function removeScansOf(companyId: string, paymentIds: string[]): Promise<void> {
+async function removeFilesOf(
+  companyId: string,
+  owners: typeof db.payments | typeof db.products,
+  ownerIds: string[],
+): Promise<void> {
   try {
-    await db.transaction('rw', [db.payments, db.attachments], async () => {
+    await db.transaction('rw', [owners, db.attachments], async () => {
       const back = new Set(
-        (await db.payments.bulkGet(paymentIds)).filter(Boolean).map((p) => p!.id),
+        (await (owners as Table<{ id: string }, string>).bulkGet(ownerIds))
+          .filter(Boolean)
+          .map((p) => p!.id),
       );
-      const gone = paymentIds.filter((id) => !back.has(id));
+      const gone = ownerIds.filter((id) => !back.has(id));
       if (gone.length === 0) return;
       const scans = await db.attachments
         .where('ownerId')

@@ -8,9 +8,12 @@ import {
   fitFace,
   fitLine,
   fitWords,
+  lostChequeLeaves,
   nextLeafNumber,
   printableAfterLeaf,
   printedFaceChanged,
+  printedLeafChanged,
+  printedLeafNumber,
   printRefusal,
   spoilPrintedLeaf,
   splitWords,
@@ -237,6 +240,86 @@ describe('which cheques print', () => {
     expect(printableAfterLeaf('printed')).toBe(true);
     expect(printableAfterLeaf(null)).toBe(true);
     expect(printableAfterLeaf('cleared')).toBe(false);
+  });
+});
+
+describe('a printed cheque changed by an older version of the app', () => {
+  // As this build records a print: with the leaf's number, bank and vendor.
+  const printed = (cheque: Partial<ChequeDetails> = {}, payment: Partial<Payment> = {}) =>
+    issued(
+      {
+        printedAt: '2026-10-21T08:00:00.000Z',
+        printedLayoutId: 'preset-BRGN',
+        printedText: {
+          date: '15/11/2026',
+          payee: 'Example Supplies Co.',
+          words: ['a', 'b'],
+          figures: 'KD **1,250.750**',
+          layoutVersion: 1,
+          number: '100045',
+          bank: 'BRGN',
+          vendorId: 'v-1',
+        },
+        ...cheque,
+      },
+      payment,
+    );
+
+  it('is printed while it says what the leaf says', () => {
+    expect(printedLeafChanged(printed())).toBe(false);
+    expect(printRefusal(printed())).toBe('printed');
+    // The amount as printed, to the fils.
+    expect(printedLeafChanged(printed({}, { amount: 1250.7504 }))).toBe(false);
+  });
+
+  it('is changed once its amount, currency, date, payee, number or bank differ from the print', () => {
+    for (const changed of [
+      printed({}, { amount: 1520 }),
+      printed({}, { currency: 'USD' }),
+      printed({ date: '2026-11-16' }),
+      printed({ drawer: 'Another Co.' }),
+      printed({ number: '100046' }),
+      printed({ bank: 'KFHO' }),
+    ]) {
+      expect(printedLeafChanged(changed)).toBe(true);
+      expect(printRefusal(changed)).toBe('changed');
+    }
+    expect(printableAfterLeaf('changed')).toBe(true);
+    // The leaf's number is the one printed, not the cheque's now.
+    expect(printedLeafNumber(printed({ number: '100046' }).cheque!)).toBe('100045');
+    expect(printedLeafNumber(issued().cheque!)).toBe('100045');
+  });
+
+  it('printed with the vendor’s name, changes with another vendor', () => {
+    const byVendor = printed({ drawer: '' });
+    expect(printedLeafChanged(byVendor)).toBe(false);
+    expect(printedLeafChanged({ ...byVendor, clientId: 'v-2' })).toBe(true);
+    // With Pay to typed, the vendor isn't what was printed.
+    expect(printedLeafChanged({ ...printed(), clientId: 'v-2' })).toBe(false);
+  });
+
+  it('can’t be compared with a print recorded without its text', () => {
+    expect(printedLeafChanged(issued({ printedAt: '2026-10-21T08:00:00.000Z' }))).toBe(false);
+    expect(printedLeafChanged(issued())).toBe(false);
+  });
+
+  it('loses its leaves when it stops being a cheque or is deleted', () => {
+    const leaf = { number: '100044', at: '2026-10-20T08:00:00.000Z', reason: 'Torn' };
+    const before = printed({ spoiledLeaves: [leaf] });
+    expect(lostChequeLeaves(before, { cheque: null })).toEqual(['100045', '100044']);
+    expect(lostChequeLeaves(before, null)).toEqual(['100045', '100044']);
+    // Kept as they were (the amount changed): nothing lost.
+    expect(lostChequeLeaves(before, printed({ spoiledLeaves: [leaf] }, { amount: 1520 }))).toEqual(
+      [],
+    );
+    // This build spoils the printed leaf when it prints again: still recorded.
+    const reprinted = issued({
+      number: '100046',
+      spoiledLeaves: [leaf, { ...leaf, number: '100045', reason: 'Printed again' }],
+    });
+    expect(lostChequeLeaves(before, reprinted)).toEqual([]);
+    expect(lostChequeLeaves(issued(), { cheque: null })).toEqual([]);
+    expect(lostChequeLeaves(null, before)).toEqual([]);
   });
 });
 

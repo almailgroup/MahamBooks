@@ -102,6 +102,9 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['documentPurposes', msg('Purposes of documents')],
   ['fileFinder', msg('Find files and papers')],
   ['items', msg('Items and units')],
+  ['vouchers', msg('Receipt and payment vouchers')],
+  ['chequePrinting', msg('Cheque printing')],
+  ['dashboard', msg('Books dashboard')],
 ];
 
 /** The settings fields of the company record belong to, each once (English keys). */

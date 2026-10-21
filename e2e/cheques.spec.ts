@@ -202,3 +202,35 @@ test('a cheque issued prints onto its Burgan Bank leaf, once', async ({ page }) 
   await expect(page.getByText('Cheque layout saved')).toBeVisible();
   await expect(page.getByText('This company’s layout prints cheques on this bank.')).toBeVisible();
 });
+
+test('arrows on the print pages point the way they go in Arabic', async ({ page }) => {
+  await page.goto('#/cheques');
+  await page.getByRole('button', { name: 'العربية' }).first().click();
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+
+  /** Whether an arrow icon shows mirrored: by the page's RTL rule, by a rotation, or both (which undo each other). */
+  const mirrored = (icon: ReturnType<Page['locator']>) =>
+    icon.evaluate((svg) => {
+      const style = getComputedStyle(svg);
+      const flipped = style.transform !== 'none' && new DOMMatrix(style.transform).a < 0;
+      const turned = style.rotate === '180deg';
+      return flipped !== turned;
+    });
+
+  await page.goto('#/cheques/test-print?bank=BRGN');
+  // The leaf doesn't turn round in Arabic: the button that moves the print left points left.
+  const nudges = page.locator('[dir="ltr"]').filter({ has: page.locator('.lucide-arrow-up') });
+  await expect(nudges.locator('.lucide-arrow-left')).toBeVisible();
+  expect(await mirrored(nudges.locator('.lucide-arrow-left'))).toBe(false);
+  expect(await mirrored(nudges.locator('.lucide-arrow-right'))).toBe(false);
+  // Back links point back, to the right, like every other one in Arabic.
+  const back = page.getByRole('link', { name: 'نماذج الشيكات' }).locator('.lucide-arrow-left');
+  expect(await mirrored(back)).toBe(true);
+
+  await page.goto('#/products/labels');
+  const labelsBack = page
+    .getByRole('link', { name: 'المنتجات والخدمات' })
+    .locator('.lucide-arrow-left');
+  await expect(labelsBack).toBeVisible();
+  expect(await mirrored(labelsBack)).toBe(true);
+});

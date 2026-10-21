@@ -101,6 +101,12 @@ describe('the pages and actions search finds', () => {
     expect(keys(true, { registerExtras: true })).toContain('page:/compliance/vehicles');
   });
 
+  it('offer the compliance and files settings while their switches are off', () => {
+    for (const access of [undefined, accessMap('staff')]) {
+      expect(keys(true, { access })).toContain('page:/settings/compliance');
+    }
+  });
+
   it('show Files only with the document finder', () => {
     expect(keys(true)).not.toContain('page:/files');
     expect(keys(true, { fileFinder: true })).toContain('page:/files');
@@ -241,6 +247,26 @@ describe('the document finder', () => {
     expect(file.to).toBe(`/employees/${guard.id}`);
     expect(isPeopleItem(file)).toBe(true);
     expect(isPeopleItem(found.find((e) => e.key === `file:${receipt.id}`)!)).toBe(false);
+  });
+
+  it('finds an expense and its receipt by whom it was paid to when that isn’t a vendor', async () => {
+    const { company } = await seed();
+    const fuel = createExpense(company.id, {
+      number: 'EXP-0007',
+      description: 'Fuel',
+      payee: 'Sahara Fuel Station',
+      amount: 7,
+      currency: 'KWD',
+    });
+    await db.expenses.put(fuel);
+    const scan = await addAttachment(company.id, fuel.id, { name: 'Pump receipt.pdf', ...PDF });
+    const found = await recordEntries({ ...company, fileFinder: true }, fmt);
+    const hits = searchEntries(found, 'sahara').map((e) => e.key);
+    expect(hits).toContain(`expense:${fuel.id}`);
+    expect(hits).toContain(`file:${scan.id}`);
+    expect(found.find((e) => e.key === `expense:${fuel.id}`)?.subtitle).toContain(
+      'Sahara Fuel Station',
+    );
   });
 
   it('finds papers by their Arabic names in the Arabic interface', async () => {

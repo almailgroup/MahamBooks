@@ -811,18 +811,24 @@ function planProducts(
   };
 
   // Items already here, by SKU and by name (null: more than one has it).
+  // Archived items apart: hidden from lists and sales, they take no stock or
+  // changes from a file (restore them first), and their SKUs and names stay taken.
   const bySku = new Map<string, Product>();
   const english = new Map<string, Product | null>();
   const arabic = new Map<string, Product | null>();
+  const archivedSku = new Map<string, Product>();
+  const archivedEnglish = new Map<string, Product | null>();
+  const archivedArabic = new Map<string, Product | null>();
   const note = (map: Map<string, Product | null>, text: string | undefined, p: Product) => {
     const k = key(text ?? '');
     if (k) map.set(k, map.has(k) && map.get(k)?.id !== p.id ? null : p);
   };
   for (const p of ctx.products) {
     const k = key(p.sku);
-    if (k && !bySku.has(k)) bySku.set(k, p);
-    note(english, p.name, p);
-    note(arabic, p.nameAr, p);
+    const skus = p.archived ? archivedSku : bySku;
+    if (k && !skus.has(k)) skus.set(k, p);
+    note(p.archived ? archivedEnglish : english, p.name, p);
+    note(p.archived ? archivedArabic : arabic, p.nameAr, p);
   }
   // Rows planned so far, by item; and the SKUs and names of the items they add.
   const planned = new Map<ID, ProductRecord>();
@@ -853,17 +859,25 @@ function planProducts(
     const nameKey = key(name);
     let earlier: ProductRecord | undefined;
     let existing: Product | undefined;
+    // The archived item the row is of (only when no item in use is).
+    let archived: Product | null | undefined;
     let ambiguous = false;
     let nameTaken = false;
     if (codeKey) {
       earlier = planned.get(fileSkus.get(codeKey) ?? '');
       existing = earlier ? undefined : bySku.get(codeKey);
+      if (!earlier && !existing) archived = archivedSku.get(codeKey);
       // A new SKU with a name another item has.
+      const taken = (live: Map<string, Product | null>, ar: Map<string, Product | null>) =>
+        live.has(nameKey) || (!cells.name && ar.has(nameKey));
       nameTaken =
         !earlier &&
         !existing &&
+        !archived &&
         Boolean(nameKey) &&
-        (fileNames.has(nameKey) || english.has(nameKey) || (!cells.name && arabic.has(nameKey)));
+        (fileNames.has(nameKey) ||
+          taken(english, arabic) ||
+          taken(archivedEnglish, archivedArabic));
     } else if (nameKey) {
       earlier = planned.get(fileNames.get(nameKey) ?? '');
       if (!earlier) {
@@ -872,6 +886,13 @@ function planProducts(
           : (english.get(nameKey) ?? arabic.get(nameKey));
         if (found === null) ambiguous = true;
         else existing = found;
+        if (found === undefined) {
+          archived = cells.name
+            ? archivedEnglish.get(nameKey)
+            : (archivedEnglish.get(nameKey) ?? archivedArabic.get(nameKey));
+          // Two archived items called so: not taken for either.
+          if (archived === null) nameTaken = true;
+        }
       }
     }
     if (existing && planned.has(existing.id)) {
@@ -945,10 +966,42 @@ function planProducts(
       }
     }
 
+    // The item with the file's values (Update existing items); null when nothing changes.
+    const updated = (before: Product): Product | null => {
+      if (!options.updateExisting) return null;
+      const next: Product = { ...before };
+      // Matched by its SKU: the file's name is the item's name.
+      if (codeKey && cells.name) next.name = cells.name.trim();
+      if (cells.nameAr) next.nameAr = cells.nameAr.trim();
+      if (cells.description) next.description = cells.description;
+      if (cells.descriptionAr) next.descriptionAr = cells.descriptionAr;
+      if (cells.unit) {
+        next.unit = unit;
+        if (unitId) next.unitId = unitId;
+        else delete next.unitId;
+      }
+      if (price !== null) next.unitPrice = price;
+      if (cost !== null) next.costPrice = cost;
+      if (reorderLevel !== null && productKind(before) === 'stock') {
+        next.reorderLevel = reorderLevel;
+      }
+      if (cells.barcode) next.barcode = cells.barcode;
+      return UPDATED_FIELDS.some((f) => (next[f] ?? null) !== (before[f] ?? null)) ? next : null;
+    };
+
     let source: ProductRecord['source'] = 'new';
     let product: Product | null = null;
     let update = false;
-    if (earlier) {
+    if (archived) {
+      // Stock or changes for it would be on an item no list shows and nothing sells.
+      const brings = (wantsStock && quantity !== 0) || updated(archived) !== null;
+      issues.push({
+        level: brings ? 'error' : 'skip',
+        text: t('{name} is archived. Restore it in Products & services first.', {
+          name: archived.name || name,
+        }),
+      });
+    } else if (earlier) {
       if (!wantsStock) issues.push({ level: 'skip', text: takenText });
       source = 'repeat';
       product = earlier.product;
@@ -956,29 +1009,11 @@ function planProducts(
       const before = existing;
       source = 'existing';
       product = before;
-      if (options.updateExisting) {
-        const next: Product = { ...before };
-        // Matched by its SKU: the file's name is the item's name.
-        if (codeKey && cells.name) next.name = cells.name.trim();
-        if (cells.nameAr) next.nameAr = cells.nameAr.trim();
-        if (cells.description) next.description = cells.description;
-        if (cells.descriptionAr) next.descriptionAr = cells.descriptionAr;
-        if (cells.unit) {
-          next.unit = unit;
-          if (unitId) next.unitId = unitId;
-          else delete next.unitId;
-        }
-        if (price !== null) next.unitPrice = price;
-        if (cost !== null) next.costPrice = cost;
-        if (reorderLevel !== null && productKind(before) === 'stock') {
-          next.reorderLevel = reorderLevel;
-        }
-        if (cells.barcode) next.barcode = cells.barcode;
-        update = UPDATED_FIELDS.some((f) => (next[f] ?? null) !== (before[f] ?? null));
-        if (update) {
-          product = next;
-          issues.push({ level: 'info', text: t('Updates the item already in your items.') });
-        }
+      const next = updated(before);
+      if (next) {
+        update = true;
+        product = next;
+        issues.push({ level: 'info', text: t('Updates the item already in your items.') });
       }
       if (!wantsStock && !update) {
         issues.push({
@@ -1198,7 +1233,11 @@ export async function loadImportContext(companyId: ID, kind?: ImportKind): Promi
     if (!first || date < first) history.set(productId, date);
   };
   for (const m of movements) since(m.productId, m.date);
-  for (const entry of entries) for (const line of entry.lines) since(line.productId, entry.date);
+  for (const entry of entries) {
+    // A voided entry left no stock behind: it isn't history.
+    if (entry.status !== 'posted') continue;
+    for (const line of entry.lines) since(line.productId, entry.date);
+  }
   // Stock already in the opening balances would be counted twice.
   const precision = currencyPrecision(company.currency);
   const inventory = stockAccounts(accounts, accountingSettings(company).template).inventory;

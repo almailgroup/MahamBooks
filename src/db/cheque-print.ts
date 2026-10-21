@@ -12,6 +12,7 @@ import {
 import {
   onSpoiledLeaf,
   printableAfterLeaf,
+  printedLeafNumber,
   printRefusal,
   REFUSAL_TEXT,
   spoilPrintedLeaf,
@@ -163,7 +164,13 @@ export async function recordChequePrinted(
       printedAt: nowStamp(),
       printCount: (payment.cheque.printCount ?? 0) + 1,
       printedLayoutId: input.layout.id,
-      printedText: input.text,
+      // With its leaf: a change made where printing isn't known shows (printedLeafChanged).
+      printedText: {
+        ...input.text,
+        number: payment.cheque.number.trim(),
+        bank: payment.cheque.bank.trim().toUpperCase(),
+        ...(payment.clientId ? { vendorId: payment.clientId } : {}),
+      },
     };
     if (input.crossed) cheque.crossed = true;
     else delete cheque.crossed;
@@ -198,9 +205,12 @@ export async function recordSpoiledLeaf(
     const refusal = printRefusal(payment);
     if (!printableAfterLeaf(refusal)) throw new ChequePrintError(t(REFUSAL_TEXT[refusal!]));
     const old = payment.cheque;
+    // The leaf spoiled: the one printed, unless this is a misprint just now.
+    const leaf = old.printedAt && !input.text ? printedLeafNumber(old) : old.number.trim();
     const number = input.nextNumber.trim();
     if (!number) throw new ChequePrintError(t('Enter the number of the next leaf.'));
-    const used = new Set([old.number, ...(old.spoiledLeaves ?? []).map((l) => l.number)]);
+    // A number given to the cheque on another device after printing was never printed: it may be the next.
+    const used = new Set([leaf, ...(old.spoiledLeaves ?? []).map((l) => l.number)]);
     if ([...used].some((n) => n.trim() === number)) {
       throw new ChequePrintError(t('Leaf {number} is spoiled: enter the next one.', { number }));
     }
@@ -259,12 +269,52 @@ export async function recordSpoiledLeaf(
           }
         : {
             text: msg('Cheque leaf {number} spoiled; payment {payment} is now on leaf {next}'),
-            vars: { number: old.number, payment: payment.number, next: number },
+            vars: { number: leaf, payment: payment.number, next: number },
           },
       refs(payment),
     );
     return next;
   });
+}
+
+/** A payment whose record of cheque leaves a change from another device took away. */
+export interface LostChequeLeaves {
+  /** The payment as it was here before the change. */
+  payment: Payment;
+  /** The leaves no longer recorded (lib/cheque-print lostChequeLeaves). */
+  numbers: string[];
+}
+
+/**
+ * Logs cheque leaves whose record a change from another device took away: a
+ * device on an older version of the app made a printed cheque another way of
+ * paying, or deleted it. A printed leaf is still a cheque, so the log keeps
+ * it on record. Logged once per payment and leaves on this device.
+ */
+export async function logLostChequeLeaves(companyId: ID, lost: LostChequeLeaves[]): Promise<void> {
+  for (const { payment, numbers } of lost) {
+    if (payment.companyId !== companyId || numbers.length === 0) continue;
+    const list = numbers.join(', ');
+    const logged = await db.activities
+      .where('entityId')
+      .equals(payment.id)
+      .filter((a) => a.action === 'cheque_leaves_lost' && a.messageVars?.numbers === list)
+      .count();
+    if (logged) continue;
+    await logActivity(
+      companyId,
+      'payment',
+      payment.id,
+      'cheque_leaves_lost',
+      {
+        text: msg(
+          'Payment {payment} was changed or deleted on another device, and with it the record of cheque leaves {numbers}. A printed leaf still in hand is a cheque: destroy it.',
+        ),
+        vars: { payment: payment.number, numbers: list },
+      },
+      refs(payment),
+    );
+  }
 }
 
 /* -------------------------------------------------------------------------- */

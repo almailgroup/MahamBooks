@@ -38,7 +38,12 @@ import {
 } from '@/apps/books/features/cheques/action-dialogs';
 import { AttachmentList } from '@/features/purchases/attachments';
 import { hasVoucher } from '@/pdf/voucher/model';
-import { printableAfterLeaf, printRefusal } from '@/lib/cheque-print';
+import {
+  printableAfterLeaf,
+  printedLeafChanged,
+  printedLeafNumber,
+  printRefusal,
+} from '@/lib/cheque-print';
 import { useHasChequeLayout } from '@/apps/books/features/cheques/use-cheque-layout';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
@@ -364,6 +369,20 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
                         : fmt.dateTime(cheque.printedAt)
                     }
                   />
+                ) : null}
+                {direction === 'out' && cheque.status === 'held' && printedLeafChanged(payment) ? (
+                  <p
+                    role="alert"
+                    className="my-2 flex gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                  >
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                    <span>
+                      {t(
+                        'The cheque was changed on another device after leaf {number} was printed: the leaf no longer matches it. Mark the leaf spoiled on Print cheque before the cheque is handed over.',
+                        { number: printedLeafNumber(cheque) },
+                      )}
+                    </span>
+                  </p>
                 ) : null}
                 {cheque.spoiledLeaves?.length ? (
                   <Row

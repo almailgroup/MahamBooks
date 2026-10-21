@@ -315,7 +315,7 @@ function Shortcut({ to, icon: Icon, label }: { to: string; icon: LucideIcon; lab
     >
       <Icon className="size-4 text-emerald-700" aria-hidden />
       <span className="flex-1">{label}</span>
-      <ArrowRight className="size-4 text-slate-400 rtl:rotate-180" aria-hidden />
+      <ArrowRight className="size-4 text-slate-400" aria-hidden />
     </Link>
   );
 }

@@ -78,6 +78,12 @@ const SUB_PAGES: {
   { label: msg('Payment details'), to: '/settings/payments', keywords: 'bank iban' },
   { label: msg('Numbering'), to: '/settings/numbering' },
   { label: msg('Items and units'), to: '/settings/items', keywords: 'sku codes units' },
+  // Found while the switches are off: this is where they are.
+  {
+    label: msg('Compliance and files'),
+    to: '/settings/compliance',
+    keywords: 'find files papers attachments scans contracts vehicles reminders licences',
+  },
   {
     label: msg('Cheque layouts'),
     to: '/cheques/layouts',
@@ -409,13 +415,18 @@ export async function recordEntries(
         key: `expense:${e.id}`,
         kind: 'document',
         title: `${t('Expense')} ${e.number}`.trim(),
-        subtitle: [e.description, vendor ? localName(vendor) : '', fmt.date(e.date)]
+        subtitle: [
+          e.description,
+          vendor ? localName(vendor) : (e.payee?.trim() ?? ''),
+          fmt.date(e.date),
+        ]
           .filter(Boolean)
           .join(' · '),
         amount: fmt.money(e.amount, e.currency),
         to: `/expenses?open=${e.id}`,
         names: [e.number, e.description],
-        terms: [vendor?.name, vendor && ar(vendor), t('Expense'), 'Expense'],
+        // Who was paid: the vendor, or the name typed in Paid to.
+        terms: [vendor?.name, vendor && ar(vendor), e.payee, t('Expense'), 'Expense'],
         numbers: [e.number, e.reference],
         amounts: [e.amount],
         precision: currencyPrecision(e.currency),

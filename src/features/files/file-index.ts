@@ -136,7 +136,8 @@ const words = (...list: (string | null | undefined)[]) =>
  * Every file of the company, newest record first. Without `people` (staff
  * and viewers), files of payroll and people data and of confidential papers
  * are left out, and so are files whose record isn't on this device, since
- * they can't be told apart.
+ * they can't be told apart. Pictures of employees and items are not files
+ * here: they are shown with their employee or item.
  */
 export async function loadFileIndex(
   company: Company,
@@ -148,18 +149,29 @@ export async function loadFileIndex(
     await db.attachments.where('[companyId+contentMissing]').equals([company.id, 1]).primaryKeys(),
   );
   const ownerIds = [...new Set(keys.map((k) => k.ownerId))];
-  const [documents, expenses, payments, assets, papers, renewals, owners, letters, templates] =
-    await Promise.all([
-      byId(db.documents, ownerIds, company.id),
-      byId(db.expenses, ownerIds, company.id),
-      byId(db.payments, ownerIds, company.id),
-      byId(db.assets, ownerIds, company.id),
-      byId(db.complianceDocuments, ownerIds, company.id),
-      byId(db.renewals, ownerIds, company.id),
-      byId(db.employees, ownerIds, company.id),
-      byId(db.employeeLetters, ownerIds, company.id),
-      byId(db.letterTemplates, ownerIds, company.id),
-    ]);
+  const [
+    documents,
+    expenses,
+    payments,
+    assets,
+    papers,
+    renewals,
+    owners,
+    letters,
+    templates,
+    products,
+  ] = await Promise.all([
+    byId(db.documents, ownerIds, company.id),
+    byId(db.expenses, ownerIds, company.id),
+    byId(db.payments, ownerIds, company.id),
+    byId(db.assets, ownerIds, company.id),
+    byId(db.complianceDocuments, ownerIds, company.id),
+    byId(db.renewals, ownerIds, company.id),
+    byId(db.employees, ownerIds, company.id),
+    byId(db.employeeLetters, ownerIds, company.id),
+    byId(db.letterTemplates, ownerIds, company.id),
+    byId(db.products, ownerIds, company.id),
+  ]);
   // The papers renewals are of, and the employees papers and letters belong to.
   const renewedId = (renewal: DocumentRenewal) => renewedDocumentId({ ...renewal });
   const renewed = await byId(
@@ -251,10 +263,10 @@ export async function loadFileIndex(
       return {
         kind: 'expense',
         owner: `${t('Expense')} ${expense.number}`.trim(),
-        detail: expense.description || localName(vendor),
+        detail: expense.description || localName(vendor) || expense.payee?.trim() || '',
         to: `/expenses?open=${expense.id}`,
         date: expense.date,
-        terms: words(expense.description, vendor?.name, vendor?.nameAr),
+        terms: words(expense.description, vendor?.name, vendor?.nameAr, expense.payee),
         numbers: words(expense.number, expense.reference),
       };
     }
@@ -367,8 +379,10 @@ export async function loadFileIndex(
   const described = new Map(ownerIds.map((id) => [id, describe(id)]));
   const entries: FileEntry[] = [];
   for (const key of keys) {
-    // An employee's photo is shown as their photo, not as a file.
+    // An employee's photo is shown as their photo, not as a file; an item's
+    // pictures likewise, with the item (Products, the line picker).
     if (owners.get(key.ownerId)?.photoId === key.id) continue;
+    if (products.has(key.ownerId)) continue;
     const owner = described.get(key.ownerId)!;
     const isPrivate = isPrivateRecord('attachments', { ownerId: key.ownerId }, lookup);
     if (!people && (isPrivate || owner.kind === 'other')) continue;

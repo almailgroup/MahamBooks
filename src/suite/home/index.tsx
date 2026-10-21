@@ -230,10 +230,7 @@ function AttentionList({
                     {line.amount}
                   </span>
                 ) : (
-                  <ArrowRight
-                    className="size-4 shrink-0 text-slate-400 rtl:rotate-180"
-                    aria-hidden
-                  />
+                  <ArrowRight className="size-4 shrink-0 text-slate-400" aria-hidden />
                 )}
               </Link>
             </li>

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/db';
-import { createClient } from '@/db/defaults';
-import { deleteCompany, saveClient, setupCompany } from '@/db/records';
+import { createClient, createProduct } from '@/db/defaults';
+import { deleteCompany, saveClient, saveCompany, setupCompany } from '@/db/records';
 import { draftDocument, isNumberTaken, saveDocument } from '@/db/documents';
 import { addAttachment } from '@/db/purchases';
-import { createPayment, savePayment } from '@/db/payments';
+import { createPayment, newCheque, savePayment } from '@/db/payments';
+import { recordChequePrinted } from '@/db/cheque-print';
+import { saveItem } from '@/db/inventory';
+import { addProductImages } from '@/db/product-images';
 import { createEmployee, saveEmployee } from '@/db/people';
 import { exportBackup, importBackup, wipeAllData } from '@/db/backup';
 import {
@@ -15,6 +18,7 @@ import {
 import type { Company, InvoiceDocument } from '@/db/types';
 import { setCounterReserver } from '@/lib/numbering';
 import { today } from '@/lib/dates';
+import { printRefusal } from '@/lib/cheque-print';
 import { storageCloudError } from './api';
 import { downloadAccountCompanies } from './auto-download';
 import { FakeCloud } from './testing/fake-cloud';
@@ -932,6 +936,114 @@ describe('a payment deleted on another device', () => {
     expect(await db.attachments.get(scan.id)).toBeDefined();
     expect(server.record(company.id, 'attachments', scan.id)).toBeDefined();
     expect(await db.outbox.count()).toBe(0);
+  });
+});
+
+describe('a printed cheque changed on a device with an older version of the app', () => {
+  async function printedCheque() {
+    const { company } = await uploaded();
+    await saveCompany({ ...company, chequePrinting: true });
+    const vendor = await saveClient(
+      createClient(company.id, { name: 'Example Supplies Co.', isVendor: true }),
+    );
+    const payment = await savePayment(
+      createPayment(company.id, {
+        direction: 'out',
+        clientId: vendor.id,
+        date: '2026-10-20',
+        amount: 1250,
+        currency: 'KWD',
+        method: 'cheque',
+        cheque: newCheque({ number: '000123', bank: 'BRGN', date: '2026-11-15', drawer: '' }),
+      }),
+    );
+    const printed = await recordChequePrinted(payment.id, {
+      layout: { id: 'preset-BRGN' },
+      text: {
+        date: '15/11/2026',
+        payee: 'Example Supplies Co.',
+        words: ['فقط ألف ومائتان وخمسون دينارًا كويتيًا لا غير'],
+        figures: '**1,250.000**',
+        layoutVersion: 1,
+      },
+      crossed: false,
+    });
+    await syncCompany(company.id, ctx);
+    return { company, printed };
+  }
+
+  /** What an older build sends: the payment as it saved it. */
+  async function olderBuildSends(companyId: string, id: string, patch: Record<string, unknown>) {
+    const rev = (await db.syncRevs.get(['payments', id]))!.rev;
+    const data = patch.deleted
+      ? undefined
+      : { ...server.record(companyId, 'payments', id)!, ...patch };
+    await server
+      .client(OWNER)
+      .pushRecords(companyId, [
+        data
+          ? { tbl: 'payments', id, data, base_rev: rev }
+          : { tbl: 'payments', id, deleted: true, base_rev: rev },
+      ]);
+  }
+
+  const lostLog = async (paymentId: string) =>
+    (await db.activities.where('entityId').equals(paymentId).toArray()).filter(
+      (a) => a.action === 'cheque_leaves_lost',
+    );
+
+  it('paid another way: the printed leaf is logged, here and for the team', async () => {
+    const { company, printed } = await printedCheque();
+    await olderBuildSends(company.id, printed.id, { method: 'bank_transfer', cheque: null });
+    await syncCompany(company.id, ctx);
+    expect((await db.payments.get(printed.id))?.cheque).toBeNull();
+    const [lost] = await lostLog(printed.id);
+    expect(lost?.messageVars).toEqual({ payment: printed.number, numbers: '000123' });
+    expect(server.record(company.id, 'activities', lost.id)).toBeDefined();
+    // Logged once.
+    await syncCompany(company.id, ctx);
+    expect(await lostLog(printed.id)).toHaveLength(1);
+  });
+
+  it('deleted: the printed leaf is logged', async () => {
+    const { company, printed } = await printedCheque();
+    await olderBuildSends(company.id, printed.id, { deleted: true });
+    await syncCompany(company.id, ctx);
+    expect(await db.payments.get(printed.id)).toBeUndefined();
+    expect((await lostLog(printed.id)).map((a) => a.messageVars?.numbers)).toEqual(['000123']);
+  });
+
+  it('with a new amount: nothing is lost, and the print shows it changed', async () => {
+    const { company, printed } = await printedCheque();
+    await olderBuildSends(company.id, printed.id, { amount: 1520 });
+    await syncCompany(company.id, ctx);
+    const changed = (await db.payments.get(printed.id))!;
+    expect(changed.amount).toBe(1520);
+    expect(changed.cheque?.printedAt).toBe(printed.cheque?.printedAt);
+    expect(printRefusal(changed)).toBe('changed');
+    expect(await lostLog(printed.id)).toEqual([]);
+  });
+});
+
+describe('an item deleted on another device', () => {
+  it('by an older build, which leaves its pictures: they are deleted here and in the cloud', async () => {
+    const { company } = await uploaded();
+    const item = await saveItem(createProduct(company.id, { name: 'A4 paper box', sku: 'PAP-A4' }));
+    await addProductImages(item.id, [{ name: 'box.png', dataUrl: PNG }]);
+    const [pictureId] = (await db.products.get(item.id))!.imageIds!;
+    await syncCompany(company.id, ctx);
+    const path = `${company.id}/${pictureId}`;
+    expect(server.files.has(path)).toBe(true);
+    // An older build's deleteItem deletes the item only.
+    const rev = (await db.syncRevs.get(['products', item.id]))!.rev;
+    await server
+      .client(OWNER)
+      .pushRecords(company.id, [{ tbl: 'products', id: item.id, deleted: true, base_rev: rev }]);
+    await syncCompany(company.id, ctx);
+    expect(await db.products.get(item.id)).toBeUndefined();
+    expect(await db.attachments.get(pictureId)).toBeUndefined();
+    expect(server.record(company.id, 'attachments', pictureId)).toBeUndefined();
+    expect(server.files.has(path)).toBe(false);
   });
 });
 

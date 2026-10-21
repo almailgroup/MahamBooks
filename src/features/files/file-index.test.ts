@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/db';
-import { createClient, createDocument } from '@/db/defaults';
+import { createClient, createDocument, createProduct } from '@/db/defaults';
+import { saveItem } from '@/db/inventory';
+import { addProductImages } from '@/db/product-images';
 import { setupCompany, saveClient } from '@/db/records';
 import { addAttachment, createExpense } from '@/db/purchases';
 import { createAsset } from '@/db/assets';
@@ -195,6 +197,34 @@ describe('the files of a company', () => {
     const files = await loadFileIndex(company);
     expect(files.find((f) => f.id === scan!.id)?.inCloud).toBe(true);
     expect(files.filter((f) => f.inCloud)).toHaveLength(1);
+  });
+
+  it('leaves out items’ pictures, shown with their item, for every role', async () => {
+    await seed();
+    const item = await saveItem(createProduct(company.id, { name: 'A4 paper box', sku: 'PAP-A4' }));
+    await addProductImages(item.id, [
+      { name: 'IMG_1234.jpg', dataUrl: JPEG.dataUrl },
+      { name: 'IMG_1235.jpg', dataUrl: JPEG.dataUrl },
+    ]);
+    for (const people of [true, false]) {
+      const files = await loadFileIndex(company, { people });
+      expect(files.filter((f) => f.ownerId === item.id || /^IMG_/.test(f.name))).toEqual([]);
+    }
+  });
+
+  it('finds an expense by whom it was paid to when that isn’t a vendor', async () => {
+    company = await setupCompany({ name: 'Made-up Trading' });
+    const expense = createExpense(company.id, {
+      number: 'EXP-0007',
+      description: '',
+      payee: 'Sahara Fuel Station',
+      date: '2026-09-05',
+    });
+    await db.expenses.put(expense);
+    await addAttachment(company.id, expense.id, { name: 'Receipt.jpg', ...JPEG });
+    const [file] = await loadFileIndex(company);
+    expect(file).toMatchObject({ kind: 'expense', detail: 'Sahara Fuel Station' });
+    expect(file.terms).toContain('Sahara Fuel Station');
   });
 
   it('is empty for a company without files', async () => {

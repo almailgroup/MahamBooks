@@ -75,7 +75,7 @@ function TestPrint({ layout }: { layout: ChequeLayout }) {
             to={`/cheques/layouts?bank=${encodeURIComponent(layout.bank)}`}
             className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
           >
-            <ArrowLeft className="size-4 rtl:rotate-180" /> {t('Cheque layouts')}
+            <ArrowLeft className="size-4" /> {t('Cheque layouts')}
           </Link>
           <Button onClick={() => window.print()}>
             <Printer /> {t('Print')}
@@ -103,7 +103,8 @@ function TestPrint({ layout }: { layout: ChequeLayout }) {
                 aria-label={t('Move 0.5 mm left')}
                 onClick={() => move(-STEP, 0)}
               >
-                <ArrowLeft />
+                {/* Not mirrored in Arabic either (index.css mirrors arrows on RTL pages). */}
+                <ArrowLeft style={{ transform: 'none' }} />
               </Button>
               <Button
                 variant="outline"
@@ -127,7 +128,7 @@ function TestPrint({ layout }: { layout: ChequeLayout }) {
                 aria-label={t('Move 0.5 mm right')}
                 onClick={() => move(STEP, 0)}
               >
-                <ArrowRight />
+                <ArrowRight style={{ transform: 'none' }} />
               </Button>
             </div>
             <p className="text-sm text-slate-700" aria-live="polite">

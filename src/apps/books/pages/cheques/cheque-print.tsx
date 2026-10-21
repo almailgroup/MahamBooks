@@ -17,6 +17,7 @@ import {
   chequeFace,
   chequePayee,
   nextLeafNumber,
+  printedLeafNumber,
   printedText,
   printRefusal,
   REFUSAL_TEXT,
@@ -125,7 +126,9 @@ function PrintView({
   const navigate = useNavigate();
   const { readOnly } = useRoleView();
   const [crossed, setCrossed] = useState(Boolean(payment.cheque.crossed));
-  const [asking, setAsking] = useState<'result' | 'spoil' | 'reprint' | 'next' | null>(null);
+  const [asking, setAsking] = useState<'result' | 'spoil' | 'reprint' | 'changed' | 'next' | null>(
+    null,
+  );
   const device = useLiveQuery(() => deviceChequeOffset(layout), [layout.id, layout.bank]);
   const cheque = payment.cheque;
   const face = chequeFace(
@@ -206,8 +209,7 @@ function PrintView({
             to={`${BASE}/${payment.id}`}
             className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
           >
-            <ArrowLeft className="size-4 rtl:rotate-180" />{' '}
-            {t('Payment {number}', { number: payment.number })}
+            <ArrowLeft className="size-4" /> {t('Payment {number}', { number: payment.number })}
           </Link>
           <div className="flex flex-wrap gap-2">
             <ButtonLink
@@ -256,6 +258,23 @@ function PrintView({
               {!readOnly.readOnly && company.chequePrinting ? (
                 <Button variant="outline" size="sm" onClick={() => setAsking('reprint')}>
                   {t('Print again on a new leaf')}
+                </Button>
+              ) : null}
+            </div>
+          ) : refusal === 'changed' && cheque.printedAt ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            >
+              <span>
+                {t(
+                  'Leaf {number} was printed on {date}, but the cheque was changed on another device afterwards: the leaf no longer matches it. Mark the leaf spoiled and destroy it, then print the cheque again.',
+                  { date: fmt.dateTime(cheque.printedAt), number: printedLeafNumber(cheque) },
+                )}
+              </span>
+              {!readOnly.readOnly && company.chequePrinting ? (
+                <Button variant="outline" size="sm" onClick={() => setAsking('changed')}>
+                  {t('Mark the leaf spoiled')}
                 </Button>
               ) : null}
             </div>
@@ -372,11 +391,12 @@ function PrintView({
         </DialogContent>
       </Dialog>
 
-      {asking === 'spoil' || asking === 'reprint' || asking === 'next' ? (
+      {asking === 'spoil' || asking === 'reprint' || asking === 'changed' || asking === 'next' ? (
         <SpoilDialog
           payment={payment}
           misprint={asking === 'spoil' ? printedText(face, fit.words.lines, layout) : undefined}
           nextOnly={asking === 'next'}
+          changed={asking === 'changed'}
           onClose={() => setAsking(null)}
         />
       ) : null}
@@ -388,6 +408,7 @@ function SpoilDialog({
   payment,
   misprint,
   nextOnly,
+  changed,
   onClose,
 }: {
   payment: ChequePayment;
@@ -395,11 +416,24 @@ function SpoilDialog({
   misprint?: ReturnType<typeof printedText>;
   /** The leaf is already recorded as spoiled: only the next one is asked for. */
   nextOnly?: boolean;
+  /** The printed cheque was changed on another device: its leaf no longer matches it. */
+  changed?: boolean;
   onClose: () => void;
 }) {
-  const number = payment.cheque.number;
-  const [reason, setReason] = useState(misprint ? t('Printed wrongly') : t('Printed again'));
-  const [next, setNext] = useState(nextLeafNumber(number));
+  const cheque = payment.cheque;
+  // The leaf spoiled is the one printed on; a number given to the cheque
+  // since then was never printed, so it is the next leaf.
+  const number = cheque.printedAt && !misprint ? printedLeafNumber(cheque) : cheque.number.trim();
+  const [reason, setReason] = useState(
+    misprint
+      ? t('Printed wrongly')
+      : changed
+        ? t('Changed on another device after printing')
+        : t('Printed again'),
+  );
+  const [next, setNext] = useState(
+    number === cheque.number.trim() ? nextLeafNumber(number) : cheque.number.trim(),
+  );
   const [busy, setBusy] = useState(false);
 
   const save = async () => {

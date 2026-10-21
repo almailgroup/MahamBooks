@@ -67,7 +67,9 @@ export function ComplianceSettingsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         title={t('Compliance settings')}
-        description={t('Reminders and the deadlines worked out for your company.')}
+        description={t(
+          'Reminders and deadlines, drivers’ licences, the register’s contracts, customers’ papers and vehicles, and the document finder for every app.',
+        )}
       >
         <DialogBody>
           <Field

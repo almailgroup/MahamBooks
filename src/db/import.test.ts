@@ -10,7 +10,13 @@ import {
   type ImportOptions,
 } from './import';
 import { createProduct } from './defaults';
-import { createWarehouse, ensureDefaultWarehouse, saveItem, saveWarehouse } from './inventory';
+import {
+  createWarehouse,
+  ensureDefaultWarehouse,
+  saveItem,
+  saveWarehouse,
+  voidStockEntry,
+} from './inventory';
 import type { Company } from './types';
 import { guessColumns, type ImportKind } from '@/features/company/import-columns';
 import { parseCsvRows } from '@/lib/banking/statement';
@@ -529,6 +535,84 @@ describe('importing stock items', () => {
     expect(byCode.get('3900')).toBe(-160_000);
     expect(byCode.get('5300') ?? 0).toBe(0);
     expect((await levels(company)).get(toner.id)?.quantity).toBe(50);
+  });
+
+  it('gives opening stock to an item whose only stock history was voided', async () => {
+    const { company, main } = await stockCompany();
+    const toner = await saveItem(
+      createProduct(company.id, { name: 'Toner', sku: 'TON-1', kind: 'stock', costPrice: 2 }),
+      { opening: { warehouseId: main.id, quantity: 5, unitCost: 2, date: '2026-09-01' } },
+    );
+    const [opening] = await db.stockEntries.where('companyId').equals(company.id).toArray();
+    await voidStockEntry(opening.id);
+    const csv = ['SKU,Name,Cost price,Quantity', 'TON-1,Toner,2,50'].join('\n');
+    const { result } = await plan(company, 'products', csv);
+    expect(result.rows[0].issues.map((i) => i.text)).toEqual([
+      'Already in your items: only its stock is taken.',
+    ]);
+    expect(result.stock).toMatchObject({ value: 100_000, opening: 1, counted: 0, differences: 0 });
+
+    const done = await run(company, 'products', csv);
+    expect(done.stockEntries?.map((e) => e.kind)).toEqual(['opening']);
+    // Against opening balance equity, not a gain in the profit and loss.
+    const byCode = await balances(company);
+    expect(byCode.get(inventoryCode)).toBe(100_000);
+    expect(byCode.get('3900')).toBe(-100_000);
+    expect(byCode.get('5300') ?? 0).toBe(0);
+    expect((await levels(company)).get(toner.id)?.quantity).toBe(50);
+  });
+
+  it('gives no stock or changes to an archived item, and keeps its SKU and name taken', async () => {
+    const { company } = await stockCompany();
+    const old = await saveItem(
+      createProduct(company.id, { name: 'Old toner', sku: 'TON-1', kind: 'stock', costPrice: 2 }),
+    );
+    await saveItem({ ...old, archived: true });
+    // A live item and an archived one with the same name: the live one is meant.
+    await saveItem(
+      createProduct(company.id, { name: 'Stapler', sku: 'STP-1', kind: 'stock', costPrice: 1 }),
+    );
+    const stapler = await saveItem({
+      ...createProduct(company.id, { name: 'Stapler', sku: 'STP-0', kind: 'stock' }),
+      archived: true,
+    });
+    const archived = 'Old toner is archived. Restore it in Products & services first.';
+
+    const stock = ['SKU,Name,Cost price,Quantity', 'TON-1,Toner,2,50'].join('\n');
+    const { result } = await plan(company, 'products', stock);
+    expect(result.rows.map((r) => [r.status, r.issues.map((i) => i.text)])).toEqual([
+      ['error', [archived]],
+    ]);
+    await expect(run(company, 'products', stock)).rejects.toThrow(ImportError);
+    expect(await db.stockEntries.count()).toBe(0);
+
+    // By name, and with Update existing items.
+    const byName = await plan(company, 'products', 'Name,Price\nOld toner,9', {
+      ...OPTIONS,
+      updateExisting: true,
+    });
+    expect(byName.result.rows[0]).toMatchObject({ status: 'error' });
+    expect(byName.result.rows[0].issues.map((i) => i.text)).toEqual([archived]);
+    // Nothing to give it: skipped, as rows of items already here are.
+    const plain = await plan(company, 'products', 'SKU,Name,Price\nTON-1,Old toner,9');
+    expect(plain.result.rows[0]).toMatchObject({ status: 'skipped' });
+    expect(plain.result.rows[0].issues.map((i) => i.text)).toEqual([archived]);
+    // Its SKU and its name stay taken: no new item gets them.
+    const taken = await plan(
+      company,
+      'products',
+      'SKU,Name,Price\nTON-1,New toner,9\nTON-9,Old toner,9',
+    );
+    expect(taken.result.rows.map((r) => [r.status, r.issues.map((i) => i.text)])).toEqual([
+      ['skipped', [archived]],
+      ['skipped', ['Old toner is already in your items.']],
+    ]);
+
+    const live = await plan(company, 'products', 'Name,Cost price,Quantity\nStapler,1,4');
+    expect(live.result.rows[0]).toMatchObject({ status: 'ready' });
+    const record = live.result.rows[0].record;
+    expect(record?.kind === 'products' ? record.value.source : null).toBe('existing');
+    expect(record?.kind === 'products' ? record.value.product.id : null).not.toBe(stapler.id);
   });
 
   it('warns when opening balances put stock on the inventory account a second time', async () => {

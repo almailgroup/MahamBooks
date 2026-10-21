@@ -18,6 +18,7 @@ import {
   Package,
   Palette,
   Percent,
+  ShieldCheck,
   Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -42,6 +43,7 @@ const TeamSettings = lazy(() => import('./team'));
 const CloudSettings = lazy(() => import('./cloud'));
 const LinkSettings = lazy(() => import('./links'));
 const AlertSettings = lazy(() => import('./alerts'));
+const ComplianceSettingsPage = lazy(() => import('./compliance'));
 
 const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
   {
@@ -50,6 +52,7 @@ const GROUPS: { title: string; items: { path: string; label: string; icon: React
       { path: 'company', label: msg('Company profile'), icon: <Building2 /> },
       { path: 'companies', label: msg('Companies'), icon: <Layers /> },
       { path: 'links', label: msg('Links'), icon: <Link2 /> },
+      { path: 'compliance', label: msg('Compliance and files'), icon: <ShieldCheck /> },
     ],
   },
   {
@@ -173,6 +176,7 @@ export default function SettingsPage() {
               <Route path="cloud" element={<CloudSettings />} />
               <Route path="links" element={<LinkSettings />} />
               <Route path="alerts" element={<AlertSettings />} />
+              <Route path="compliance" element={<ComplianceSettingsPage />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

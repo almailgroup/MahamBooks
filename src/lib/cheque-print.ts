@@ -212,6 +212,7 @@ export type PrintRefusal =
   | 'currency'
   | 'amount'
   | 'printed'
+  | 'changed'
   | 'leaf_spoiled';
 
 /** English keys, translated where shown. */
@@ -226,12 +227,81 @@ export const REFUSAL_TEXT: Record<PrintRefusal, string> = {
   currency: msg('Only cheques in Kuwaiti dinars are printed.'),
   amount: msg('The cheque has no amount.'),
   printed: msg('This cheque was printed. To print it again, mark its leaf spoiled first.'),
+  changed: msg(
+    'This cheque was changed after it was printed: its leaf no longer matches it. Mark the leaf spoiled first.',
+  ),
   leaf_spoiled: msg('The leaf with this number is spoiled. Enter the number of the next leaf.'),
 };
 
 /** Refusals that the person can clear from the print page: by marking a leaf spoiled or taking the next one. */
 export function printableAfterLeaf(refusal: PrintRefusal | null): boolean {
-  return refusal === null || refusal === 'printed' || refusal === 'leaf_spoiled';
+  return (
+    refusal === null || refusal === 'printed' || refusal === 'changed' || refusal === 'leaf_spoiled'
+  );
+}
+
+/** The number of the leaf a printed cheque was printed on (it is the cheque's, unless that changed since). */
+export function printedLeafNumber(cheque: Pick<ChequeDetails, 'number' | 'printedText'>): string {
+  return cheque.printedText?.number?.trim() || cheque.number.trim();
+}
+
+/** The amount in printed figures: "KD **1,250.750**" → 1250.75; null when there is none. */
+function printedAmount(figures: string): number | null {
+  const match = /(\d{1,3}(?:,\d{3})+|\d+)\.(\d{3})(?!\d)/.exec(figures);
+  return match ? Number(`${match[1].replace(/,/g, '')}.${match[2]}`) : null;
+}
+
+/**
+ * Whether a printed cheque no longer says what was printed on its leaf. This
+ * build marks the leaf spoiled whenever a printed cheque changes
+ * (printedFaceChanged); a device on an older version of the app keeps the
+ * print record as it was while it changes the number, bank, date, amount,
+ * currency or payee. What was printed is compared with the cheque as it is
+ * now, as printedFaceChanged compares them: a payee printed from the
+ * vendor's name changes with another vendor, not with the vendor's name.
+ */
+export function printedLeafChanged(
+  payment: Pick<Payment, 'cheque' | 'amount' | 'currency' | 'clientId'>,
+): boolean {
+  const cheque = payment.cheque;
+  const text = cheque?.printedAt ? cheque.printedText : null;
+  if (!cheque || !text) return false;
+  if (printedLeafNumber(cheque) !== cheque.number.trim()) return true;
+  if (
+    text.bank !== undefined &&
+    text.bank.trim().toUpperCase() !== cheque.bank.trim().toUpperCase()
+  ) {
+    return true;
+  }
+  if (text.date !== chequeDate(cheque.date)) return true;
+  // Printed in dinars only.
+  if (payment.currency.trim().toUpperCase() !== 'KWD') return true;
+  const amount = printedAmount(text.figures);
+  if (amount !== null && toMinor(amount, 3) !== toMinor(round(payment.amount, 3), 3)) return true;
+  const typed = cheque.drawer.trim();
+  if (typed) return text.payee.trim() !== typed;
+  return text.vendorId !== undefined && text.vendorId !== payment.clientId;
+}
+
+/**
+ * The cheque leaves recorded on `before` (the one printed, the spoiled ones)
+ * that `after` no longer records: a device on an older version of the app
+ * changed a printed cheque into another way of paying, or deleted it.
+ */
+export function lostChequeLeaves(
+  before: Pick<Payment, 'cheque'> | null | undefined,
+  after: Pick<Payment, 'cheque'> | null | undefined,
+): string[] {
+  const recorded = (payment: Pick<Payment, 'cheque'> | null | undefined) => {
+    const cheque = payment?.cheque;
+    if (!cheque) return [];
+    return [
+      ...(cheque.printedAt ? [printedLeafNumber(cheque)] : []),
+      ...(cheque.spoiledLeaves ?? []).map((leaf) => leaf.number.trim()),
+    ].filter(Boolean);
+  };
+  const kept = new Set(recorded(after));
+  return [...new Set(recorded(before))].filter((number) => !kept.has(number));
 }
 
 /** Whether the cheque's number is that of one of its spoiled leaves (it changed after printing). */
@@ -244,10 +314,14 @@ export function onSpoiledLeaf(cheque: Pick<ChequeDetails, 'number' | 'spoiledLea
  * Why a payment's cheque can't be printed now, or null when it can: a
  * cheque issued, in dinars, not void, still waiting to be presented, not
  * printed yet (printing it again first marks the printed leaf spoiled) and
- * not on a leaf that is spoiled.
+ * not on a leaf that is spoiled. A printed cheque that no longer matches its
+ * leaf is 'changed' (see printedLeafChanged).
  */
 export function printRefusal(
-  payment: Pick<Payment, 'method' | 'cheque' | 'direction' | 'voided' | 'currency' | 'amount'>,
+  payment: Pick<
+    Payment,
+    'method' | 'cheque' | 'direction' | 'voided' | 'currency' | 'amount' | 'clientId'
+  >,
 ): PrintRefusal | null {
   const cheque = payment.cheque;
   if (payment.method !== 'cheque' || !cheque) return 'not_cheque';
@@ -257,9 +331,10 @@ export function printRefusal(
   if (cheque.status === 'cleared') return 'cleared';
   if (payment.voided) return 'void';
   if (cheque.status !== 'held') return 'presented';
+  // Before the amount and currency: a leaf printed, then changed, is marked spoiled first.
+  if (cheque.printedAt) return printedLeafChanged(payment) ? 'changed' : 'printed';
   if (payment.currency.trim().toUpperCase() !== 'KWD') return 'currency';
   if (!(round(payment.amount, 3) > 0)) return 'amount';
-  if (cheque.printedAt) return 'printed';
   if (onSpoiledLeaf(cheque)) return 'leaf_spoiled';
   return null;
 }
@@ -322,7 +397,7 @@ export function spoilPrintedLeaf(
     spoiledLeaves: [
       ...(printed.spoiledLeaves ?? []),
       {
-        number: printed.number,
+        number: printed.printedAt ? printedLeafNumber(printed) : printed.number,
         at,
         reason: reason.trim(),
         ...(printed.printedText ? { printedText: printed.printedText } : {}),

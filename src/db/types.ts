@@ -1154,6 +1154,12 @@ export interface ChequePrintedText {
   crossing?: string;
   /** The version of the layout it was printed with. */
   layoutVersion: number;
+  /** The number of the leaf it was printed on (missing on prints recorded before it was kept). */
+  number?: string;
+  /** The bank of that leaf, as on the cheque. */
+  bank?: string;
+  /** The vendor it was printed for: the payee is the vendor's name when Pay to is left empty. */
+  vendorId?: ID;
 }
 
 /** A cheque leaf that was spoiled: printed wrongly, printed before a change, or printed again. */

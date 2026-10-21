@@ -11,6 +11,7 @@ import type {
 } from '@/db/types';
 import { MAX_VOUCHER_LINES, voucherLines, type VoucherDirection } from '@/pdf/voucher/model';
 import { t } from '@/i18n';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
 /**
@@ -29,6 +30,9 @@ const trimLines = (lines: VoucherSignatureLine[]) =>
 
 export default function DocumentSettings() {
   const { draft, setDraft, update, dirty, saving, saveWith, reset } = useCompanyDraft();
+  const { role, readOnly } = useRoleView();
+  // Part of the company record: staff and viewers only look at the vouchers' settings.
+  const locked = readOnly.readOnly || role === 'staff';
   const d = draft.defaults;
   const setDefaults = (patch: Partial<DocumentDefaults>) =>
     update({ defaults: { ...d, ...patch } });
@@ -191,8 +195,14 @@ export default function DocumentSettings() {
           </ButtonLink>
         }
       >
+        {locked ? (
+          <p className="text-sm text-slate-500">
+            {t('Owners, admins and accountants set up vouchers. You can look at them.')}
+          </p>
+        ) : null}
         <Switch
           checked={Boolean(vouchers.images)}
+          disabled={locked}
           onChange={(images) => setVouchers({ images: images || undefined })}
           label={t('Print the stamp, signature and address')}
           description={t(
@@ -204,6 +214,7 @@ export default function DocumentSettings() {
             {(id) => (
               <Select
                 id={id}
+                disabled={locked}
                 value={vouchers.paper ?? ''}
                 onChange={(e) => setVouchers({ paper: e.target.value === 'A5' ? 'A5' : undefined })}
               >
@@ -224,6 +235,7 @@ export default function DocumentSettings() {
               {lines[direction].map((line, index) => (
                 <li key={index} className="flex items-center gap-2">
                   <Input
+                    disabled={locked}
                     value={line.en}
                     onChange={(e) => changeLine(direction, index, { en: e.target.value })}
                     aria-label={t('Signature line {number} in English', { number: index + 1 })}
@@ -232,6 +244,7 @@ export default function DocumentSettings() {
                     dir="ltr"
                   />
                   <Input
+                    disabled={locked}
                     value={line.ar}
                     onChange={(e) => changeLine(direction, index, { ar: e.target.value })}
                     aria-label={t('Signature line {number} in Arabic', { number: index + 1 })}
@@ -248,7 +261,7 @@ export default function DocumentSettings() {
                         lines[direction].filter((_, i) => i !== index),
                       )
                     }
-                    disabled={lines[direction].length <= 1}
+                    disabled={locked || lines[direction].length <= 1}
                     aria-label={t('Remove signature line {number}', { number: index + 1 })}
                   >
                     <Trash2 />
@@ -260,6 +273,7 @@ export default function DocumentSettings() {
               <Button
                 variant="outline"
                 size="sm"
+                disabled={locked}
                 onClick={() => setLines(direction, [...lines[direction], { en: '', ar: '' }])}
               >
                 <Plus /> {t('Add a line')}
@@ -274,7 +288,12 @@ export default function DocumentSettings() {
             )}
           </p>
           {vouchers.lines ? (
-            <Button variant="ghost" size="sm" onClick={() => setVouchers({ lines: undefined })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={locked}
+              onClick={() => setVouchers({ lines: undefined })}
+            >
               <RotateCcw /> {t('Use the standard lines')}
             </Button>
           ) : null}

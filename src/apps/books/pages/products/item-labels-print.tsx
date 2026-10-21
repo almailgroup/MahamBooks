@@ -125,7 +125,7 @@ export default function ItemLabelsPrintPage() {
             to="/products"
             className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
           >
-            <ArrowLeft className="size-4 rtl:rotate-180" /> {t('Products & services')}
+            <ArrowLeft className="size-4" /> {t('Products & services')}
           </Link>
           <div className="flex flex-wrap gap-2">
             <Button

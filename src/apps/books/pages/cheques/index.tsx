@@ -31,6 +31,7 @@ import {
   type ChequeFilter,
   type MaturityBucket,
 } from '@/lib/cheques';
+import { printedLeafChanged } from '@/lib/cheque-print';
 import { currencyPrecision, fromMinor } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { securityChequeStatusMeta } from '@/lib/status';
@@ -466,9 +467,15 @@ export default function ChequeRegisterPage() {
                                   </span>
                                 ) : null}
                                 {p.cheque.printedAt ? (
-                                  <span className="mt-0.5 block text-xs text-slate-500">
-                                    {t('Printed')}
-                                  </span>
+                                  p.cheque.status === 'held' && printedLeafChanged(p) ? (
+                                    <span className="mt-0.5 block text-xs font-medium text-amber-700">
+                                      {t('Changed after printing')}
+                                    </span>
+                                  ) : (
+                                    <span className="mt-0.5 block text-xs text-slate-500">
+                                      {t('Printed')}
+                                    </span>
+                                  )
                                 ) : null}
                               </td>
                               <td
