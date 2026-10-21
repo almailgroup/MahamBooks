@@ -273,7 +273,11 @@ to apply to the new one. Numbers are never reused. To avoid using up numbers
 on drafts, **Settings → Numbering → Number invoices and credit notes when they
 are issued** gives drafts their number only when they are sent; the cloud then
 refuses an invoice issued without its number (an older version issuing such a
-draft), which waits in **Settings → Cloud and sync**.
+draft), which waits in **Settings → Cloud and sync**. In a company kept in the
+cloud the switch appears only once the fifth script (step 1.9) has run, since
+until then nothing in the cloud refuses such an invoice; switched on before the
+company moved to the cloud, it can still be turned off there, and should be
+until the script has run.
 
 Before turning approvals or that numbering on, update every device and let
 each one sync. A change an older version makes to an issued invoice is refused

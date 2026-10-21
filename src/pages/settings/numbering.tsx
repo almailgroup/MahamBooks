@@ -3,6 +3,8 @@ import { NUMBER_PLACEHOLDERS, previewNumber } from '@/lib/numbering';
 import { defaultNumbering } from '@/db/defaults';
 import { today } from '@/lib/dates';
 import { msg, t } from '@/i18n';
+import { useCompany } from '@/app/company';
+import { useCloudLink, useServerFeature } from '@/cloud/hooks';
 import { Field, Input, NumberInput, Select, Switch } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
@@ -41,6 +43,13 @@ export default function NumberingSettings() {
   const ruleFor = (key: NumberedEntity) => draft.numbering[key] ?? defaultNumbering()[key];
   const setRule = (key: NumberedEntity, patch: Partial<NumberingRule>) =>
     update({ numbering: { ...draft.numbering, [key]: { ...ruleFor(key), ...patch } } });
+  // In a company kept in the cloud, numbering on issue waits for the server's
+  // approvals script: only it refuses an invoice an older version issues
+  // without its number. Already on (turned on while the company was kept on
+  // this device only), it can still be turned off.
+  const link = useCloudLink(draft.id);
+  const numbersReady = useServerFeature(draft.id, 'approvals');
+  const numberedOnIssue = useCompany().defaults.numberOnIssue === true;
 
   return (
     <div className="space-y-6">
@@ -50,14 +59,32 @@ export default function NumberingSettings() {
           'Numbers are never given twice: a void invoice keeps its number, and an invoice issued in place of one gets a new number that says which it replaces.',
         )}
       >
-        <Switch
-          checked={draft.defaults.numberOnIssue ?? false}
-          onChange={(on) => update({ defaults: { ...draft.defaults, numberOnIssue: on } })}
-          label={t('Number invoices and credit notes when they are issued')}
-          description={t(
-            'Drafts have no number until they are sent, so a draft that is deleted never uses one up. In a company kept in the cloud, update every device first.',
-          )}
-        />
+        {link === undefined ? null : (
+          <>
+            {numbersReady ? null : (
+              <p className="text-sm text-slate-600">
+                {t(
+                  'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+                )}{' '}
+                {numberedOnIssue
+                  ? t(
+                      'Until it has run, turn this off: a device still on an older version could issue a draft without its number.',
+                    )
+                  : null}
+              </p>
+            )}
+            {numbersReady || numberedOnIssue ? (
+              <Switch
+                checked={draft.defaults.numberOnIssue ?? false}
+                onChange={(on) => update({ defaults: { ...draft.defaults, numberOnIssue: on } })}
+                label={t('Number invoices and credit notes when they are issued')}
+                description={t(
+                  'Drafts have no number until they are sent, so a draft that is deleted never uses one up. In a company kept in the cloud, update every device first.',
+                )}
+              />
+            ) : null}
+          </>
+        )}
       </SettingsSection>
       <SettingsSection
         title={t('Number formats')}
