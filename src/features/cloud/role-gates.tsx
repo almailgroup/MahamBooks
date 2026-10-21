@@ -44,12 +44,12 @@ export function useRoleView(): RoleView {
   }, [link]);
 }
 
-/** Payroll and people pages: shown only to roles that may see them. */
-export function PeopleGate({ children }: { children: ReactNode }) {
-  const { peopleHidden, role, known } = useRoleView();
-  // Nothing until the role is known: a page of salaries must not flash up.
-  if (!known) return null;
-  if (!peopleHidden) return <>{children}</>;
+/**
+ * In place of a payroll or people page, for a role that doesn't see them
+ * (see AppGate, which shows nothing until the role is known: a page of
+ * salaries must not flash up).
+ */
+export function PeopleLocked({ role }: { role: MemberRole | null }) {
   return (
     <Card className="mx-auto max-w-xl">
       <EmptyState

@@ -18,6 +18,7 @@ import {
   type CashInput,
   type RulesContext,
 } from './cheque-rules';
+import { pendingRequestFor } from './approvals';
 import type {
   ChequeDetails,
   Company,
@@ -631,10 +632,27 @@ export async function validateSecurityCheque(input: SecurityCheque): Promise<Sec
   return checkSecurityCheque(input, await db.securityCheques.get(input.id));
 }
 
+/**
+ * While cashing a security cheque waits for confirmation it stays as it was
+ * asked: the approver confirms a payment of that amount, number and bank.
+ * Reads `approvals`: the caller's transaction must have it.
+ */
+async function assertNotWaitingToCash(cheque: SecurityCheque): Promise<void> {
+  const waiting = await pendingRequestFor(cheque.id);
+  if (waiting?.kind !== 'security_cheque_cash') return;
+  throw new ChequeError(
+    t(
+      'Cashing security cheque {number} is waiting for confirmation. Until that request is decided or taken back, the cheque can’t be changed or deleted.',
+      { number: cheque.number },
+    ),
+  );
+}
+
 export async function saveSecurityCheque(input: SecurityCheque): Promise<SecurityCheque> {
   const rules = Dexie.currentTransaction ? undefined : await rulesContext(input.companyId);
-  return db.transaction('rw', [db.securityCheques, db.activities], async () => {
+  return db.transaction('rw', [db.securityCheques, db.activities, db.approvals], async () => {
     const existing = await db.securityCheques.get(input.id);
+    if (existing) await assertNotWaitingToCash(existing);
     const cheque = checkSecurityCheque(input, existing);
     const number = cheque.number;
     // One the company's rules keep for approvers (given to someone): asked for instead.
@@ -788,12 +806,13 @@ export async function cashSecurityCheque(
 /** Removes a security cheque entered by mistake (only while held; nothing was posted). */
 export async function deleteSecurityCheque(id: ID): Promise<void> {
   const rules = await rulesFor('securityCheques', id);
-  await db.transaction('rw', [db.securityCheques, db.activities], async () => {
+  await db.transaction('rw', [db.securityCheques, db.activities, db.approvals], async () => {
     const cheque = await db.securityCheques.get(id);
     if (!cheque) return;
     if (cheque.status !== 'held') {
       throw new ChequeError(t('Only a security cheque that is still held can be deleted.'));
     }
+    await assertNotWaitingToCash(cheque);
     assertChequeConfirmed(rules, 'securityCheques', cheque, undefined, () => ({
       action: 'delete',
       table: 'securityCheques',

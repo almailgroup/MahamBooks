@@ -3,8 +3,8 @@ import { Link } from 'react-router';
 import { Eye, Lock } from 'lucide-react';
 import { buttonClass } from '@/components/ui/button';
 import { Card, EmptyState } from '@/components/ui/misc';
-import { ReadOnlyContext } from '@/components/ui/read-only';
-import { PeopleGate, useRoleView } from '@/features/cloud/role-gates';
+import { ReadOnlyContext, useReadOnly } from '@/components/ui/read-only';
+import { PeopleLocked, useRoleView, type RoleView } from '@/features/cloud/role-gates';
 import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
 import { appAccess, appById, appTitle, roleAccess } from './apps';
@@ -17,29 +17,31 @@ import type { AppId } from './types';
  * shown with its saving turned off, the same rule the server applies to
  * their changes. Books' pages show at once, as they always have: only a
  * limit of the owner, once known, makes them view only.
+ *
+ * The role is read here once and handed down, so the page never sees a
+ * guess of it, and Books' page stays the same element while the role is
+ * read: it is mounted once, never again when the role becomes known.
  */
 export function AppGate({ app, children }: { app: AppId; children: ReactNode }) {
   const view = useRoleView();
-  if (app === 'people') {
-    return (
-      <PeopleGate>
-        <Limited app={app}>{children}</Limited>
-      </PeopleGate>
-    );
-  }
-  if (app === 'books' && !view.known) return <>{children}</>;
-  // Nothing until the role is known.
-  if (!view.known) return null;
-  return <Limited app={app}>{children}</Limited>;
+  // Nothing until the role is known: a page of salaries must not flash up.
+  if (app !== 'books' && !view.known) return null;
+  if (app === 'people' && view.peopleHidden) return <PeopleLocked role={view.role} />;
+  return (
+    <Limited app={app} view={view}>
+      {children}
+    </Limited>
+  );
 }
 
-function Limited({ app, children }: { app: AppId; children: ReactNode }) {
-  const view = useRoleView();
+function Limited({ app, view, children }: { app: AppId; view: RoleView; children: ReactNode }) {
+  const outer = useReadOnly();
   const { language } = useLanguage();
-  const access = appAccess(app, view.role, view.known, view.permissions);
+  // Not known yet (Books only): the page as it always was, with nothing said.
+  const access = view.known ? appAccess(app, view.role, true, view.permissions) : null;
   const name = appTitle(appById(app), language);
   // Taken away by the owner, not by the role.
-  const byOwner = access !== roleAccess(app, view.role);
+  const byOwner = access !== null && access !== roleAccess(app, view.role);
   if (access === 'none') {
     return (
       <Card className="mx-auto max-w-xl">
@@ -60,9 +62,14 @@ function Limited({ app, children }: { app: AppId; children: ReactNode }) {
       </Card>
     );
   }
-  if (access === 'view' && !view.readOnly.readOnly) {
-    return (
-      <ReadOnlyContext.Provider value={{ readOnly: true, reason: t('View only in this app') }}>
+  const limited = access === 'view' && !view.readOnly.readOnly;
+  // The same elements either way, so the page is not mounted again when a
+  // limit becomes known.
+  return (
+    <ReadOnlyContext.Provider
+      value={limited ? { readOnly: true, reason: t('View only in this app') } : outer}
+    >
+      {limited ? (
         <div
           role="status"
           className="mb-5 flex items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-600/20"
@@ -80,9 +87,8 @@ function Limited({ app, children }: { app: AppId; children: ReactNode }) {
                 )}
           </p>
         </div>
-        {children}
-      </ReadOnlyContext.Provider>
-    );
-  }
-  return <>{children}</>;
+      ) : null}
+      {children}
+    </ReadOnlyContext.Provider>
+  );
 }

@@ -9,6 +9,7 @@ import { receiptFromFile } from '@/lib/image';
 import { newId } from '@/lib/ids';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
+import { useReadOnly } from '@/components/ui/read-only';
 import { t } from '@/i18n';
 
 /** A file shown in an attachment list, stored or not yet saved. */
@@ -131,7 +132,8 @@ export function useDraftAttachments(ownerId: ID) {
 /**
  * Thumbnails of receipts and scanned bills, with an "Attach file" button.
  * With `camera`, phones also get a "Take photo" button that opens the camera.
- * With `readOnly`, the files only open: nothing is added or removed. With
+ * With `readOnly`, or view only (a viewer, or an app the owner made view
+ * only), the files only open: nothing is added or removed. With
  * `compact` (a dialog whose own button saves, where a file is optional), the
  * buttons stay small and plain, the camera too.
  */
@@ -141,7 +143,7 @@ export function AttachmentList({
   onRemove,
   emptyText,
   camera = false,
-  readOnly = false,
+  readOnly: readOnlyHere = false,
   compact = false,
 }: {
   files: AttachedFile[];
@@ -155,6 +157,7 @@ export function AttachmentList({
   const input = useRef<HTMLInputElement>(null);
   const photo = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const readOnly = useReadOnly().readOnly || readOnlyHere;
 
   const pick = async (target: HTMLInputElement) => {
     const file = target.files?.[0];

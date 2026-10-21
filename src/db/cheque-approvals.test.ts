@@ -565,6 +565,107 @@ describe('security cheques', () => {
     await applyChequeRequest({ ...(await db.approvals.get(request.id))!, status: 'approved' });
     expect(await db.payments.count()).toBe(count);
   });
+
+  // A security cheque received (or given, with securityOut off) is not kept
+  // for approvers, though the payment it is cashed as is: the cloud lets
+  // others change it, so the approver must confirm it as it was asked.
+  for (const [label, rules, direction] of [
+    [
+      'received, with cheques received on',
+      { expireDays: 14, cheques: { issued: false, securityOut: false, received: true } },
+      'in',
+    ],
+    [
+      'given, with security cheques given off',
+      { expireDays: 14, cheques: { issued: true, securityOut: false, received: false } },
+      'out',
+    ],
+  ] as const) {
+    it(`cashing one ${label} is never confirmed for a cheque changed since it was asked`, async () => {
+      const { company, vendor, customer, bill, invoice } = await setup(rules);
+      const contact = direction === 'out' ? vendor : customer;
+      const doc = direction === 'out' ? bill : invoice;
+      await signedInAs(company, 'owner');
+      const held = await saveSecurityCheque(
+        createSecurityCheque(company.id, {
+          direction,
+          clientId: contact.id,
+          number: '000777',
+          bank: 'KFHO',
+          amount: 50,
+          currency: 'KWD',
+          drawer: contact.name,
+          purpose: 'Guarantee',
+        }),
+      );
+      await signedInAs(company, 'staff');
+      const request = await ask(
+        cashSecurityCheque(held.id, { date: '2026-10-10', applyToOpen: true }),
+      );
+      // This device keeps it as it was asked while the request waits.
+      const editing = { ...(await db.securityCheques.get(held.id))!, amount: 240 };
+      await expect(saveSecurityCheque(editing)).rejects.toThrow(
+        /Cashing security cheque 000777 is waiting for confirmation/,
+      );
+      await expect(deleteSecurityCheque(held.id)).rejects.toThrow(/waiting for confirmation/);
+      expect((await db.securityCheques.get(held.id))!.amount).toBe(50);
+      // Changed elsewhere all the same (an older app, then synced here).
+      await db.securityCheques.put({ ...editing, number: '000999' });
+      await signedInAs(company, 'owner');
+      await decided(request.id, 'approved');
+      expect(await db.payments.get(madeBy(request))).toBeUndefined();
+      expect((await db.securityCheques.get(held.id))!.status).toBe('held');
+      expect(await balance(doc.id)).toBe(doc.totals.balance);
+      expect(await db.approvals.get(request.id)).toMatchObject({ status: 'approved' });
+      // Carrying it out again says why; it is rejected then, and asked again.
+      const error = await refusal(applyApproval(request.id));
+      expect(error).toBeInstanceOf(ApprovalError);
+      expect((error as Error).message).toMatch(/000999 has changed since cashing it was asked/);
+      await decideApproval(request.id, 'rejected', 'Changed meanwhile');
+      expect(await db.approvals.get(request.id)).toMatchObject({ status: 'rejected' });
+      // Decided: the cheque can be changed again.
+      await saveSecurityCheque({ ...(await db.securityCheques.get(held.id))!, amount: 60 });
+      expect((await db.securityCheques.get(held.id))!.amount).toBe(60);
+    });
+  }
+
+  it('cashing one asked for is confirmed when only its notes changed meanwhile', async () => {
+    const rules: ApprovalRules = {
+      expireDays: 14,
+      cheques: { issued: false, securityOut: false, received: true },
+    };
+    const { company, customer, invoice } = await setup(rules);
+    await signedInAs(company, 'owner');
+    const held = await saveSecurityCheque(
+      createSecurityCheque(company.id, {
+        direction: 'in',
+        clientId: customer.id,
+        number: '000778',
+        bank: 'NBK',
+        amount: 400,
+        currency: 'KWD',
+        drawer: customer.name,
+        purpose: 'Guarantee',
+      }),
+    );
+    await signedInAs(company, 'staff');
+    const request = await ask(
+      cashSecurityCheque(held.id, { date: '2026-10-10', applyToOpen: true }),
+    );
+    // Taken back: the cheque can be changed again, and cashing asked again.
+    await cancelApproval(request.id);
+    await saveSecurityCheque({ ...(await db.securityCheques.get(held.id))!, notes: 'In the safe' });
+    const again = await ask(cashSecurityCheque(held.id, { date: '2026-10-11', applyToOpen: true }));
+    await db.securityCheques.put({
+      ...(await db.securityCheques.get(held.id))!,
+      notes: 'In the safe, top shelf',
+    });
+    await signedInAs(company, 'owner');
+    await decided(again.id, 'approved');
+    expect(await db.payments.get(madeBy(again))).toMatchObject({ amount: 400 });
+    expect(await balance(invoice.id)).toBe(0);
+    expect(await db.approvals.get(again.id)).toMatchObject({ status: 'applied' });
+  });
 });
 
 async function saveLockDate(company: Company, lockDate: string): Promise<Company> {

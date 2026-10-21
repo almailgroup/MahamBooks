@@ -103,6 +103,28 @@ export function securityParts(cheque: SecurityCheque): Parts {
   return pick(cheque, SECURITY_EDIT_FIELDS);
 }
 
+/** What the payment a security cheque is cashed as takes from it (cashSecurityCheque). */
+const CASHED_FIELDS = [
+  'direction',
+  'number',
+  'bank',
+  'date',
+  'amount',
+  'currency',
+  'drawer',
+  'drawerCivilId',
+] as const;
+
+/**
+ * Whether a security cheque changed, in what its payment takes from it,
+ * since cashing it was asked for: the approver confirmed the cheque as it
+ * was then (the request's copy), not as it is now.
+ */
+export function cashedChequeChanged(request: ApprovalRequest, current: SecurityCheque): boolean {
+  if (request.kind !== 'security_cheque_cash' || !request.before) return false;
+  return !sameData(pick(current, CASHED_FIELDS), pick(request.before, CASHED_FIELDS));
+}
+
 /** A request about to be written, before it is stamped. */
 interface Asked {
   companyId: ID;
@@ -491,6 +513,15 @@ export async function applyChequeRequest(request: ApprovalRequest): Promise<ID |
       if (!input || typeof after.sourceId !== 'string') throw cannot();
       const paymentId = madeBy(request);
       if (await db.payments.get(paymentId)) return paymentId;
+      const current = await db.securityCheques.get(after.sourceId);
+      if (current && cashedChequeChanged(request, current)) {
+        throw new ApprovalError(
+          t(
+            'Security cheque {number} has changed since cashing it was asked for. Reject this request, and ask again if it is still needed.',
+            { number: current.number },
+          ),
+        );
+      }
       const payment = await cashSecurityCheque(after.sourceId, input, {
         paymentId,
         approvalId: request.id,

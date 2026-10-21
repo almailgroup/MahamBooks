@@ -11,7 +11,11 @@ import { shortId } from '@/lib/ids';
 import {
   approvalRulesChanged,
   approvalRulesOf,
+  appLimit,
+  ATTACHMENT_OWNER_TABLES,
   canWriteRecord,
+  companyBooksChanged,
+  hasLimits,
   chequeChangeNeedsApprover,
   deleteKeptBy,
   documentChangeNeedsApproval,
@@ -19,8 +23,10 @@ import {
   isApprover,
   issuesWithoutNumber,
   limitBlocksWrite,
+  paymentLinkNeedsApprover,
   sameData,
   staffCompanyChangeOk,
+  type RecordLookup,
 } from './roles';
 import type { CloudLink, OutboxEntry } from './types';
 
@@ -133,6 +139,44 @@ async function linksFor(
 /** Tables whose changes the company's approval rules decide on (see refuseByRules). */
 const RULED = new Set(['documents', 'approvals', 'payments', 'securityCheques']);
 
+/**
+ * The records the files being written are kept with, as stored in this
+ * transaction (the owner's limits follow them: see recordApp).
+ */
+async function ownersFor(
+  down: DBCore,
+  trans: DBCoreTransaction,
+  changes: Change[],
+): Promise<RecordLookup> {
+  const ids = [
+    ...new Set(
+      changes
+        .flatMap((c) => [c.before?.ownerId, c.after?.ownerId])
+        .filter((id): id is string => typeof id === 'string' && id !== ''),
+    ),
+  ];
+  const tables = ATTACHMENT_OWNER_TABLES.filter((name) =>
+    down.schema.tables.some((t) => t.name === name),
+  );
+  const found = new Map<string, Record<string, unknown>>();
+  if (ids.length) {
+    const rows = await Promise.all(
+      tables.map(
+        (name) =>
+          down.table(name).getMany({ trans, keys: ids }) as Promise<
+            (Record<string, unknown> | undefined)[]
+          >,
+      ),
+    );
+    tables.forEach((name, i) =>
+      rows[i].forEach((row, j) => {
+        if (row) found.set(`${name} ${ids[j]}`, row);
+      }),
+    );
+  }
+  return (table, id) => found.get(`${table} ${id}`) ?? null;
+}
+
 /** The company records of these companies, as stored in this transaction. */
 async function companiesFor(
   down: DBCore,
@@ -206,8 +250,14 @@ function refuseByRules(
       : null;
   }
   if (table === 'documents' && change.after) {
-    return !approver && documentChangeNeedsApproval(rules, change.before, change.after)
-      ? t('This change needs approval. Send it for approval instead.')
+    if (approver) return null;
+    if (documentChangeNeedsApproval(rules, change.before, change.after)) {
+      return t('This change needs approval. Send it for approval instead.');
+    }
+    return paymentLinkNeedsApprover(rules, change.before, change.after)
+      ? t(
+          'Only an approver can change or remove the payment link of an issued invoice. You can add one where there is none.',
+        )
       : null;
   }
   return null;
@@ -218,21 +268,36 @@ function refuse(
   table: string,
   change: Change,
   company: Record<string, unknown> | null | undefined,
+  lookup: RecordLookup | undefined,
 ): string | null {
-  return refuseByRole(link, table, change) ?? refuseByRules(link, table, change, company);
+  return refuseByRole(link, table, change, lookup) ?? refuseByRules(link, table, change, company);
 }
 
-function refuseByRole(link: CloudLink, table: string, change: Change): string | null {
+function refuseByRole(
+  link: CloudLink,
+  table: string,
+  change: Change,
+  lookup: RecordLookup | undefined,
+): string | null {
   if (link.status === 'removed') {
     return t(
       'This company is no longer shared with you. Keep it as a company on this device or remove it.',
     );
   }
   if (link.role === 'viewer') return t('You can view this company but not change it.');
-  // The owner's limits on this person, as the server applies them.
+  // The owner's limits on this person, as the server applies them: a file
+  // is of the app of the record it is kept with, and the books' settings on
+  // the company record are Maham Books'.
   const limited = (row: Record<string, unknown> | undefined) =>
-    row !== undefined && limitBlocksWrite(link.role, link.permissions, table, row);
-  if (limited(change.before) || limited(change.after)) {
+    row !== undefined && limitBlocksWrite(link.role, link.permissions, table, row, lookup);
+  const booksLimit = appLimit(link.role, link.permissions, 'books');
+  if (
+    limited(change.before) ||
+    limited(change.after) ||
+    (table === 'companies' &&
+      (booksLimit === 'view' || booksLimit === 'none') &&
+      companyBooksChanged(change.before, change.after))
+  ) {
     return t(
       'The owner has made this app view only for you. Ask the owner if you need to change it.',
     );
@@ -286,8 +351,8 @@ async function capture(
     return { ...change, companyId: companyOf(name, change) };
   });
   const companyIds = changes.map((c) => c.companyId);
-  // Both at once: Dexie keeps its transaction across only so many waits.
-  const [links, companies] = await Promise.all([
+  // All at once: Dexie keeps its transaction across only so many waits.
+  const [links, companies, owners] = await Promise.all([
     linksFor(down, trans, companyIds),
     RULED.has(name) && down.schema.tables.some((t) => t.name === 'companies')
       ? companiesFor(
@@ -296,11 +361,13 @@ async function capture(
           companyIds.filter((id): id is string => !!id),
         )
       : null,
+    name === 'attachments' ? ownersFor(down, trans, changes) : undefined,
   ]);
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;
     if (!link) continue;
-    const reason = refuse(link, name, change, companies?.get(link.companyId));
+    const lookup = owners && hasLimits(link.role, link.permissions) ? owners : undefined;
+    const reason = refuse(link, name, change, companies?.get(link.companyId), lookup);
     if (reason) throw new CloudPermissionError(reason, link.companyId);
   }
 
@@ -345,6 +412,10 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
       const enabled = down.schema.tables.some((t) => t.name === 'outbox');
       if (!enabled) return {};
       const withCompanies = down.schema.tables.some((t) => t.name === 'companies');
+      // The records files are kept with, for the owner's limits (see ownersFor).
+      const owners = ATTACHMENT_OWNER_TABLES.filter((name) =>
+        down.schema.tables.some((t) => t.name === name),
+      );
       return {
         transaction(stores, mode, options) {
           if (mode === 'readwrite' && stores.some((s) => synced.has(s))) {
@@ -353,6 +424,7 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
               stores.some((s) => RULED.has(s)) && withCompanies
                 ? ['outbox', 'syncState', 'companies']
                 : ['outbox', 'syncState'];
+            if (stores.includes('attachments')) wanted.push(...owners);
             const extra = wanted.filter((s) => !stores.includes(s));
             return down.transaction([...stores, ...extra], mode, options);
           }

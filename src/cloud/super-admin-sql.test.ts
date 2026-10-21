@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS, startDatabase, type Harness } from './sql-harness';
-import { recordApp, type MemberPermissions, type MemberRole } from './roles';
+import { companyBooksChanged, recordApp, type MemberPermissions, type MemberRole } from './roles';
 import { FakeCloud } from './testing/fake-cloud';
 
 /**
@@ -456,10 +456,17 @@ describe('a member’s limits on the records', () => {
         { tbl: 'documents', id: 'inv-3', data: rec(c, 'inv-3') },
       ]),
     ).rejects.toThrow();
-    // What every app shares stays theirs: activity, files and the counters.
+    // A file of an invoice is Books' too.
+    await expect(
+      push(t.staff, c, [
+        { tbl: 'attachments', id: 'att-1', data: rec(c, 'att-1', { ownerId: 'inv-1' }) },
+      ]),
+    ).rejects.toThrow(/row-level security/);
+    // What every app shares stays theirs: activity, a file of no record found
+    // (a cheque waiting for confirmation) and the counters.
     await push(t.staff, c, [
       { tbl: 'activities', id: 'act-1', data: rec(c, 'act-1', { entity: 'invoice' }) },
-      { tbl: 'attachments', id: 'att-1', data: rec(c, 'att-1', { ownerId: 'inv-1' }) },
+      { tbl: 'attachments', id: 'att-2', data: rec(c, 'att-2', { ownerId: 'pay-new' }) },
       {
         tbl: 'companies',
         id: c,
@@ -511,6 +518,143 @@ describe('a member’s limits on the records', () => {
     await push(t.admin, c, [
       { tbl: 'employees', id: 'emp-1', data: rec(c, 'emp-1', { name: 'Changed' }) },
     ]);
+  });
+
+  it('follow a file to the record it is kept with', async () => {
+    const t = await team();
+    const c = t.company;
+    await push(t.owner, c, [
+      { tbl: 'employees', id: 'emp-1', data: rec(c, 'emp-1', { name: 'Made-up Person' }) },
+      { tbl: 'documents', id: 'bill-1', data: rec(c, 'bill-1', { type: 'bill' }) },
+      { tbl: 'attachments', id: 'att-cid', data: rec(c, 'att-cid', { ownerId: 'emp-1' }) },
+      { tbl: 'attachments', id: 'att-bill', data: rec(c, 'att-bill', { ownerId: 'bill-1' }) },
+    ]);
+    await limit(t, t.accountant, { people: 'view', books: 'view' });
+    for (const change of [
+      // A scan in the employee's personnel file, deleted or added.
+      { tbl: 'attachments', id: 'att-cid', deleted: true },
+      { tbl: 'attachments', id: 'att-new', data: rec(c, 'att-new', { ownerId: 'emp-1' }) },
+      { tbl: 'attachments', id: 'att-cid', data: rec(c, 'att-cid', { ownerId: 'other' }) },
+      // A bill's receipt.
+      { tbl: 'attachments', id: 'att-bill', deleted: true },
+      { tbl: 'attachments', id: 'att-rcpt', data: rec(c, 'att-rcpt', { ownerId: 'bill-1' }) },
+    ]) {
+      await expect(push(t.accountant, c, [change]), json(change)).rejects.toThrow(
+        /row-level security|permission/,
+      );
+    }
+    // Their file can't be replaced either (Storage asks the same).
+    const [canUse] = await h.as(t.accountant, (q) =>
+      q<{ ok: boolean }>('select almailbooks.can_use_file($1, null, true) as ok', [`${c}/att-cid`]),
+    );
+    expect(canUse.ok).toBe(false);
+    // With People open again, the personnel file is theirs again; the bill's isn't.
+    await limit(t, t.accountant, { books: 'view' });
+    await push(t.accountant, c, [{ tbl: 'attachments', id: 'att-cid', deleted: true }]);
+    await expect(
+      push(t.accountant, c, [{ tbl: 'attachments', id: 'att-bill', deleted: true }]),
+    ).rejects.toThrow(/permission/);
+  });
+
+  it('keep the books’ settings from a member Books is view only for', async () => {
+    const t = await team();
+    const c = t.company;
+    const company = (extra: Record<string, unknown> = {}) => ({
+      id: c,
+      name: 'Acme',
+      numbering: {
+        invoice: { pattern: 'INV-{counter}', next: 5, padding: 4, reset: 'never' },
+        employee: { pattern: 'E-{counter}', next: 3, padding: 3, reset: 'never' },
+      },
+      accounting: { template: 'kuwait', lockDate: null },
+      payment: { bankDetails: 'NBK', instructions: '', paymentLink: '', showQrCode: true },
+      holidays: [],
+      ...extra,
+    });
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: company() }]);
+    await limit(t, t.accountant, { books: 'view' });
+    const patch = (ops: unknown[]) =>
+      h.rpc(t.accountant, 'patch_company', { p_company: c, p_ops: json(ops) });
+    for (const ops of [
+      [{ path: ['accounting', 'lockDate'], value: '2026-12-31' }],
+      [{ path: ['numbering', 'invoice', 'pattern'], value: 'X-{counter}' }],
+      [{ path: ['payment', 'bankDetails'], value: 'Somewhere else' }],
+      [{ path: ['defaults', 'numberOnIssue'], value: true }],
+    ]) {
+      await expect(patch(ops), json(ops)).rejects.toThrow(
+        /almail:permission The owner has made Maham Books view only for you/,
+      );
+    }
+    await expect(
+      push(t.accountant, c, [
+        {
+          tbl: 'companies',
+          id: c,
+          data: company({ accounting: { template: 'kuwait', lockDate: '2026-12-31' } }),
+        },
+      ]),
+    ).rejects.toThrow(/view only for you/);
+    // The counters, People's numbering and the rest of the company stay theirs.
+    await patch([{ path: ['numbering', 'invoice', 'next'], value: 6 }]);
+    await patch([{ path: ['numbering', 'employee', 'pattern'], value: 'EMP-{counter}' }]);
+    await patch([{ path: ['holidays'], value: [{ date: '2026-02-25', name: 'National Day' }] }]);
+    await patch([{ path: ['numbering', 'journal'], value: { pattern: 'MJ-{counter}', next: 2 } }]);
+    // An accountant with no limits, and the owner, change the books' settings as before.
+    await limit(t, t.accountant, null);
+    await patch([{ path: ['accounting', 'lockDate'], value: '2026-12-31' }]);
+    await h.rpc(t.owner, 'patch_company', {
+      p_company: c,
+      p_ops: json([{ path: ['accounting', 'lockDate'], value: '2027-01-31' }]),
+    });
+  });
+
+  it('keep the books’ settings the same way on the server and in the app', async () => {
+    const rule = (extra: Record<string, unknown> = {}) => ({
+      pattern: 'INV-{counter}',
+      next: 1,
+      padding: 4,
+      reset: 'never',
+      ...extra,
+    });
+    const base = {
+      id: 'c',
+      name: 'Acme',
+      numbering: { invoice: rule(), employee: rule({ pattern: 'E' }) },
+      accounting: { lockDate: null, template: 'kuwait' },
+      payment: { bankDetails: 'NBK' },
+    };
+    const samples: Record<string, unknown>[] = [
+      base,
+      { ...base, name: 'Changed' },
+      { ...base, holidays: [{ date: '2026-02-25' }] },
+      { ...base, accounting: { lockDate: '2026-12-31', template: 'kuwait' } },
+      { ...base, accounting: { template: 'kuwait' } },
+      { ...base, accounting: undefined },
+      { ...base, accounting: null },
+      { ...base, payment: { bankDetails: 'KFH' } },
+      { ...base, defaults: { numberOnIssue: true } },
+      { ...base, taxesEnabled: true },
+      { ...base, numbering: { invoice: rule({ next: 9, period: '2026' }), employee: rule() } },
+      { ...base, numbering: { invoice: rule({ pattern: 'X' }), employee: rule({ pattern: 'E' }) } },
+      { ...base, numbering: { invoice: rule(), employee: rule({ pattern: 'EMP' }) } },
+      {
+        ...base,
+        numbering: { invoice: rule(), employee: rule(), journal: rule({ pattern: 'MJ' }) },
+      },
+      { ...base, numbering: { invoice: 'odd' } },
+      { ...base, numbering: null },
+    ];
+    for (const before of samples) {
+      for (const after of samples) {
+        const [row] = await h.admin<{ changed: boolean }>(
+          'select almailbooks.company_books_changed($1::jsonb, $2::jsonb) as changed',
+          [json(before), json(after)],
+        );
+        expect(companyBooksChanged(before, after), `${json(before)} → ${json(after)}`).toBe(
+          row.changed,
+        );
+      }
+    }
   });
 
   it('never apply to the owner', async () => {
@@ -579,6 +723,13 @@ describe('the fake cloud of the app’s tests', () => {
       viewer: t.viewer,
     };
     for (const [role, user] of Object.entries(users)) fake.addMember(c, user, role as MemberRole);
+    // Records files are kept with, in both.
+    const owners = [
+      { tbl: 'employees', id: 'emp-par', data: rec(c, 'emp-par', { name: 'Made-up Person' }) },
+      { tbl: 'documents', id: 'inv-par', data: rec(c, 'inv-par', { type: 'invoice' }) },
+    ];
+    await push(t.owner, c, owners);
+    await fake.client(t.owner).pushRecords(c, owners);
     const changes: [string, Record<string, unknown>][] = [
       ['clients', {}],
       ['documents', {}],
@@ -590,6 +741,9 @@ describe('the fake cloud of the app’s tests', () => {
       ['vehicles', {}],
       ['activities', { entity: 'invoice' }],
       ['accounts', {}],
+      ['attachments', { ownerId: 'emp-par' }],
+      ['attachments', { ownerId: 'inv-par' }],
+      ['attachments', { ownerId: 'nowhere' }],
     ];
     const limits: NonNullable<MemberPermissions['apps']>[] = [
       {},
@@ -630,6 +784,62 @@ describe('the fake cloud of the app’s tests', () => {
     // Both answers came up.
     expect(new Set(seen)).toEqual(new Set(['true', 'false']));
   }, 60_000);
+
+  it('keeps the books’ settings from the same members as the server', async () => {
+    const t = await team();
+    const c = t.company;
+    const fake = new FakeCloud();
+    fake.features = ['tables_v16', 'super_admin', 'approvals'];
+    fake.companies.set(c, { id: c, name: 'Same', purgedUntilRev: 0, createdAt: '' });
+    fake.addMember(c, t.owner, 'owner');
+    fake.addMember(c, t.accountant, 'accountant');
+    const company = {
+      id: c,
+      name: 'Acme',
+      numbering: { invoice: { pattern: 'INV-{counter}', next: 5, padding: 4, reset: 'never' } },
+      accounting: { template: 'kuwait', lockDate: null },
+    };
+    await push(t.owner, c, [{ tbl: 'companies', id: c, data: company }]);
+    await fake.client(t.owner).pushRecords(c, [{ tbl: 'companies', id: c, data: company }]);
+    const opsList: unknown[][] = [
+      [{ path: ['accounting', 'lockDate'], value: '2026-12-31' }],
+      [{ path: ['numbering', 'invoice', 'pattern'], value: 'X-{counter}' }],
+      [{ path: ['numbering', 'invoice', 'next'], value: 6 }],
+      [{ path: ['holidays'], value: [] }],
+    ];
+    const answers: string[] = [];
+    for (const apps of [{ books: 'view' as const }, {}]) {
+      await limit(t, t.accountant, apps);
+      fake.setAccess(c, t.accountant, { apps });
+      for (const ops of opsList) {
+        const inSql = await h
+          .rpc(t.accountant, 'patch_company', { p_company: c, p_ops: json(ops) })
+          .then(
+            () => true,
+            () => false,
+          );
+        const inFake = await fake
+          .client(t.accountant)
+          .patchCompany(c, ops as never)
+          .then(
+            () => true,
+            () => false,
+          );
+        expect(`${json(apps)} ${json(ops)} ${inFake}`).toBe(`${json(apps)} ${json(ops)} ${inSql}`);
+        answers.push(`${json(apps)} ${inSql}`);
+      }
+    }
+    expect(answers).toEqual([
+      '{"books":"view"} false',
+      '{"books":"view"} false',
+      '{"books":"view"} true',
+      '{"books":"view"} true',
+      '{} true',
+      '{} true',
+      '{} true',
+      '{} true',
+    ]);
+  });
 });
 
 describe('companies you own (owned_companies_overview)', () => {
@@ -752,5 +962,25 @@ describe('server_features', () => {
     await expect(early.rpc(someone, 'my_permissions', { p_company: 'x' })).rejects.toThrow(
       /does not exist/,
     );
+  }, 60_000);
+
+  it('stops at once, changing nothing, without the tables_v16 file', async () => {
+    // The first three files only: this one would otherwise answer
+    // 'tables_v16', and the devices would send the confidential documents
+    // they keep back for it to a server without its rules.
+    const early = await startDatabase(1, MIGRATIONS.indexOf(FILE) - 1);
+    const { readFileSync } = await import('node:fs');
+    await expect(early.db.exec(readFileSync(FILE, 'utf8'))).rejects.toThrow(
+      /20261102000000_tables_v16\.sql first/,
+    );
+    const [found] = await early.admin<{ column: string | null }>(
+      `select column_name::text as column from information_schema.columns
+        where table_schema = 'public' and table_name = 'company_members' and column_name = 'permissions'
+       union all select null limit 1`,
+    );
+    expect(found.column).toBeNull();
+    // No server_features either: the app finds nothing new on this server.
+    const someone = await early.user('sa-no-v16@example.com');
+    await expect(early.rpc(someone, 'server_features')).rejects.toThrow(/does not exist/);
   }, 60_000);
 });

@@ -3,7 +3,8 @@ import { AlertTriangle, ExternalLink, Link2, Pencil, Trash2 } from 'lucide-react
 import { toast } from 'sonner';
 import { setPaymentLink } from '@/db/payments';
 import type { InvoiceDocument, PaymentLink, PaymentLinkProvider } from '@/db/types';
-import { useFormat } from '@/app/company';
+import { useCompany, useFormat } from '@/app/company';
+import { useApprovalView } from '@/features/approvals/hooks';
 import { addDaysISO, today } from '@/lib/dates';
 import { PAYMENT_PROVIDERS, providerLabel } from '@/lib/payment-methods';
 import { isLinkExpired, isValidPaymentLink } from '@/lib/whatsapp';
@@ -127,10 +128,14 @@ export function PaymentLinkDialog({ doc, onClose }: { doc: InvoiceDocument; onCl
 export function PaymentLinkCard({ doc }: { doc: InvoiceDocument }) {
   const fmt = useFormat();
   const confirm = useConfirm();
+  const company = useCompany();
+  const approvals = useApprovalView(company);
   const [editing, setEditing] = useState(false);
   const link = doc.paymentLink;
   const expired = isLinkExpired(link, today());
   const canAdd = doc.status !== 'void' && doc.status !== 'paid';
+  // Where the customer pays: on an issued invoice the rules cover, an approver's to change.
+  const kept = Boolean(link?.url) && approvals.waits(doc);
 
   const remove = async () => {
     const ok = await confirm({
@@ -158,6 +163,7 @@ export function PaymentLinkCard({ doc }: { doc: InvoiceDocument }) {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => setEditing(true)}
+                disabled={kept}
                 aria-label={t('Change payment link')}
               >
                 <Pencil />
@@ -166,6 +172,7 @@ export function PaymentLinkCard({ doc }: { doc: InvoiceDocument }) {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => void remove()}
+                disabled={kept}
                 aria-label={t('Remove the payment link')}
               >
                 <Trash2 />
@@ -198,6 +205,11 @@ export function PaymentLinkCard({ doc }: { doc: InvoiceDocument }) {
             ) : link.expiresAt ? (
               <p className="text-slate-500">
                 {t('Valid until {date}', { date: fmt.date(link.expiresAt) })}
+              </p>
+            ) : null}
+            {kept ? (
+              <p className="text-xs text-slate-500">
+                {t('Only an approver can change or remove this payment link.')}
               </p>
             ) : null}
           </>

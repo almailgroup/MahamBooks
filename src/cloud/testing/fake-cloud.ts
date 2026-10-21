@@ -17,9 +17,11 @@ import {
   type TeamMember,
 } from '../api';
 import {
+  appLimit,
   approvalRulesChanged,
   approvalRulesOf,
   canChangeMember,
+  companyBooksChanged,
   canWriteRecord,
   chequeChangeNeedsApprover,
   deleteKeptBy,
@@ -32,6 +34,7 @@ import {
   issuesWithoutNumber,
   limitBlocksWrite,
   MAX_APPROVERS,
+  paymentLinkNeedsApprover,
   readPermissions,
   sameData,
   seesChange,
@@ -255,7 +258,7 @@ export class FakeCloud {
     // As can_write_record: the role, then the owner's limits on the member.
     return (
       canWriteRecord(role, tbl, data, this.lookup(company)) &&
-      !limitBlocksWrite(role, this.permissionsOf(company, user), tbl, data)
+      !limitBlocksWrite(role, this.permissionsOf(company, user), tbl, data, this.lookup(company))
     );
   }
 
@@ -989,6 +992,13 @@ export class FakeCloud {
     old: Record<string, unknown> | undefined,
     data: Record<string, unknown>,
   ): Record<string, unknown> {
+    if (tbl === 'companies' && this.features.includes('super_admin')) {
+      // The books' settings, for a member the owner made Maham Books view only for.
+      const books = appLimit(role, this.permissionsOf(company, user), 'books');
+      if ((books === 'view' || books === 'none') && companyBooksChanged(old, data)) {
+        throw fail('permission');
+      }
+    }
     if (!this.features.includes('approvals')) return data;
     if (tbl === 'companies') {
       if (role !== 'owner' && approvalRulesChanged(old, data)) throw fail('permission');
@@ -1023,6 +1033,9 @@ export class FakeCloud {
     const rules = this.approvalRules(company);
     if (rules && old && !approver && documentChangeNeedsApproval(rules, old, data)) {
       throw fail('approval_required');
+    }
+    if (rules && old && !approver && paymentLinkNeedsApprover(rules, old, data)) {
+      throw fail('permission');
     }
     return data;
   }

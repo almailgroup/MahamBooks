@@ -5,6 +5,7 @@ import { Check, RotateCcw, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { cancelApproval, decideApproval } from '@/db/approvals';
+import { cashedChequeChanged } from '@/db/cheque-approvals';
 import type { ApprovalRequest, Client } from '@/db/types';
 import { useFormat } from '@/app/company';
 import { bankName } from '@/lib/cheques';
@@ -134,6 +135,18 @@ export function ChequeRequestCard({
         : [],
     [request.kind, request.subjectTbl, request.subjectId],
   );
+
+  // The security cheque to cash as it is now: changed since it was asked,
+  // it can't be confirmed (the approver would confirm what isn't asked).
+  const cashing = useLiveQuery(
+    () =>
+      request.kind === 'security_cheque_cash' &&
+      (request.status === 'pending' || request.status === 'approved')
+        ? db.securityCheques.get(request.subjectId)
+        : undefined,
+    [request.kind, request.status, request.subjectId],
+  );
+  const changedSince = cashing ? cashedChequeChanged(request, cashing) : false;
 
   const { manager } = useCloud();
   // Confirmed here, and not in the cloud yet: recorded once it is.
@@ -283,6 +296,14 @@ export function ChequeRequestCard({
       {request.kind === 'cheque_delete' ? (
         <p className="text-sm text-slate-600">{t('Asks to delete this cheque.')}</p>
       ) : null}
+      {changedSince && cashing ? (
+        <p role="alert" className="text-sm text-amber-700">
+          {t(
+            'Security cheque {number} has changed since cashing it was asked for. Reject this request, and ask again if it is still needed.',
+            { number: cashing.number },
+          )}
+        </p>
+      ) : null}
       {files && files.length > 0 ? (
         <AttachmentList
           files={files}
@@ -325,7 +346,7 @@ export function ChequeRequestCard({
             <Button
               size="sm"
               loading={busy === 'approve'}
-              disabled={busy !== null}
+              disabled={busy !== null || changedSince}
               onClick={() =>
                 void run(
                   'approve',

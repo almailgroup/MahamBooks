@@ -5,6 +5,7 @@ import { FileThumb, openAttachment, type AttachedFile } from '@/features/purchas
 import { receiptFromFile } from '@/lib/image';
 import { newId } from '@/lib/ids';
 import { Button } from '@/components/ui/button';
+import { useReadOnly } from '@/components/ui/read-only';
 import { t } from '@/i18n';
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -12,6 +13,8 @@ const MAX_BYTES = 10 * 1024 * 1024;
 /**
  * Scans and photos kept with a record (the personnel file, a licence…):
  * the same storage as receipts, with the wording in the interface language.
+ * View only (a viewer, or an app the owner made view only), the files only
+ * open: nothing is added or removed.
  */
 export function FileList({
   files,
@@ -28,6 +31,7 @@ export function FileList({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const { readOnly } = useReadOnly();
 
   const pick = async (list: FileList | null) => {
     const file = list?.[0];
@@ -77,32 +81,38 @@ export function FileList({
                   </span>
                 </span>
               </button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Remove {name}', { name: f.name })}
-                onClick={() => void onRemove(f)}
-              >
-                <X />
-              </Button>
+              {readOnly ? null : (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Remove {name}', { name: f.name })}
+                  onClick={() => void onRemove(f)}
+                >
+                  <X />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       ) : emptyText ? (
         <p className="text-sm text-slate-500">{emptyText}</p>
       ) : null}
-      <input
-        ref={input}
-        type="file"
-        accept="image/*,application/pdf"
-        className="sr-only"
-        tabIndex={-1}
-        aria-label={t('Attach a file')}
-        onChange={(e) => void pick(e.target.files)}
-      />
-      <Button variant="outline" size="sm" loading={busy} onClick={() => input.current?.click()}>
-        <Paperclip /> {addLabel ?? t('Attach file')}
-      </Button>
+      {readOnly ? null : (
+        <>
+          <input
+            ref={input}
+            type="file"
+            accept="image/*,application/pdf"
+            className="sr-only"
+            tabIndex={-1}
+            aria-label={t('Attach a file')}
+            onChange={(e) => void pick(e.target.files)}
+          />
+          <Button variant="outline" size="sm" loading={busy} onClick={() => input.current?.click()}>
+            <Paperclip /> {addLabel ?? t('Attach file')}
+          </Button>
+        </>
+      )}
     </div>
   );
 }

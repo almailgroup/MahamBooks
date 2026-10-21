@@ -5,6 +5,7 @@ import {
   guardApprovalWrite,
   INVOICE_CONTENT_FIELDS,
   invoiceContent,
+  paymentLinkNeedsApprover,
   type MemberRole,
 } from './roles';
 import { FakeCloud } from './testing/fake-cloud';
@@ -312,6 +313,73 @@ describe('with the rules on: issued invoices', () => {
       await push(user, c, [doc(invoice(c, id, { status: 'void' }))]);
       await push(user, c, [doc(invoice(c, id, { status: 'sent' }))]);
     }
+  });
+
+  it('keeps the payment link, once there is one, for approvers to change or remove', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    await h.rpc(t.owner, 'set_member_permissions', {
+      p_company: c,
+      p_user: t.accountant,
+      p_permissions: json({}),
+      p_can_approve: true,
+    });
+    const link = (url: string) => ({ provider: 'myfatoorah', url, expiresAt: null });
+    const linked = (id: string, url: string | null) =>
+      doc(invoice(c, id, { paymentLink: url === null ? null : link(url) }));
+    let n = 0;
+    for (const user of [t.admin, t.staff]) {
+      n += 1;
+      const id = `link-${n}`;
+      await push(user, c, [doc(invoice(c, id))]);
+      // Adding one where there was none stays open.
+      await push(user, c, [linked(id, 'https://pay.example.com/a')]);
+      for (const url of ['https://pay.example.com/b', null]) {
+        await expect(push(user, c, [linked(id, url)])).rejects.toThrow(
+          /almail:permission Only an approver changes or removes the payment link/,
+        );
+      }
+      expect(await stored(c, 'documents', id)).toMatchObject({
+        paymentLink: { url: 'https://pay.example.com/a' },
+      });
+      // The same link with a new expiry date, and a payment, still go through.
+      await push(user, c, [
+        doc(
+          invoice(c, id, {
+            paymentLink: { ...link('https://pay.example.com/a'), expiresAt: '2026-10-31' },
+            status: 'partial',
+            totals: {
+              subtotal: 300,
+              discount: 0,
+              taxTotal: 0,
+              total: 300,
+              paid: 100,
+              balance: 200,
+            },
+          }),
+        ),
+      ]);
+      // The owner and the approvers the owner chose change and remove it.
+      await push(t.owner, c, [linked(id, 'https://pay.example.com/c')]);
+      await push(t.accountant, c, [linked(id, 'https://pay.example.com/d')]);
+      await push(t.accountant, c, [linked(id, null)]);
+    }
+    // Drafts, and documents the rules don't cover, as before.
+    await push(t.staff, c, [linked('draft-link', 'https://pay.example.com/a')]);
+    const draft = invoice(c, 'draft-link', {
+      status: 'draft',
+      number: '',
+      paymentLink: link('https://pay.example.com/a'),
+    });
+    await push(t.owner, c, [doc(draft)]);
+    await push(t.staff, c, [doc({ ...draft, paymentLink: link('https://pay.example.com/b') })]);
+    const quote = invoice(c, 'q-link', {
+      type: 'quote',
+      paymentLink: link('https://pay.example.com/a'),
+    });
+    await push(t.staff, c, [doc(quote)]);
+    await push(t.staff, c, [doc({ ...quote, paymentLink: null })]);
   });
 
   it('lets payments move an invoice’s balance and status, and leaves drafts and new invoices free', async () => {
@@ -779,6 +847,78 @@ describe('what a document says (invoice_content)', () => {
     );
     const listed = [...fn.body.matchAll(/'(\w+)', p -> '\1'/g)].map((m) => m[1]);
     expect(listed).toEqual([...INVOICE_CONTENT_FIELDS]);
+  });
+});
+
+describe('the payment link of an issued document (payment_link_changed)', () => {
+  it('is kept for approvers on the server and in the app alike', async () => {
+    const link = (url: unknown) => ({ paymentLink: { provider: 'tap', url, expiresAt: null } });
+    const samples: Record<string, unknown>[] = [
+      {},
+      { paymentLink: null },
+      link('https://pay.example.com/a'),
+      link('https://pay.example.com/b'),
+      link(''),
+      link(42),
+      { paymentLink: 'https://pay.example.com/a' },
+    ];
+    const rules = { documentTypes: ['invoice'] };
+    for (const before of samples) {
+      for (const after of samples) {
+        const old = { type: 'invoice', status: 'sent', ...before };
+        const next = { type: 'invoice', status: 'sent', ...after };
+        const [row] = await h.admin<{ changed: boolean }>(
+          'select almailbooks.payment_link_changed($1::jsonb, $2::jsonb) as changed',
+          [json(old), json(next)],
+        );
+        expect(paymentLinkNeedsApprover(rules, old, next), `${json(before)} → ${json(after)}`).toBe(
+          row.changed,
+        );
+      }
+    }
+  });
+
+  it('is answered the same by the app’s stand-in for the cloud', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    const fake = new FakeCloud();
+    fake.features = ['tables_v16', 'super_admin', 'approvals'];
+    fake.companies.set(c, { id: c, name: 'Company', purgedUntilRev: 0, createdAt: '' });
+    fake.addMember(c, t.owner, 'owner');
+    fake.addMember(c, t.staff, 'staff');
+    await fake
+      .client(t.owner)
+      .pushRecords(c, [
+        { tbl: 'companies', id: c, data: companyRecord(c, { approvalRules: RULES }) },
+      ]);
+    const link = (url: string | null) => ({
+      paymentLink: url ? { provider: 'tap', url, expiresAt: null } : null,
+    });
+    const answer = async (changes: Change[]) => {
+      const inSql = await push(t.staff, c, changes).then(
+        () => 'ok',
+        (e: Error) => (/almail:permission/.test(e.message) ? 'permission' : 'refused'),
+      );
+      const inFake = await fake
+        .client(t.staff)
+        .pushRecords(c, changes as never)
+        .then(
+          () => 'ok',
+          (e: { code?: string }) => (e.code === 'permission' ? 'permission' : 'refused'),
+        );
+      return `${inFake} ${inSql}`;
+    };
+    const steps: [string | null, string][] = [
+      ['https://pay.example.com/a', 'ok ok'],
+      ['https://pay.example.com/b', 'permission permission'],
+      [null, 'permission permission'],
+      ['https://pay.example.com/a', 'ok ok'],
+    ];
+    expect(await answer([doc(invoice(c, 'fake-link'))])).toBe('ok ok');
+    for (const [url, expected] of steps) {
+      expect(await answer([doc(invoice(c, 'fake-link', link(url)))]), String(url)).toBe(expected);
+    }
   });
 });
 

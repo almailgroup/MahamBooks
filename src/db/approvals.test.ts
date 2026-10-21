@@ -284,6 +284,35 @@ describe('with the rules on, for someone who is not an approver', () => {
     await db.documents.update(converted.id, { archived: true });
   });
 
+  it('keeps an issued invoice’s payment link, once it has one, for approvers to change', async () => {
+    const { company, client } = await setup();
+    const invoice = await issue(company, client);
+    const link = (url: string) => ({ provider: 'myfatoorah' as const, url, expiresAt: null });
+    await signedInAs(company, 'staff');
+    // Adding one where there was none, and a new expiry date, go on as before.
+    await setPaymentLink(invoice.id, link('https://pay.example.com/a'));
+    await setPaymentLink(invoice.id, {
+      ...link('https://pay.example.com/a'),
+      expiresAt: '2026-11-01',
+    });
+    // Changing or removing it is the approvers' (where the customer pays).
+    for (const next of [link('https://pay.example.com/b'), null]) {
+      const error = await catchError(setPaymentLink(invoice.id, next));
+      expect(error).toBeInstanceOf(CloudPermissionError);
+      expect((error as Error).message).toMatch(
+        /Only an approver can change or remove the payment link/,
+      );
+    }
+    expect((await db.documents.get(invoice.id))!.paymentLink).toMatchObject({
+      url: 'https://pay.example.com/a',
+    });
+    await signedInAs(company, 'accountant', true);
+    await setPaymentLink(invoice.id, link('https://pay.example.com/c'));
+    await signedInAs(company, 'owner');
+    await setPaymentLink(invoice.id, null);
+    expect((await db.documents.get(invoice.id))!.paymentLink).toBeNull();
+  });
+
   it('lets retention releases and recalculations change invoices as before', async () => {
     const { company, client } = await setup();
     const draft = await draftDocument(company, 'invoice', client);

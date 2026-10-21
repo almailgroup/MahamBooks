@@ -97,6 +97,34 @@ function recordApp(tbl: string, data: Record<string, unknown> | null): string | 
   return shared.includes(tbl) ? null : 'books';
 }
 
+/** The records a file is kept with, as almailbooks.attachment_app looks them up. */
+const ATTACHMENT_OWNERS = [
+  'employees',
+  'employeeLetters',
+  'letterTemplates',
+  'complianceDocuments',
+  'renewals',
+  'vehicles',
+  'documents',
+  'payments',
+  'expenses',
+  'assets',
+  'securityCheques',
+  'products',
+];
+
+/** The books' settings on the company record, as almailbooks.company_books_changed. */
+const COMPANY_BOOKS = [
+  'accounting',
+  'payment',
+  'defaults',
+  'taxesEnabled',
+  'openingBalances',
+  'vouchers',
+  'items',
+  'chequePrinting',
+];
+
 const SENIOR: Role[] = ['admin', 'accountant'];
 
 /**
@@ -149,6 +177,12 @@ const content = (doc: Record<string, unknown>) =>
   canonical(Object.fromEntries(CONTENT.map((key) => [key, doc[key]])));
 
 const stage = (status: unknown) => (status === 'draft' || status === 'void' ? status : 'issued');
+
+/** The address of a document's payment link, or '' for none. */
+const linkUrl = (doc: Record<string, unknown>) => {
+  const url = (doc.paymentLink as Record<string, unknown> | null | undefined)?.url;
+  return typeof url === 'string' ? url : '';
+};
 
 type Data = Record<string, unknown>;
 
@@ -607,9 +641,42 @@ export class FakeSupabase {
     data: Record<string, unknown> | null,
   ): boolean {
     if (this.companies.get(company)?.members.get(user) === 'owner') return false;
-    const app = recordApp(tbl, data);
+    let app = recordApp(tbl, data);
+    // A file is of the app of the record it is kept with.
+    if (tbl === 'attachments' && typeof data?.ownerId === 'string') {
+      for (const owner of ATTACHMENT_OWNERS) {
+        const row = this.records.get(`${company}/${owner}/${data.ownerId}`);
+        if (row && !row.deleted) {
+          app = recordApp(owner, row.data);
+          break;
+        }
+      }
+    }
     const limit = app ? this.access.get(`${company} ${user}`)?.permissions.apps?.[app] : undefined;
     return limit === 'none' || limit === 'view';
+  }
+
+  /** The books' settings on the company record changed (almailbooks.company_books_changed). */
+  private booksChanged(old: Record<string, unknown> | null, data: Record<string, unknown>) {
+    if (!old) return false;
+    if (COMPANY_BOOKS.some((key) => canonical(old[key]) !== canonical(data[key]))) return true;
+    const rules = (row: Record<string, unknown>) =>
+      (row.numbering && typeof row.numbering === 'object' ? row.numbering : {}) as Record<
+        string,
+        Record<string, unknown> | null
+      >;
+    const shape = (rule: Record<string, unknown> | null | undefined) => {
+      if (!rule || typeof rule !== 'object') return canonical(rule);
+      const copy = { ...rule };
+      delete copy.next;
+      delete copy.period;
+      return canonical(copy);
+    };
+    const before = rules(old);
+    const after = rules(data);
+    return Object.keys(before).some(
+      (key) => key !== 'employee' && key in after && shape(before[key]) !== shape(after[key]),
+    );
   }
 
   /**
@@ -635,6 +702,13 @@ export class FakeSupabase {
       const before = canonical(old?.approvalRules ?? null);
       if (data && role !== 'owner' && before !== canonical(data.approvalRules ?? null)) {
         return refuse('almail:permission Only the owner changes the approval rules.');
+      }
+      const books =
+        role === 'owner'
+          ? undefined
+          : this.access.get(`${company} ${user}`)?.permissions.apps?.books;
+      if (data && (books === 'view' || books === 'none') && this.booksChanged(old, data)) {
+        return refuse('almail:permission The owner has made Maham Books view only for you.');
       }
       return data;
     }
@@ -684,8 +758,15 @@ export class FakeSupabase {
       }
       if (!rules || !old || approver || old.status === 'draft' || !(covers(old) || covers(data)))
         return data;
-      return content(old) !== content(data) || stage(old.status) !== stage(data.status)
-        ? approvalRequired()
+      if (content(old) !== content(data) || stage(old.status) !== stage(data.status)) {
+        return approvalRequired();
+      }
+      // Its payment link, once it has one (almailbooks.payment_link_changed).
+      const was = linkUrl(old);
+      return was !== '' && was !== linkUrl(data)
+        ? refuse(
+            'almail:permission Only an approver changes or removes the payment link of an issued document.',
+          )
         : data;
     }
     // Approval requests, whether or not the rules are on.

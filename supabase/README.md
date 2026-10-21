@@ -304,9 +304,12 @@ skipped the new tables' records fetches just those tables once
 
 ## The Super Admin
 
-`20261116000000_super_admin_approvals.sql`. The Super Admin is each company's
-owner (`company_members_one_owner`); someone becomes Super Admin through
-`transfer_ownership`, and nothing names a person.
+`20261116000000_super_admin_approvals.sql`. It stops before changing
+anything without `20261102000000_tables_v16.sql` (it answers `tables_v16` in
+`server_features()`, and the devices then send what they kept back for that
+file). The Super Admin is each company's owner (`company_members_one_owner`);
+someone becomes Super Admin through `transfer_ownership`, and nothing names a
+person.
 
 - `company_members.permissions` (jsonb, `'{}'` by default) holds the owner's
   limits on a member: `{"apps": {"books" | "people" | "crm" | "compliance":
@@ -314,8 +317,15 @@ owner (`company_members_one_owner`); someone becomes Super Admin through
   member's row once (as `member_role` did) and refuses a write when the
   record's app (`almailbooks.record_app`: People tables, payroll journals and
   employees' papers are People; the register and vehicles Compliance; the
-  books Books; the company record, activity, files and approval requests no
-  app) is limited to `none` or `view`. Owners are never limited. `'{}'`, every
+  books Books; the company record, activity and approval requests no app; a
+  file the app of the record it is kept with, `almailbooks.attachment_app`,
+  looked up only for a member with limits) is limited to `none` or `view`.
+  `records_guard` also refuses (`almail:permission`) a member whose Books is
+  `none` or `view` a change of the books' settings on the company record
+  (`almailbooks.company_books_changed`: accounting with the lock date,
+  payment, defaults, taxes, opening balances, vouchers, items, cheque
+  printing and numbering rules; counters and employees' numbering stay open),
+  by a push or `patch_company`. Owners are never limited. `'{}'`, every
   member's value until the owner sets one, gives the first file's answers
   (the regular tests run with it). Reading is unchanged.
 - `company_members.can_approve` (false by default): admins and accountants
@@ -363,8 +373,11 @@ does nothing while it is null, except those on approval requests themselves
     party, dates, currency, lines, discounts, taxes, charges, deposit,
     retention terms, wording, design, number, `replacesNumber`) or the stage
     changes (draft, issued, void). Totals, status within issued, paid and sent
-    times, retention releases, the posting snapshot, the payment link and
-    internal notes are written by payments and sync, and stay open. Refusal:
+    times, retention releases, the posting snapshot and internal notes are
+    written by payments and sync, and stay open. The payment link
+    (`almailbooks.payment_link_changed`): once there is one, anyone but an
+    approver is refused `almail:permission` changing or removing it; adding
+    one where there was none stays open. Refusal:
     `almail:approval_required`, SQLSTATE 42501, which older versions of the app
     park as a permission problem.
   - `approvals`, whether or not the rules are on: a new request waits
@@ -422,6 +435,12 @@ approver's device records the payment when they confirm it.
   anyone but an approver who may write the record is refused
   `almail:approval_required`, SQLSTATE 42501.
 - `can_delete_record`: only an approver deletes a covered cheque.
+- A security cheque received (or given, with `securityOut` off) is not
+  covered itself, though the payment it is cashed as may be: the approver's
+  device carries out a request to cash it only while the security cheque is
+  still what the request copied (`applyChequeRequest` in
+  `src/db/cheque-approvals.ts`), and devices keep it unchanged while the
+  request waits.
 - `server_features()` also answers `cheque_approvals`: the app shows the
   cheque switches only then.
 - `src/cloud/cheque-approvals-sql.test.ts` checks rules off = as before, every

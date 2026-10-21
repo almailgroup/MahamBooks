@@ -46,9 +46,11 @@ has to be added to the app or to Vercel.
    "Approvals" and "Cheque confirmation" below). Running it changes nothing by
    itself: every member keeps their role's access, admins keep inviting and
    changing roles until the owner switches that off, and nothing waits for
-   approval or confirmation until the owner turns it on. If you ran an earlier
-   copy of this script, run it again: it is safe, and the cheque switches
-   appear only once it has run.
+   approval or confirmation until the owner turns it on. It stops with "Run
+   20261102000000_tables_v16.sql first" if the fourth script hasn't run, and
+   then changes nothing: run step 8 first. If you ran an earlier copy of this
+   script, run it again: it is safe, and the cheque switches appear only once
+   it has run.
 10. Then the sixth script,
     [`supabase/migrations/20261123000000_change_feed.sql`](../supabase/migrations/20261123000000_change_feed.sql)
     (a new query, paste, **Run**), after the fifth. It adds **Changes by your
@@ -218,9 +220,12 @@ In **Settings → Team**, the owner (badge **Owner (Super Admin)**, المالك
 - **Permissions** (الصلاحيات) next to each member: make an app view only or
   turn it off for them (Maham Books can only be made view only, because the
   other apps use its customers and items). Limits only take away from the
-  role, and the cloud refuses what the member saves in that app. Settings,
-  files and activity follow the role, and what is already on their device
-  stays there.
+  role, and the cloud refuses what the member saves in that app, the files
+  of its records included (a scan in an employee's personnel file is
+  People's). Settings and activity follow the role, except the books'
+  settings (the lock date, numbering, payment details and document
+  defaults), which follow the limit on Maham Books. What is already on their
+  device stays there.
 - **Can approve** (صلاحية الاعتماد), in the same dialog: up to two admins or
   accountants may approve requests besides the owner. Off for everyone at
   first.
@@ -242,8 +247,10 @@ until the owner turns something on:
   owner, or an admin or accountant with **Can approve** (Settings → Team).
   Everyone else gets **Send for approval** (إرسال للاعتماد) instead of Save,
   and **Request void** instead of Void (or Delete), with a reason. Payments,
-  payment links, credit notes applied to it and retention releases go on as
-  before. Drafts and new invoices are anyone's.
+  credit notes applied to it and retention releases go on as before. A
+  payment link can still be added to one that has none; once it has one,
+  only an approver changes or removes it (it is where the customer pays).
+  Drafts and new invoices are anyone's.
 - **Void instead of delete** (الإبطال بدلاً من الحذف), on by default: issued
   invoices and credit notes are voided, never deleted, so their numbers stay
   used. With it off only approvers may delete them. They are under **Invoices → Void** (الفواتير الملغاة). Drafts can
@@ -314,6 +321,10 @@ on, it covers what is recommended: **Cheques issued** (الشيكات الصاد
   Depositing, clearing, returning, cancelling, printing, notes and the
   documents it pays go on as before. A printed cheque moved to its next leaf
   (the spoiled leaf on record) needs nothing more.
+- While cashing a security cheque waits, that security cheque can't be
+  changed or deleted. Changed anyway (on an older version), the request
+  can't be confirmed, since the payment would not be what was asked: it says
+  so, and is rejected and asked again.
 - If a bill was paid meanwhile, or the period was locked, confirming says why
   and the request stays confirmed but not recorded: carry it out again, or
   reject it.

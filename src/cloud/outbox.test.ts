@@ -219,13 +219,63 @@ describe('roles on this device', () => {
     );
     expect(await db.clients.count()).toBe(0);
     expect(await db.outbox.count()).toBe(0);
-    // Settings follow the role.
+    // Settings follow the role, but for the books' own.
     const current = (await db.companies.get(acme.id))!;
     await db.companies.put({ ...current, currency: 'USD' });
     expect(await queued()).toEqual([`put companies ${acme.id}`]);
+    await expect(
+      db.companies.put({
+        ...current,
+        accounting: { ...current.accounting!, lockDate: '2026-12-31' },
+      }),
+    ).rejects.toThrow(/The owner has made this app view only for you/);
+    await expect(
+      db.companies.put({
+        ...current,
+        numbering: {
+          ...current.numbering,
+          invoice: { ...current.numbering.invoice, pattern: 'X-{counter}' },
+        },
+      }),
+    ).rejects.toThrow(CloudPermissionError);
+    // Counters move with whatever is numbered.
+    await db.companies.put({
+      ...current,
+      numbering: {
+        ...current.numbering,
+        invoice: { ...current.numbering.invoice, next: current.numbering.invoice.next + 1 },
+      },
+    });
     // The owner is never limited.
     await link(acme, 'owner', { apps: { books: 'view' } });
     await saveClient(createClient(acme.id, { name: 'Allowed' }));
+    await db.companies.put({
+      ...current,
+      accounting: { ...current.accounting!, lockDate: '2026-12-31' },
+    });
+  });
+
+  it('keep a file with the app of the record it is kept with', async () => {
+    const acme = await company();
+    const customer = await saveClient(createClient(acme.id, { name: 'Made-up Customer' }));
+    const invoice = await saveDocument({
+      ...(await draftDocument(acme, 'invoice', customer)),
+      status: 'sent',
+    });
+    await db.employees.put({ id: 'emp-1', companyId: acme.id, name: 'Made-up Person' } as never);
+    const scan = { name: 'civil-id.pdf', type: 'application/pdf', dataUrl: 'data:,x' };
+    const kept = await addAttachment(acme.id, 'emp-1', scan);
+    await link(acme, 'accountant', { apps: { people: 'view' } });
+    // A scan in the personnel file is People's: neither added nor removed.
+    await expect(addAttachment(acme.id, 'emp-1', scan)).rejects.toThrow(
+      /The owner has made this app view only for you/,
+    );
+    await expect(db.attachments.delete(kept.id)).rejects.toThrow(CloudPermissionError);
+    expect(await db.attachments.count()).toBe(1);
+    // An invoice's file is Books', open to them; one of no record found is anyone's.
+    await addAttachment(acme.id, invoice.id, scan);
+    await addAttachment(acme.id, 'pay-waiting', scan);
+    expect(await queued()).toHaveLength(2);
   });
 
   it('tell before a draft is sent whether it may be marked as sent, queuing nothing', async () => {

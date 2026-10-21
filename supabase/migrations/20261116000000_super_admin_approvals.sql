@@ -22,7 +22,9 @@
 --     app ({"apps": {"books": "view", "people": "none"}}). They only ever take
 --     away: a member never gets more than their role. The server refuses
 --     their changes to the records of an app limited to "view" or "none"
---     (can_write_record); reading is unchanged.
+--     (can_write_record), the files kept with them included, and with Books
+--     so limited, to the books' settings on the company record
+--     (records_guard); reading is unchanged.
 --   * company_members.can_approve: up to two admins or accountants who may
 --     approve besides the owner (almailbooks.is_approver), for the approval
 --     requests of later releases.
@@ -43,11 +45,13 @@
 --     invoices and credit notes change, are voided or come back from void
 --     only through an approver; anyone else is refused with
 --     "almail:approval_required" (SQL state 42501, which older versions of
---     the app keep aside as a permission problem). Payments, which change an
---     invoice's balance and status, go through as before. Only the owner
---     changes the rules. Requests are never deleted, and with "Void instead
---     of delete" issued documents keep their numbers: they are voided, never
---     deleted (drafts still are).
+--     the app keep aside as a permission problem). The payment link of one,
+--     once it has one, is changed or removed by an approver only (adding
+--     one stays open). Payments, which change an invoice's balance and
+--     status, go through as before. Only the owner changes the rules.
+--     Requests are never deleted, and with "Void instead of delete" issued
+--     documents keep their numbers: they are voided, never deleted (drafts
+--     still are).
 --   * Cheque confirmation (Settings → Approvals → Cheques, also off until the
 --     owner turns it on). With it on, a cheque the company writes (and, if
 --     the owner chooses, a security cheque it hands over or a cheque it
@@ -60,6 +64,18 @@
 --   * public.server_features() also answers 'super_admin', 'approvals' and
 --     'cheque_approvals'.
 -- =============================================================================
+
+-- It builds on the rules of 20261102000000_tables_v16.sql (who reads the
+-- confidential documents and the new tables), and answers 'tables_v16' in
+-- server_features, which lets the devices send what they kept back for that
+-- file. So without it, it stops here and changes nothing.
+do $$
+begin
+  if to_regprocedure('almailbooks.can_read_v16_record(text,text,jsonb)') is null then
+    raise exception 'Run 20261102000000_tables_v16.sql first, then this file.';
+  end if;
+end
+$$;
 
 -- Columns ------------------------------------------------------------------------
 
@@ -110,8 +126,9 @@ as $$
 $$;
 
 -- The app whose records these are, for the owner's limits; null for what
--- every app shares (the company record, activity, files, approval requests).
--- Kept the same as recordApp in src/cloud/roles.ts.
+-- every app shares (the company record, activity, approval requests). A
+-- file is its record's (attachment_app). Kept the same as recordApp in
+-- src/cloud/roles.ts.
 create or replace function almailbooks.record_app(p_tbl text, p_data jsonb)
 returns text
 language sql
@@ -140,9 +157,99 @@ as $$
   end
 $$;
 
+-- The app of a file: that of the record it is kept with (a scan in an
+-- employee's file is People's, a bill's receipt Books'), or null when that
+-- record is not found (a cheque waiting for confirmation, a clearance
+-- certificate). Kept the same as recordApp in src/cloud/roles.ts
+-- (ATTACHMENT_OWNER_TABLES).
+create or replace function almailbooks.attachment_app(p_company text, p_owner text)
+returns text
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select almailbooks.record_app(o.tbl, o.data)
+  from public.records o
+  where o.company_id = p_company
+    and o.tbl in (
+      'employees', 'employeeLetters', 'letterTemplates', 'complianceDocuments', 'renewals',
+      'vehicles', 'documents', 'payments', 'expenses', 'assets', 'securityCheques', 'products'
+    )
+    and o.id = p_owner
+  limit 1
+$$;
+
+-- Whether two JSON values are the same, a missing value and null alike, as
+-- the app compares them (sameData in src/cloud/roles.ts).
+create or replace function almailbooks.json_same(p_a jsonb, p_b jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select nullif(p_a, 'null'::jsonb) is not distinct from nullif(p_b, 'null'::jsonb)
+$$;
+
+-- Whether the books' settings on the company record differ: the lock date
+-- and the rest of the accounting settings, the payment details, the
+-- document defaults (numbering on issue included), taxes, opening balances,
+-- vouchers, items, cheque printing and the numbering rules. Counters (a
+-- rule's next and period) move with whatever is numbered, and employees'
+-- numbering is People's, so they stay open; so does a rule added or
+-- removed. Kept the same as companyBooksChanged in src/cloud/roles.ts.
+create or replace function almailbooks.company_books_changed(p_old jsonb, p_new jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from unnest(array[
+      'accounting', 'payment', 'defaults', 'taxesEnabled', 'openingBalances', 'vouchers',
+      'items', 'chequePrinting'
+    ]) as k(key)
+    where not almailbooks.json_same(p_old -> k.key, p_new -> k.key)
+  ) or exists (
+    select 1
+    from jsonb_each(
+      case when jsonb_typeof(p_old -> 'numbering') = 'object' then p_old -> 'numbering' else '{}' end
+    ) o
+    join jsonb_each(
+      case when jsonb_typeof(p_new -> 'numbering') = 'object' then p_new -> 'numbering' else '{}' end
+    ) n on n.key = o.key
+    where o.key <> 'employee'
+      and not almailbooks.json_same(
+        case when jsonb_typeof(o.value) = 'object' then o.value - 'next' - 'period' else o.value end,
+        case when jsonb_typeof(n.value) = 'object' then n.value - 'next' - 'period' else n.value end
+      )
+  )
+$$;
+
+-- The owner made Maham Books view only for the caller, or gave them no access.
+create or replace function almailbooks.books_limited(p_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.company_members m
+    where m.company_id = p_company
+      and m.user_id = auth.uid()
+      and m.role <> 'owner'
+      and jsonb_typeof(m.permissions -> 'apps') = 'object'
+      and coalesce(m.permissions -> 'apps' ->> 'books', '') in ('none', 'view')
+  )
+$$;
+
 -- As in the first file, and then the owner's limits on the member: nothing
--- of an app limited to "view" or "none". No limits ('{}', every member
--- before this file) give the same answer as before.
+-- of an app limited to "view" or "none", files of its records included. No
+-- limits ('{}', every member before this file) give the same answer as
+-- before, without looking anything up.
 create or replace function almailbooks.can_write_record(p_company text, p_tbl text, p_data jsonb)
 returns boolean
 language plpgsql
@@ -153,6 +260,7 @@ as $$
 declare
   v_role public.member_role;
   v_apps jsonb;
+  v_app text;
 begin
   select m.role, m.permissions -> 'apps' into v_role, v_apps
   from public.company_members m
@@ -166,10 +274,14 @@ begin
   ) then
     return false;
   end if;
-  if v_role <> 'owner'
-    and jsonb_typeof(v_apps) = 'object'
-    and coalesce(v_apps ->> almailbooks.record_app(p_tbl, p_data), '') in ('none', 'view') then
-    return false;
+  if v_role <> 'owner' and jsonb_typeof(v_apps) = 'object' then
+    v_app := case
+      when p_tbl = 'attachments' then almailbooks.attachment_app(p_company, p_data ->> 'ownerId')
+      else almailbooks.record_app(p_tbl, p_data)
+    end;
+    if coalesce(v_apps ->> v_app, '') in ('none', 'view') then
+      return false;
+    end if;
   end if;
   return true;
 end
@@ -751,8 +863,9 @@ $$;
 -- the currency, the lines, discounts, taxes and charges, the deposit and
 -- retention asked for, the wording and the design. What payments and the
 -- books write (totals, status, when it was paid, retention releases, the
--- posting snapshot) is not part of it, nor the payment link or the internal
--- notes. Kept the same as invoiceContent in src/cloud/roles.ts.
+-- posting snapshot) is not part of it, nor the internal notes, nor the
+-- payment link (payment_link_changed has its own rule). Kept the same as
+-- invoiceContent in src/cloud/roles.ts.
 create or replace function almailbooks.invoice_content(p jsonb)
 returns jsonb
 language sql
@@ -789,6 +902,27 @@ as $$
     'retentionKind', p -> 'retentionKind',
     'replacesNumber', p -> 'replacesNumber'
   ))
+$$;
+
+-- The payment link of an issued document the rules cover: printed on it and
+-- in its QR code, it is where the customer pays. Once there is one, only an
+-- approver changes or removes it; adding one where there was none stays
+-- open (links are often made after the invoice is issued). Kept the same as
+-- paymentLinkNeedsApprover in src/cloud/roles.ts.
+create or replace function almailbooks.payment_link_changed(p_old jsonb, p_new jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select v_was <> '' and v_was is distinct from v_now
+  from (
+    select
+      case when jsonb_typeof(p_old #> '{paymentLink,url}') = 'string'
+        then p_old #>> '{paymentLink,url}' else '' end as v_was,
+      case when jsonb_typeof(p_new #> '{paymentLink,url}') = 'string'
+        then p_new #>> '{paymentLink,url}' else '' end as v_now
+  ) as links
 $$;
 
 -- Whether the rules ask an approver to confirm this payment: a cheque the
@@ -1037,6 +1171,14 @@ begin
       raise exception 'almail:permission Only the owner changes the approval rules.'
         using errcode = '42501';
     end if;
+    -- The books' settings are Maham Books': not changed by a member the owner
+    -- made it view only for (the lock date, numbering, payment details…).
+    if tg_op = 'UPDATE'
+      and almailbooks.company_books_changed(old.data, new.data)
+      and almailbooks.books_limited(new.company_id) then
+      raise exception 'almail:permission The owner has made Maham Books view only for you.'
+        using errcode = '42501';
+    end if;
     return new;
   end if;
 
@@ -1090,6 +1232,10 @@ begin
       or almailbooks.document_stage(old.data ->> 'status')
         <> almailbooks.document_stage(new.data ->> 'status') then
       raise exception 'almail:approval_required This change to an issued document needs approval. Send it for approval instead.'
+        using errcode = '42501';
+    end if;
+    if almailbooks.payment_link_changed(old.data, new.data) then
+      raise exception 'almail:permission Only an approver changes or removes the payment link of an issued document.'
         using errcode = '42501';
     end if;
     return new;
@@ -1262,6 +1408,10 @@ revoke all on function
   almailbooks.senior_roles_owner_only(text),
   almailbooks.is_approver(text),
   almailbooks.record_app(text, jsonb),
+  almailbooks.attachment_app(text, text),
+  almailbooks.json_same(jsonb, jsonb),
+  almailbooks.company_books_changed(jsonb, jsonb),
+  almailbooks.books_limited(text),
   almailbooks.company_members_before_write(),
   almailbooks.company_members_audit(),
   almailbooks.staff_can_write(text, jsonb),
@@ -1269,6 +1419,7 @@ revoke all on function
   almailbooks.rules_cover_document(jsonb, text),
   almailbooks.document_stage(text),
   almailbooks.invoice_content(jsonb),
+  almailbooks.payment_link_changed(jsonb, jsonb),
   almailbooks.rules_cover_cheque(jsonb, jsonb),
   almailbooks.rules_cover_security_cheque(jsonb, jsonb),
   almailbooks.cheque_content(jsonb),
@@ -1283,11 +1434,16 @@ grant execute on function
   almailbooks.senior_roles_owner_only(text),
   almailbooks.is_approver(text),
   almailbooks.record_app(text, jsonb),
+  almailbooks.attachment_app(text, text),
+  almailbooks.json_same(jsonb, jsonb),
+  almailbooks.company_books_changed(jsonb, jsonb),
+  almailbooks.books_limited(text),
   almailbooks.staff_can_write(text, jsonb),
   almailbooks.approval_rules(text),
   almailbooks.rules_cover_document(jsonb, text),
   almailbooks.document_stage(text),
   almailbooks.invoice_content(jsonb),
+  almailbooks.payment_link_changed(jsonb, jsonb),
   almailbooks.rules_cover_cheque(jsonb, jsonb),
   almailbooks.rules_cover_security_cheque(jsonb, jsonb),
   almailbooks.cheque_content(jsonb),

@@ -320,12 +320,43 @@ const BOOKS_APP = new Set([
 ]);
 
 /**
- * The app a record belongs to, for the owner's limits; null for what every
- * app shares (the company record, activity, files, approval requests). The
- * same as almailbooks.record_app on the server. Maham CRM works on Books'
- * customers and quotes, so it has none of its own.
+ * The records a file (an attachment) is kept with, as
+ * almailbooks.attachment_app looks them up.
  */
-export function recordApp(table: string, record: Row): AppId | null {
+export const ATTACHMENT_OWNER_TABLES = [
+  'employees',
+  'employeeLetters',
+  'letterTemplates',
+  'complianceDocuments',
+  'renewals',
+  'vehicles',
+  'documents',
+  'payments',
+  'expenses',
+  'assets',
+  'securityCheques',
+  'products',
+] as const;
+
+/**
+ * The app a record belongs to, for the owner's limits; null for what every
+ * app shares (the company record, activity, approval requests). The same as
+ * almailbooks.record_app on the server. A file is of the app of the record
+ * it is kept with, found with `lookup` (almailbooks.attachment_app): a scan
+ * in an employee's file is People's, a bill's receipt Books'; without
+ * `lookup`, or when that record isn't found, it has none. Maham CRM works on
+ * Books' customers and quotes, so it has none of its own.
+ */
+export function recordApp(table: string, record: Row, lookup?: RecordLookup): AppId | null {
+  if (table === 'attachments') {
+    const owner = typeof record?.ownerId === 'string' ? record.ownerId : '';
+    if (!owner || !lookup) return null;
+    for (const tbl of ATTACHMENT_OWNER_TABLES) {
+      const found = lookup(tbl, owner);
+      if (found) return recordApp(tbl, found);
+    }
+    return null;
+  }
   if (PEOPLE_APP.has(table)) return 'people';
   if (table === 'journals' && record?.kind === 'payroll') return 'people';
   const employee = typeof record?.employeeId === 'string' && record.employeeId !== '';
@@ -345,11 +376,69 @@ export function limitBlocksWrite(
   permissions: MemberPermissions | undefined,
   table: string,
   record: Row,
+  lookup?: RecordLookup,
 ): boolean {
-  const app = recordApp(table, record);
+  const app = recordApp(table, record, lookup);
   if (!app) return false;
   const limit = appLimit(role, permissions, app);
   return limit === 'none' || limit === 'view';
+}
+
+/** Whether the person has any app limited to view only or no access. */
+export function hasLimits(
+  role: MemberRole | null | undefined,
+  permissions: MemberPermissions | undefined,
+): boolean {
+  return LIMIT_APPS.some((app) => {
+    const limit = appLimit(role, permissions, app);
+    return limit === 'none' || limit === 'view';
+  });
+}
+
+/** The books' settings on the company record (see companyBooksChanged). */
+const COMPANY_BOOKS_FIELDS = [
+  'accounting',
+  'payment',
+  'defaults',
+  'taxesEnabled',
+  'openingBalances',
+  'vouchers',
+  'items',
+  'chequePrinting',
+] as const;
+
+/**
+ * Whether the books' settings on the company record differ, as
+ * almailbooks.company_books_changed: the lock date and the rest of the
+ * accounting settings, the payment details, the document defaults
+ * (numbering on issue included), taxes, opening balances, vouchers, items,
+ * cheque printing and the numbering rules. Counters (a rule's next and
+ * period) move with whatever is numbered, and employees' numbering is
+ * People's, so they stay open; so does a rule added or removed. A member
+ * the owner made Maham Books view only for (or gave no access) doesn't
+ * change them.
+ */
+export function companyBooksChanged(before: Row, after: Row): boolean {
+  if (!before || !after) return false;
+  if (COMPANY_BOOKS_FIELDS.some((field) => !sameData(before[field], after[field]))) return true;
+  const rules = (row: Row) => {
+    const numbering = row?.numbering;
+    return numbering && typeof numbering === 'object' && !Array.isArray(numbering)
+      ? (numbering as Record<string, unknown>)
+      : {};
+  };
+  const shape = (rule: unknown) => {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return rule;
+    const copy = { ...(rule as Record<string, unknown>) };
+    delete copy.next;
+    delete copy.period;
+    return copy;
+  };
+  const old = rules(before);
+  const next = rules(after);
+  return Object.keys(old).some(
+    (key) => key !== 'employee' && key in next && !sameData(shape(old[key]), shape(next[key])),
+  );
 }
 
 /** Changes accounting setup: accounts, tax rates, manual journals, year-end. */
@@ -431,7 +520,8 @@ export function sameData(a: unknown, b: unknown): boolean {
  * The fields of a document that say what it is, as it is printed and sent:
  * the same as almailbooks.invoice_content. What payments and the books write
  * (totals, status, paid and sent times, retention releases, the posting
- * snapshot), the payment link and the internal notes are not among them.
+ * snapshot), the internal notes and the payment link (see
+ * paymentLinkNeedsApprover) are not among them.
  */
 export const INVOICE_CONTENT_FIELDS = [
   'type',
@@ -527,6 +617,36 @@ export function documentChangeNeedsApproval(
     !sameData(invoiceContent(old), invoiceContent(next)) ||
     documentStage(old.status) !== documentStage(next.status)
   );
+}
+
+/** The address of a document's payment link, or '' for none. */
+function paymentLinkUrl(row: Row): string {
+  const link = row?.paymentLink;
+  if (!link || typeof link !== 'object') return '';
+  const url = (link as Record<string, unknown>).url;
+  return typeof url === 'string' ? url : '';
+}
+
+/**
+ * Whether storing `after` over `before` changes or removes the payment link
+ * of an issued document the rules cover, as records_guard
+ * (almailbooks.payment_link_changed): printed on it and in its QR code, it
+ * is where the customer pays, so only an approver changes it. Adding one
+ * where there was none stays open.
+ */
+export function paymentLinkNeedsApprover(
+  rules: AnyRecord,
+  before: AnyRecord,
+  after: AnyRecord,
+): boolean {
+  const old = asRow(before);
+  const next = asRow(after);
+  if (!rules || !old || !next || old.status === 'draft') return false;
+  if (!rulesCoverDocument(rules, old.type) && !rulesCoverDocument(rules, next.type)) {
+    return false;
+  }
+  const was = paymentLinkUrl(old);
+  return was !== '' && was !== paymentLinkUrl(next);
 }
 
 /**
