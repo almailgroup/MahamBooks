@@ -1,9 +1,11 @@
+import Dexie from 'dexie';
 import { db } from './db';
 import { defaultNumbering, nowStamp } from './defaults';
 import { logActivity } from './activity';
 import { recalculateDocuments } from './documents';
 import { accountingSettings } from './chart-setup';
 import { assertUnlocked, createAccount } from './accounting';
+import { assertChequeConfirmed, rulesContext, waitingCheques } from './cheque-rules';
 import type {
   Account,
   ChequeDetails,
@@ -211,6 +213,51 @@ export async function ensurePaymentAccount(
   return account;
 }
 
+/**
+ * Why a cheque number can't be recorded again: it is on another payment
+ * (from the same client, for cheques received), or a cheque waiting for an
+ * approver's confirmation has it. Null when it is free. Reads `payments` and
+ * `approvals`.
+ */
+export async function chequeNumberTaken(
+  companyId: ID,
+  cheque: { id: ID; direction: 'in' | 'out'; clientId: ID; number: string; bank: string },
+): Promise<string | null> {
+  const out = cheque.direction === 'out';
+  const number = cheque.number.trim();
+  const duplicate = await db.payments
+    .where('companyId')
+    .equals(companyId)
+    .filter(
+      (p) =>
+        p.id !== cheque.id &&
+        !p.voided &&
+        p.method === 'cheque' &&
+        Boolean(p.cheque) &&
+        (p.direction === 'out') === out &&
+        (out || p.clientId === cheque.clientId) &&
+        p.cheque!.number.trim() === number &&
+        sameBank(p.cheque!.bank, cheque.bank),
+    )
+    .first();
+  if (duplicate) {
+    return t('Cheque {number} is already recorded on payment {payment}.', {
+      number,
+      payment: duplicate.number,
+    });
+  }
+  // A cheque waiting for an approver's confirmation is recorded already.
+  const waiting = (await waitingCheques(companyId)).find(
+    (w) =>
+      w.subjectId !== cheque.id &&
+      (w.direction === 'out') === out &&
+      (out || w.clientId === cheque.clientId) &&
+      w.number === number &&
+      sameBank(w.bank, cheque.bank),
+  );
+  return waiting ? t('Cheque {number} is already waiting for confirmation.', { number }) : null;
+}
+
 async function checkCheque(
   input: Payment,
   existing: Payment | undefined,
@@ -229,29 +276,14 @@ async function checkCheque(
     throw new PaymentError(t('Check the Civil ID number: it has 12 digits.'));
   }
   const out = input.direction === 'out';
-  const duplicate = await db.payments
-    .where('companyId')
-    .equals(input.companyId)
-    .filter(
-      (p) =>
-        p.id !== input.id &&
-        !p.voided &&
-        p.method === 'cheque' &&
-        Boolean(p.cheque) &&
-        (p.direction === 'out') === out &&
-        (out || p.clientId === input.clientId) &&
-        p.cheque!.number.trim() === number &&
-        sameBank(p.cheque!.bank, cheque.bank),
-    )
-    .first();
-  if (duplicate) {
-    throw new PaymentError(
-      t('Cheque {number} is already recorded on payment {payment}.', {
-        number,
-        payment: duplicate.number,
-      }),
-    );
-  }
+  const taken = await chequeNumberTaken(input.companyId, {
+    id: input.id,
+    direction: out ? 'out' : 'in',
+    clientId: input.clientId,
+    number,
+    bank: cheque.bank,
+  });
+  if (taken) throw new PaymentError(taken);
   // A leaf recorded as spoiled was destroyed: its number is not used again.
   if (out && number !== existing?.cheque?.number.trim()) {
     const isSpoiled = (p: Payment) =>
@@ -361,72 +393,170 @@ function sameEntries(
   return ids.every((id) => !id || docs.get(id)?.currency === currency);
 }
 
+/** What saving a payment checks before it writes anything (see checkPayment). */
+interface CheckedPayment {
+  company: Company;
+  existing: Payment | undefined;
+  docs: Map<ID, InvoiceDocument>;
+  direction: 'in' | 'out';
+  precision: number;
+  /** The payment as it would be stored, but for its accounts and its number. */
+  payment: Payment;
+  /** The printed cheque whose leaf the change spoils, if it does. */
+  printed: ChequeDetails | null;
+  spoiled: boolean;
+}
+
+/**
+ * Everything savePayment checks before it writes: the amounts applied, the
+ * documents, the credit, the cheque and the fee. Reads only.
+ */
+async function checkPayment(input: Payment): Promise<CheckedPayment> {
+  const company = await db.companies.get(input.companyId);
+  if (!company) throw new PaymentError(t('Company not found.'));
+  const existing = await db.payments.get(input.id);
+  if (existing?.voided) {
+    throw new PaymentError(t('This payment is void and can no longer be changed.'));
+  }
+  const out = input.direction === 'out';
+  const direction = out ? 'out' : 'in';
+  const precision = currencyPrecision(input.currency);
+  const allocations = normalizeAllocations(input.allocations, precision);
+  const amount = round(input.amount, precision);
+  const allocated = allocations.reduce((s, a) => s.plus(dec(a.amount)), dec(0));
+  if (amount >= 0 && toMinor(allocated, precision) > toMinor(amount, precision)) {
+    throw new AllocationError(
+      out
+        ? t('The amounts applied to bills are larger than the payment.')
+        : t('The amounts applied to invoices are larger than the payment.'),
+    );
+  }
+  const creditId = input.creditId ?? null;
+  const related = [
+    ...new Set(
+      [
+        ...allocations.map((a) => a.documentId),
+        ...(existing?.documentIds ?? []),
+        creditId,
+        existing?.creditId,
+      ].filter((id): id is ID => Boolean(id)),
+    ),
+  ];
+  const docs = new Map(
+    (await db.documents.bulkGet(related))
+      .filter((d): d is InvoiceDocument => Boolean(d))
+      .map((d) => [d.id, d]),
+  );
+  checkIssued(allocations, docs, existing, precision);
+  if (input.method === 'credit_note' && creditId) {
+    const credit = docs.get(creditId);
+    const kept =
+      existing?.creditId === creditId &&
+      toMinor(amount, precision) <= toMinor(existing.amount, precision);
+    if (credit && !isPosted(credit) && !kept) throw notIssuedError(credit);
+  }
+
+  let cheque = await checkCheque(input, existing);
+  // A printed cheque that changes no longer matches its leaf: the leaf is
+  // spoiled (destroyed) and the cheque is printed again. Only while the
+  // leaf is still in hand: once presented, cleared or returned, the bank
+  // has had it, and its print stays on record.
+  const printed =
+    existing?.cheque?.printedAt && existing.cheque.status === 'held' ? existing.cheque : null;
+  const spoiled = printed !== null && printedFaceChanged(existing!, { ...input, amount, cheque });
+  if (printed && spoiled) {
+    if (!cheque) {
+      throw new PaymentError(
+        t('This cheque was printed. Cancel the cheque instead of paying another way.'),
+      );
+    }
+    cheque = spoilPrintedLeaf(printed, cheque, t('Changed after printing'), nowStamp());
+  }
+
+  const fee = takesFee(input.method, direction) ? round(input.fee ?? 0, precision) : 0;
+  if (fee < 0) throw new PaymentError(t('The fee cannot be negative.'));
+  if (fee > 0 && toMinor(fee, precision) >= toMinor(amount, precision)) {
+    throw new PaymentError(t('The fee must be less than the amount received.'));
+  }
+
+  const payment: Payment = {
+    ...input,
+    amount,
+    allocations,
+    documentIds: allocations.map((a) => a.documentId),
+    provider: providersFor(input.method).length ? (input.provider ?? null) : null,
+    fee,
+    cheque,
+    // Saved now, it posts under the current rules (an earlier payment
+    // moves to them here, in an open period).
+    postingRules: PAYMENT_POSTING_RULES,
+  };
+  if (!fee) delete payment.fee;
+  return { company, existing, docs, direction, precision, payment, printed, spoiled };
+}
+
+/** The money a settled cheque keeps: its own entries are booked on it. */
+function assertSettledKept(
+  existing: Payment | undefined,
+  next: Payment,
+  precision: number,
+  accountId: ID | null | undefined,
+): void {
+  if (!existing || !isChequeSettled(existing)) return;
+  const changed =
+    toMinor(existing.amount, precision) !== toMinor(next.amount, precision) ||
+    existing.currency !== next.currency ||
+    (existing.exchangeRate ?? 1) !== (next.exchangeRate ?? 1) ||
+    existing.method !== next.method ||
+    (existing.direction ?? 'in') !== (next.direction ?? 'in') ||
+    (accountId !== undefined && (existing.accountId ?? null) !== accountId);
+  if (changed) {
+    throw new PaymentError(
+      t(
+        'This cheque has its own entries now. Only the notes and the documents it pays can change.',
+      ),
+    );
+  }
+}
+
+/**
+ * Checks a payment as savePayment would, without saving it: the payment as
+ * it would be stored, but for its accounts and its number (given when it is
+ * saved). For a cheque sent for an approver's confirmation.
+ */
+export async function validatePayment(input: Payment): Promise<Payment> {
+  return db.transaction('r', [db.payments, db.documents, db.companies, db.approvals], async () => {
+    const { company, existing, docs, precision, payment } = await checkPayment(input);
+    assertSettledKept(existing, payment, precision, undefined);
+    // The account of a cheque is the post-dated cheques account either way.
+    const comparable =
+      existing && existing.method === 'cheque' && payment.method === 'cheque'
+        ? { ...payment, accountId: existing.accountId }
+        : payment;
+    if (!existing || !sameEntries(existing, comparable, docs, company)) {
+      assertUnlocked(company, payment.date, existing?.date);
+    }
+    return payment;
+  });
+}
+
 export async function savePayment(input: Payment): Promise<Payment> {
+  // The company's cheque rules, for a person who isn't an approver.
+  const rules = await rulesContext(input.companyId);
   return db.transaction(
     'rw',
-    [db.payments, db.documents, db.clients, db.companies, db.accounts, db.activities],
+    [db.payments, db.documents, db.clients, db.companies, db.accounts, db.activities, db.approvals],
     async () => {
-      const company = await db.companies.get(input.companyId);
-      if (!company) throw new PaymentError(t('Company not found.'));
-      const existing = await db.payments.get(input.id);
-      if (existing?.voided) {
-        throw new PaymentError(t('This payment is void and can no longer be changed.'));
-      }
-      const out = input.direction === 'out';
-      const direction = out ? 'out' : 'in';
-      const precision = currencyPrecision(input.currency);
-      const allocations = normalizeAllocations(input.allocations, precision);
-      const amount = round(input.amount, precision);
-      const allocated = allocations.reduce((s, a) => s.plus(dec(a.amount)), dec(0));
-      if (amount >= 0 && toMinor(allocated, precision) > toMinor(amount, precision)) {
-        throw new AllocationError(
-          out
-            ? t('The amounts applied to bills are larger than the payment.')
-            : t('The amounts applied to invoices are larger than the payment.'),
-        );
-      }
-      const creditId = input.creditId ?? null;
-      const related = [
-        ...new Set(
-          [
-            ...allocations.map((a) => a.documentId),
-            ...(existing?.documentIds ?? []),
-            creditId,
-            existing?.creditId,
-          ].filter((id): id is ID => Boolean(id)),
-        ),
-      ];
-      const docs = new Map(
-        (await db.documents.bulkGet(related))
-          .filter((d): d is InvoiceDocument => Boolean(d))
-          .map((d) => [d.id, d]),
-      );
-      checkIssued(allocations, docs, existing, precision);
-      if (input.method === 'credit_note' && creditId) {
-        const credit = docs.get(creditId);
-        const kept =
-          existing?.creditId === creditId &&
-          toMinor(amount, precision) <= toMinor(existing.amount, precision);
-        if (credit && !isPosted(credit) && !kept) throw notIssuedError(credit);
-      }
-
-      let cheque = await checkCheque(input, existing);
-      // A printed cheque that changes no longer matches its leaf: the leaf is
-      // spoiled (destroyed) and the cheque is printed again. Only while the
-      // leaf is still in hand: once presented, cleared or returned, the bank
-      // has had it, and its print stays on record.
-      const printed =
-        existing?.cheque?.printedAt && existing.cheque.status === 'held' ? existing.cheque : null;
-      const spoiled =
-        printed !== null && printedFaceChanged(existing!, { ...input, amount, cheque });
-      if (printed && spoiled) {
-        if (!cheque) {
-          throw new PaymentError(
-            t('This cheque was printed. Cancel the cheque instead of paying another way.'),
-          );
-        }
-        cheque = spoilPrintedLeaf(printed, cheque, t('Changed after printing'), nowStamp());
-      }
+      const checked = await checkPayment(input);
+      const { company, existing, docs, direction, precision, printed, spoiled } = checked;
+      const out = direction === 'out';
+      // A cheque the company's rules keep for approvers: sent for confirmation instead.
+      assertChequeConfirmed(rules, 'payments', existing, checked.payment, () => ({
+        action: 'save',
+        table: 'payments',
+        record: checked.payment,
+      }));
+      const { cheque, fee } = checked.payment;
       const accounts = await db.accounts.where('companyId').equals(company.id).toArray();
       const template = accountingSettings(company).template;
       const chequeAccounts = new Set(
@@ -446,52 +576,22 @@ export async function savePayment(input: Payment): Promise<Payment> {
         }
       }
 
-      const fee = takesFee(input.method, direction) ? round(input.fee ?? 0, precision) : 0;
-      if (fee < 0) throw new PaymentError(t('The fee cannot be negative.'));
-      if (fee > 0 && toMinor(fee, precision) >= toMinor(amount, precision)) {
-        throw new PaymentError(t('The fee must be less than the amount received.'));
-      }
       let feeAccountId: ID | null = null;
-      if (fee > 0) {
+      if (fee && fee > 0) {
         feeAccountId =
           input.feeAccountId && accounts.some((a) => a.id === input.feeAccountId)
             ? input.feeAccountId
             : (await ensurePaymentAccount(company, 'cardFees', accounts)).id;
       }
 
-      if (existing && isChequeSettled(existing)) {
-        const changed =
-          toMinor(existing.amount, precision) !== toMinor(amount, precision) ||
-          existing.currency !== input.currency ||
-          (existing.exchangeRate ?? 1) !== (input.exchangeRate ?? 1) ||
-          existing.method !== input.method ||
-          (existing.direction ?? 'in') !== direction ||
-          (existing.accountId ?? null) !== accountId;
-        if (changed) {
-          throw new PaymentError(
-            t(
-              'This cheque has its own entries now. Only the notes and the documents it pays can change.',
-            ),
-          );
-        }
-      }
+      assertSettledKept(existing, checked.payment, precision, accountId);
 
       let payment: Payment = {
-        ...input,
-        amount,
-        allocations,
-        documentIds: allocations.map((a) => a.documentId),
+        ...checked.payment,
         accountId,
-        provider: providersFor(input.method).length ? (input.provider ?? null) : null,
-        fee,
         feeAccountId,
-        cheque,
-        // Saved now, it posts under the current rules (an earlier payment
-        // moves to them here, in an open period).
-        postingRules: PAYMENT_POSTING_RULES,
         updatedAt: nowStamp(),
       };
-      if (!fee) delete payment.fee;
       // A closed period keeps its entries; a change that posts nothing new
       // (applying an advance to another invoice) is fine.
       if (!existing || !sameEntries(existing, payment, docs, company)) {
@@ -568,8 +668,29 @@ export async function savePayment(input: Payment): Promise<Payment> {
   );
 }
 
+/** Why a payment can't be deleted: void ones, cleared cheques and printed ones stay on record. */
+export function checkDeletable(payment: Payment): void {
+  if (payment.voided) {
+    throw new PaymentError(t('A void payment stays on record and cannot be deleted.'));
+  }
+  if (isChequeSettled(payment)) {
+    throw new PaymentError(
+      t('This cheque has its own entries now. Mark it returned instead of deleting it.'),
+    );
+  }
+  // Its printed and spoiled leaves are on record so their numbers are never used again.
+  if (payment.cheque?.printedAt || payment.cheque?.spoiledLeaves?.length) {
+    throw new PaymentError(
+      t('Leaves of this cheque were printed. Cancel the cheque instead of deleting it.'),
+    );
+  }
+}
+
 /** Deletes a payment with its files (scans of the cheque or the transfer). */
 export async function deletePayment(id: ID): Promise<void> {
+  // The company's cheque rules, for a person who isn't an approver.
+  const found = Dexie.currentTransaction ? undefined : await db.payments.get(id);
+  const rules = found ? await rulesContext(found.companyId) : undefined;
   await db.transaction(
     'rw',
     [
@@ -584,20 +705,13 @@ export async function deletePayment(id: ID): Promise<void> {
     async () => {
       const payment = await db.payments.get(id);
       if (!payment) return;
-      if (payment.voided) {
-        throw new PaymentError(t('A void payment stays on record and cannot be deleted.'));
-      }
-      if (isChequeSettled(payment)) {
-        throw new PaymentError(
-          t('This cheque has its own entries now. Mark it returned instead of deleting it.'),
-        );
-      }
-      // Its printed and spoiled leaves are on record so their numbers are never used again.
-      if (payment.cheque?.printedAt || payment.cheque?.spoiledLeaves?.length) {
-        throw new PaymentError(
-          t('Leaves of this cheque were printed. Cancel the cheque instead of deleting it.'),
-        );
-      }
+      checkDeletable(payment);
+      // A cheque the company's rules keep for approvers: deleting it is asked for instead.
+      assertChequeConfirmed(rules, 'payments', payment, undefined, () => ({
+        action: 'delete',
+        table: 'payments',
+        id,
+      }));
       const company = await db.companies.get(payment.companyId);
       if (company) assertUnlocked(company, payment.date);
       await db.payments.delete(id);

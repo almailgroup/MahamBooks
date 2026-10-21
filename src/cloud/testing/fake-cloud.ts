@@ -19,6 +19,7 @@ import {
   approvalRulesOf,
   canChangeMember,
   canWriteRecord,
+  chequeChangeNeedsApprover,
   documentChangeNeedsApproval,
   grantableRoles,
   guardApprovalWrite,
@@ -154,6 +155,15 @@ export class FakeCloud {
   private approvalRules(company: string): Record<string, unknown> | null {
     if (!this.features.includes('approvals')) return null;
     return approvalRulesOf(this.records.get(this.key(company, 'companies', company))?.data);
+  }
+
+  /**
+   * The rules for cheques, once the server has cheque confirmation
+   * (cheque_approvals); null before.
+   */
+  private chequeRules(company: string): Record<string, unknown> | null {
+    if (!this.features.includes('cheque_approvals')) return null;
+    return this.approvalRules(company);
   }
 
   private approver(company: string, user: string): boolean {
@@ -715,6 +725,17 @@ export class FakeCloud {
       if (role !== 'owner' && approvalRulesChanged(old, data)) throw fail('permission');
       return data;
     }
+    if (tbl === 'payments' || tbl === 'securityCheques') {
+      const rules = this.chequeRules(company);
+      if (
+        rules &&
+        !this.approver(company, user) &&
+        chequeChangeNeedsApprover(rules, tbl, old, data)
+      ) {
+        throw fail('approval_required');
+      }
+      return data;
+    }
     if (tbl !== 'documents' && tbl !== 'approvals') return data;
     const rules = this.approvalRules(company);
     if (!rules) return data;
@@ -749,7 +770,14 @@ export class FakeCloud {
         change.tbl === 'companies' ||
         !this.canWrite(company, user, change.tbl, visibleOld.data) ||
         // As can_delete_record: what the approval rules keep.
-        rulesKeepRecord(this.approvalRules(company), change.tbl, visibleOld.data)
+        rulesKeepRecord(this.approvalRules(company), change.tbl, visibleOld.data) ||
+        (!this.approver(company, user) &&
+          chequeChangeNeedsApprover(
+            this.chequeRules(company),
+            change.tbl,
+            visibleOld.data,
+            undefined,
+          ))
       ) {
         throw fail('permission');
       }

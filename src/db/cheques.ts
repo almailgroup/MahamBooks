@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from './db';
 import { logActivity } from './activity';
 import { assertUnlocked, createJournal, newJournalLine, roleMap, saveJournal } from './accounting';
@@ -11,6 +12,12 @@ import {
   savePayment,
 } from './payments';
 import { nowStamp } from './defaults';
+import {
+  assertChequeConfirmed,
+  rulesContext,
+  type CashInput,
+  type RulesContext,
+} from './cheque-rules';
 import type {
   ChequeDetails,
   Company,
@@ -56,7 +63,19 @@ const TABLES = () => [
   db.expenses,
   db.activities,
   db.securityCheques,
+  // Cheques waiting for confirmation are recorded already (savePayment checks them).
+  db.approvals,
 ];
+
+/** The company's cheque rules for the person, read before a transaction (none inside one). */
+async function rulesFor(
+  table: 'payments' | 'securityCheques',
+  id: ID,
+): Promise<RulesContext | undefined> {
+  if (Dexie.currentTransaction) return undefined;
+  const found = await (table === 'payments' ? db.payments.get(id) : db.securityCheques.get(id));
+  return found ? rulesContext(found.companyId) : undefined;
+}
 
 type ChequePayment = Payment & { cheque: ChequeDetails };
 
@@ -428,21 +447,37 @@ export interface ReplacementInput {
   date: ISODate;
 }
 
+/** Why a cheque can't be replaced as asked, before anything is done. */
+export function checkReplacement(old: Payment, input: ReplacementInput): void {
+  if (old.cheque?.replacedById) {
+    throw new ChequeError(t('This cheque has already been replaced.'));
+  }
+  if (old.cheque?.status === 'cleared') {
+    throw new ChequeError(t('A cleared cheque can’t be replaced. Mark it returned first.'));
+  }
+  const amount = round(input.amount, currencyPrecision(old.currency));
+  if (!(amount > 0)) throw new ChequeError(t('Enter the amount of the new cheque.'));
+}
+
 /**
  * Records the cheque that replaces a returned (or still unpresented) one.
  * The old cheque is cancelled first when it is still open. The new payment
  * pays the same documents, as far as they are still open.
  */
 export async function replaceCheque(oldPaymentId: ID, input: ReplacementInput): Promise<Payment> {
+  const rules = await rulesFor('payments', oldPaymentId);
   return db.transaction('rw', TABLES(), async () => {
     const { payment: old, company } = await load(oldPaymentId);
-    if (old.cheque.replacedById) {
-      throw new ChequeError(t('This cheque has already been replaced.'));
-    }
+    checkReplacement(old, input);
+    // The new cheque is one the company's rules keep for approvers: asked for instead.
+    assertChequeConfirmed(
+      rules,
+      'payments',
+      undefined,
+      { method: 'cheque', direction: old.direction ?? 'in' },
+      () => ({ action: 'replace', id: old.id, input }),
+    );
     const status = old.cheque.status;
-    if (status === 'cleared') {
-      throw new ChequeError(t('A cleared cheque can’t be replaced. Mark it returned first.'));
-    }
     if (status === 'held' || status === 'deposited') {
       await cancelCheque(old.id, {
         date: input.date,
@@ -451,7 +486,6 @@ export async function replaceCheque(oldPaymentId: ID, input: ReplacementInput): 
     }
     const precision = currencyPrecision(old.currency);
     const amount = round(input.amount, precision);
-    if (!(amount > 0)) throw new ChequeError(t('Enter the amount of the new cheque.'));
     // Pay the same documents again, as far as they are open now.
     let remaining = dec(amount);
     const allocations: PaymentAllocation[] = [];
@@ -540,33 +574,55 @@ export function createSecurityCheque(
   };
 }
 
+/** The security cheque as saveSecurityCheque would store it, or why it can't be. */
+function checkSecurityCheque(
+  input: SecurityCheque,
+  existing: SecurityCheque | undefined,
+): SecurityCheque {
+  if (existing && existing.status !== 'held') {
+    throw new ChequeError(t('Only a security cheque that is still held can be changed.'));
+  }
+  const number = input.number.trim();
+  if (!number) throw new ChequeError(t('Enter the cheque number.'));
+  const amount = round(input.amount, currencyPrecision(input.currency));
+  if (!(amount > 0)) throw new ChequeError(t('Enter the amount of the cheque.'));
+  const civilId = (input.drawerCivilId ?? '').replace(/\s/g, '');
+  if (civilId && !isValidCivilId(civilId)) {
+    throw new ChequeError(t('Check the Civil ID number: it has 12 digits.'));
+  }
+  const cheque: SecurityCheque = {
+    ...input,
+    number,
+    amount,
+    bank: input.bank.trim(),
+    drawer: input.drawer.trim(),
+    purpose: input.purpose.trim(),
+    date: input.date || null,
+    status: existing?.status ?? 'held',
+    updatedAt: nowStamp(),
+  };
+  if (civilId) cheque.drawerCivilId = civilId;
+  else delete cheque.drawerCivilId;
+  return cheque;
+}
+
+/** Checks a security cheque as saveSecurityCheque would, without saving it. */
+export async function validateSecurityCheque(input: SecurityCheque): Promise<SecurityCheque> {
+  return checkSecurityCheque(input, await db.securityCheques.get(input.id));
+}
+
 export async function saveSecurityCheque(input: SecurityCheque): Promise<SecurityCheque> {
+  const rules = Dexie.currentTransaction ? undefined : await rulesContext(input.companyId);
   return db.transaction('rw', [db.securityCheques, db.activities], async () => {
     const existing = await db.securityCheques.get(input.id);
-    if (existing && existing.status !== 'held') {
-      throw new ChequeError(t('Only a security cheque that is still held can be changed.'));
-    }
-    const number = input.number.trim();
-    if (!number) throw new ChequeError(t('Enter the cheque number.'));
-    const amount = round(input.amount, currencyPrecision(input.currency));
-    if (!(amount > 0)) throw new ChequeError(t('Enter the amount of the cheque.'));
-    const civilId = (input.drawerCivilId ?? '').replace(/\s/g, '');
-    if (civilId && !isValidCivilId(civilId)) {
-      throw new ChequeError(t('Check the Civil ID number: it has 12 digits.'));
-    }
-    const cheque: SecurityCheque = {
-      ...input,
-      number,
-      amount,
-      bank: input.bank.trim(),
-      drawer: input.drawer.trim(),
-      purpose: input.purpose.trim(),
-      date: input.date || null,
-      status: existing?.status ?? 'held',
-      updatedAt: nowStamp(),
-    };
-    if (civilId) cheque.drawerCivilId = civilId;
-    else delete cheque.drawerCivilId;
+    const cheque = checkSecurityCheque(input, existing);
+    const number = cheque.number;
+    // One the company's rules keep for approvers (given to someone): asked for instead.
+    assertChequeConfirmed(rules, 'securityCheques', existing, cheque, () => ({
+      action: 'save',
+      table: 'securityCheques',
+      record: cheque,
+    }));
     if (!existing) cheque.createdAt = cheque.updatedAt;
     await db.securityCheques.put(cheque);
     await logActivity(
@@ -615,10 +671,8 @@ export async function returnSecurityCheque(id: ID, date: ISODate): Promise<Secur
  * deposited on the given date, optionally paying the contact's open
  * invoices (or bills), oldest first.
  */
-export async function cashSecurityCheque(
-  id: ID,
-  input: { date: ISODate; clientId?: ID | null; applyToOpen?: boolean },
-): Promise<Payment> {
+export async function cashSecurityCheque(id: ID, input: CashInput): Promise<Payment> {
+  const rules = await rulesFor('securityCheques', id);
   return db.transaction('rw', TABLES(), async () => {
     const cheque = await db.securityCheques.get(id);
     if (!cheque) throw new ChequeError(t('Cheque not found.'));
@@ -631,6 +685,14 @@ export async function cashSecurityCheque(
         cheque.direction === 'out' ? t('Choose the vendor.') : t('Choose the client.'),
       );
     }
+    // The payment it becomes is a cheque the company's rules keep for approvers: asked for instead.
+    assertChequeConfirmed(
+      rules,
+      'payments',
+      undefined,
+      { method: 'cheque', direction: cheque.direction },
+      () => ({ action: 'cash', id, input }),
+    );
     const out = cheque.direction === 'out';
     const precision = currencyPrecision(cheque.currency);
     const allocations: PaymentAllocation[] = [];
@@ -700,12 +762,18 @@ export async function cashSecurityCheque(
 
 /** Removes a security cheque entered by mistake (only while held; nothing was posted). */
 export async function deleteSecurityCheque(id: ID): Promise<void> {
+  const rules = await rulesFor('securityCheques', id);
   await db.transaction('rw', [db.securityCheques, db.activities], async () => {
     const cheque = await db.securityCheques.get(id);
     if (!cheque) return;
     if (cheque.status !== 'held') {
       throw new ChequeError(t('Only a security cheque that is still held can be deleted.'));
     }
+    assertChequeConfirmed(rules, 'securityCheques', cheque, undefined, () => ({
+      action: 'delete',
+      table: 'securityCheques',
+      id,
+    }));
     await db.securityCheques.delete(id);
     await logActivity(
       cheque.companyId,

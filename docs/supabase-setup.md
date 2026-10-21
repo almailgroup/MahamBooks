@@ -42,10 +42,13 @@ has to be added to the app or to Vercel.
    [`supabase/migrations/20261116000000_super_admin_approvals.sql`](../supabase/migrations/20261116000000_super_admin_approvals.sql)
    (a new query, paste, **Run**), after the fourth. It adds the Super Admin's
    controls in **Settings → Team** and the approval rules in **Settings →
-   Approvals** (see "The Super Admin" and "Approvals" below). Running it
-   changes nothing by itself: every member keeps their role's access, admins
-   keep inviting and changing roles until the owner switches that off, and
-   nothing waits for approval until the owner turns approvals on.
+   Approvals**, cheque confirmation included (see "The Super Admin",
+   "Approvals" and "Cheque confirmation" below). Running it changes nothing by
+   itself: every member keeps their role's access, admins keep inviting and
+   changing roles until the owner switches that off, and nothing waits for
+   approval or confirmation until the owner turns it on. If you ran an earlier
+   copy of this script, run it again: it is safe, and the cheque switches
+   appear only once it has run.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -256,6 +259,42 @@ change an older version makes to an issued invoice is refused by the cloud and
 waits in **Settings → Cloud and sync**, with **Send for approval instead**.
 Companies kept on one device only have nobody to ask: the rules apply to cloud
 companies.
+
+## Cheque confirmation
+
+**Settings → Approvals → Cheques** (الإعدادات ← الاعتمادات ← الشيكات), the
+owner's switch **Cheques need confirmation** (الشيكات تحتاج إلى تأكيد). Turned
+on, it covers what is recommended: **Cheques issued** (الشيكات الصادرة) and
+**Security cheques given** (شيكات الضمان المسلَّمة) on, **Cheques received**
+(الشيكات المستلمة) off. Each can be changed on its own.
+
+- A cheque of a covered kind recorded by anyone but an approver is not a
+  payment: the button says **Send for confirmation** (إرسال للتأكيد), and the
+  cheque waits as a request. It is not in the books, not on the bill or
+  invoice (which shows "waiting for confirmation" so nobody records it twice),
+  not in the cheque register's totals or the morning alerts, and it can't be
+  printed.
+- The approver (the owner, or an admin or accountant with **Can approve**)
+  finds it in **Approvals** and in **Cheques → Waiting for confirmation**
+  (بانتظار التأكيد), and presses **Confirm** (تأكيد) or **Reject**. Confirming
+  records the payment on the approver's device as it was asked, dated the day
+  the cheque was written or received, numbered and posted then. Whoever asked
+  can take a request back while it waits.
+- Changing a confirmed cheque's amount, payee, number, bank or dates, deleting
+  it, replacing it and cashing a security cheque given out wait the same way.
+  Depositing, clearing, returning, cancelling, printing, notes and the
+  documents it pays go on as before. A printed cheque moved to its next leaf
+  (the spoiled leaf on record) needs nothing more.
+- If a bill was paid meanwhile, or the period was locked, confirming says why
+  and the request stays confirmed but not recorded: carry it out again, or
+  reject it.
+
+Received cheques are off by default: while one waits, its invoice stays unpaid
+and the customer may still get a reminder. Before turning cheque confirmation
+on, update every device and let each one sync: a cheque an older version
+records is refused by the cloud and waits in **Settings → Cloud and sync**,
+with **Send for confirmation instead**. The paper cheque should not leave the
+office before it is confirmed: the app can't see paper.
 
 ## Problems
 

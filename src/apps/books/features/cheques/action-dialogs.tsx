@@ -44,6 +44,9 @@ import { BankAccountSelect, ChequeFields } from '@/apps/books/features/payments/
 import { PAYMENT_COPY, paymentDirection } from '@/apps/books/features/payments/direction';
 import { DateField } from '@/components/ui/date-field';
 import { useHasChequeLayout } from './use-cheque-layout';
+import { ChequeConfirmationRequiredError } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import { useMyName } from '@/features/approvals/hooks';
 
 export type ChequeAction = 'deposit' | 'clear' | 'return' | 'cancel' | 'replace';
 
@@ -545,6 +548,7 @@ function ReplaceDialog({
     }),
   );
   const [busy, setBusy] = useState(false);
+  const myName = useMyName();
   const open = payment.cheque.status === 'held' || payment.cheque.status === 'deposited';
   const save = async () => {
     setBusy(true);
@@ -563,6 +567,19 @@ function ReplaceDialog({
       onClose();
       onReplaced?.(replacement);
     } catch (error) {
+      if (error instanceof ChequeConfirmationRequiredError) {
+        // The new cheque waits for an approver; the current one stays as it is until then.
+        try {
+          await requestChequeConfirmation(error.ask, { byName: myName });
+          toast.success(
+            t('Sent for confirmation. The cheque is recorded once an approver confirms it.'),
+          );
+          onClose();
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : t('Something went wrong.'));
+        }
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     } finally {
       setBusy(false);

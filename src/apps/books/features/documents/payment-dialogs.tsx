@@ -32,6 +32,9 @@ import {
 import { DateField } from '@/components/ui/date-field';
 import { useReadOnly } from '@/components/ui/read-only';
 import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
+import { ChequeConfirmationRequiredError } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import { useChequeView, useMyName } from '@/features/approvals/hooks';
 
 /** Records a payment against one invoice (money in) or bill (money out). */
 export function RecordPaymentDialog({
@@ -87,6 +90,10 @@ export function RecordPaymentDialog({
   });
   const isCheque = method === 'cheque';
   const showFee = takesFee(method, direction);
+  // A cheque the company's rules keep for an approver's confirmation (#9).
+  const chequeView = useChequeView(company);
+  const myName = useMyName();
+  const waits = chequeView.waits('payments', undefined, { method, direction });
 
   const changeMethod = (next: PaymentMethod) => {
     setMethod(next);
@@ -148,6 +155,20 @@ export function RecordPaymentDialog({
         );
       onOpenChange(false);
     } catch (error) {
+      if (error instanceof ChequeConfirmationRequiredError) {
+        // Not a payment yet: it waits for an approver, with its scans.
+        try {
+          await requestChequeConfirmation(error.ask, { byName: myName });
+          await attachments.commit(company.id).catch(() => undefined);
+          toast.success(
+            t('Sent for confirmation. The cheque is recorded once an approver confirms it.'),
+          );
+          onOpenChange(false);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : t('Could not record the payment.'));
+        }
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('Could not record the payment.'));
     } finally {
       setSaving(false);
@@ -264,6 +285,14 @@ export function RecordPaymentDialog({
               paymentDate={date}
             />
           ) : null}
+          {waits ? (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {t(
+                'This cheque waits for an approver’s confirmation. It is recorded, numbered and paid against the documents once confirmed, dated {date}.',
+                { date: fmt.date(date) },
+              )}
+            </p>
+          ) : null}
           <CashRuleNotice
             company={company}
             check={cashCheck}
@@ -296,7 +325,7 @@ export function RecordPaymentDialog({
             {t('Cancel')}
           </Button>
           <Button onClick={save} loading={saving}>
-            {t('Record payment')}
+            {waits ? t('Send for confirmation') : t('Record payment')}
           </Button>
         </DialogFooter>
       </DialogContent>

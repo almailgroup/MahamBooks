@@ -22,7 +22,12 @@ export type ServerFeature =
    * issued invoices and credit notes for approvers to change (Settings →
    * Approvals) and Void instead of delete.
    */
-  | 'approvals';
+  | 'approvals'
+  /**
+   * The same file: cheques an approver confirms (Settings → Approvals →
+   * Cheques); recorded by anyone else, they wait as requests.
+   */
+  | 'cheque_approvals';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

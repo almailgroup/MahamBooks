@@ -45,6 +45,11 @@ import {
   printRefusal,
 } from '@/lib/cheque-print';
 import { useHasChequeLayout } from '@/apps/books/features/cheques/use-cheque-layout';
+import { ChequeConfirmationRequiredError, type ChequeAsk } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import { PaymentChequeApprovals } from '@/features/approvals/cheque-approvals';
+import { useMyName } from '@/features/approvals/hooks';
+import { ReasonDialog } from '@/features/approvals/reason-dialog';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -63,6 +68,9 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
   const fmt = useFormat();
   const confirm = useConfirm();
   const [action, setAction] = useState<ChequeAction | null>(null);
+  // Deleting a cheque the company's rules keep for approvers, asked for instead (#9).
+  const [asking, setAsking] = useState<ChequeAsk | null>(null);
+  const myName = useMyName();
 
   const payment = useLiveQuery(() => db.payments.get(id), [id]);
   const client = useLiveQuery(
@@ -151,6 +159,10 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
       toast.success(t('Payment deleted'));
       navigate(copy.base);
     } catch (error) {
+      if (error instanceof ChequeConfirmationRequiredError) {
+        setAsking(error.ask);
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     }
   };
@@ -275,6 +287,8 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
           </div>
         </div>
       ) : null}
+
+      <PaymentChequeApprovals paymentId={payment.id} client={client ?? null} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
@@ -519,6 +533,28 @@ export default function PaymentDetailPage({ direction = 'in' }: { direction?: Pa
           payment={payment as Payment & { cheque: ChequeDetails }}
           onClose={() => setAction(null)}
           onReplaced={(replacement) => navigate(`${copy.base}/${replacement.id}`)}
+        />
+      ) : null}
+      {asking ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={t('Send for confirmation')}
+          description={t(
+            'Deleting this cheque waits for an approver. It stays as it is until they confirm it.',
+          )}
+          label={t('Note for the approver')}
+          required={false}
+          confirmLabel={t('Send for confirmation')}
+          onConfirm={async (reason) => {
+            try {
+              await requestChequeConfirmation(asking, { reason, byName: myName });
+              toast.success(t('Sent for confirmation'));
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : t('Something went wrong.'));
+              throw err;
+            }
+          }}
         />
       ) : null}
     </div>

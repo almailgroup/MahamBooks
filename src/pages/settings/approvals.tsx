@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import type { ApprovalRules, DocumentType } from '@/db/types';
+import type { ApprovalRules, ChequeApprovalRules, DocumentType } from '@/db/types';
 import { useCloudLink, useServerFeature } from '@/cloud/hooks';
 import { isSuperAdmin } from '@/cloud/roles';
 import { ReadOnlyContext } from '@/components/ui/read-only';
@@ -27,6 +27,39 @@ const COVERED: { type: DocumentType; label: string; description: string }[] = [
 ];
 
 /**
+ * The recommended cheques when the owner first turns cheque confirmation on:
+ * those the company writes and security cheques it hands over; cheques
+ * received stay off (waiting, they would leave invoices unpaid).
+ */
+const RECOMMENDED_CHEQUES: ChequeApprovalRules = {
+  issued: true,
+  securityOut: true,
+  received: false,
+};
+
+const CHEQUE_KINDS: { key: keyof ChequeApprovalRules; label: string; description: string }[] = [
+  {
+    key: 'issued',
+    label: msg('Cheques issued'),
+    description: msg(
+      'Payments made by cheque, the cheques that replace them, and security cheques given that are cashed.',
+    ),
+  },
+  {
+    key: 'securityOut',
+    label: msg('Security cheques given'),
+    description: msg('Guarantee cheques the company hands over, such as a rent deposit.'),
+  },
+  {
+    key: 'received',
+    label: msg('Cheques received'),
+    description: msg(
+      'Off is recommended: while a cheque received waits, its invoice stays unpaid, so the customer may still be reminded to pay.',
+    ),
+  },
+];
+
+/**
  * Settings → Approvals: the owner's rules (Company.approvalRules). Nothing
  * waits for approval until the owner turns them on, and only the owner
  * changes them (the cloud refuses anyone else). For companies kept in the
@@ -36,6 +69,7 @@ export default function ApprovalSettings() {
   const { draft, update, dirty, saving, save, reset } = useCompanyDraft();
   const link = useCloudLink(draft.id);
   const ready = useServerFeature(draft.id, 'approvals');
+  const chequesReady = useServerFeature(draft.id, 'cheque_approvals');
 
   if (link === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
   if (link === null) {
@@ -80,6 +114,9 @@ export default function ApprovalSettings() {
         ...patch,
       },
     });
+  const cheques = rules?.cheques ?? {};
+  const chequesOn = Boolean(cheques.issued || cheques.securityOut || cheques.received);
+  const setCheques = (patch: ChequeApprovalRules) => set({ cheques: { ...cheques, ...patch } });
   const cover = (type: DocumentType, on: boolean) =>
     set({
       documentTypes: on
@@ -143,6 +180,52 @@ export default function ApprovalSettings() {
             </Field>
           </div>
         </SettingsSection>
+
+        {chequesReady ? (
+          <SettingsSection
+            title={t('Cheques')}
+            description={t(
+              'A cheque recorded by anyone but an approver waits as a request. It reaches the books, the cheque register and the invoice or bill, and can be printed, only once an approver confirms it, dated the day it was written or received.',
+            )}
+          >
+            <div className="space-y-5">
+              <Switch
+                checked={chequesOn}
+                onChange={(on) =>
+                  setCheques(
+                    on
+                      ? RECOMMENDED_CHEQUES
+                      : { issued: false, securityOut: false, received: false },
+                  )
+                }
+                label={t('Cheques need confirmation')}
+                description={t(
+                  'Changing the amount, payee, number, bank or dates of a confirmed cheque, or deleting it, waits too. Depositing, clearing, returning, cancelling, printing and notes go on as before.',
+                )}
+                disabled={!owner}
+              />
+              {chequesOn ? (
+                <div className="space-y-4 border-s-2 border-slate-100 ps-4">
+                  {CHEQUE_KINDS.map((kind) => (
+                    <Switch
+                      key={kind.key}
+                      checked={cheques[kind.key] === true}
+                      onChange={(on) => setCheques({ [kind.key]: on })}
+                      label={t(kind.label)}
+                      description={t(kind.description)}
+                      disabled={!owner}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                {t(
+                  'Before turning this on, update every device and let it sync. A cheque an older version records is refused and kept aside in Settings → Cloud and sync, where it can be sent for confirmation.',
+                )}
+              </p>
+            </div>
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title={t('Who approves')}>
           <p className="text-sm text-slate-600">

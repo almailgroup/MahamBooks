@@ -48,7 +48,17 @@
 --     changes the rules. Requests are never deleted, and with "Void instead
 --     of delete" issued documents keep their numbers: they are voided, never
 --     deleted (drafts still are).
---   * public.server_features() also answers 'super_admin' and 'approvals'.
+--   * Cheque confirmation (Settings → Approvals → Cheques, also off until the
+--     owner turns it on). With it on, a cheque the company writes (and, if
+--     the owner chooses, a security cheque it hands over or a cheque it
+--     receives) is recorded by anyone but an approver as a request only; it
+--     becomes a payment when an approver confirms it. Anyone else is refused
+--     "almail:approval_required" for a new cheque of that kind, for a change
+--     of its amount, currency, rate, date, payee, number, bank or drawer, and
+--     for deleting it. Depositing, clearing, returning, cancelling, printing,
+--     the notes and the documents it pays go on as before.
+--   * public.server_features() also answers 'super_admin', 'approvals' and
+--     'cheque_approvals'.
 -- =============================================================================
 
 -- Columns ------------------------------------------------------------------------
@@ -657,7 +667,8 @@ $$;
 --
 -- The company's rules are kept on its own record (approvalRules, set in
 -- Settings → Approvals by the owner):
---   {"documentTypes": ["invoice", "credit"], "voidInsteadOfDelete": true, "expireDays": 14}
+--   {"documentTypes": ["invoice", "credit"], "voidInsteadOfDelete": true, "expireDays": 14,
+--    "cheques": {"issued": true, "securityOut": true, "received": false}}
 -- Without them (every company until the owner turns them on) nothing below
 -- changes anything: records are written and deleted as before.
 
@@ -768,12 +779,157 @@ as $$
   ))
 $$;
 
+-- Whether the rules ask an approver to confirm this payment: a cheque the
+-- company writes (cheques.issued) or receives (cheques.received).
+create or replace function almailbooks.rules_cover_cheque(p_rules jsonb, p jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(
+    p ->> 'method' = 'cheque'
+      and jsonb_typeof(p_rules -> 'cheques') = 'object'
+      and p_rules -> 'cheques' ->> (
+        case when p ->> 'direction' = 'out' then 'issued' else 'received' end
+      ) = 'true',
+    false
+  )
+$$;
+
+-- Whether the rules ask an approver to confirm this security cheque: one the
+-- company hands over (cheques.securityOut).
+create or replace function almailbooks.rules_cover_security_cheque(p_rules jsonb, p jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(
+    p ->> 'direction' = 'out'
+      and jsonb_typeof(p_rules -> 'cheques') = 'object'
+      and p_rules -> 'cheques' ->> 'securityOut' = 'true',
+    false
+  )
+$$;
+
+-- What an approver confirms on a cheque payment: the money (amount,
+-- currency, rate, date, direction), who it is for, and the cheque itself
+-- (number, bank, date, drawer or payee). Where it is in its life (deposited,
+-- cleared, returned, cancelled), its prints, the notes and the documents it
+-- pays are not part of it. Kept the same as chequeContent in
+-- src/cloud/roles.ts.
+create or replace function almailbooks.cheque_content(p jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'method', p -> 'method',
+    'direction', coalesce(p ->> 'direction', 'in'),
+    'clientId', p -> 'clientId',
+    'date', p -> 'date',
+    'amount', p -> 'amount',
+    'currency', p -> 'currency',
+    'exchangeRate', coalesce(nullif(p -> 'exchangeRate', 'null'::jsonb), '1'::jsonb),
+    'number', p -> 'cheque' -> 'number',
+    'bank', p -> 'cheque' -> 'bank',
+    'chequeDate', p -> 'cheque' -> 'date',
+    'drawer', p -> 'cheque' -> 'drawer',
+    'drawerCivilId', nullif(p -> 'cheque' -> 'drawerCivilId', '""'::jsonb)
+  ))
+$$;
+
+-- The same for a security cheque. Kept the same as securityChequeContent in
+-- src/cloud/roles.ts.
+create or replace function almailbooks.security_cheque_content(p jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'direction', coalesce(p ->> 'direction', 'in'),
+    'number', p -> 'number',
+    'bank', p -> 'bank',
+    'date', p -> 'date',
+    'amount', p -> 'amount',
+    'currency', p -> 'currency',
+    'drawer', p -> 'drawer',
+    'drawerCivilId', nullif(p -> 'drawerCivilId', '""'::jsonb)
+  ))
+$$;
+
+-- Whether a change of a payment or security cheque waits for an approver:
+-- a new one the rules cover, or a change of what is confirmed on one they
+-- cover (before or after). A printed cheque moved to its next leaf, with the
+-- spoiled leaf on record, keeps its confirmation: only its number changed.
+create or replace function almailbooks.cheque_change_needs_approver(
+  p_rules jsonb,
+  p_tbl text,
+  p_old jsonb,
+  p_new jsonb
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v_old jsonb;
+  v_new jsonb;
+begin
+  if p_tbl = 'payments' then
+    if not (
+      almailbooks.rules_cover_cheque(p_rules, p_old)
+      or almailbooks.rules_cover_cheque(p_rules, p_new)
+    ) then
+      return false;
+    end if;
+    if p_old is null or p_new is null then
+      return true;
+    end if;
+    v_old := almailbooks.cheque_content(p_old);
+    v_new := almailbooks.cheque_content(p_new);
+    if v_old ->> 'number' is distinct from v_new ->> 'number' and exists (
+      select 1
+      from jsonb_array_elements(
+        case
+          when jsonb_typeof(p_new -> 'cheque' -> 'spoiledLeaves') = 'array'
+            then p_new -> 'cheque' -> 'spoiledLeaves'
+          else '[]'::jsonb
+        end
+      ) l
+      where btrim(l ->> 'number') = btrim(v_old ->> 'number')
+    ) then
+      v_old := v_old - 'number';
+      v_new := v_new - 'number';
+    end if;
+    return v_old is distinct from v_new;
+  end if;
+  if p_tbl = 'securityCheques' then
+    if not (
+      almailbooks.rules_cover_security_cheque(p_rules, p_old)
+      or almailbooks.rules_cover_security_cheque(p_rules, p_new)
+    ) then
+      return false;
+    end if;
+    return p_old is null or p_new is null
+      or almailbooks.security_cheque_content(p_old)
+        is distinct from almailbooks.security_cheque_content(p_new);
+  end if;
+  return false;
+end
+$$;
+
 -- What the server checks before a record is stored, after
 -- records_before_write (triggers of the same kind run in the order of their
--- names). Only the company record, documents and approval requests are
--- looked at; every other record passes at once, and so do all three while
--- the company's rules are off (the approval rules themselves are the
--- owner's either way). Refusals have the SQL state 42501.
+-- names). Only the company record, documents, approval requests, cheque
+-- payments and security cheques given are looked at; every other record
+-- passes at once, and so do they while the company's rules are off (the
+-- approval rules themselves are the owner's either way). Refusals have the
+-- SQL state 42501.
 create or replace function almailbooks.records_guard()
 returns trigger
 language plpgsql
@@ -789,7 +945,19 @@ declare
   v_key text;
 begin
   -- The SQL editor and the server's own jobs are not members.
-  if new.tbl not in ('companies', 'documents', 'approvals') or auth.uid() is null then
+  if new.tbl not in ('companies', 'documents', 'approvals', 'payments', 'securityCheques')
+    or auth.uid() is null then
+    return new;
+  end if;
+  -- Payments other than cheques, and security cheques received, at once.
+  if new.tbl = 'payments'
+    and coalesce(new.data ->> 'method', '') <> 'cheque'
+    and (tg_op = 'INSERT' or coalesce(old.data ->> 'method', '') <> 'cheque') then
+    return new;
+  end if;
+  if new.tbl = 'securityCheques'
+    and coalesce(new.data ->> 'direction', '') <> 'out'
+    and (tg_op = 'INSERT' or coalesce(old.data ->> 'direction', '') <> 'out') then
     return new;
   end if;
   -- An upsert runs this as an insert before it turns into an update: a
@@ -818,6 +986,22 @@ begin
     return new;
   end if;
   v_approver := almailbooks.is_approver(new.company_id);
+
+  if new.tbl in ('payments', 'securityCheques') then
+    -- A cheque the rules cover is recorded, changed in what is confirmed on
+    -- it, by approvers only; anyone else sends it for confirmation.
+    -- Whoever may not write it at all is refused by the row's policies, as before.
+    if not v_approver and almailbooks.cheque_change_needs_approver(
+      v_rules,
+      new.tbl,
+      case when tg_op = 'UPDATE' then old.data end,
+      new.data
+    ) and almailbooks.can_write_record(new.company_id, new.tbl, new.data) then
+      raise exception 'almail:approval_required This cheque needs confirmation. Send it for confirmation instead.'
+        using errcode = '42501';
+    end if;
+    return new;
+  end if;
 
   if new.tbl = 'documents' then
     -- New documents and drafts are anyone's to write, and approvers write anything.
@@ -917,10 +1101,10 @@ create trigger records_guard
 
 -- The company's own record is never deleted through sync: delete_company
 -- does that. With the company's rules on, approval requests stay (they are
--- the record of who asked and who decided), and with "Void instead of
--- delete" issued documents of the types the rules cover are voided, never
--- deleted, so their numbers stay used; drafts may still go. As in the first
--- file otherwise.
+-- the record of who asked and who decided), with "Void instead of delete"
+-- issued documents of the types the rules cover are voided, never deleted,
+-- so their numbers stay used (drafts may still go), and only an approver
+-- deletes a cheque the rules cover. As in the first file otherwise.
 create or replace function almailbooks.can_delete_record(p_company text, p_tbl text, p_data jsonb)
 returns boolean
 language plpgsql
@@ -934,7 +1118,7 @@ begin
   if p_tbl = 'companies' or not almailbooks.can_write_record(p_company, p_tbl, p_data) then
     return false;
   end if;
-  if p_tbl not in ('approvals', 'documents') then
+  if p_tbl not in ('approvals', 'documents', 'payments', 'securityCheques') then
     return true;
   end if;
   v_rules := almailbooks.approval_rules(p_company);
@@ -943,6 +1127,12 @@ begin
   end if;
   if p_tbl = 'approvals' then
     return false;
+  end if;
+  if p_tbl in ('payments', 'securityCheques') then
+    return not (
+      almailbooks.cheque_change_needs_approver(v_rules, p_tbl, p_data, null)
+      and not almailbooks.is_approver(p_company)
+    );
   end if;
   return not (
     coalesce(v_rules ->> 'voidInsteadOfDelete', '') = 'true'
@@ -954,14 +1144,14 @@ $$;
 
 -- What this server has beyond the first files, so the app shows a feature
 -- only once the server has what it needs: tables_v16 is the fourth file,
--- super_admin and approvals this one.
+-- super_admin, approvals and cheque_approvals this one.
 create or replace function public.server_features()
 returns text[]
 language sql
 stable
 set search_path = ''
 as $$
-  select array['tables_v16', 'super_admin', 'approvals']::text[]
+  select array['tables_v16', 'super_admin', 'approvals', 'cheque_approvals']::text[]
 $$;
 
 -- Who may run what ------------------------------------------------------------------
@@ -977,6 +1167,11 @@ revoke all on function
   almailbooks.rules_cover_document(jsonb, text),
   almailbooks.document_stage(text),
   almailbooks.invoice_content(jsonb),
+  almailbooks.rules_cover_cheque(jsonb, jsonb),
+  almailbooks.rules_cover_security_cheque(jsonb, jsonb),
+  almailbooks.cheque_content(jsonb),
+  almailbooks.security_cheque_content(jsonb),
+  almailbooks.cheque_change_needs_approver(jsonb, text, jsonb, jsonb),
   almailbooks.records_guard(),
   almailbooks.can_delete_record(text, text, jsonb)
 from public, anon;
@@ -989,6 +1184,11 @@ grant execute on function
   almailbooks.rules_cover_document(jsonb, text),
   almailbooks.document_stage(text),
   almailbooks.invoice_content(jsonb),
+  almailbooks.rules_cover_cheque(jsonb, jsonb),
+  almailbooks.rules_cover_security_cheque(jsonb, jsonb),
+  almailbooks.cheque_content(jsonb),
+  almailbooks.security_cheque_content(jsonb),
+  almailbooks.cheque_change_needs_approver(jsonb, text, jsonb, jsonb),
   almailbooks.can_delete_record(text, text, jsonb)
 to authenticated;
 

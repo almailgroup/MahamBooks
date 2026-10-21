@@ -60,6 +60,7 @@ import {
 import { AttachmentList } from '@/features/purchases/attachments';
 import { useAccounts } from '@/apps/books/features/accounting/account-pickers';
 import { PaymentStatusBadge } from '@/apps/books/features/payments/status-badge';
+import { WaitingChequesNote } from '@/features/approvals/cheque-approvals';
 import { PartDialog } from '@/apps/books/features/orders/part-dialog';
 import { RelatedDocuments } from '@/apps/books/features/orders/related';
 
@@ -671,6 +672,8 @@ export default function BillViewPage({ type }: { type: PurchaseDocumentType }) {
               ) : null}
             </CardBody>
           </Card>
+
+          {isBill ? <WaitingChequesNote doc={doc} /> : null}
 
           {order ? null : (
             <Card>

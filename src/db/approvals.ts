@@ -152,7 +152,39 @@ const LOG: Record<'asked' | 'cancelled' | 'approved' | 'rejected' | 'expired', s
   expired: msg('Approval request on {number} expired'),
 };
 
-async function logRequest(request: ApprovalRequest, what: keyof typeof LOG): Promise<void> {
+/** The same for cheques (#9): a cheque waits for confirmation, an approver confirms it. */
+const CHEQUE_LOG: Record<keyof typeof LOG, string> = {
+  asked: msg('Confirmation asked for cheque {number}'),
+  cancelled: msg('Confirmation request for cheque {number} cancelled'),
+  approved: msg('Cheque {number} confirmed'),
+  rejected: msg('Cheque {number} not confirmed'),
+  expired: msg('Confirmation request for cheque {number} expired'),
+};
+
+/** The contact a cheque request is about, as far as this device knows it. */
+async function chequeContact(request: ApprovalRequest): Promise<ID | null> {
+  const after = (request.after ?? {}) as Record<string, unknown>;
+  if (typeof after.clientId === 'string' && after.clientId) return after.clientId;
+  const subject =
+    request.subjectTbl === 'payments'
+      ? await db.payments.get(request.subjectId)
+      : await db.securityCheques.get(request.subjectId);
+  return subject?.clientId || null;
+}
+
+/** Writes what happened to a request to the activity of the record it is about. */
+export async function logRequest(request: ApprovalRequest, what: keyof typeof LOG): Promise<void> {
+  if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
+    await logActivity(
+      request.companyId,
+      request.subjectTbl === 'payments' ? 'payment' : 'cheque',
+      request.subjectId,
+      `approval:${what}`,
+      { text: CHEQUE_LOG[what], vars: { number: request.subjectNumber } },
+      { clientId: await chequeContact(request) },
+    );
+    return;
+  }
   if (request.subjectTbl !== 'documents') return;
   const doc = await db.documents.get(request.subjectId);
   await logActivity(
@@ -163,6 +195,30 @@ async function logRequest(request: ApprovalRequest, what: keyof typeof LOG): Pro
     { text: LOG[what], vars: { number: request.subjectNumber } },
     { clientId: doc?.clientId || null, documentId: request.subjectId },
   );
+}
+
+/** What writing a request and its activity reads and writes. */
+export const REQUEST_TABLES = () => [
+  db.approvals,
+  db.documents,
+  db.payments,
+  db.securityCheques,
+  db.activities,
+];
+
+/**
+ * A cheque that was never recorded keeps no files: the scans attached to a
+ * request for a new cheque go once it is turned down, taken back or expired.
+ */
+async function dropUnusedFiles(requests: ApprovalRequest[]): Promise<void> {
+  const unused = requests.filter((r) => r.subjectTbl === 'payments' && r.kind === 'cheque_create');
+  if (unused.length === 0) return;
+  await db.transaction('rw', [db.payments, db.attachments], async () => {
+    for (const request of unused) {
+      if (await db.payments.get(request.subjectId)) continue;
+      await db.attachments.where('ownerId').equals(request.subjectId).delete();
+    }
+  });
 }
 
 /** The company's requests waiting for a decision, the oldest first. */
@@ -206,7 +262,7 @@ export async function requestApproval(input: {
   const reason = input.reason.trim();
   if (!reason) throw new ApprovalError(t('Say why, for the approver.'));
   const link = await db.syncState.get(subject.companyId);
-  return db.transaction('rw', [db.approvals, db.documents, db.activities], async () => {
+  return db.transaction('rw', REQUEST_TABLES(), async () => {
     if (await pendingRequestFor(subject.id)) {
       throw new ApprovalError(
         t('A request on {number} is already waiting for approval.', { number: subject.number }),
@@ -260,7 +316,7 @@ export async function cancelApproval(id: ID): Promise<void> {
   const request = await db.approvals.get(id);
   if (!request) return;
   const link = await db.syncState.get(request.companyId);
-  await db.transaction('rw', [db.approvals, db.documents, db.activities], async () => {
+  await db.transaction('rw', REQUEST_TABLES(), async () => {
     const current = await db.approvals.get(id);
     if (!current || current.status !== 'pending') return;
     const now = nowStamp();
@@ -273,6 +329,7 @@ export async function cancelApproval(id: ID): Promise<void> {
     });
     await logRequest(current, 'cancelled');
   });
+  await dropUnusedFiles([request]);
 }
 
 /**
@@ -287,7 +344,9 @@ export async function decideApproval(
   note = '',
 ): Promise<void> {
   const request = await db.approvals.get(id);
-  if (!request || request.status !== 'pending') {
+  // An approved request that could not be carried out may still be rejected.
+  const turnedDown = request?.status === 'approved' && decision === 'rejected';
+  if (!request || (request.status !== 'pending' && !turnedDown)) {
     throw new ApprovalError(t('This request has already been decided.'));
   }
   if (!(await isApproverIn(request.companyId))) {
@@ -295,7 +354,7 @@ export async function decideApproval(
   }
   const link = await db.syncState.get(request.companyId);
   const now = nowStamp();
-  await db.transaction('rw', [db.approvals, db.documents, db.activities], async () => {
+  await db.transaction('rw', REQUEST_TABLES(), async () => {
     await db.approvals.put({
       ...request,
       status: decision,
@@ -307,6 +366,7 @@ export async function decideApproval(
     await logRequest(request, decision);
   });
   if (decision === 'approved') await applyApproval(id);
+  else await dropUnusedFiles([request]);
 }
 
 /**
@@ -338,6 +398,21 @@ export function changedSinceAsked(request: ApprovalRequest, current: InvoiceDocu
 export async function applyApproval(id: ID): Promise<void> {
   const request = await db.approvals.get(id);
   if (!request || request.status !== 'approved') return;
+  if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
+    // Imported here: the cheque functions use this module for their own checks.
+    const { applyChequeRequest } = await import('./cheque-approvals');
+    const resultId = await applyChequeRequest(request);
+    const done = await db.approvals.get(id);
+    if (done?.status === 'approved') {
+      await db.approvals.put({
+        ...done,
+        status: 'applied',
+        ...(resultId ? { resultId } : {}),
+        updatedAt: nowStamp(),
+      });
+    }
+    return;
+  }
   if (request.subjectTbl !== 'documents') {
     throw new ApprovalError(t('This version of the app can’t carry out this request.'));
   }
@@ -384,7 +459,7 @@ export async function expirePending(companyId: ID, on = today()): Promise<number
     .toArray();
   const old = waiting.filter((r) => addDaysISO(r.requestedAt.slice(0, 10), days) < on);
   if (old.length === 0) return 0;
-  await db.transaction('rw', [db.approvals, db.documents, db.activities], async () => {
+  await db.transaction('rw', REQUEST_TABLES(), async () => {
     for (const request of old) {
       const now = nowStamp();
       await db.approvals.put({
@@ -398,5 +473,6 @@ export async function expirePending(companyId: ID, on = today()): Promise<number
       await logRequest(request, 'expired');
     }
   });
+  await dropUnusedFiles(old);
   return old.length;
 }

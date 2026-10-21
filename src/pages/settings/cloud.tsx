@@ -46,8 +46,14 @@ import { LastSynced, SyncStatusLine } from '@/features/cloud/sync-status';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import type { DataTable } from '@/db/db';
-import { canSendForApproval, sendParkedForApproval } from '@/features/approvals/parked';
+import {
+  canSendForApproval,
+  canSendForConfirmation,
+  sendParkedForApproval,
+  sendParkedForConfirmation,
+} from '@/features/approvals/parked';
 import { ApprovalError } from '@/db/approvals';
+import { PaymentError } from '@/db/payments';
 import { ReasonDialog } from '@/features/approvals/reason-dialog';
 import { useMyName } from '@/features/approvals/hooks';
 import { SettingsSection } from './shared';
@@ -452,6 +458,8 @@ function Problems({
   const [busy, setBusy] = useState<string | null>(null);
   // A change of an issued invoice the rules keep for approvers, to send for approval.
   const [asking, setAsking] = useState<OutboxEntry | null>(null);
+  // A cheque the rules keep for an approver's confirmation, to send for it (#9).
+  const [confirming, setConfirming] = useState<OutboxEntry | null>(null);
   const unique = [...new Map(entries.map((e) => [`${e.table}/${e.id}`, e])).values()];
 
   /** Takes the cloud's copy back; a record the cloud never had is only deleted once agreed. */
@@ -541,6 +549,11 @@ function Problems({
                 <Send /> {t('Send for approval instead')}
               </Button>
             ) : null}
+            {api && user && canSendForConfirmation(entry) ? (
+              <Button size="xs" variant="ghost" onClick={() => setConfirming(entry)}>
+                <Send /> {t('Send for confirmation instead')}
+              </Button>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -566,6 +579,39 @@ function Problems({
               await manager?.syncNow(companyId).catch(() => undefined);
             } catch (err) {
               toast.error(err instanceof ApprovalError ? err.message : cloudErrorMessage(err));
+              throw err;
+            }
+          }}
+        />
+      ) : null}
+      {confirming && api && user ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setConfirming(null)}
+          title={t('Send for confirmation instead')}
+          description={t(
+            'The cheque goes back to the cloud’s copy (a new one leaves this device), and your change waits for an approver. It is made when they confirm it.',
+          )}
+          label={t('Note for the approver')}
+          required={false}
+          confirmLabel={t('Send for confirmation')}
+          onConfirm={async (reason) => {
+            try {
+              await sendParkedForConfirmation(
+                companyId,
+                confirming,
+                { api, userId: user.id },
+                reason,
+                myName,
+              );
+              toast.success(t('Sent for confirmation'));
+              await manager?.syncNow(companyId).catch(() => undefined);
+            } catch (err) {
+              toast.error(
+                err instanceof ApprovalError || err instanceof PaymentError
+                  ? err.message
+                  : cloudErrorMessage(err),
+              );
               throw err;
             }
           }}

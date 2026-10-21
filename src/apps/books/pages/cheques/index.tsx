@@ -68,6 +68,18 @@ import {
   registerTab,
   type RegisterTab,
 } from '@/apps/books/features/cheques/register';
+import type { ApprovalRequest } from '@/db/types';
+import { ChequeConfirmationRequiredError } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import {
+  useApprovalView,
+  useChequeView,
+  useMemberNames,
+  useMyName,
+  usePendingChequeRequests,
+} from '@/features/approvals/hooks';
+import { ChequeRequestCard } from '@/features/approvals/cheque-request-card';
+import { onRegisterTab } from '@/features/approvals/cheque-changes';
 
 type ChequePayment = Payment & { cheque: ChequeDetails };
 
@@ -103,6 +115,47 @@ function Tile({
   );
 }
 
+/** Cheques waiting for an approver's confirmation (#9): not in the books until confirmed. */
+function WaitingList({
+  requests,
+  clients,
+  names,
+  approver,
+  userId,
+}: {
+  requests: ApprovalRequest[];
+  clients: Map<string, Client>;
+  names: Map<string, string>;
+  approver: boolean;
+  userId: string | null;
+}) {
+  if (requests.length === 0) {
+    return (
+      <p className="px-6 py-12 text-center text-sm text-slate-500">
+        {t('Nothing is waiting for confirmation.')}
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y divide-slate-100">
+      {[...requests]
+        .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+        .map((request) => (
+          <li key={request.id} className="px-5 py-4">
+            <ChequeRequestCard
+              request={request}
+              clients={clients}
+              names={names}
+              approver={approver}
+              userId={userId}
+              showSubject
+            />
+          </li>
+        ))}
+    </ul>
+  );
+}
+
 export default function ChequeRegisterPage() {
   const company = useCompany();
   const fmt = useFormat();
@@ -111,6 +164,13 @@ export default function ChequeRegisterPage() {
   const [params, setParams] = useSearchParams();
   const tab = registerTab(params.get('tab'));
   const filter = registerFilter(params.get('filter'));
+  // Cheques waiting for an approver's confirmation, on their own (#9).
+  const pendingView = params.get('filter') === 'pending';
+  const chequeView = useChequeView(company);
+  const approvalView = useApprovalView(company);
+  const waiting = usePendingChequeRequests(company.id);
+  const names = useMemberNames(company.id, approvalView.link, (waiting?.length ?? 0) > 0);
+  const myName = useMyName();
   // "?q=" from search opens the register searched for one cheque ("&all=1": not
   // only those held), also when the register is open already: taken into the
   // search box each time it comes, then dropped from the address (below).
@@ -165,7 +225,7 @@ export default function ChequeRegisterPage() {
   const companyMoney = (minor: number) => fmt.money(fromMinor(minor, precision), company.currency);
   const language = currentLanguage();
 
-  const setView = (patch: { tab?: RegisterTab; filter?: ChequeFilter }) => {
+  const setView = (patch: { tab?: RegisterTab; filter?: ChequeFilter | 'pending' }) => {
     const next = new URLSearchParams(params);
     if (patch.tab) next.set('tab', patch.tab);
     if (patch.filter) next.set('filter', patch.filter);
@@ -216,9 +276,28 @@ export default function ChequeRegisterPage() {
       .sort((a, b) => (b.date ?? b.createdAt).localeCompare(a.date ?? a.createdAt));
   }, [securityCheques, showAllSecurity, q, byClient, language]);
 
-  if (!payments || !clients || !securityCheques) {
+  if (!payments || !clients || !securityCheques || !waiting) {
     return <Spinner className="py-24" label={t('Loading…')} />;
   }
+  const waitingHere = waiting.filter((r) => onRegisterTab(r, tab));
+  // Cheques with a change (or their deletion) waiting for confirmation.
+  const waitingOn = new Set(waiting.map((r) => r.subjectId));
+  const showWaiting = chequeView.on || waitingHere.length > 0;
+  const waitingList = (
+    <WaitingList
+      requests={waitingHere}
+      clients={byClient}
+      names={names}
+      approver={approvalView.approver}
+      userId={approvalView.link?.userId ?? null}
+    />
+  );
+  const waitingLink =
+    waitingHere.length > 0 ? (
+      <Button variant="outline" size="sm" onClick={() => setView({ filter: 'pending' })}>
+        {t('Waiting for confirmation')} ({waitingHere.length})
+      </Button>
+    ) : null;
 
   const openCount = (items: ChequePayment[]) =>
     items.filter((p) => isOpenCheque(p.cheque.status)).length;
@@ -260,6 +339,16 @@ export default function ChequeRegisterPage() {
       await deleteSecurityCheque(cheque.id);
       toast.success(t('Security cheque {number} deleted', { number: cheque.number }));
     } catch (error) {
+      if (error instanceof ChequeConfirmationRequiredError) {
+        // One given out is deleted once an approver confirms it.
+        try {
+          await requestChequeConfirmation(error.ask, { byName: myName });
+          toast.success(t('Sent for confirmation'));
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : t('Something went wrong.'));
+        }
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
     }
   };
@@ -312,7 +401,7 @@ export default function ChequeRegisterPage() {
             <Tile label={t('Next 30 days')} bucket={strip.month} money={companyMoney} />
           </div>
 
-          {list.length === 0 ? (
+          {list.length === 0 && !pendingView ? (
             <Card>
               <EmptyState
                 icon={<Banknote />}
@@ -324,7 +413,12 @@ export default function ChequeRegisterPage() {
                         'Record a payment by cheque to follow it here until it clears. Post-dated cheques show when they can be deposited.',
                       )
                 }
-                action={newAction}
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {newAction}
+                    {waitingLink}
+                  </div>
+                }
               />
             </Card>
           ) : (
@@ -332,9 +426,23 @@ export default function ChequeRegisterPage() {
               <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
                 <Segmented
                   size="sm"
-                  value={filter}
+                  value={pendingView ? 'pending' : filter}
                   onChange={(value) => setView({ filter: value })}
-                  options={CHEQUE_FILTERS.map((f) => ({ value: f, label: filterLabel(f, tab) }))}
+                  options={[
+                    ...CHEQUE_FILTERS.map((f) => ({
+                      value: f as ChequeFilter | 'pending',
+                      label: filterLabel(f, tab),
+                    })),
+                    ...(showWaiting
+                      ? [
+                          {
+                            value: 'pending' as const,
+                            label: t('Waiting for confirmation'),
+                            count: waitingHere.length,
+                          },
+                        ]
+                      : []),
+                  ]}
                 />
                 <div className="relative lg:w-72">
                   <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -347,7 +455,9 @@ export default function ChequeRegisterPage() {
                   />
                 </div>
               </div>
-              {rows.length === 0 ? (
+              {pendingView ? (
+                waitingList
+              ) : rows.length === 0 ? (
                 <p className="px-6 py-12 text-center text-sm text-slate-500">
                   {t('No cheques match.')}
                 </p>
@@ -466,6 +576,11 @@ export default function ChequeRegisterPage() {
                                     {t('Replaced')}
                                   </span>
                                 ) : null}
+                                {waitingOn.has(p.id) ? (
+                                  <span className="mt-0.5 block text-xs font-medium text-amber-700">
+                                    {t('Waiting for confirmation')}
+                                  </span>
+                                ) : null}
                                 {p.cheque.printedAt ? (
                                   p.cheque.status === 'held' && printedLeafChanged(p) ? (
                                     <span className="mt-0.5 block text-xs font-medium text-amber-700">
@@ -500,13 +615,21 @@ export default function ChequeRegisterPage() {
                   </div>
                 </>
               )}
-              <div className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
-                <span>{tp(rows.length, '{count} cheque', '{count} cheques')}</span>
-                <span>
-                  {t('Total')}{' '}
-                  <strong className="tabular text-slate-900">{companyMoney(rowsTotal)}</strong>
-                </span>
-              </div>
+              {pendingView ? (
+                <p className="border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
+                  {t(
+                    'Not in the books, the invoices and bills or the totals above until confirmed.',
+                  )}
+                </p>
+              ) : (
+                <div className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
+                  <span>{tp(rows.length, '{count} cheque', '{count} cheques')}</span>
+                  <span>
+                    {t('Total')}{' '}
+                    <strong className="tabular text-slate-900">{companyMoney(rowsTotal)}</strong>
+                  </span>
+                </div>
+              )}
             </Card>
           )}
         </>
@@ -523,7 +646,7 @@ export default function ChequeRegisterPage() {
             </span>
             <span className="text-slate-500 sm:ms-auto">{t('Not in the books until cashed.')}</span>
           </Card>
-          {securityCheques.length === 0 ? (
+          {securityCheques.length === 0 && !pendingView ? (
             <Card>
               <EmptyState
                 icon={<ShieldCheck />}
@@ -531,7 +654,12 @@ export default function ChequeRegisterPage() {
                 description={t(
                   'Keep guarantee cheques here, such as rent deposits. They stay off the books, and only become a payment if you cash them.',
                 )}
-                action={newAction}
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {newAction}
+                    {waitingLink}
+                  </div>
+                }
               />
             </Card>
           ) : (
@@ -539,11 +667,35 @@ export default function ChequeRegisterPage() {
               <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <Segmented
                   size="sm"
-                  value={showAllSecurity ? 'all' : 'held'}
-                  onChange={(value) => setShowAllSecurity(value === 'all')}
+                  value={pendingView ? 'pending' : showAllSecurity ? 'all' : 'held'}
+                  onChange={(value) => {
+                    if (value === 'pending') {
+                      setView({ filter: 'pending' });
+                      return;
+                    }
+                    if (pendingView) {
+                      setParams(
+                        (p) => {
+                          p.delete('filter');
+                          return p;
+                        },
+                        { replace: true },
+                      );
+                    }
+                    setShowAllSecurity(value === 'all');
+                  }}
                   options={[
                     { value: 'held', label: t('Held') },
                     { value: 'all', label: t('All') },
+                    ...(showWaiting
+                      ? [
+                          {
+                            value: 'pending' as const,
+                            label: t('Waiting for confirmation'),
+                            count: waitingHere.length,
+                          },
+                        ]
+                      : []),
                   ]}
                 />
                 <div className="relative sm:w-72">
@@ -557,7 +709,9 @@ export default function ChequeRegisterPage() {
                   />
                 </div>
               </div>
-              {securityRows.length === 0 ? (
+              {pendingView ? (
+                waitingList
+              ) : securityRows.length === 0 ? (
                 <p className="px-6 py-12 text-center text-sm text-slate-500">
                   {t('No cheques match.')}
                 </p>
@@ -578,6 +732,9 @@ export default function ChequeRegisterPage() {
                             </span>
                             <Badge tone={meta.tone}>{t(meta.label)}</Badge>
                             {s.direction === 'out' ? <Badge>{t('Given')}</Badge> : null}
+                            {waitingOn.has(s.id) ? (
+                              <Badge tone="amber">{t('Waiting for confirmation')}</Badge>
+                            ) : null}
                           </div>
                           <p className="truncate text-sm text-slate-700">
                             <bdi>{s.drawer || (client ? localName(client) : '—')}</bdi>

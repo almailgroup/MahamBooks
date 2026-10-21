@@ -83,6 +83,7 @@ import { PartDialog } from '@/apps/books/features/orders/part-dialog';
 import { DeliverDialog } from '@/apps/books/features/orders/deliver-dialog';
 import { OrderProgressCard, RelatedDocuments } from '@/apps/books/features/orders/related';
 import { DocumentApprovals } from '@/features/approvals/document-approvals';
+import { WaitingChequesNote } from '@/features/approvals/cheque-approvals';
 import { useApprovalView, useMyName, usePendingRequest } from '@/features/approvals/hooks';
 import { ReasonDialog } from '@/features/approvals/reason-dialog';
 
@@ -769,6 +770,8 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
           (type === 'sales_order' || progress.some((p) => p.delivered || p.inDelivery)) ? (
             <OrderProgressCard doc={doc} progress={progress} />
           ) : null}
+
+          {type === 'invoice' ? <WaitingChequesNote doc={doc} /> : null}
 
           {booked ? (
             <Card>

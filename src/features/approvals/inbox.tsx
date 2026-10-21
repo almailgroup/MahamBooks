@@ -9,6 +9,8 @@ import { msg, t } from '@/i18n';
 import { Card, EmptyState, Segmented, Spinner } from '@/components/ui/misc';
 import { useApprovalView, useMemberNames } from './hooks';
 import { ApprovalRequestCard } from './request-card';
+import { ChequeRequestCard } from './cheque-request-card';
+import { isChequeRequest } from '@/db/cheque-rules';
 
 type Tab = 'waiting' | 'decided' | 'mine';
 
@@ -105,15 +107,26 @@ export function ApprovalsInbox() {
         <ul className="divide-y divide-slate-100">
           {shown.map((request) => (
             <li key={request.id} className="px-5 py-4">
-              <ApprovalRequestCard
-                request={request}
-                doc={docs.get(request.subjectId)}
-                clients={clients}
-                names={names}
-                approver={view.approver}
-                userId={userId}
-                showSubject
-              />
+              {isChequeRequest(request) ? (
+                <ChequeRequestCard
+                  request={request}
+                  clients={clients}
+                  names={names}
+                  approver={view.approver}
+                  userId={userId}
+                  showSubject
+                />
+              ) : (
+                <ApprovalRequestCard
+                  request={request}
+                  doc={docs.get(request.subjectId)}
+                  clients={clients}
+                  names={names}
+                  approver={view.approver}
+                  userId={userId}
+                  showSubject
+                />
+              )}
             </li>
           ))}
         </ul>

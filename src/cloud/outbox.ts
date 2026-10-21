@@ -11,6 +11,7 @@ import {
   approvalRulesChanged,
   approvalRulesOf,
   canWriteRecord,
+  chequeChangeNeedsApprover,
   documentChangeNeedsApproval,
   guardApprovalWrite,
   isApprover,
@@ -33,8 +34,8 @@ import type { CloudLink, OutboxEntry } from './types';
  * role does not allow (viewers change nothing; staff stay out of accounting
  * setup and payroll), the owner's limits on them (an app made view only) or
  * the company's approval rules (an issued invoice only an approver may
- * change), with a message they can act on. The server enforces the same
- * rules on its own.
+ * change, a cheque only an approver may record), with a message they can
+ * act on. The server enforces the same rules on its own.
  */
 
 export class CloudPermissionError extends Error {
@@ -120,7 +121,7 @@ async function linksFor(
 }
 
 /** Tables whose changes the company's approval rules decide on (see refuseByRules). */
-const RULED = new Set(['documents', 'approvals']);
+const RULED = new Set(['documents', 'approvals', 'payments', 'securityCheques']);
 
 /** The company records of these companies, as stored in this transaction. */
 async function companiesFor(
@@ -156,13 +157,19 @@ function refuseByRules(
       : null;
   }
   if (!rules) return null;
+  const approver = isApprover(link.role, link.approver);
+  if (table === 'payments' || table === 'securityCheques') {
+    // A cheque the rules keep for approvers: recorded, changed or deleted by them only.
+    return !approver && chequeChangeNeedsApprover(rules, table, change.before, change.after)
+      ? t('This cheque needs confirmation. Send it for confirmation instead.')
+      : null;
+  }
   if (!change.after) {
     if (!change.before || !rulesKeepRecord(rules, table, change.before)) return null;
     return table === 'approvals'
       ? t('Approval requests are kept as the record of who asked and who decided.')
       : t('Issued documents are voided, never deleted, so their numbers stay used.');
   }
-  const approver = isApprover(link.role, link.approver);
   if (table === 'documents') {
     return !approver && documentChangeNeedsApproval(rules, change.before, change.after)
       ? t('This change needs approval. Send it for approval instead.')

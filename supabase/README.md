@@ -11,7 +11,8 @@ second runs, the app notices its functions are missing and works as before.
 next: the records of the app's database version 16 and their privacy (see
 "Records of database version 16" below).
 `migrations/20261116000000_super_admin_approvals.sql` comes last: the Super
-Admin's controls and approvals (see "The Super Admin" and "Approvals" below). Each file is run once, in this
+Admin's controls, approvals and cheque confirmation (see "The Super Admin",
+"Approvals" and "Cheque confirmation" below). Each file is run once, in this
 order; a release that needs more from the server adds a file, and only that
 one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
@@ -370,6 +371,43 @@ does nothing while it is null.
   an older app's batch, upserts, deletes, that `invoice_content` matches the
   app's `invoiceContent` (src/cloud/roles.ts) field by field, and that the
   test clouds refuse the same changes.
+
+## Cheque confirmation
+
+The same file (#9 of docs/requirements-plan.md). The rules' `cheques`
+(`{"issued": true, "securityOut": true, "received": false}`, set by the owner
+in Settings → Approvals → Cheques; absent or all false: nothing changes). An
+unconfirmed cheque is an approval request, never a payment (D13): the
+approver's device records the payment when they confirm it.
+
+- `almailbooks.rules_cover_cheque(rules, payment)`: `method = 'cheque'` in a
+  covered direction (`out`: issued; anything else: received).
+  `almailbooks.rules_cover_security_cheque(rules, cheque)`: a security cheque
+  with `direction = 'out'` while `securityOut` is on.
+- `almailbooks.cheque_content(payment)`: what is confirmed (method, direction,
+  client, payment date, amount, currency, rate with 1 for none, cheque number,
+  bank, cheque date, drawer or payee, drawer civil ID).
+  `almailbooks.security_cheque_content(cheque)`: direction, number, bank,
+  date, amount, currency, drawer, drawer civil ID. Their life (status,
+  deposited, cleared, returned, journals, replacements, voiding), prints,
+  notes, allocations, the account and the posting rules stay open. Kept the
+  same as `chequeContent` / `securityChequeContent` in `src/cloud/roles.ts`.
+- `almailbooks.cheque_change_needs_approver(rules, tbl, old, new)`: a new
+  covered cheque, a change of its content (before or after covered), or a
+  deletion (`new` null). A number change is open when the old number is among
+  the new row's `cheque.spoiledLeaves` (printed onto the next leaf).
+- `records_guard` also looks at `payments` and `securityCheques` (returning at
+  once for payments that are not cheques and security cheques received):
+  anyone but an approver who may write the record is refused
+  `almail:approval_required`, SQLSTATE 42501.
+- `can_delete_record`: only an approver deletes a covered cheque.
+- `server_features()` also answers `cheque_approvals`: the app shows the
+  cheque switches only then.
+- `src/cloud/cheque-approvals-sql.test.ts` checks rules off = as before, every
+  role, an older app's batch, upserts, deletes, the spoiled-leaf case, that
+  the content functions match the app's, and that the test cloud
+  (`src/cloud/testing/fake-cloud.ts`) answers the same; the e2e fake
+  (`e2e/cloud-fake.ts`) mirrors it too.
 
 ## Email alerts
 

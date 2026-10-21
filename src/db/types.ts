@@ -674,6 +674,26 @@ export interface ApprovalRules {
   voidInsteadOfDelete?: boolean;
   /** Requests still waiting after this many days are cancelled. Missing: they wait. */
   expireDays?: number;
+  /**
+   * Cheques an approver confirms (#9): recorded by anyone else, a cheque of
+   * these kinds is a request, not a payment, until an approver confirms it.
+   * Missing: none, as before.
+   */
+  cheques?: ChequeApprovalRules;
+}
+
+/**
+ * The kinds of cheque an approver confirms. The cloud enforces them too
+ * (records_guard in 20261116000000_super_admin_approvals.sql). Missing or
+ * false: that kind is recorded by anyone, as before.
+ */
+export interface ChequeApprovalRules {
+  /** Cheques the company writes (payments made by cheque). */
+  issued?: boolean;
+  /** Security cheques the company hands over (given to someone). */
+  securityOut?: boolean;
+  /** Cheques the company receives. Waiting ones leave their invoices unpaid. */
+  received?: boolean;
 }
 
 /** One of the company's purposes of documents (الغرض), chosen on a document in the register. */
@@ -1271,6 +1291,8 @@ export interface Payment {
    * saving one again moves it to the current rules.
    */
   postingRules?: number;
+  /** The approval request it was confirmed by (a cheque the company's rules keep for approvers). */
+  approvalId?: ID | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -2651,6 +2673,8 @@ export interface ApprovalRequest {
   decisionNote: string;
   /** Cancelled because it waited longer than the company's rules allow. */
   expired?: boolean;
+  /** What carrying it out made, e.g. the payment of a confirmed cheque. */
+  resultId?: ID;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

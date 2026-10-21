@@ -23,6 +23,25 @@ import { CurrencySelect } from '@/components/fields';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { BankSelect } from '@/apps/books/features/payments/fields';
 import { DateField } from '@/components/ui/date-field';
+import { ChequeConfirmationRequiredError } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import { useMyName } from '@/features/approvals/hooks';
+
+/**
+ * Sends a security cheque change the company's rules keep for approvers for
+ * confirmation instead (#9); false when the error is another one.
+ */
+async function sentForConfirmation(error: unknown, byName: string): Promise<boolean> {
+  if (!(error instanceof ChequeConfirmationRequiredError)) return false;
+  try {
+    await requestChequeConfirmation(error.ask, { byName });
+    toast.success(t('Sent for confirmation. It is recorded once an approver confirms it.'));
+    return true;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : t('Something went wrong.'));
+    return false;
+  }
+}
 
 function useContacts(direction: 'in' | 'out') {
   const company = useCompany();
@@ -56,6 +75,7 @@ export function SecurityChequeDialog({
     () => cheque ?? createSecurityCheque(company.id, { currency: company.currency }),
   );
   const [saving, setSaving] = useState(false);
+  const myName = useMyName();
   const contacts = useContacts(draft.direction);
   const set = (patch: Partial<SecurityCheque>) => setDraft((d) => ({ ...d, ...patch }));
   const civilId = (draft.drawerCivilId ?? '').replace(/\s/g, '');
@@ -73,7 +93,10 @@ export function SecurityChequeDialog({
       );
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      if (await sentForConfirmation(error, myName)) onClose();
+      else if (!(error instanceof ChequeConfirmationRequiredError)) {
+        toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      }
     } finally {
       setSaving(false);
     }
@@ -299,6 +322,7 @@ export function CashSecurityDialog({
   const [clientId, setClientId] = useState<string | null>(cheque.clientId);
   const [apply, setApply] = useState(true);
   const [busy, setBusy] = useState(false);
+  const myName = useMyName();
   const save = async () => {
     setBusy(true);
     try {
@@ -312,7 +336,10 @@ export function CashSecurityDialog({
       onClose();
       onCashed?.(payment);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      if (await sentForConfirmation(error, myName)) onClose();
+      else if (!(error instanceof ChequeConfirmationRequiredError)) {
+        toast.error(error instanceof Error ? error.message : t('Something went wrong.'));
+      }
     } finally {
       setBusy(false);
     }

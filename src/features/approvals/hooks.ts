@@ -7,6 +7,7 @@ import {
   voidsInsteadOfDeleting,
   waitsForApproval,
 } from '@/db/approvals';
+import { chequeWaits, isChequeRequest } from '@/db/cheque-rules';
 import type { ApprovalRequest, ApprovalRules, Company, InvoiceDocument } from '@/db/types';
 import { useCloudLink } from '@/cloud/hooks';
 import { useCloud } from '@/cloud/store';
@@ -37,6 +38,41 @@ export function useApprovalView(company: Pick<Company, 'id' | 'approvalRules'>):
     waits: (doc) => link !== undefined && waitsForApproval(company, link, doc),
     voidsInstead: (doc) => voidsInsteadOfDeleting(company, link, doc),
   };
+}
+
+/** The company's cheque rules (#9) and the person's place in them. */
+export interface ChequeView {
+  /** The rules cover some cheques (Settings → Approvals → Cheques). */
+  on: boolean;
+  /** The person confirms cheques (the owner, or someone the owner allowed). */
+  approver: boolean;
+  /** Storing `after` over `before` waits for an approver's confirmation, for this person. */
+  waits: (
+    table: 'payments' | 'securityCheques',
+    before: object | null | undefined,
+    after: object | null | undefined,
+  ) => boolean;
+}
+
+export function useChequeView(company: Pick<Company, 'id' | 'approvalRules'>): ChequeView {
+  const link = useCloudLink(company.id);
+  const cheques = rulesInEffect(company, link)?.cheques;
+  return {
+    on: Boolean(cheques && (cheques.issued || cheques.received || cheques.securityOut)),
+    approver: link !== undefined && approverOf(link),
+    waits: (table, before, after) => chequeWaits(company, link, table, before, after),
+  };
+}
+
+/** The company's cheque requests waiting for confirmation, kept up to date. */
+export function usePendingChequeRequests(companyId: string): ApprovalRequest[] | undefined {
+  return useLiveQuery(
+    async () =>
+      (
+        await db.approvals.where('[companyId+status]').equals([companyId, 'pending']).toArray()
+      ).filter(isChequeRequest),
+    [companyId],
+  );
 }
 
 /** The request waiting on a record, kept up to date. */

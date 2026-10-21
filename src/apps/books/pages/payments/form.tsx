@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { AlertTriangle, Info, Wand2 } from 'lucide-react';
+import { AlertTriangle, Hourglass, Info, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import { createPayment, isChequeSettled, newCheque, savePayment } from '@/db/payments';
@@ -44,6 +44,10 @@ import {
 import { DateField } from '@/components/ui/date-field';
 import { useReadOnly } from '@/components/ui/read-only';
 import { AttachmentList, useDraftAttachments } from '@/features/purchases/attachments';
+import { ChequeConfirmationRequiredError, type ChequeAsk } from '@/db/cheque-rules';
+import { requestChequeConfirmation } from '@/db/cheque-approvals';
+import { useChequeView, useMyName } from '@/features/approvals/hooks';
+import { ReasonDialog } from '@/features/approvals/reason-dialog';
 
 const METHODS = new Set<string>([
   'bank_transfer',
@@ -72,6 +76,10 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
   const [cashConfirmed, setCashConfirmed] = useState(false);
   const { readOnly } = useReadOnly();
   const attachments = useDraftAttachments(payment?.id ?? '');
+  // A cheque the company's rules keep for an approver's confirmation (#9).
+  const chequeView = useChequeView(company);
+  const myName = useMyName();
+  const [asking, setAsking] = useState<ChequeAsk | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -276,6 +284,26 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
     set({ allocations: next });
   };
 
+  const toSave: Payment = {
+    ...payment,
+    creditId: isCredit ? payment.creditId : null,
+    cheque: isCheque ? payment.cheque : null,
+  };
+  const waits = chequeView.waits('payments', before ?? undefined, toSave);
+
+  /** Sends the cheque for confirmation; its scans go with the request. */
+  const sendForConfirmation = async (ask: ChequeAsk, reason = '') => {
+    await requestChequeConfirmation(ask, { reason, byName: myName });
+    await attachments.commit(company.id).catch(() => undefined);
+    toast.success(t('Sent for confirmation. The cheque is recorded once an approver confirms it.'));
+    allowNavigation();
+    navigate(
+      id
+        ? `${copy.base}/${id}`
+        : `/cheques?tab=${direction === 'out' ? 'issued' : 'received'}&filter=pending`,
+    );
+  };
+
   const save = async () => {
     if (!payment.clientId) return toast.error(t(copy.chooseParty));
     if (!(payment.amount > 0)) return toast.error(t(copy.enterAmount));
@@ -304,11 +332,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
     }
     setSaving(true);
     try {
-      const saved = await savePayment({
-        ...payment,
-        creditId: isCredit ? payment.creditId : null,
-        cheque: isCheque ? payment.cheque : null,
-      });
+      const saved = await savePayment(toSave);
       // The payment is saved even when its files can't be: say so.
       const filesSaved = await attachments.commit(company.id).then(
         () => true,
@@ -324,6 +348,21 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
       allowNavigation();
       navigate(`${copy.base}/${saved.id}`);
     } catch (error) {
+      if (error instanceof ChequeConfirmationRequiredError) {
+        // A new cheque is sent at once; a change says why, for the approver.
+        if (!id) {
+          try {
+            await sendForConfirmation(error.ask);
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : t('Could not save the payment.'));
+            setSaving(false);
+          }
+          return;
+        }
+        setAsking(error.ask);
+        setSaving(false);
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('Could not save the payment.'));
       setSaving(false);
     }
@@ -356,7 +395,7 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
               {t('Cancel')}
             </Button>
             <Button onClick={save} loading={saving}>
-              {t('Save payment')}
+              {waits ? t('Send for confirmation') : t('Save payment')}
             </Button>
           </StickyActions>
         }
@@ -620,6 +659,19 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
                 )}
               </p>
             ) : null}
+            {waits ? (
+              <p className="mt-4 flex gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <Hourglass className="mt-0.5 size-4 shrink-0" aria-hidden />
+                {id
+                  ? t(
+                      'This change waits for an approver’s confirmation. The cheque stays as it is until it is confirmed.',
+                    )
+                  : t(
+                      'This cheque waits for an approver’s confirmation. It is recorded, numbered and paid against the documents once confirmed, dated {date}.',
+                      { date: fmt.date(payment.date) },
+                    )}
+              </p>
+            ) : null}
           </CardBody>
         </Card>
       ) : null}
@@ -717,6 +769,27 @@ export default function PaymentFormPage({ direction = 'in' }: { direction?: Paym
           </span>
         </div>
       </Card>
+      {asking ? (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => !open && setAsking(null)}
+          title={t('Send for confirmation')}
+          description={t(
+            'The cheque stays as it is, and your change waits for an approver. It is made when they confirm it.',
+          )}
+          label={t('Note for the approver')}
+          required={false}
+          confirmLabel={t('Send for confirmation')}
+          onConfirm={async (reason) => {
+            try {
+              await sendForConfirmation(asking, reason);
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : t('Could not save the payment.'));
+              throw err;
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

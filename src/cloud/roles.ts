@@ -524,6 +524,127 @@ export function rulesKeepRecord(rules: AnyRecord, table: string, record: AnyReco
   );
 }
 
+/* Cheque confirmation (the cheques part of the rules) ---------------------- */
+
+const chequeRules = (rules: AnyRecord): Row => {
+  const cheques = asRow(rules)?.cheques;
+  return cheques && typeof cheques === 'object' && !Array.isArray(cheques)
+    ? (cheques as Row)
+    : null;
+};
+
+/**
+ * Whether the rules ask an approver to confirm this payment, as
+ * almailbooks.rules_cover_cheque: a cheque the company writes (issued) or
+ * receives (received).
+ */
+export function rulesCoverCheque(rules: AnyRecord, payment: AnyRecord): boolean {
+  const row = asRow(payment);
+  const cheques = chequeRules(rules);
+  if (!row || !cheques || row.method !== 'cheque') return false;
+  return cheques[row.direction === 'out' ? 'issued' : 'received'] === true;
+}
+
+/** Whether the rules ask an approver to confirm this security cheque: one the company hands over. */
+export function rulesCoverSecurityCheque(rules: AnyRecord, cheque: AnyRecord): boolean {
+  const row = asRow(cheque);
+  return Boolean(row && row.direction === 'out' && chequeRules(rules)?.securityOut === true);
+}
+
+/**
+ * What an approver confirms on a cheque payment, as
+ * almailbooks.cheque_content: the money, who it is for and the cheque
+ * itself. Its life (deposited, cleared, returned), its prints, the notes and
+ * the documents it pays are not part of it.
+ */
+export function chequeContent(payment: AnyRecord): Record<string, unknown> {
+  const row = asRow(payment) ?? {};
+  const cheque = row.cheque && typeof row.cheque === 'object' ? (row.cheque as Row) : null;
+  return stripNulls({
+    method: row.method,
+    direction: row.direction ?? 'in',
+    clientId: row.clientId,
+    date: row.date,
+    amount: row.amount,
+    currency: row.currency,
+    exchangeRate: row.exchangeRate ?? 1,
+    number: cheque?.number,
+    bank: cheque?.bank,
+    chequeDate: cheque?.date,
+    drawer: cheque?.drawer,
+    drawerCivilId: cheque?.drawerCivilId === '' ? undefined : cheque?.drawerCivilId,
+  }) as Record<string, unknown>;
+}
+
+/** The same for a security cheque, as almailbooks.security_cheque_content. */
+export function securityChequeContent(cheque: AnyRecord): Record<string, unknown> {
+  const row = asRow(cheque) ?? {};
+  return stripNulls({
+    direction: row.direction ?? 'in',
+    number: row.number,
+    bank: row.bank,
+    date: row.date,
+    amount: row.amount,
+    currency: row.currency,
+    drawer: row.drawer,
+    drawerCivilId: row.drawerCivilId === '' ? undefined : row.drawerCivilId,
+  }) as Record<string, unknown>;
+}
+
+/** A cheque number as text without the spaces around it; null when there is none. */
+function leafNumber(value: unknown): string | null {
+  return value === undefined || value === null ? null : String(value).trim();
+}
+
+/** The leaves a cheque records as spoiled, by number. */
+function spoiledNumbers(payment: Row): (string | null)[] {
+  const cheque =
+    payment?.cheque && typeof payment.cheque === 'object' ? (payment.cheque as Row) : null;
+  const leaves = cheque?.spoiledLeaves;
+  if (!Array.isArray(leaves)) return [];
+  return leaves.map((leaf) =>
+    leaf && typeof leaf === 'object' ? leafNumber((leaf as Row)?.number) : null,
+  );
+}
+
+/**
+ * Whether storing `after` over `before` (undefined: new, or deleted) waits
+ * for an approver, as almailbooks.cheque_change_needs_approver: a new cheque
+ * the rules cover, a change of what is confirmed on one they cover, or
+ * deleting one. A printed cheque moved to its next leaf, with the spoiled
+ * leaf on record, keeps its confirmation.
+ */
+export function chequeChangeNeedsApprover(
+  rules: AnyRecord,
+  table: string,
+  before: AnyRecord,
+  after: AnyRecord,
+): boolean {
+  const old = asRow(before) ?? null;
+  const next = asRow(after) ?? null;
+  if (!rules) return false;
+  if (table === 'payments') {
+    if (!rulesCoverCheque(rules, old) && !rulesCoverCheque(rules, next)) return false;
+    if (!old || !next) return true;
+    const a = chequeContent(old);
+    const b = chequeContent(next);
+    const moved = leafNumber(a.number);
+    if (!sameData(a.number, b.number) && moved !== null && spoiledNumbers(next).includes(moved)) {
+      delete a.number;
+      delete b.number;
+    }
+    return !sameData(a, b);
+  }
+  if (table === 'securityCheques') {
+    if (!rulesCoverSecurityCheque(rules, old) && !rulesCoverSecurityCheque(rules, next)) {
+      return false;
+    }
+    if (!old || !next) return true;
+    return !sameData(securityChequeContent(old), securityChequeContent(next));
+  }
+  return false;
+}
+
 /** Whether the approval rules differ between two copies of the company record (the owner's alone). */
 export function approvalRulesChanged(before: AnyRecord, after: AnyRecord): boolean {
   return !sameData(asRow(before)?.approvalRules ?? null, asRow(after)?.approvalRules ?? null);

@@ -150,6 +150,92 @@ const content = (doc: Record<string, unknown>) =>
 
 const stage = (status: unknown) => (status === 'draft' || status === 'void' ? status : 'issued');
 
+type Data = Record<string, unknown>;
+
+/**
+ * What an approver confirms on a cheque, as almailbooks.cheque_content (and
+ * chequeContent in src/cloud/roles.ts), as canonical JSON.
+ */
+function chequeContent(p: Data): Data {
+  const cheque = (p.cheque && typeof p.cheque === 'object' ? p.cheque : {}) as Data;
+  return {
+    method: p.method,
+    direction: p.direction ?? 'in',
+    clientId: p.clientId,
+    date: p.date,
+    amount: p.amount,
+    currency: p.currency,
+    exchangeRate: p.exchangeRate ?? 1,
+    number: cheque.number,
+    bank: cheque.bank,
+    chequeDate: cheque.date,
+    drawer: cheque.drawer,
+    drawerCivilId: cheque.drawerCivilId === '' ? null : cheque.drawerCivilId,
+  };
+}
+
+const securityContent = (p: Data): Data => ({
+  direction: p.direction ?? 'in',
+  number: p.number,
+  bank: p.bank,
+  date: p.date,
+  amount: p.amount,
+  currency: p.currency,
+  drawer: p.drawer,
+  drawerCivilId: p.drawerCivilId === '' ? null : p.drawerCivilId,
+});
+
+/**
+ * Whether a change of a payment or security cheque waits for an approver,
+ * as almailbooks.cheque_change_needs_approver.
+ */
+function chequeNeedsApprover(
+  cheques: { issued?: boolean; received?: boolean; securityOut?: boolean } | undefined,
+  tbl: string,
+  old: Data | null,
+  data: Data | null,
+): boolean {
+  if (!cheques || typeof cheques !== 'object') return false;
+  if (tbl === 'payments') {
+    const covers = (p: Data | null) =>
+      Boolean(
+        p &&
+        p.method === 'cheque' &&
+        cheques[p.direction === 'out' ? 'issued' : 'received'] === true,
+      );
+    if (!covers(old) && !covers(data)) return false;
+    if (!old || !data) return true;
+    const a = chequeContent(old);
+    const b = chequeContent(data);
+    const leaves = ((data.cheque as Data | null)?.spoiledLeaves ?? []) as Data[];
+    const moved = a.number == null ? null : String(a.number).trim();
+    if (
+      a.number !== b.number &&
+      moved !== null &&
+      leaves.some((leaf) => leaf?.number != null && String(leaf.number).trim() === moved)
+    ) {
+      delete a.number;
+      delete b.number;
+    }
+    return canonical(a) !== canonical(b);
+  }
+  if (tbl === 'securityCheques') {
+    const covers = (p: Data | null) =>
+      Boolean(p && p.direction === 'out' && cheques.securityOut === true);
+    if (!covers(old) && !covers(data)) return false;
+    if (!old || !data) return true;
+    return canonical(securityContent(old)) !== canonical(securityContent(data));
+  }
+  return false;
+}
+
+const chequeConfirmationRequired = () =>
+  new Refusal(403, {
+    code: '42501',
+    message:
+      'almail:approval_required This cheque needs confirmation. Send it for confirmation instead.',
+  });
+
 /** Refusals of almailbooks.records_guard, as PostgREST answers them. */
 const approvalRequired = () =>
   new Refusal(403, {
@@ -410,11 +496,24 @@ export class FakeSupabase {
     const rules = (companyRow?.data?.approvalRules ?? null) as {
       documentTypes?: string[];
       voidInsteadOfDelete?: boolean;
+      cheques?: { issued?: boolean; received?: boolean; securityOut?: boolean };
     } | null;
     if (change.tbl === 'companies') {
       const before = canonical(old?.approvalRules ?? null);
       if (data && role !== 'owner' && before !== canonical(data.approvalRules ?? null)) {
         return refuse('almail:permission Only the owner changes the approval rules.');
+      }
+      return data;
+    }
+    const approver =
+      role === 'owner' ||
+      ((role === 'admin' || role === 'accountant') &&
+        Boolean(this.access.get(`${company} ${user}`)?.canApprove));
+    if (rules && (change.tbl === 'payments' || change.tbl === 'securityCheques')) {
+      if (!approver && chequeNeedsApprover(rules.cheques, change.tbl, old, data)) {
+        return data
+          ? chequeConfirmationRequired()
+          : refuse('almail:permission You cannot delete this record.');
       }
       return data;
     }
@@ -430,10 +529,6 @@ export class FakeSupabase {
       }
       return null;
     }
-    const approver =
-      role === 'owner' ||
-      ((role === 'admin' || role === 'accountant') &&
-        Boolean(this.access.get(`${company} ${user}`)?.canApprove));
     if (change.tbl === 'documents') {
       if (!old || approver || old.status === 'draft' || !(covers(old) || covers(data))) return data;
       return content(old) !== content(data) || stage(old.status) !== stage(data.status)
@@ -572,7 +667,7 @@ export class FakeSupabase {
       case 'company_record_ids':
         return [];
       case 'server_features':
-        return ['tables_v16', 'super_admin', 'approvals'];
+        return ['tables_v16', 'super_admin', 'approvals', 'cheque_approvals'];
       case 'my_permissions': {
         const access = this.access.get(`${company} ${me.id}`);
         return [
