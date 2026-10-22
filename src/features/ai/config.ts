@@ -20,3 +20,18 @@ export const MAX_TURNS = 20;
 
 /** The longest question the box takes, in characters. */
 export const MAX_QUESTION_LENGTH = 4000;
+
+/**
+ * The longest answer the chat asks for, in tokens (the model's thinking
+ * counts in it too). The Worker caps it again (MAX_OUTPUT_TOKENS).
+ */
+export const CHAT_MAX_OUTPUT_TOKENS = 2048;
+
+/**
+ * How much the model thinks before it answers a chat question
+ * (generationConfig.thinkingConfig.thinkingLevel). gemini-3.6-flash thinks
+ * at "medium" unless told, billed as output; "low" is the cheapest level
+ * that works in a conversation sent back as text (Google's "minimal" needs
+ * the model's thought signatures sent back, which the chat doesn't keep).
+ */
+export const CHAT_THINKING_LEVEL = 'low';

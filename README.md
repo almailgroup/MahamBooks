@@ -180,7 +180,8 @@ and the compliance calendar (Maham Compliance).
 - **AI assistant** (first version, off until the owner or an admin turns it
   on in Settings → AI assistant, for companies kept in the cloud): an Ask AI
   button on every page that explains how to do things in Maham One, in Arabic
-  or English. It is sent only what you type and the page you are on, never
+  or English. It is sent only what you type, with ID numbers, IBANs, phone
+  numbers and email addresses hidden first, and the page you are on, never
   your records ([`docs/ai-assistant.md`](docs/ai-assistant.md)).
 - Import contacts, items, opening balances and open invoices from CSV or
   Excel (Settings → Import data, or Import on Products & services). Items can

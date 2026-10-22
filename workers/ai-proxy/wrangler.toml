@@ -47,6 +47,9 @@ SUPABASE_PUBLISHABLE_KEY = "sb_publishable_KyVAkWtemw_XDnNK8ZKRpA_-5x4pk8d"
 COMPANY_ID = ""
 # The longest answer, in tokens (Gemini counts its thinking in this too).
 MAX_OUTPUT_TOKENS = "8192"
+# The longest answer when a request doesn't say (no maxOutputTokens), never
+# above MAX_OUTPUT_TOKENS. A request that sets no thinking gets low thinking.
+DEFAULT_ANSWER_TOKENS = "2048"
 # The largest request the Worker accepts, in bytes (256 KB).
 MAX_BODY_BYTES = "262144"
 # Optional timeouts, in milliseconds (these are the defaults):
@@ -89,6 +92,7 @@ SUPABASE_PUBLISHABLE_KEY = "sb_publishable_KyVAkWtemw_XDnNK8ZKRpA_-5x4pk8d"
 # A test company's id, so the dev Worker never serves the real company's people.
 COMPANY_ID = ""
 MAX_OUTPUT_TOKENS = "8192"
+DEFAULT_ANSWER_TOKENS = "2048"
 MAX_BODY_BYTES = "262144"
 
 [[env.dev.ratelimits]]

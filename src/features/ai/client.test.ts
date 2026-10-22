@@ -106,7 +106,26 @@ describe('asking with the answer streamed', () => {
     expect(seen[0].body).toEqual({
       contents: [{ role: 'user', parts: [{ text: 'How do I record annual leave?' }] }],
       systemInstruction: { parts: [{ text: SYSTEM }] },
+      // A chat answer's length and low thinking, every time.
+      generationConfig: { maxOutputTokens: 2048, thinkingConfig: { thinkingLevel: 'low' } },
     });
+  });
+
+  it('sends only the headers the Worker allows (its preflight lists them)', async () => {
+    const { fetch, seen } = fakeFetch(sse([chunk('Yes.')]));
+    await client(fetch).streamChat({ messages: QUESTION, system: SYSTEM, onText: () => {} });
+    const sent = [...new Headers(seen[0].init.headers).keys()].sort();
+    expect(sent).toEqual(['authorization', 'content-type']);
+    // workers/ai-proxy/src/worker.js, ALLOWED_REQUEST_HEADERS.
+    const worker = (await import('node:fs')).readFileSync(
+      new URL('../../../workers/ai-proxy/src/worker.js', import.meta.url),
+      'utf8',
+    );
+    const allowed = /const ALLOWED_REQUEST_HEADERS = \[([\s\S]*?)\]/
+      .exec(worker)![1]
+      .match(/'([^']+)'/g)!
+      .map((header) => header.slice(1, -1).toLowerCase());
+    for (const header of sent) expect(allowed).toContain(header);
   });
 
   it('reads the same answer however the stream is split, in Arabic too', async () => {
@@ -280,6 +299,53 @@ describe('what each failure becomes', () => {
     expect(aiErrorMessage(error)).not.toMatch(/Worker says/);
   });
 
+  it('says what each refusal means, in both languages', async () => {
+    const said = async (response: Response) =>
+      aiErrorMessage(await ask(fakeFetch(response).fetch).catch((e: unknown) => e));
+    const notMember =
+      'Your account is not a member of the company the AI assistant is set up for. Ask the owner.';
+    const notAvailable = 'The AI assistant is not available for this account.';
+    const notSetUp = 'The AI assistant is not set up yet. Ask the owner.';
+    const origin = 'The AI assistant works only in the app at mahamone.com.';
+    // The Worker's own codes.
+    expect(await said(workerError('forbidden', 403))).toBe(notMember);
+    expect(await said(workerError('forbidden_origin', 403))).toBe(origin);
+    // Any other 403: in general words, never the web address's.
+    for (const response of [
+      workerError('not_enabled', 403),
+      workerError('some_later_code', 403),
+      new Response('<html>Forbidden</html>', { status: 403 }),
+      new Response('', { status: 403 }),
+    ]) {
+      const message = await said(response);
+      expect(message).toBe(notAvailable);
+      expect(message).not.toBe(origin);
+    }
+    // The Worker without its settings, and any other internal error.
+    const internal = (message: string) =>
+      new Response(JSON.stringify({ error: { code: 'internal', message, status: 500 } }), {
+        status: 500,
+      });
+    expect(await said(internal('The AI service is not set up yet.'))).toBe(notSetUp);
+    expect(await said(internal('Something broke.'))).toBe(
+      'Something went wrong with the AI assistant. Try again.',
+    );
+    setDictionaryForTests('ar', {
+      [notMember]: 'حسابك ليس عضواً في الشركة التي هُيّئ لها المساعد الذكي. اسأل المالك.',
+      [notAvailable]: 'المساعد الذكي غير متاح لهذا الحساب.',
+      [notSetUp]: 'لم تكتمل تهيئة المساعد الذكي بعد. اسأل المالك.',
+    });
+    expect(await said(workerError('forbidden', 403))).toBe(
+      'حسابك ليس عضواً في الشركة التي هُيّئ لها المساعد الذكي. اسأل المالك.',
+    );
+    expect(await said(new Response('', { status: 403 }))).toBe(
+      'المساعد الذكي غير متاح لهذا الحساب.',
+    );
+    expect(await said(internal('The AI service is not set up yet.'))).toBe(
+      'لم تكتمل تهيئة المساعد الذكي بعد. اسأل المالك.',
+    );
+  });
+
   it('a limit, with the wait in seconds from Retry-After', async () => {
     const { fetch } = fakeFetch(workerError('rate_limited', 429, { 'Retry-After': '42' }));
     const error = await ask(fetch).catch((e: unknown) => e);
@@ -297,8 +363,9 @@ describe('what each failure becomes', () => {
   it('an answer that is not the Worker’s, by its status', async () => {
     const { fetch } = fakeFetch(new Response('<html>Bad gateway</html>', { status: 502 }));
     await expect(ask(fetch)).rejects.toMatchObject({ code: 'upstream_error', status: 502 });
+    // A 403 without a code the app knows: not said to be about the company, nor the address.
     const refused = fakeFetch(new Response('Forbidden', { status: 403 }));
-    await expect(ask(refused.fetch)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    await expect(ask(refused.fetch)).rejects.toMatchObject({ code: 'not_available', status: 403 });
     const limited = fakeFetch(new Response('', { status: 429 }));
     await expect(ask(limited.fetch)).rejects.toMatchObject({
       code: 'rate_limited',

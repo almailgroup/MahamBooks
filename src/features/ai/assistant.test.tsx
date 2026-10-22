@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { db } from '@/db/db';
-import { saveCompany, setupCompany } from '@/db/records';
+import { saveCompany, setCurrentCompanyId, setupCompany } from '@/db/records';
+import { createEmployee, saveEmployee } from '@/db/people';
 import type { Company } from '@/db/types';
 import { CompanyProvider } from '@/app/company';
 import type { CloudLink } from '@/cloud/types';
@@ -26,18 +27,36 @@ import { withAiSwitch } from './availability';
  * and the person is signed in to it in the cloud. Made-up company and person.
  */
 
-const cloud = vi.hoisted(() => ({ user: null as CloudUser | null }));
-vi.mock('@/cloud/store', async (original) => ({
-  ...(await original<typeof import('@/cloud/store')>()),
-  useCloud: () => ({
-    user: cloud.user,
-    api: null,
-    manager: null,
-    configured: true,
-    ready: true,
-    redirectError: null,
-  }),
+const cloud = vi.hoisted(() => ({
+  user: null as CloudUser | null,
+  listeners: new Set<() => void>(),
 }));
+vi.mock('@/cloud/store', async (original) => {
+  const { useSyncExternalStore } = await import('react');
+  return {
+    ...(await original<typeof import('@/cloud/store')>()),
+    useCloud: () => ({
+      user: useSyncExternalStore(
+        (listener) => {
+          cloud.listeners.add(listener);
+          return () => cloud.listeners.delete(listener);
+        },
+        () => cloud.user,
+      ),
+      api: null,
+      manager: null,
+      configured: true,
+      ready: true,
+      redirectError: null,
+    }),
+  };
+});
+
+/** Signs the person in or out while the app is shown. */
+function setUser(user: CloudUser | null) {
+  cloud.user = user;
+  act(() => cloud.listeners.forEach((listener) => listener()));
+}
 
 const USER: CloudUser = {
   id: 'user-1',
@@ -73,9 +92,9 @@ function fakeService(options: StreamOptions): Promise<{ text: string }> {
 
 let company: Company;
 
-async function linkCompany(userId = USER.id) {
+async function linkCompany(userId = USER.id, patch: Partial<CloudLink> = {}, of = company) {
   const link: CloudLink = {
-    companyId: company.id,
+    companyId: of.id,
     userId,
     role: 'owner',
     status: 'ready',
@@ -85,6 +104,7 @@ async function linkCompany(userId = USER.id) {
     lastSyncAt: null,
     lastError: null,
     lastErrorAt: null,
+    ...patch,
   };
   await db.syncState.put(link);
 }
@@ -534,5 +554,112 @@ describe('the panel', () => {
     await askButton();
     expect(assistantState().turns).toEqual([]);
     expect(assistantState().open).toBe(false);
+  });
+});
+
+describe('what is hidden before sending', () => {
+  /** Made up to pass their checks: a Civil ID (born 15 April 1987) and an IBAN. */
+  const CIVIL_ID = '287041512345';
+  const IBAN = 'KW81 CBKU 0000 0000 0000 1234 5601 01';
+
+  it('sends the question with them hidden, and says so under it', async () => {
+    show();
+    fireEvent.click(await askButton());
+    type(`My Civil ID is ${CIVIL_ID} and my IBAN ${IBAN}. How do I add them?`);
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(1));
+    const sent = 'My Civil ID is [ID number hidden] and my IBAN [IBAN hidden]. How do I add them?';
+    expect(asked[0].options.messages).toEqual([{ role: 'user', text: sent }]);
+    expect(within(panel()).getByText(sent)).toBeInTheDocument();
+    expect(within(panel()).getByText('1 ID number was hidden before sending')).toBeVisible();
+    expect(within(panel()).getByText('1 IBAN was hidden before sending')).toBeVisible();
+    // What was typed is kept nowhere: not in the box, not in the conversation.
+    expect(box()).toHaveValue('');
+    expect(JSON.stringify(assistantState())).not.toContain(CIVIL_ID);
+    act(() => asked[0].finish());
+  });
+
+  it('hides an employee’s own numbers, and counts them in Arabic', async () => {
+    await saveEmployee(
+      createEmployee(company.id, { name: 'Imaginary Guard Person', passportNumber: 'X98765' }),
+    );
+    await loadLanguage('ar');
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'اسأل المساعد' }));
+    const sheet = screen.getByRole('dialog', { name: 'المساعد الذكي' });
+    const question = within(sheet).getByRole('textbox', { name: 'سؤالك' });
+    fireEvent.change(question, {
+      target: { value: 'جواز سفره x98765 وبطاقته المدنية ٢٨٧٠٤١٥١٢٣٤٥، كيف أجددهما؟' },
+    });
+    fireEvent.keyDown(question, { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(1));
+    expect(asked[0].options.messages[0].text).toBe(
+      'جواز سفره [رقم هوية مخفي] وبطاقته المدنية [رقم هوية مخفي]، كيف أجددهما؟',
+    );
+    expect(await within(sheet).findByText('أُخفي قبل الإرسال: رقما هوية')).toBeVisible();
+    act(() => asked[0].finish());
+  });
+});
+
+describe('the conversation is forgotten', () => {
+  /** Asks a question and leaves its answer being written. */
+  async function askAndWait() {
+    show();
+    fireEvent.click(await askButton());
+    type('A question');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(1));
+    act(() => asked[0].write('Half an answer'));
+    await within(panel()).findByText('Half an answer');
+  }
+
+  it('with the answer stopped, when the person signs out', async () => {
+    await askAndWait();
+    setUser(null);
+    await waitFor(() => expect(assistantState().turns).toEqual([]));
+    expect(asked[0].options.signal?.aborted).toBe(true);
+    expect(assistantState().open).toBe(false);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByText('Half an answer')).toBeNull();
+  });
+
+  it('when another company is opened', async () => {
+    let other = await setupCompany({ name: 'Another Made-up Co', currency: 'KWD' });
+    other = await saveCompany(withAiSwitch(other, true));
+    await linkCompany(USER.id, {}, other);
+    await setCurrentCompanyId(company.id);
+    await askAndWait();
+    await act(() => setCurrentCompanyId(other.id));
+    await waitFor(() => expect(assistantState().turns).toEqual([]));
+    expect(asked[0].options.signal?.aborted).toBe(true);
+    expect(screen.queryByText('Half an answer')).toBeNull();
+  });
+
+  it('when the person’s role changes, or the owner’s limits on them', async () => {
+    await askAndWait();
+    await act(() => linkCompany(USER.id, { role: 'accountant' }));
+    await waitFor(() => expect(assistantState().turns).toEqual([]));
+    expect(asked[0].options.signal?.aborted).toBe(true);
+
+    // Asked again as an accountant; then the owner limits them to viewing Maham Books.
+    type('Another question');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(2));
+    await act(() =>
+      linkCompany(USER.id, { role: 'accountant', permissions: { apps: { books: 'view' } } }),
+    );
+    await waitFor(() => expect(assistantState().turns).toEqual([]));
+    expect(asked[1].options.signal?.aborted).toBe(true);
+  });
+
+  it('when the assistant is switched off', async () => {
+    await askAndWait();
+    await act(async () => {
+      await saveCompany(withAiSwitch((await db.companies.get(company.id))!, false));
+    });
+    await waitFor(() => expect(assistantState().turns).toEqual([]));
+    expect(asked[0].options.signal?.aborted).toBe(true);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Ask AI' })).toBeNull();
   });
 });

@@ -1104,8 +1104,8 @@ export function switchesLetters(role: MemberRole | null | undefined): boolean {
 
 /**
  * Turns the company's AI assistant on or off (Settings → AI assistant):
- * the owner or an admin, as records_guard_ai of
- * 20261214000000_ai_assistant.sql (anyone in a company kept on this
+ * the owner or an admin, as almailbooks.switches_ai of
+ * 20261208000000_ai_assistant.sql (anyone in a company kept on this
  * device only, where the assistant never shows).
  */
 export function switchesAi(role: MemberRole | null | undefined): boolean {
@@ -1119,9 +1119,9 @@ export function aiSwitchChanged(before: AnyRecord, after: AnyRecord): boolean {
 
 /**
  * What the cloud stores when someone writes the company record, as
- * records_guard_ai: for anyone but the owner or an admin, the AI
- * assistant's switch as it was stored (or left out, as it was). A copy
- * that hasn't heard of the switch never turns it off.
+ * records_guard of 20261208000000_ai_assistant.sql: for anyone but the
+ * owner or an admin, the AI assistant's switch as it was stored (or left
+ * out, as it was). A copy that hasn't heard of the switch never turns it off.
  */
 export function keepAiSwitch(
   role: MemberRole | null | undefined,

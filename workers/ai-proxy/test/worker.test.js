@@ -340,6 +340,25 @@ describe('routing', () => {
 });
 
 describe('CORS', () => {
+  it('allows every header the app sends, so its preflight never fails', async () => {
+    const response = await send('/v1/stream', {
+      method: 'OPTIONS',
+      token: null,
+      headers: {
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    });
+    const allowed = (response.headers.get('Access-Control-Allow-Headers') ?? '')
+      .split(',')
+      .map((header) => header.trim().toLowerCase());
+    // src/features/ai/client.ts: the token and the JSON body.
+    for (const header of ['authorization', 'content-type']) expect(allowed).toContain(header);
+    for (const header of ['x-maham-company', 'x-maham-feature', 'x-maham-shares']) {
+      expect(allowed).toContain(header);
+    }
+  });
+
   it('echoes an allowed origin, with Vary and Retry-After readable', async () => {
     const response = await send('/v1/generate');
     expect(response.status).toBe(200);
@@ -361,8 +380,9 @@ describe('CORS', () => {
       expect(response.status).toBe(204);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe(APP);
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, GET, OPTIONS');
+      // What the app sends, and the headers later versions of it send (ignored here).
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
-        'Authorization, Content-Type',
+        'Authorization, Content-Type, X-Maham-Company, X-Maham-Feature, X-Maham-Shares',
       );
       expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
       expect(response.headers.get('Vary')).toBe('Origin');
@@ -891,6 +911,7 @@ describe('request limits and fields', () => {
       responseMimeType: 'application/json',
       maxOutputTokens: 1024,
       candidateCount: 1,
+      thinkingConfig: { thinkingLevel: 'low' },
     });
     expect(sent.tools).toEqual(body.tools);
     expect(sent.toolConfig).toEqual(body.toolConfig);
@@ -906,6 +927,41 @@ describe('request limits and fields', () => {
     expect(geminiCalls().map((_, i) => geminiBody(i).generationConfig.maxOutputTokens)).toEqual([
       1024, 100, 1024,
     ]);
+  });
+
+  it('gives a request that names no length DEFAULT_ANSWER_TOKENS, 2048 unless set, still capped', async () => {
+    const lengthWith = async (overrides, generationConfig) => {
+      calls.length = 0;
+      await send('/v1/generate', {
+        env: makeEnv(overrides),
+        body: generationConfig ? { ...question, generationConfig } : question,
+      });
+      return geminiBody().generationConfig.maxOutputTokens;
+    };
+    // The default, with the production cap.
+    expect(await lengthWith({ MAX_OUTPUT_TOKENS: '8192' })).toBe(2048);
+    expect(await lengthWith({ MAX_OUTPUT_TOKENS: undefined }, {})).toBe(2048);
+    expect(await lengthWith({ MAX_OUTPUT_TOKENS: '8192', DEFAULT_ANSWER_TOKENS: '' })).toBe(2048);
+    // Set, and never above the cap.
+    expect(await lengthWith({ MAX_OUTPUT_TOKENS: '8192', DEFAULT_ANSWER_TOKENS: '3000' })).toBe(
+      3000,
+    );
+    expect(await lengthWith({ MAX_OUTPUT_TOKENS: '1024', DEFAULT_ANSWER_TOKENS: '3000' })).toBe(
+      1024,
+    );
+    // Not a whole number above 0: the 2048 default.
+    for (const value of ['lots', '0', '-5', '1.5']) {
+      expect(await lengthWith({ MAX_OUTPUT_TOKENS: '8192', DEFAULT_ANSWER_TOKENS: value })).toBe(
+        2048,
+      );
+    }
+    // A length the request names is kept, up to the cap, whatever the default.
+    expect(
+      await lengthWith(
+        { MAX_OUTPUT_TOKENS: '8192', DEFAULT_ANSWER_TOKENS: '3000' },
+        { maxOutputTokens: 6000 },
+      ),
+    ).toBe(6000);
   });
 
   it('uses the 8192 default cap when MAX_OUTPUT_TOKENS is not set', async () => {
@@ -1125,6 +1181,22 @@ describe('what is sent to Google is rebuilt from allowlists', () => {
     expect(geminiBody().generationConfig).toEqual({ ...generationConfig, candidateCount: 1 });
   });
 
+  it('asks for low thinking when the request sets none, and leaves a request’s own alone', async () => {
+    await ask(question);
+    await ask(withConfig({ temperature: 0.3 }));
+    await ask(withConfig({ thinkingConfig: { thinkingBudget: 512 } }));
+    await ask(withConfig({ thinkingConfig: { thinkingLevel: 'high' } }));
+    await ask(withConfig({ thinkingConfig: { includeThoughts: false } }));
+    expect(geminiCalls().map((_, i) => geminiBody(i).generationConfig.thinkingConfig)).toEqual([
+      { thinkingLevel: 'low' },
+      { thinkingLevel: 'low' },
+      // Never a level next to a budget: Google refuses the two together.
+      { thinkingBudget: 512 },
+      { thinkingLevel: 'high' },
+      { includeThoughts: false },
+    ]);
+  });
+
   it('caps thinkingBudget at MAX_OUTPUT_TOKENS and refuses unknown thinking fields', async () => {
     await ask(withConfig({ thinkingConfig: { thinkingBudget: 50_000 } }));
     await ask(withConfig({ thinkingConfig: { thinkingBudget: -1 } }));
@@ -1202,7 +1274,11 @@ describe('what is sent to Google is rebuilt from allowlists', () => {
     };
     expect((await ask(body)).status).toBe(200);
     expect(Object.keys(geminiBody()).sort()).toEqual(['contents', 'generationConfig']);
-    expect(geminiBody().generationConfig).toEqual({ maxOutputTokens: 1024, candidateCount: 1 });
+    expect(geminiBody().generationConfig).toEqual({
+      maxOutputTokens: 1024,
+      candidateCount: 1,
+      thinkingConfig: { thinkingLevel: 'low' },
+    });
   });
 
   it('checks safetySettings, function declarations and toolConfig field by field', async () => {

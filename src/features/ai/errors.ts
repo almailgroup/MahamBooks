@@ -3,14 +3,16 @@ import { t } from '@/i18n';
 /**
  * What can go wrong asking the AI assistant, each with a message for the
  * person in their language (`aiErrorMessage`). The Worker's own codes
- * (workers/ai-proxy: unauthorized … internal), and the app's: nobody signed
- * in, no internet, the service out of reach, an answer cut off, empty or
- * withheld, and a question stopped by the person.
+ * (workers/ai-proxy: unauthorized … internal), and the app's: refused for
+ * this account without a code the app knows, nobody signed in, no
+ * internet, the service out of reach, an answer cut off, empty or withheld,
+ * and a question stopped by the person.
  */
 export type AiErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'forbidden_origin'
+  | 'not_available'
   | 'bad_request'
   | 'payload_too_large'
   | 'model_not_allowed'
@@ -28,7 +30,7 @@ export type AiErrorCode =
 
 const WORKER_CODES = new Set<string>([
   'unauthorized',
-  // Signed in, but not one of the people the service is for.
+  // Signed in, but not a member of the company the service is set up for (COMPANY_ID).
   'forbidden',
   'forbidden_origin',
   'bad_request',
@@ -111,9 +113,15 @@ export function errorFromBody(
   });
 }
 
+/**
+ * What a status means when the answer names no code the app knows. A 403
+ * without one (a later Worker's new code, or a page of a proxy in between)
+ * is said in general words: it isn't known to be about the company, nor
+ * about the web address.
+ */
 function byStatus(status: number | undefined): AiErrorCode {
   if (status === 401) return 'unauthorized';
-  if (status === 403) return 'forbidden';
+  if (status === 403) return 'not_available';
   if (status === 404) return 'not_found';
   if (status === 413) return 'payload_too_large';
   if (status === 429) return 'rate_limited';
@@ -132,7 +140,11 @@ export function aiErrorMessage(error: unknown): string {
     case 'unauthorized':
       return t('Your sign-in has expired. Sign in again to use the AI assistant.');
     case 'forbidden':
-      return t('Your account may not use the AI assistant. Ask the owner of the company.');
+      return t(
+        'Your account is not a member of the company the AI assistant is set up for. Ask the owner.',
+      );
+    case 'not_available':
+      return t('The AI assistant is not available for this account.');
     case 'forbidden_origin':
       return t('The AI assistant works only in the app at mahamone.com.');
     case 'bad_request':
@@ -163,6 +175,15 @@ export function aiErrorMessage(error: unknown): string {
       return t('Stopped');
     case 'internal':
     default:
+      // The Worker's settings aren't complete (its key or COMPANY_ID).
+      if (isAiError(error) && error.code === 'internal' && notSetUp(error.detail)) {
+        return t('The AI assistant is not set up yet. Ask the owner.');
+      }
       return t('Something went wrong with the AI assistant. Try again.');
   }
+}
+
+/** The Worker's message when a setting it needs is missing ("The AI service is not set up yet."). */
+function notSetUp(detail: string | undefined): boolean {
+  return detail !== undefined && /\bnot set up yet\b/i.test(detail);
 }

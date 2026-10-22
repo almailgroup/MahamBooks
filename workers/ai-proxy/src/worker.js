@@ -28,7 +28,8 @@
  *     model?: string,             // one of ALLOWED_MODELS; GEMINI_MODEL if left out
  *     contents: Content[],        // required, as in the Gemini API
  *     systemInstruction?: Content,          // text parts only
- *     generationConfig?: object,  // allowlisted fields; maxOutputTokens capped, one candidate
+ *     generationConfig?: object,  // allowlisted fields; maxOutputTokens capped, one candidate,
+ *                                 // DEFAULT_ANSWER_TOKENS and low thinking when left out
  *     safetySettings?: object[],
  *     tools?: [{functionDeclarations: [...]}],  // function calling only
  *     toolConfig?: {functionCallingConfig: {...}}
@@ -71,6 +72,8 @@
  * @property {string} [SUPABASE_PUBLISHABLE_KEY] Its publishable key (public by design).
  * @property {string} [COMPANY_ID] The company whose members may use the service.
  * @property {string | number} [MAX_OUTPUT_TOKENS] Cap on generationConfig.maxOutputTokens.
+ * @property {string | number} [DEFAULT_ANSWER_TOKENS] maxOutputTokens when a request gives none
+ *   (still capped by MAX_OUTPUT_TOKENS).
  * @property {string | number} [MAX_BODY_BYTES] Largest request body accepted.
  * @property {string | number} [GENERATE_TIMEOUT_MS] Longest wait for a whole /v1/generate answer.
  * @property {string | number} [STREAM_START_TIMEOUT_MS] Longest wait for a stream's first byte.
@@ -90,6 +93,22 @@ const GEMINI_MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/mode
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/**
+ * The longest answer when a request doesn't say (generationConfig.maxOutputTokens
+ * left out): enough for a chat answer, a quarter of the most allowed.
+ */
+const DEFAULT_ANSWER_TOKENS = 2048;
+/**
+ * The thinking level when a request sets no generationConfig.thinkingConfig.
+ * gemini-3.6-flash thinks at "medium" unless told otherwise, and its thinking
+ * counts in maxOutputTokens and is billed as output. Google's docs list
+ * minimal, low, medium and high for it, under
+ * generationConfig.thinkingConfig.thinkingLevel. "low" rather than "minimal":
+ * Google says minimal needs the model's thought signatures sent back in a
+ * conversation of several turns (the app's chat sends earlier answers as text
+ * only), and later Flash models (3.8) no longer accept minimal.
+ */
+const DEFAULT_THINKING_LEVEL = 'low';
 /**
  * generateContent sends nothing until the whole answer is written, so this
  * is the time allowed for the whole answer (thinking included). Long answers
@@ -324,6 +343,7 @@ function readConfig(env) {
     supabaseKey: text(env.SUPABASE_PUBLISHABLE_KEY),
     companyId: text(env.COMPANY_ID),
     maxOutputTokens: positiveInt(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
+    answerTokens: positiveInt(env.DEFAULT_ANSWER_TOKENS, DEFAULT_ANSWER_TOKENS),
     maxBodyBytes: positiveInt(env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
     generateTimeoutMs: positiveInt(env.GENERATE_TIMEOUT_MS, DEFAULT_GENERATE_TIMEOUT_MS),
     streamStartMs: positiveInt(env.STREAM_START_TIMEOUT_MS, DEFAULT_STREAM_START_TIMEOUT_MS),
@@ -410,13 +430,27 @@ function corsFor(origin, allowed) {
   return { forbidden: false, headers };
 }
 
+/**
+ * The headers the app may send. Besides the token and the JSON type, the
+ * company, the feature and the kinds of data a request holds, which later
+ * versions of the app send (and of the Worker check): allowed now so that a
+ * newer app never fails its preflight here, and ignored.
+ */
+const ALLOWED_REQUEST_HEADERS = [
+  'Authorization',
+  'Content-Type',
+  'X-Maham-Company',
+  'X-Maham-Feature',
+  'X-Maham-Shares',
+].join(', ');
+
 /** @param {Record<string, string>} cors */
 function preflight(cors) {
   /** @type {Record<string, string>} */
   const headers = { ...cors };
   if (headers['Access-Control-Allow-Origin']) {
     headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS';
-    headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type';
+    headers['Access-Control-Allow-Headers'] = ALLOWED_REQUEST_HEADERS;
     headers['Access-Control-Max-Age'] = '86400';
   }
   return new Response(null, { status: 204, headers: { ...headers, ...SECURITY_HEADERS } });
@@ -787,7 +821,7 @@ function buildGeminiRequest(input, config) {
   if (input.systemInstruction !== undefined) {
     body.systemInstruction = cleanSystemInstruction(input.systemInstruction);
   }
-  body.generationConfig = cleanGenerationConfig(input.generationConfig, config.maxOutputTokens);
+  body.generationConfig = cleanGenerationConfig(input.generationConfig, config);
 
   if (input.safetySettings !== undefined) {
     if (!Array.isArray(input.safetySettings)) {
@@ -933,9 +967,11 @@ function cleanSystemInstruction(instruction) {
 
 /**
  * @param {unknown} input
- * @param {number} maxOutputTokens The cap (MAX_OUTPUT_TOKENS).
+ * @param {Config} config The cap (MAX_OUTPUT_TOKENS) and the default answer
+ *   length (DEFAULT_ANSWER_TOKENS).
  */
-function cleanGenerationConfig(input, maxOutputTokens) {
+function cleanGenerationConfig(input, config) {
+  const { maxOutputTokens } = config;
   if (input !== undefined && !isObject(input)) {
     throw badRequest('generationConfig must be an object.');
   }
@@ -943,7 +979,8 @@ function cleanGenerationConfig(input, maxOutputTokens) {
 
   const asked = clean.maxOutputTokens;
   if (asked === undefined) {
-    clean.maxOutputTokens = maxOutputTokens;
+    // Not the most allowed: a request that doesn't say gets a chat answer's length.
+    clean.maxOutputTokens = Math.min(config.answerTokens, maxOutputTokens);
   } else if (!isWholeNumber(asked) || asked < 1) {
     throw badRequest('generationConfig.maxOutputTokens must be a whole number above 0.');
   } else {
@@ -975,6 +1012,9 @@ function cleanGenerationConfig(input, maxOutputTokens) {
       thinking.thinkingBudget = Math.min(budget, maxOutputTokens);
     }
     clean.thinkingConfig = thinking;
+  } else {
+    // Cheap thinking unless the request chose: the model's own default thinks more.
+    clean.thinkingConfig = { thinkingLevel: DEFAULT_THINKING_LEVEL };
   }
   return clean;
 }

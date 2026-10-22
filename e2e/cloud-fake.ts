@@ -851,7 +851,7 @@ export class FakeSupabase {
       if (data && (books === 'view' || books === 'none') && this.booksChanged(old, data)) {
         return refuse('almail:permission The owner has made Maham Books view only for you.');
       }
-      // The AI assistant's switch (20261214000000_ai_assistant.sql): anyone
+      // The AI assistant's switch (20261208000000_ai_assistant.sql): anyone
       // but the owner or an admin keeps it as it is stored.
       if (data && role !== 'owner' && role !== 'admin') {
         const kept: Record<string, unknown> = { ...data };
@@ -1248,6 +1248,7 @@ export class FakeSupabase {
           'document_alerts',
           'employee_letters',
           'staffing_costings',
+          'ai_assistant',
         ];
       // The change feed (20261123000000_change_feed.sql).
       case 'notification_status': {

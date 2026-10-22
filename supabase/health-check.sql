@@ -18,7 +18,7 @@
 -- write, even by mistake.
 --
 -- The answer is one table, one row per check, in the order of the scripts:
---   step    the script (1 to 8, as below) or the part that is checked
+--   step    the script (1 to 9, as below) or the part that is checked
 --   check   what is checked
 --   status  OK       as it should be
 --           MISSING  the script has not run yet: run it (the detail says which, in which order)
@@ -38,6 +38,7 @@
 --   6  20261123000000_change_feed.sql             Phase 3
 --   7  20261130000000_people_alerts.sql           Phase 4
 --   8  20261207000000_staffing_costings.sql       Phase 5
+--   9  20261208000000_ai_assistant.sql            AI assistant
 --
 -- For developers: a new script needs its objects added to the lists below,
 -- and the fingerprints of the functions it defines added to bd;
@@ -56,12 +57,13 @@ as $$
   select case p_script
     when 1 then array[1]
     when 2 then array[2]
-    when 3 then array[3, 7, 8]
-    when 4 then array[4, 8]
-    when 5 then array[5, 7, 8]
-    when 6 then array[6, 7, 8]
-    when 7 then array[7, 8]
-    when 8 then array[8]
+    when 3 then array[3, 7, 8, 9]
+    when 4 then array[4, 8, 9]
+    when 5 then array[5, 7, 8, 9]
+    when 6 then array[6, 7, 8, 9]
+    when 7 then array[7, 8, 9]
+    when 8 then array[8, 9]
+    when 9 then array[9]
     else array[]::integer[]
   end
 $$;
@@ -80,12 +82,13 @@ as $$
           '20261004000000_almailbooks_cloud.sql', '20261006000000_sync_fixes.sql',
           '20261007000000_email_alerts.sql', '20261102000000_tables_v16.sql',
           '20261116000000_super_admin_approvals.sql', '20261123000000_change_feed.sql',
-          '20261130000000_people_alerts.sql', '20261207000000_staffing_costings.sql'
+          '20261130000000_people_alerts.sql', '20261207000000_staffing_costings.sql',
+          '20261208000000_ai_assistant.sql'
         ])[d.s] || case when coalesce(p_ran[d.s], false) then ' again' else '' end,
         ', then ' order by d.s
       ) || case when count(*) > 1 then ' (in this order).' else '.' end
   end
-  from (select distinct s from unnest(p_scripts) as u(s) where s between 1 and 8) as d
+  from (select distinct s from unnest(p_scripts) as u(s) where s between 1 and 9) as d
 $$;
 
 -- One more row of the answer.
@@ -145,7 +148,7 @@ begin
     order by 1
   );
   if v_fail + v_missing + v_warn = 0 then
-    return pg_temp.maham_row(p_rows, 1200, '12. Summary', 'All good', 'OK',
+    return pg_temp.maham_row(p_rows, 1300, '13. Summary', 'All good', 'OK',
       'Every script has run, each as its latest version, and everything checked works.');
   end if;
   if cardinality(v_fix) > 0 then
@@ -166,7 +169,7 @@ begin
       end
       || 'The WARN rows say what is off and what to do; nothing in them stops the app.';
   end if;
-  return pg_temp.maham_row(p_rows, 1200, '12. Summary',
+  return pg_temp.maham_row(p_rows, 1300, '13. Summary',
     array_to_string(array_remove(array[
       case when v_fail > 0 then v_fail || ' FAIL' end,
       case when v_missing > 0 then v_missing || ' MISSING' end,
@@ -187,14 +190,15 @@ declare
   v_steps constant text[] := array[
     '1. First setup: almailbooks_cloud', '2. Set-up: sync_fixes', '3. Set-up: email_alerts',
     '4. Phase 0-2: tables_v16', '5. Phase 3: super_admin_approvals', '6. Phase 3: change_feed',
-    '7. Phase 4: people_alerts', '8. Phase 5: staffing_costings', '9. Schedules (pg_cron)',
-    '10. Email alerts set-up', '11. Data and privacy', '12. Summary'
+    '7. Phase 4: people_alerts', '8. Phase 5: staffing_costings', '9. AI assistant: ai_assistant',
+    '10. Schedules (pg_cron)', '11. Email alerts set-up', '12. Data and privacy', '13. Summary'
   ];
   -- What public.server_features() answers once every script has run: the
   -- names the app knows (ServerFeature in src/cloud/features.ts).
   v_app_features constant text[] := array[
     'tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed',
-    'payroll_approvals', 'document_alerts', 'employee_letters', 'staffing_costings'
+    'payroll_approvals', 'document_alerts', 'employee_letters', 'staffing_costings',
+    'ai_assistant'
   ];
   -- Every kind of record the app syncs (DATA_TABLES in src/db/db.ts).
   v_kinds constant text[] := array[
@@ -281,21 +285,22 @@ begin
       from pg_policy p
       where p.polrelid = to_regclass('public.records')
         and p.polname = 'Manpower costings: kept from staff and viewers'
-    )
+    ),
+    to_regprocedure('almailbooks.switches_ai(text)') is not null
   ];
   v_anon := exists (select 1 from pg_roles r where r.rolname = 'anon');
   v_auth := exists (select 1 from pg_roles r where r.rolname = 'authenticated');
 
   -- Scripts that haven't run: one row each ------------------------------------
 
-  for v_s in 1..8 loop
+  for v_s in 1..9 loop
     if not v_ran[v_s] then
       -- That script and each later one that hasn't run either (but the
       -- optional email alerts, said in their own row), each with the scripts
       -- that put back what it replaces.
       v_fix := array(
         select distinct u.s
-        from generate_series(v_s, 8) as t(t), unnest(pg_temp.maham_closure(t.t)) as u(s)
+        from generate_series(v_s, 9) as t(t), unnest(pg_temp.maham_closure(t.t)) as u(s)
         where t.t = v_s or (not v_ran[t.t] and t.t <> 3)
         order by u.s
       );
@@ -379,15 +384,15 @@ begin
           when not v_features_ok then 'server_features() stopped with an error'
           when not (e.name = any (coalesce(v_features, '{}'::text[]))) then 'not answered'
         end,
-        'versions', '{4,5,6,7,8}'
+        'versions', '{4,5,6,7,8,9}'
       ))
       from (
         values
           (4, 'tables_v16'), (5, 'super_admin'), (5, 'approvals'), (5, 'cheque_approvals'),
           (6, 'change_feed'), (7, 'payroll_approvals'), (7, 'document_alerts'),
-          (7, 'employee_letters')
+          (7, 'employee_letters'), (8, 'staffing_costings')
         union all
-        select 8, x.name from unnest(v_app_features) as x(name)
+        select 9, x.name from unnest(v_app_features) as x(name)
       ) as e(step, name)
     ), '[]'::jsonb);
   end if;
@@ -480,7 +485,7 @@ begin
           ('almailbooks.is_v16_private_owner(text,text)', 4, 'rls', '{4}'),
           ('almailbooks.can_read_v16_record(text,text,jsonb)', 4, 'rls', '{4,8}'),
           ('almailbooks.can_read_v16_file(text)', 4, 'rls', '{4}'),
-          ('public.server_features()', 4, 'app', '{4,5,6,7,8}'),
+          ('public.server_features()', 4, 'app', '{4,5,6,7,8,9}'),
           ('almailbooks.senior_roles_owner_only(text)', 5, 'rls', '{5}'),
           ('almailbooks.is_approver(text)', 5, 'rls', '{5}'),
           ('almailbooks.record_app(text,jsonb)', 5, 'rls', '{5,8}'),
@@ -507,7 +512,7 @@ begin
           ('almailbooks.cheque_change_needs_approver(jsonb,text,jsonb,jsonb)', 5, 'rls', '{5}'),
           ('almailbooks.numbers_on_issue(text)', 5, 'plain', '{5}'),
           ('almailbooks.kept_key(jsonb,jsonb,text)', 5, 'plain', '{5}'),
-          ('almailbooks.records_guard()', 5, 'plain', '{5,7}'),
+          ('almailbooks.records_guard()', 5, 'plain', '{5,7,9}'),
           ('almailbooks.change_kind(text,jsonb)', 6, 'internal', '{6,8}'),
           ('almailbooks.change_details(text,text,jsonb,jsonb,boolean)', 6, 'internal', '{6}'),
           ('almailbooks.records_change_event()', 6, 'internal', '{6}'),
@@ -528,7 +533,8 @@ begin
           ('almailbooks.people_shut(text)', 7, 'internal', '{7}'),
           ('almailbooks.payroll_approval_email()', 7, 'internal', '{7}'),
           ('public.email_alert_scope(text)', 7, 'app', '{7}'),
-          ('public.set_email_alert_scope(text,text[])', 7, 'app', '{7}')
+          ('public.set_email_alert_scope(text,text[])', 7, 'app', '{7}'),
+          ('almailbooks.switches_ai(text)', 9, 'internal', '{9}')
       ),
       -- Functions whose grants only some of the scripts that define them set:
       -- the scripts that grant or revoke them (the others keep the grants).
@@ -558,7 +564,8 @@ begin
           (8, 'almailbooks.record_is_private(text,text,jsonb)', '''staffingCostings'''),
           (8, 'almailbooks.can_read_v16_record(text,text,jsonb)', '''staffingCostings'''),
           (8, 'almailbooks.record_app(text,jsonb)', '''staffingCostings'''),
-          (8, 'almailbooks.change_kind(text,jsonb)', '''staffingCostings''')
+          (8, 'almailbooks.change_kind(text,jsonb)', '''staffingCostings'''),
+          (9, 'almailbooks.records_guard()', 'switches_ai')
       ),
       -- Each function's body as each script that defines it has it, as a
       -- fingerprint (md5, with comments and spacing left out, so a paste that
@@ -690,7 +697,10 @@ begin
           ('almailbooks.can_read_v16_record(text,text,jsonb)', 8, '2dea031ee9ae6db47b401272c665749f'),
           ('public.server_features()', 8, 'ea691cbea0c7c110f8d4756cacbba5fe'),
           ('almailbooks.record_app(text,jsonb)', 8, '5203cd0527553ae3e02765d8a5319225'),
-          ('almailbooks.change_kind(text,jsonb)', 8, '38d0a17b093a01525378c09db7110b69')
+          ('almailbooks.change_kind(text,jsonb)', 8, '38d0a17b093a01525378c09db7110b69'),
+          ('public.server_features()', 9, '691c5bdcc267b865e0e136c4c38f95d0'),
+          ('almailbooks.records_guard()', 9, '0b52eddbdb4153736355beaef01acf7e'),
+          ('almailbooks.switches_ai(text)', 9, 'e241799e58ee7fd04d65ad90122fed65')
       ),
       -- Tables, and whether row-level security must be on.
       tb (step, rel, rls) as (
@@ -1035,7 +1045,7 @@ begin
         from (values ('anon'), ('authenticated')) as r(role)
         union all
         -- Rules nobody's script made, on the app's tables and on Storage.
-        select 11, 'extra_tables', '"' || left(x.polname, 60) || '" on ' || x.polrelid::regclass::text,
+        select 12, 'extra_tables', '"' || left(x.polname, 60) || '" on ' || x.polrelid::regclass::text,
           case when not exists (
               select 1 from po p where to_regclass(p.rel) = x.polrelid and p.name = x.polname
             ) then case when x.polpermissive then 'adds access' else 'restricts access' end
@@ -1044,7 +1054,7 @@ begin
         from pg_policy as x
         where x.polrelid in (select to_regclass(t.rel)::oid from tb t where to_regclass(t.rel) is not null)
         union all
-        select 11, 'extra_storage', '"' || left(x.polname, 60) || '"',
+        select 12, 'extra_storage', '"' || left(x.polname, 60) || '"',
           case when not exists (
               select 1 from po p where p.rel = 'storage.objects' and p.name = x.polname
             ) and x.polpermissive then 'adds access' end,
@@ -1064,7 +1074,7 @@ begin
             where v_ran[v.v] and v.v >= i.step
           ) as lr
         from items as i
-        where (i.step between 1 and 8 and v_ran[i.step]) or i.step > 8
+        where (i.step between 1 and 9 and v_ran[i.step]) or i.step > 9
       )
       select j.step, j.grp, count(*)::integer as total,
         array_agg(j.label order by j.label) as labels,
@@ -1074,14 +1084,14 @@ begin
       from judged as j
       group by j.step, j.grp
     loop
-      if g.step = 11 then
+      if g.step = 12 then
         -- Rules added by hand.
         if g.grp = 'extra_tables' then
           if g.bad is null then
-            v_rows := pg_temp.maham_row(v_rows, 1109, v_steps[11], 'Rules added by hand to the app''s tables', 'OK',
+            v_rows := pg_temp.maham_row(v_rows, 1209, v_steps[12], 'Rules added by hand to the app''s tables', 'OK',
               'None: the app''s tables have only the rules the scripts make.');
           else
-            v_rows := pg_temp.maham_row(v_rows, 1109, v_steps[11], 'Rules added by hand to the app''s tables', 'FAIL',
+            v_rows := pg_temp.maham_row(v_rows, 1209, v_steps[12], 'Rules added by hand to the app''s tables', 'FAIL',
               'Not made by the scripts: ' || array_to_string(g.bad[1:8], ', ')
               || case when cardinality(g.bad) > 8 then format(' and %s more', cardinality(g.bad) - 8) else '' end
               || '. Rules add up, so one that adds access can let staff, viewers or anyone else read '
@@ -1090,10 +1100,10 @@ begin
           end if;
         elsif g.grp = 'extra_storage' then
           if g.bad is null then
-            v_rows := pg_temp.maham_row(v_rows, 1110, v_steps[11], 'Other rules on Storage', 'OK',
+            v_rows := pg_temp.maham_row(v_rows, 1210, v_steps[12], 'Other rules on Storage', 'OK',
               'None: Storage has only the rules the scripts make.');
           else
-            v_rows := pg_temp.maham_row(v_rows, 1110, v_steps[11], 'Other rules on Storage', 'WARN',
+            v_rows := pg_temp.maham_row(v_rows, 1210, v_steps[12], 'Other rules on Storage', 'WARN',
               'Rules the scripts didn''t make: ' || array_to_string(g.bad[1:8], ', ')
               || case when cardinality(g.bad) > 8 then format(' and %s more', cardinality(g.bad) - 8) else '' end
               || '. Rules add up: make sure none of them reaches the company-files bucket (it '
@@ -1125,7 +1135,7 @@ begin
           when g.grp = 'kinds' and g.step = 8
             then format('The cloud takes all %s kinds of record the app syncs.', g.total)
           when g.grp = 'kinds' then format('The cloud takes the %s kinds of record this script adds.', g.total)
-          when g.grp = 'features' and g.step = 8
+          when g.grp = 'features' and g.step = 9
             then 'It answers every name the app knows: ' || array_to_string(g.labels, ', ') || '.'
           when g.grp = 'features' then 'It answers ' || array_to_string(g.labels, ', ') || '.'
           when g.grp = 'private'
@@ -1206,7 +1216,7 @@ begin
       'Devices hear at once that their company changed (public.sync_signals is published).');
   end if;
 
-  -- 9. Schedules ------------------------------------------------------------------
+  -- 10. Schedules -----------------------------------------------------------------
 
   v_cron := exists (select 1 from pg_extension e where e.extname = 'pg_cron')
     or to_regclass('cron.job') is not null;
@@ -1223,15 +1233,15 @@ begin
       from unnest(
         case
           when v_ran[3] then pg_temp.maham_closure(3)
-          when v_ran[8] then array[8]
-          when v_ran[4] and not v_costings then array[4]
+          when v_ran[8] then pg_temp.maham_closure(8)
+          when v_ran[4] and not v_costings then pg_temp.maham_closure(4)
           else '{}'::integer[]
         end
         || case when v_ran[6] then pg_temp.maham_closure(6) else '{}'::integer[] end
       ) as s(s)
       where v_ran[s.s]
     );
-    v_rows := pg_temp.maham_row(v_rows, 901, v_steps[9], 'pg_cron and pg_net', 'WARN',
+    v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'pg_cron and pg_net', 'WARN',
       'pg_cron is not on, so nothing runs on a schedule: deletion markers are cleaned up only as '
       || 'each company syncs'
       || case when v_ran[3] then ', nobody gets the morning email alerts' else '' end
@@ -1245,11 +1255,11 @@ begin
       || coalesce(nullif(lower(left(pg_temp.maham_advice(v_fix, v_ran), 1))
         || substr(pg_temp.maham_advice(v_fix, v_ran), 2), ''), 'run this check again.'));
   elsif not v_net then
-    v_rows := pg_temp.maham_row(v_rows, 901, v_steps[9], 'pg_cron and pg_net', 'WARN',
+    v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'pg_cron and pg_net', 'WARN',
       'pg_cron is on, but pg_net is not: the schedules can''t call the email-alerts function, so '
       || 'no email goes out. Database → Extensions: enable pg_net.');
   else
-    v_rows := pg_temp.maham_row(v_rows, 901, v_steps[9], 'pg_cron and pg_net', 'OK',
+    v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'pg_cron and pg_net', 'OK',
       'pg_cron' || coalesce(' ' || v_cron_version, '') || ' and pg_net'
       || coalesce(' ' || v_net_version, '') || ' are on.');
   end if;
@@ -1259,17 +1269,17 @@ begin
       select *
       from (
         values
-          (902, 'almailbooks-purge-deleted-records', '17 3 * * *',
+          (1002, 'almailbooks-purge-deleted-records', '17 3 * * *',
             'select almailbooks.purge_all_deleted_records()', 'daily clean-up of deletion markers',
             true, coalesce(case
               when v_ran[8] then 8 when v_ran[4] and not v_costings then 4 when v_ran[3] then 3
             end, 4)),
-          (903, 'maham-books-email-alerts', '7 * * * *', 'select almailbooks.run_email_alerts()',
+          (1003, 'maham-books-email-alerts', '7 * * * *', 'select almailbooks.run_email_alerts()',
             'morning email alerts, every hour', v_ran[3], 3),
-          (904, 'maham-change-notifications', '*/5 * * * *',
+          (1004, 'maham-change-notifications', '*/5 * * * *',
             'select almailbooks.run_change_notifications()',
             'emails of team changes and of pay runs sent for approval, every 5 minutes', v_ran[6], 6),
-          (905, 'maham-change-feed-purge', '47 2 * * *', 'select almailbooks.purge_change_events()',
+          (1005, 'maham-change-feed-purge', '47 2 * * *', 'select almailbooks.purge_change_events()',
             'daily clean-up of changes older than 180 days', v_ran[6], 6)
       ) as j(n, name, sched, cmd, what, needed, script)
       where j.needed
@@ -1283,20 +1293,20 @@ begin
           using v_job.name;
         if v_jobid is null then
           v_fix := pg_temp.maham_closure(v_job.script);
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'FAIL',
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'FAIL',
             'It is not scheduled (pg_cron was probably turned on after the script ran). '
             || pg_temp.maham_advice(v_fix, v_ran), v_fix);
           continue;
         end if;
         if lower(regexp_replace(btrim(btrim(v_cmd), ';'), '\s+', ' ', 'g')) <> v_job.cmd then
           v_fix := pg_temp.maham_closure(v_job.script);
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'FAIL',
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'FAIL',
             'It runs something else than the script schedules. ' || pg_temp.maham_advice(v_fix, v_ran),
             v_fix);
           continue;
         end if;
         if not v_active then
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'WARN',
             'It is switched off. Turn it on in Integrations → Cron → Jobs.');
           continue;
         end if;
@@ -1316,37 +1326,37 @@ begin
           else ''
         end;
         if v_run_status is null then
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'WARN',
             'It is on, but no run is recorded yet. If the script ran more than a day ago, look at '
             || 'it in Integrations → Cron → Jobs.' || v_text);
         elsif v_run_status = 'unknown' then
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label,
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label,
             case when v_text = '' then 'OK' else 'WARN' end,
             'It is on (its runs could not be read).' || v_text);
         elsif v_run_status = 'succeeded' then
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label,
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label,
             case when v_text = '' then 'OK' else 'WARN' end,
             'It is on; its last run, ' || to_char(v_run_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI')
             || ' UTC, succeeded.' || v_text);
         elsif v_run_status in ('starting', 'running', 'sending', 'connecting') then
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label,
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label,
             case when v_text = '' then 'OK' else 'WARN' end,
             'It is on and running now (started ' || to_char(v_run_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI')
             || ' UTC).' || v_text);
         else
-          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'FAIL',
+          v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'FAIL',
             'Its last run, ' || coalesce(to_char(v_run_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC', '')
             || ', ended "' || v_run_status || '". Open it in Integrations → Cron → Jobs to see why, '
             || 'or ask the developer.' || v_text);
         end if;
       exception when others then
-        v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[9], v_label, 'WARN',
+        v_rows := pg_temp.maham_row(v_rows, v_job.n, v_steps[10], v_label, 'WARN',
           format('The schedules could not be read (error %s). Look in Integrations → Cron → Jobs.', sqlstate));
       end;
     end loop;
   end if;
 
-  -- 10. Email alerts set-up -------------------------------------------------------
+  -- 11. Email alerts set-up -------------------------------------------------------
   --
   -- The email-alerts function keeps its address and the secret the schedule
   -- shows it in almailbooks.email_alerts_config (no values are shown here).
@@ -1364,34 +1374,34 @@ begin
         using '^https?://[^[:space:]/]+/functions/v1/email-alerts$';
       if v_a = 0 then
         v_fix := pg_temp.maham_closure(3);
-        v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'Settings row and its secret', 'FAIL',
+        v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Settings row and its secret', 'FAIL',
           'The settings row of almailbooks.email_alerts_config is missing. '
           || pg_temp.maham_advice(v_fix, v_ran), v_fix);
       elsif v_b = 0 then
-        v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'Settings row and its secret', 'FAIL',
+        v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Settings row and its secret', 'FAIL',
           'The secret the schedule shows the email-alerts function is missing or too short, so the '
           || 'function refuses every run. Ask the developer.');
       else
-        v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'Settings row and its secret', 'OK',
+        v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Settings row and its secret', 'OK',
           'The settings row is there, with its secret (not shown).');
       end if;
       if v_a > 0 then
         if v_c = 0 then
-          v_rows := pg_temp.maham_row(v_rows, 1002, v_steps[10], 'The email-alerts function has run', 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, 1102, v_steps[11], 'The email-alerts function has run', 'WARN',
             'The email-alerts function hasn''t run yet, so the schedule doesn''t know where it is and '
             || 'no email goes out. Publish it (docs/email-alerts.md, steps 4 and 5), then in the app '
             || 'open Settings → Email alerts and press Send it now.');
         elsif v_d = 0 then
-          v_rows := pg_temp.maham_row(v_rows, 1002, v_steps[10], 'The email-alerts function has run', 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, 1102, v_steps[11], 'The email-alerts function has run', 'WARN',
             'The address the function left doesn''t look like a Supabase function. In the app, open '
             || 'Settings → Email alerts and press Send it now to set it again.');
         else
-          v_rows := pg_temp.maham_row(v_rows, 1002, v_steps[10], 'The email-alerts function has run', 'OK',
+          v_rows := pg_temp.maham_row(v_rows, 1102, v_steps[11], 'The email-alerts function has run', 'OK',
             'It has run and left its address for the schedule (not shown).');
         end if;
       end if;
     exception when others then
-      v_rows := pg_temp.maham_row(v_rows, 1001, v_steps[10], 'Settings row and its secret', 'FAIL',
+      v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Settings row and its secret', 'FAIL',
         format('almailbooks.email_alerts_config could not be read (error %s). Ask the developer.', sqlstate));
     end;
 
@@ -1402,20 +1412,20 @@ begin
         || 'from public.email_alerts a'
         into v_a, v_b;
       if v_b > 0 then
-        v_rows := pg_temp.maham_row(v_rows, 1003, v_steps[10], 'Morning email alerts', 'WARN',
+        v_rows := pg_temp.maham_row(v_rows, 1103, v_steps[11], 'Morning email alerts', 'WARN',
           format('%s of the %s people who get them had a problem with an email in the last 2 days. '
             || 'They see what went wrong in Settings → Email alerts; see docs/email-alerts.md, '
             || '"If no email arrives".', v_b, v_a));
       elsif v_a = 0 then
-        v_rows := pg_temp.maham_row(v_rows, 1003, v_steps[10], 'Morning email alerts', 'OK',
+        v_rows := pg_temp.maham_row(v_rows, 1103, v_steps[11], 'Morning email alerts', 'OK',
           'Nobody has turned them on yet (Settings → Email alerts).');
       else
-        v_rows := pg_temp.maham_row(v_rows, 1003, v_steps[10], 'Morning email alerts', 'OK',
+        v_rows := pg_temp.maham_row(v_rows, 1103, v_steps[11], 'Morning email alerts', 'OK',
           format('%s %s them, with no problem in the last 2 days.', v_a,
             case when v_a = 1 then 'person gets' else 'people get' end));
       end if;
     exception when others then
-      v_rows := pg_temp.maham_row(v_rows, 1003, v_steps[10], 'Morning email alerts', 'FAIL',
+      v_rows := pg_temp.maham_row(v_rows, 1103, v_steps[11], 'Morning email alerts', 'FAIL',
         format('public.email_alerts could not be read (error %s). Ask the developer.', sqlstate));
     end;
 
@@ -1427,17 +1437,17 @@ begin
           || 'from public.notification_settings s'
           into v_a, v_b;
         if v_b > 0 then
-          v_rows := pg_temp.maham_row(v_rows, 1004, v_steps[10], 'Emails of team changes', 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, 1104, v_steps[11], 'Emails of team changes', 'WARN',
             format('%s of the %s people who get them had a problem with an email in the last 2 days. '
               || 'They see what went wrong in Settings → Email alerts → Changes by your team.', v_b, v_a));
         else
-          v_rows := pg_temp.maham_row(v_rows, 1004, v_steps[10], 'Emails of team changes', 'OK',
+          v_rows := pg_temp.maham_row(v_rows, 1104, v_steps[11], 'Emails of team changes', 'OK',
             case when v_a = 0 then 'Nobody has turned them on yet (Settings → Email alerts → Changes by your team).'
               else format('%s %s them, with no problem in the last 2 days.', v_a,
                 case when v_a = 1 then 'person gets' else 'people get' end) end);
         end if;
       exception when others then
-        v_rows := pg_temp.maham_row(v_rows, 1004, v_steps[10], 'Emails of team changes', 'FAIL',
+        v_rows := pg_temp.maham_row(v_rows, 1104, v_steps[11], 'Emails of team changes', 'FAIL',
           format('public.notification_settings could not be read (error %s). Ask the developer.', sqlstate));
       end;
     end if;
@@ -1452,15 +1462,15 @@ begin
           || 'from almailbooks.approval_emails a'
           into v_a, v_b, v_c;
         if v_c > 0 then
-          v_rows := pg_temp.maham_row(v_rows, 1005, v_steps[10], 'Emails of pay runs sent for approval', 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, 1105, v_steps[11], 'Emails of pay runs sent for approval', 'WARN',
             format('%s could not be sent (5 tries or 3 days). The approvers still find the requests '
               || 'in the app (Approvals); see docs/email-alerts.md, "If no email arrives".', v_c));
         else
-          v_rows := pg_temp.maham_row(v_rows, 1005, v_steps[10], 'Emails of pay runs sent for approval', 'OK',
+          v_rows := pg_temp.maham_row(v_rows, 1105, v_steps[11], 'Emails of pay runs sent for approval', 'OK',
             format('%s sent, %s waiting to be sent, none given up.', v_a, v_b));
         end if;
       exception when others then
-        v_rows := pg_temp.maham_row(v_rows, 1005, v_steps[10], 'Emails of pay runs sent for approval', 'FAIL',
+        v_rows := pg_temp.maham_row(v_rows, 1105, v_steps[11], 'Emails of pay runs sent for approval', 'FAIL',
           format('almailbooks.approval_emails could not be read (error %s). Ask the developer.', sqlstate));
       end;
     end if;
@@ -1477,13 +1487,13 @@ begin
           || 'end as failed from net._http_response r) a'
           into v_a, v_b, v_list;
         if v_b > 0 then
-          v_rows := pg_temp.maham_row(v_rows, 1006, v_steps[10], 'Recent calls to the email-alerts function', 'WARN',
+          v_rows := pg_temp.maham_row(v_rows, 1106, v_steps[11], 'Recent calls to the email-alerts function', 'WARN',
             format('%s of the %s calls of the last hours failed (%s). 401: the function and the database '
               || 'disagree on the secret; 404: the function isn''t published; 500: a problem inside it '
               || '(Edge Functions → email-alerts → Logs says what). See docs/email-alerts.md, '
               || '"If no email arrives".', v_b, v_a, v_list));
         else
-          v_rows := pg_temp.maham_row(v_rows, 1006, v_steps[10], 'Recent calls to the email-alerts function', 'OK',
+          v_rows := pg_temp.maham_row(v_rows, 1106, v_steps[11], 'Recent calls to the email-alerts function', 'OK',
             case when v_a = 0 then 'No call in the last hours (nothing was due).'
               else format('%s calls in the last hours, all answered.', v_a) end);
         end if;
@@ -1493,11 +1503,11 @@ begin
     end if;
   end if;
 
-  -- 11. Data and privacy ------------------------------------------------------------
+  -- 12. Data and privacy ------------------------------------------------------------
 
   begin
     select count(*) into v_a from public.companies;
-    v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Companies in the cloud', 'OK',
+    v_rows := pg_temp.maham_row(v_rows, 1201, v_steps[12], 'Companies in the cloud', 'OK',
       case when v_a = 0 then 'None yet.' when v_a = 1 then '1 company.' else format('%s companies.', v_a) end);
 
     select count(*) filter (where x.owners = 0), count(*) filter (where x.owners > 1)
@@ -1509,11 +1519,11 @@ begin
       from public.companies c
     ) as x;
     if v_a + v_b > 0 then
-      v_rows := pg_temp.maham_row(v_rows, 1102, v_steps[11], 'Each company has exactly one owner', 'FAIL',
+      v_rows := pg_temp.maham_row(v_rows, 1202, v_steps[12], 'Each company has exactly one owner', 'FAIL',
         format('%s %s no owner and %s more than one. Nobody can change the team or the rules there: '
           || 'ask the developer.', v_a, case when v_a = 1 then 'company has' else 'companies have' end, v_b));
     else
-      v_rows := pg_temp.maham_row(v_rows, 1102, v_steps[11], 'Each company has exactly one owner', 'OK',
+      v_rows := pg_temp.maham_row(v_rows, 1202, v_steps[12], 'Each company has exactly one owner', 'OK',
         'Every company has one owner (the Super Admin).');
     end if;
 
@@ -1540,7 +1550,7 @@ begin
           case when v_c = 1 then 'company has' else 'companies have' end);
       end if;
     end if;
-    v_rows := pg_temp.maham_row(v_rows, 1103, v_steps[11], 'Members by role', v_status, v_text);
+    v_rows := pg_temp.maham_row(v_rows, 1203, v_steps[12], 'Members by role', v_status, v_text);
 
     select count(*), count(distinct r.tbl), count(*) filter (where r.tbl = any (v_private_kinds)),
       count(*) filter (where not (r.tbl = any (v_kinds)))
@@ -1550,11 +1560,11 @@ begin
       select string_agg(distinct r.tbl, ', ') into v_list
       from public.records r
       where not (r.tbl = any (v_kinds)) and r.tbl ~ '^[A-Za-z]{1,40}$';
-      v_rows := pg_temp.maham_row(v_rows, 1104, v_steps[11], 'Records by kind', 'FAIL',
+      v_rows := pg_temp.maham_row(v_rows, 1204, v_steps[12], 'Records by kind', 'FAIL',
         format('%s records are of kinds the app doesn''t sync (%s), so they never reach a device. '
           || 'Ask the developer.', v_d, coalesce(v_list, 'unnamed')));
     else
-      v_rows := pg_temp.maham_row(v_rows, 1104, v_steps[11], 'Records by kind', 'OK',
+      v_rows := pg_temp.maham_row(v_rows, 1204, v_steps[12], 'Records by kind', 'OK',
         format('%s records of %s kinds, %s of them payroll and people data. None is of a kind the '
           || 'app doesn''t sync.', v_a, v_b, v_c));
     end if;
@@ -1563,7 +1573,7 @@ begin
       select count(*) into v_a
       from public.records r
       where r.tbl = 'approvals' and coalesce(r.data ->> 'status', '') = 'pending';
-      v_rows := pg_temp.maham_row(v_rows, 1105, v_steps[11], 'Approval requests waiting', 'OK',
+      v_rows := pg_temp.maham_row(v_rows, 1205, v_steps[12], 'Approval requests waiting', 'OK',
         case when v_a = 0 then 'None waiting.'
           else format('%s waiting for a decision (Approvals, in the app).', v_a) end);
     end if;
@@ -1572,12 +1582,12 @@ begin
     into v_a, v_b
     from public.deleted_records m;
     if v_b > 0 then
-      v_rows := pg_temp.maham_row(v_rows, 1106, v_steps[11], 'Deletion markers cleaned up', 'WARN',
+      v_rows := pg_temp.maham_row(v_rows, 1206, v_steps[12], 'Deletion markers cleaned up', 'WARN',
         format('%s of the %s deletion markers are older than 30 days: the daily clean-up isn''t '
           || 'running (see the pg_cron rows). Nothing is lost: a device away longer than 30 days '
           || 'downloads everything again.', v_b, v_a));
     else
-      v_rows := pg_temp.maham_row(v_rows, 1106, v_steps[11], 'Deletion markers cleaned up', 'OK',
+      v_rows := pg_temp.maham_row(v_rows, 1206, v_steps[12], 'Deletion markers cleaned up', 'OK',
         format('%s deletion markers, none older than 30 days.', v_a));
     end if;
 
@@ -1586,16 +1596,16 @@ begin
         || 'from public.change_events e'
         into v_a, v_b;
       if v_b > 0 then
-        v_rows := pg_temp.maham_row(v_rows, 1107, v_steps[11], 'Old changes cleaned up', 'WARN',
+        v_rows := pg_temp.maham_row(v_rows, 1207, v_steps[12], 'Old changes cleaned up', 'WARN',
           format('%s of the %s changes of the team are older than 180 days: their daily clean-up '
             || 'isn''t running (see the pg_cron rows).', v_b, v_a));
       else
-        v_rows := pg_temp.maham_row(v_rows, 1107, v_steps[11], 'Old changes cleaned up', 'OK',
+        v_rows := pg_temp.maham_row(v_rows, 1207, v_steps[12], 'Old changes cleaned up', 'OK',
           format('%s changes of the team kept, none older than 180 days.', v_a));
       end if;
     end if;
   exception when others then
-    v_rows := pg_temp.maham_row(v_rows, 1101, v_steps[11], 'Data', 'FAIL',
+    v_rows := pg_temp.maham_row(v_rows, 1201, v_steps[12], 'Data', 'FAIL',
       format('The data could not be counted (error %s). Run this check as the postgres user (the '
         || 'SQL editor does), or ask the developer.', sqlstate));
   end;
@@ -1701,14 +1711,14 @@ begin
   end if;
   v_fix := array(select distinct u.s from unnest(v_fix) as u(s) where u.s > 1 order by u.s);
   if cardinality(v_problems) = 0 then
-    v_rows := pg_temp.maham_row(v_rows, 1108, v_steps[11], 'Staff and viewers can''t read payroll and people data', 'OK',
+    v_rows := pg_temp.maham_row(v_rows, 1208, v_steps[12], 'Staff and viewers can''t read payroll and people data', 'OK',
       'Row-level security is on, the rules that keep payroll'
       || case when v_ran[8] then ', people data and manpower costings' else ' and people data' end
       || ' from staff and viewers are there'
       || case when v_ran[8] then ', record_is_private knows every private kind,' else '' end
       || ' and nobody added a rule that opens them.');
   else
-    v_rows := pg_temp.maham_row(v_rows, 1108, v_steps[11], 'Staff and viewers can''t read payroll and people data', 'FAIL',
+    v_rows := pg_temp.maham_row(v_rows, 1208, v_steps[12], 'Staff and viewers can''t read payroll and people data', 'FAIL',
       rtrim('Not right: ' || array_to_string(v_problems[1:8], '; ')
         || case when cardinality(v_problems) > 8 then format(' and %s more', cardinality(v_problems) - 8) else '' end
         || '. '

@@ -230,7 +230,9 @@ describe('the file', () => {
   }, 120_000);
 
   it('names staffing_costings with everything the earlier files name', async () => {
-    expect(await features(h)).toEqual([
+    // Later files add their own names after these.
+    const upto = await startDatabase(1, MIGRATIONS.indexOf(FILE) + 1);
+    expect(await features(upto)).toEqual([
       'tables_v16',
       'super_admin',
       'approvals',
@@ -241,7 +243,7 @@ describe('the file', () => {
       'employee_letters',
       'staffing_costings',
     ]);
-  });
+  }, 120_000);
 
   it('is needed before the cloud takes a costing: until then it is refused, and nothing else', async () => {
     const before = await startDatabase(1, MIGRATIONS.indexOf(FILE));

@@ -31,7 +31,7 @@ async function runCheck(h: Harness): Promise<Row[]> {
   return results.at(-1)!.rows as unknown as Row[];
 }
 
-/** The script number a row is about (1 to 8), or the part after them (9 to 12). */
+/** The script number a row is about (1 to 9), or the part after them (10 to 13). */
 const stepNo = (row: Row) => Number(/^(\d+)\./.exec(row.step)![1]);
 const notOk = (rows: Row[]) => rows.filter((row) => row.status !== 'OK');
 const summary = (rows: Row[]) => rows.at(-1)!;
@@ -43,8 +43,8 @@ function scriptsIn(detail: string): number[] {
 
 /** What PGlite and its stand-in for Supabase can't have: pg_cron, pg_net, a published function. */
 const STAND_IN_WARNINGS = [
-  ['9. Schedules (pg_cron)', 'pg_cron and pg_net'],
-  ['10. Email alerts set-up', 'The email-alerts function has run'],
+  ['10. Schedules (pg_cron)', 'pg_cron and pg_net'],
+  ['11. Email alerts set-up', 'The email-alerts function has run'],
 ];
 
 function expectOnlyStandInWarnings(rows: Row[], extra: Row[] = []) {
@@ -400,9 +400,9 @@ describe('the health check’s lists are the scripts’', () => {
     const appFeatures = [...union.matchAll(/\| '([a-z0-9_]+)'/g)].map((m) => m[1]);
     expect(arrayIn('v_app_features')).toEqual(appFeatures);
     // The latest server_features() answers the same names.
-    const latest = [
-      ...SOURCES[7].matchAll(/function public\.server_features\(\)[\s\S]*?\$\$([\s\S]*?)\$\$/g),
-    ].at(-1)![1];
+    const latest = SOURCES.flatMap((source) => [
+      ...source.matchAll(/function public\.server_features\(\)[\s\S]*?\$\$([\s\S]*?)\$\$/g),
+    ]).at(-1)![1];
     expect([...latest.matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1])).toEqual(appFeatures);
   });
 
@@ -476,14 +476,14 @@ describe('after every script', () => {
     const h = await startDatabase();
     const rows = await runCheck(h);
     expectOnlyStandInWarnings(rows);
-    expect(summary(rows)).toMatchObject({ step: '12. Summary', check: '2 WARN', status: 'WARN' });
+    expect(summary(rows)).toMatchObject({ step: '13. Summary', check: '2 WARN', status: 'WARN' });
     // One row per check, few enough for the SQL editor's first 100.
     expect(rows.length).toBeLessThan(100);
     expect(new Set(rows.map((row) => `${row.step} ${row.check}`)).size).toBe(rows.length);
     // Every script's step is there, in order, and the summary last.
     const steps = rows.map(stepNo);
     expect(steps).toEqual([...steps].sort((a, b) => a - b));
-    expect([...new Set(steps)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect([...new Set(steps)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   }, 60_000);
 
   it('says "All good" when pg_cron, pg_net and the email function are there too', async () => {
@@ -506,12 +506,12 @@ describe('after every script', () => {
 });
 
 describe('before the later scripts', () => {
-  for (const ran of [4, 5, 6, 7]) {
+  for (const ran of [4, 5, 6, 7, 8]) {
     it(`after ${ran} scripts, says exactly the later ones are missing, in order`, async () => {
       const h = await startDatabase(1, ran);
       const rows = await runCheck(h);
       const missing = rows.filter((row) => row.status === 'MISSING' && row !== summary(rows));
-      const later = Array.from({ length: 8 - ran }, (_, i) => ran + 1 + i);
+      const later = Array.from({ length: 9 - ran }, (_, i) => ran + 1 + i);
       expect(missing.map(stepNo)).toEqual(later);
       for (const row of missing) {
         expect(row.check).toBe('Script has run');
@@ -524,25 +524,25 @@ describe('before the later scripts', () => {
       expect(rows.filter((row) => row.status === 'FAIL')).toEqual([]);
       expect(summary(rows)).toMatchObject({
         status: 'MISSING',
-        check: `${8 - ran} MISSING, 2 WARN`,
+        check: `${9 - ran} MISSING, 2 WARN`,
       });
       expect(scriptsIn(summary(rows).detail)).toEqual(later);
     }, 60_000);
   }
 
   it('says email alerts were never set up as a warning, with the scripts that set them up', async () => {
-    const h = await databaseWith([1, 2, 4, 5, 6, 7, 8]);
+    const h = await databaseWith([1, 2, 4, 5, 6, 7, 8, 9]);
     const rows = await runCheck(h);
     const email = rows.find((row) => row.step.startsWith('3.'))!;
     expect(email).toMatchObject({ check: 'Email alerts', status: 'WARN' });
     expect(email.detail).toContain('docs/email-alerts.md');
-    expect(scriptsIn(email.detail)).toEqual([3, 7, 8]);
+    expect(scriptsIn(email.detail)).toEqual([3, 7, 8, 9]);
     // No email rows without the email alerts; nothing else is wrong.
-    expect(rows.filter((row) => row.step.startsWith('10.'))).toEqual([]);
+    expect(rows.filter((row) => row.step.startsWith('11.'))).toEqual([]);
     expect(notOk(rows).map((row) => [row.step, row.check, row.status])).toEqual([
       ['3. Set-up: email_alerts', 'Email alerts', 'WARN'],
-      ['9. Schedules (pg_cron)', 'pg_cron and pg_net', 'WARN'],
-      ['12. Summary', '2 WARN', 'WARN'],
+      ['10. Schedules (pg_cron)', 'pg_cron and pg_net', 'WARN'],
+      ['13. Summary', '2 WARN', 'WARN'],
     ]);
     expect(summary(rows).detail).toContain('Every script but the optional email alerts has run.');
   }, 60_000);
@@ -559,23 +559,25 @@ describe('before the later scripts', () => {
       [6, 'MISSING'],
       [7, 'MISSING'],
       [8, 'MISSING'],
-      [12, 'MISSING'],
+      [9, 'MISSING'],
+      [13, 'MISSING'],
     ]);
     // The optional email alerts only in their own row, with what they need after them.
-    expect(scriptsIn(summary(rows).detail)).toEqual([1, 2, 4, 5, 6, 7, 8]);
+    expect(scriptsIn(summary(rows).detail)).toEqual([1, 2, 4, 5, 6, 7, 8, 9]);
     expect(scriptsIn(rows.find((row) => row.step.startsWith('3.'))!.detail)).toEqual([
-      3, 4, 5, 6, 7, 8,
+      3, 4, 5, 6, 7, 8, 9,
     ]);
   }, 60_000);
 
   // Set-up scripts skipped: what the last row says leads to no FAIL or MISSING,
   // and the email alerts' own row then to nothing but what PGlite can't have.
   const skipped: [number[], number[]][] = [
-    [[1, 4, 5, 6, 7, 8], [2]],
+    [[1, 4, 5, 6, 7, 8, 9], [2]],
     [
       [1, 4, 5, 6, 7],
-      [2, 8],
+      [2, 8, 9],
     ],
+    [[1, 2, 4, 5, 6, 7, 8], [9]],
   ];
   for (const [ran, fix] of skipped) {
     it(`with scripts ${ran.join(', ')}, says to run ${fix.join(', ')}, and that is enough`, async () => {
@@ -587,9 +589,9 @@ describe('before the later scripts', () => {
       expect(rows.filter((row) => row.status === 'FAIL' || row.status === 'MISSING')).toEqual([]);
       const email = rows.find((row) => row.step.startsWith('3.'))!;
       expect(email.status).toBe('WARN');
-      expect(scriptsIn(email.detail)).toEqual([3, 7, 8]);
+      expect(scriptsIn(email.detail)).toEqual([3, 7, 8, 9]);
       expect(email.detail).toContain(
-        `Run ${FILE_NAMES[2]}, then ${FILE_NAMES[6]} again, then ${FILE_NAMES[7]} again`,
+        `Run ${FILE_NAMES[2]}, then ${FILE_NAMES[6]} again, then ${FILE_NAMES[7]} again, then ${FILE_NAMES[8]} again`,
       );
       for (const n of scriptsIn(email.detail)) await h.db.exec(SOURCES[n - 1]);
       expectOnlyStandInWarnings(await runCheck(h));
@@ -600,12 +602,14 @@ describe('before the later scripts', () => {
 describe('an earlier script run again after the later ones', () => {
   // The script run again, and the scripts the check says to run, in order.
   const cases: [number, number[]][] = [
-    [1, [2, 5, 7, 8]],
-    [3, [7, 8]],
-    [4, [8]],
-    [5, [7, 8]],
-    [6, [7, 8]],
-    [7, [8]],
+    [1, [2, 5, 7, 8, 9]],
+    [3, [7, 8, 9]],
+    [4, [8, 9]],
+    [5, [7, 8, 9]],
+    [6, [7, 8, 9]],
+    // Script 9 has the latest server_features too: it alone puts back what 8 did.
+    [7, [9]],
+    [8, [9]],
   ];
   for (const [again, fix] of cases) {
     it(`script ${again} run again: FAIL, then run ${fix.join(', ')} again`, async () => {
@@ -617,7 +621,7 @@ describe('an earlier script run again after the later ones', () => {
       expect(rows.filter((row) => row.status === 'MISSING')).toEqual([]);
       for (const row of failed) {
         // Only rows of the scripts that ran after it, or the privacy row.
-        expect(stepNo(row) > again || row.step.startsWith('11.'), row.step).toBe(true);
+        expect(stepNo(row) > again || row.step.startsWith('12.'), row.step).toBe(true);
         for (const n of scriptsIn(row.detail)) expect(fix).toContain(n);
         expect(row.detail).toMatch(/ again[ ,.(]/);
       }
@@ -638,19 +642,65 @@ describe('an earlier script run again after the later ones', () => {
   }, 60_000);
 
   it('tells what an older version of one function is, and which script brings it back', async () => {
+    const guardOf = (source: string) =>
+      /create or replace function almailbooks\.records_guard\(\)[\s\S]*?\$\$;/.exec(source)![0];
+    // records_guard as the Super Admin script left it, before people_alerts
+    // and ai_assistant: the latest script that has it puts it right.
     const h = await startDatabase();
-    // records_guard as the Super Admin script left it, before people_alerts.
-    const guard = /create or replace function almailbooks\.records_guard\(\)[\s\S]*?\$\$;/.exec(
-      SOURCES[4],
-    )![0];
-    await h.db.exec(guard);
-    const rows = await runCheck(h);
-    expect(notOk(rows).find((row) => row.status === 'FAIL')).toMatchObject({
-      step: '7. Phase 4: people_alerts',
-      check: 'Functions are its latest version',
-      detail: expect.stringContaining('almailbooks.records_guard (an older version)'),
-    });
-    expect(scriptsIn(summary(rows).detail)).toEqual([7, 8]);
+    await h.db.exec(guardOf(SOURCES[4]));
+    let rows = await runCheck(h);
+    const failed = rows.filter((row) => row.status === 'FAIL' && row !== summary(rows));
+    expect(failed.map((row) => [row.step, row.check])).toEqual([
+      ['7. Phase 4: people_alerts', 'Functions are its latest version'],
+      ['9. AI assistant: ai_assistant', 'Functions are its latest version'],
+    ]);
+    for (const row of failed) {
+      expect(row.detail).toContain('almailbooks.records_guard (an older version)');
+    }
+    expect(scriptsIn(summary(rows).detail)).toEqual([9]);
+    await h.db.exec(SOURCES[8]);
+    expectOnlyStandInWarnings(await runCheck(h));
+    // As people_alerts left it: only the AI assistant's script is behind.
+    await h.db.exec(guardOf(SOURCES[6]));
+    rows = await runCheck(h);
+    expect(
+      rows
+        .filter((row) => row.status === 'FAIL' && row !== summary(rows))
+        .map((row) => [row.step, row.check]),
+    ).toEqual([['9. AI assistant: ai_assistant', 'Functions are its latest version']]);
+    expect(scriptsIn(summary(rows).detail)).toEqual([9]);
+  }, 60_000);
+
+  it('says the AI assistant’s script is missing before it runs, and OK after', async () => {
+    const h = await databaseWith([1, 2, 3, 4, 5, 6, 7, 8]);
+    let rows = await runCheck(h);
+    const ai = (all: Row[]) => all.filter((row) => row.step === '9. AI assistant: ai_assistant');
+    expect(ai(rows)).toEqual([
+      {
+        step: '9. AI assistant: ai_assistant',
+        check: 'Script has run',
+        status: 'MISSING',
+        detail: `This script has not run yet. Run ${FILE_NAMES[8]}.`,
+      },
+    ]);
+    expect(
+      rows.find(
+        (row) => row.step.startsWith('8.') && row.check === 'What server_features() answers',
+      )?.detail,
+    ).toBe('It answers staffing_costings.');
+    expect(summary(rows)).toMatchObject({ check: '1 MISSING, 2 WARN', status: 'MISSING' });
+    await h.db.exec(SOURCES[8]);
+    rows = await runCheck(h);
+    expect(ai(rows).map((row) => [row.check, row.status])).toEqual([
+      ['Functions', 'OK'],
+      ['Functions are its latest version', 'OK'],
+      ['What server_features() answers', 'OK'],
+      ['Who may use what (grants)', 'OK'],
+    ]);
+    expect(ai(rows).find((row) => row.check === 'What server_features() answers')?.detail).toBe(
+      `It answers every name the app knows: ${[...arrayIn('v_app_features')].sort().join(', ')}.`,
+    );
+    expectOnlyStandInWarnings(rows);
   }, 60_000);
 
   /** company_books_changed as the Super Admin script had it before its last fixes. */
@@ -681,8 +731,8 @@ describe('an earlier script run again after the later ones', () => {
       'almailbooks.company_books_changed (not as the script has it)',
     );
     expect(failed[0].detail).toContain('an older copy of this script was run');
-    expect(scriptsIn(summary(rows).detail)).toEqual([5, 7, 8]);
-    for (const n of [5, 7, 8]) await h.db.exec(SOURCES[n - 1]);
+    expect(scriptsIn(summary(rows).detail)).toEqual([5, 7, 8, 9]);
+    for (const n of [5, 7, 8, 9]) await h.db.exec(SOURCES[n - 1]);
     expectOnlyStandInWarnings(await runCheck(h));
   }, 60_000);
 
@@ -740,7 +790,7 @@ describe('what goes wrong besides the scripts', () => {
     expect(failed.map((row) => [row.step, row.check])).toEqual([
       ['4. Phase 0-2: tables_v16', 'Row-level security rules'],
       ['4. Phase 0-2: tables_v16', 'Who may use what (grants)'],
-      ['11. Data and privacy', "Staff and viewers can't read payroll and people data"],
+      ['12. Data and privacy', "Staff and viewers can't read payroll and people data"],
     ]);
     for (const row of rows) expect(row.detail).not.toContain(FILE_NAMES[3]);
     for (const row of failed) {
@@ -756,9 +806,9 @@ describe('what goes wrong besides the scripts', () => {
     const h = await startDatabase();
     await breakTablesV16(h);
     const rows = await runCheck(h);
-    expect(scriptsIn(summary(rows).detail)).toEqual([4, 8]);
+    expect(scriptsIn(summary(rows).detail)).toEqual([4, 8, 9]);
     expect(summary(rows).detail).not.toMatch(/needs? more than a script/);
-    for (const n of [4, 8]) await h.db.exec(SOURCES[n - 1]);
+    for (const n of [4, 8, 9]) await h.db.exec(SOURCES[n - 1]);
     expectOnlyStandInWarnings(await runCheck(h));
   }, 60_000);
 
@@ -841,7 +891,7 @@ describe('what goes wrong besides the scripts', () => {
     expect(grants[0].detail).toContain('public.profiles for authenticated (may also update)');
     expect(grants[0].detail).toContain('public.profiles.email for authenticated (may change it)');
     expect(grants[1].detail).toContain('public.server_features (anonymous visitors can run it)');
-    expect(scriptsIn(grants[1].detail)).toEqual([8]);
+    expect(scriptsIn(grants[1].detail)).toEqual([9]);
   }, 60_000);
 
   it('reports each schedule: missing, off, failing, never run, or moved', async () => {
@@ -861,7 +911,7 @@ describe('what goes wrong besides the scripts', () => {
     const rows = await runCheck(h);
     const job = (name: string) => rows.find((row) => row.check.startsWith(`Job ${name} `))!;
     expect(job('maham-change-feed-purge')).toMatchObject({ status: 'FAIL' });
-    expect(scriptsIn(job('maham-change-feed-purge').detail)).toEqual([6, 7, 8]);
+    expect(scriptsIn(job('maham-change-feed-purge').detail)).toEqual([6, 7, 8, 9]);
     expect(job('maham-books-email-alerts')).toMatchObject({
       status: 'WARN',
       detail: expect.stringContaining('switched off'),

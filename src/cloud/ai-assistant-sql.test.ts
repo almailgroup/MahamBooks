@@ -6,11 +6,14 @@ import type { MemberRole } from './roles';
 import { FakeCloud } from './testing/fake-cloud';
 
 /**
- * 20261214000000_ai_assistant.sql: the company's AI assistant switch ("ai"
+ * 20261208000000_ai_assistant.sql: the company's AI assistant switch ("ai"
  * on the company record) is changed by the owner or an admin only, whatever
  * apps the owner limited the admin to. Anyone else's copy, by a push or
  * patch_company, keeps it as it is stored, so an older version's copy never
- * turns it off; staff and viewers are refused as before. Made-up data only.
+ * turns it off; staff and viewers are refused as before. The rule is one
+ * more in records_guard, which keeps every rule it had (the other *-sql
+ * tests run against this file's records_guard too), and server_features()
+ * also answers 'ai_assistant'. Made-up data only.
  */
 
 const FILE = MIGRATIONS.find((file) => file.endsWith('_ai_assistant.sql'))!;
@@ -93,13 +96,70 @@ const record = (c: string, extra: Record<string, unknown> = {}) => ({
 const ON = [{ path: ['ai'], value: { on: true } }];
 const OFF = [{ path: ['ai'], remove: true }];
 
+const EARLIER = [
+  'tables_v16',
+  'super_admin',
+  'approvals',
+  'cheque_approvals',
+  'change_feed',
+  'payroll_approvals',
+  'document_alerts',
+  'employee_letters',
+  'staffing_costings',
+];
+
+async function features(db: Harness): Promise<string[]> {
+  const someone = await db.user(`f-${Math.random().toString(36).slice(2)}@example.com`);
+  const [row] = await db.rpc<{ server_features: string[] }>(someone, 'server_features');
+  return row.server_features;
+}
+
+/** A function's definition in a migration file (the last one there). */
+function definition(file: string, name: string): string {
+  const source = readFileSync(file, 'utf8');
+  const found = [
+    ...source.matchAll(
+      new RegExp(
+        String.raw`create or replace function ${name.replace('.', String.raw`\.`)}\([\s\S]*?\$\$;`,
+        'g',
+      ),
+    ),
+  ];
+  return found.at(-1)![0];
+}
+
 describe('the file', () => {
-  it('stops with what to run first when the earlier files are missing', async () => {
-    const early = await startDatabase(1, 4);
+  it('stops at once, changing nothing, without the staffing costings file', async () => {
+    const early = await startDatabase(1, MIGRATIONS.indexOf(FILE) - 1);
     await expect(early.db.exec(readFileSync(FILE, 'utf8'))).rejects.toThrow(
-      /Run 20261116000000_super_admin_approvals.sql and the files after it first/,
+      /Run 20261207000000_staffing_costings\.sql first, then this file\./,
     );
+    const [row] = await early.admin<{ missing: boolean }>(
+      `select to_regprocedure('almailbooks.switches_ai(text)') is null as missing`,
+    );
+    expect(row.missing).toBe(true);
+    expect(await features(early)).not.toContain('ai_assistant');
   }, 60_000);
+
+  it('names ai_assistant with everything the earlier files name', async () => {
+    expect(await features(h)).toEqual([...EARLIER, 'ai_assistant']);
+    const before = await startDatabase(1, MIGRATIONS.indexOf(FILE));
+    expect(await features(before)).toEqual(EARLIER);
+  }, 60_000);
+
+  it('keeps every rule records_guard had: the latest earlier one, with only the switch added', () => {
+    const earlier = MIGRATIONS.slice(0, MIGRATIONS.indexOf(FILE)).filter((file) =>
+      readFileSync(file, 'utf8').includes('create or replace function almailbooks.records_guard()'),
+    );
+    const latest = definition(earlier.at(-1)!, 'almailbooks.records_guard');
+    const mine = definition(FILE, 'almailbooks.records_guard');
+    const rule = /\n {4}-- The AI assistant's switch[\s\S]*?\n {4}end if;/.exec(mine)![0];
+    expect(rule).toContain('almailbooks.kept_key(');
+    expect(mine.replace(rule, '')).toBe(latest);
+    // server_features as the latest earlier file has it, with one more name.
+    const names = (body: string) => [...body.matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]);
+    expect(names(definition(FILE, 'public.server_features'))).toEqual([...EARLIER, 'ai_assistant']);
+  });
 });
 
 describe('the AI assistant’s switch', () => {
@@ -155,49 +215,49 @@ describe('the AI assistant’s switch', () => {
 });
 
 describe('the app’s stand-in for the cloud', () => {
-  it('keeps the switch as the server does', async () => {
-    const t = await team();
-    const c = t.company;
-    const fake = new FakeCloud();
-    fake.features = [
-      'tables_v16',
-      'super_admin',
-      'approvals',
-      'cheque_approvals',
-      'change_feed',
-      'payroll_approvals',
-      'document_alerts',
-      'employee_letters',
-      'staffing_costings',
-    ];
-    fake.companies.set(c, { id: c, name: 'Company', purgedUntilRev: 0, createdAt: '' });
-    const users: [string, MemberRole][] = [
-      [t.owner, 'owner'],
-      [t.admin, 'admin'],
-      [t.accountant, 'accountant'],
-    ];
-    for (const [user, role] of users) fake.addMember(c, user, role);
-    await fake
-      .client(t.owner)
-      .pushRecords(c, [{ tbl: 'companies', id: c, data: record(c) }] as never);
-    const ai = async () => [
-      fake.record(c, 'companies', c)?.ai ?? null,
-      (await stored(c))?.ai ?? null,
-    ];
-    for (const [user] of users) {
-      for (const ops of [ON, OFF, ON]) {
-        await patch(user, c, ops);
-        await fake.client(user).patchCompany(c, ops as never);
+  it('keeps the switch as the server does, before the file and after it', async () => {
+    const before = await startDatabase(1, MIGRATIONS.indexOf(FILE));
+    for (const db of [before, h]) {
+      const t = await team(db);
+      const c = t.company;
+      const fake = new FakeCloud();
+      fake.features = await features(db);
+      expect(fake.features.includes('ai_assistant')).toBe(db === h);
+      fake.companies.set(c, { id: c, name: 'Company', purgedUntilRev: 0, createdAt: '' });
+      const users: [string, MemberRole][] = [
+        [t.owner, 'owner'],
+        [t.admin, 'admin'],
+        [t.accountant, 'accountant'],
+      ];
+      for (const [user, role] of users) fake.addMember(c, user, role);
+      await fake
+        .client(t.owner)
+        .pushRecords(c, [{ tbl: 'companies', id: c, data: record(c) }] as never);
+      const ai = async () => [
+        fake.record(c, 'companies', c)?.ai ?? null,
+        (await stored(c, db))?.ai ?? null,
+      ];
+      const seen: unknown[] = [];
+      for (const [user] of users) {
+        for (const ops of [ON, OFF, ON]) {
+          await patch(user, c, ops, db);
+          await fake.client(user).patchCompany(c, ops as never);
+          const [inFake, inSql] = await ai();
+          expect(inFake).toEqual(inSql);
+          seen.push(inSql);
+        }
+        const whole = { tbl: 'companies', id: c, data: record(c) };
+        await push(user, c, [whole], db);
+        await fake.client(user).pushRecords(c, [whole] as never);
         const [inFake, inSql] = await ai();
         expect(inFake).toEqual(inSql);
+        seen.push(inSql);
       }
-      const whole = { tbl: 'companies', id: c, data: record(c) };
-      await push(user, c, [whole]);
-      await fake.client(user).pushRecords(c, [whole] as never);
-      const [inFake, inSql] = await ai();
-      expect(inFake).toEqual(inSql);
+      // The accountant's turn last: kept as stored once the file has run
+      // (the admin turned it off with the whole record), theirs before it.
+      expect(seen.slice(-4)).toEqual(
+        db === h ? [null, null, null, null] : [{ on: true }, null, { on: true }, null],
+      );
     }
-    // The accountant last: the admin turned it off with the whole record.
-    expect(await ai()).toEqual([null, null]);
-  });
+  }, 120_000);
 });

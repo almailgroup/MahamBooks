@@ -16,7 +16,7 @@ This Worker (Cloudflare)
 Google Gemini API
 ```
 
-This is **phase 1**: the Worker only. The app does not use it yet. In phase 2 the app gets the Worker's address as `VITE_AI_PROXY_URL` and an owner switch to turn AI on for the company.
+The app's AI assistant (**Settings → AI assistant** in Maham One, see [`docs/ai-assistant.md`](../../docs/ai-assistant.md)) sends its questions here. The Worker already running at `maham-ai-proxy` is the first version: to update it, see **"Updating the Worker that is already running"** in step 2 (paste the new `src/worker.js`, add `COMPANY_ID` and `DEFAULT_ANSWER_TOKENS`, deploy, test).
 
 Three things to know before you start:
 
@@ -85,7 +85,13 @@ The Worker serves only the members of one company, named by its cloud id (`COMPA
 1. Sign in at [supabase.com/dashboard](https://supabase.com/dashboard) and open the Maham One project (`gagdyhintrxdkiqhahzh`).
 2. **Table Editor** → the `companies` table. Find the company by its `name` and copy its `id` (8 to 64 letters, digits, `-` or `_`).
 
-   Or, in the **SQL Editor**, run `select id, name from public.companies order by created_at;` and copy the `id`.
+   Or open the **SQL Editor** → **New query**, paste this and choose **Run**:
+
+   ```sql
+   select id, name from public.companies;
+   ```
+
+   It lists every company kept in the cloud, by `id` and `name`, and changes nothing. Copy the `id` on the row of your company's `name`, exactly as it is (no quotes or spaces).
 
 Until `COMPANY_ID` is set, the Worker refuses every AI request with `internal` ("The AI service is not set up yet"), so nobody can use it by mistake.
 
@@ -107,6 +113,7 @@ Then pick **one** way. Both give you an address like `https://maham-ai-proxy.<yo
    | `SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_KyVAkWtemw_XDnNK8ZKRpA_-5x4pk8d` |
    | `COMPANY_ID`               | the company's cloud id from step 2.0             |
    | `MAX_OUTPUT_TOKENS`        | `8192`                                           |
+   | `DEFAULT_ANSWER_TOKENS`    | `2048`                                           |
    | `MAX_BODY_BYTES`           | `262144`                                         |
 
    The publishable key is public by design (the app already contains it); it only names the Supabase project.
@@ -118,7 +125,27 @@ Then pick **one** way. Both give you an address like `https://maham-ai-proxy.<yo
 9. **Settings** → **Domains & Routes**: check that the `workers.dev` address is on and copy it.
 10. Test it (step 3).
 
-If you change the code later, repeat step 3 with the new `src/worker.js`. If you switch to way B later, note that `wrangler deploy` makes the Worker match `wrangler.toml`: variables added only in the dashboard are replaced by the file's (the secret is kept).
+If you change the code later, follow "Updating the Worker that is already running" below. If you switch to way B later, note that `wrangler deploy` makes the Worker match `wrangler.toml`: variables added only in the dashboard are replaced by the file's (the secret is kept).
+
+### Updating the Worker that is already running (dashboard)
+
+For the Worker deployed with the first version of `src/worker.js` (way A). The new version serves only the members of your company and gives shorter answers unless the app asks for more. Your Gemini key and the other variables stay as they are.
+
+1. Find the company's cloud id (step 2.0): in Supabase, **SQL Editor** → **New query** → `select id, name from public.companies;` → **Run**, and copy the `id` of your company.
+2. Sign in at [dash.cloudflare.com](https://dash.cloudflare.com/) → **Workers & Pages** → `maham-ai-proxy` → **Edit code**. Delete everything in `worker.js`, paste the whole of the new [`src/worker.js`](src/worker.js) from this folder, and choose **Deploy**.
+3. Back on the Worker: **Settings** → **Variables and Secrets** → **Add**, type **Text**, for each of these two, then choose **Deploy**:
+
+   | Variable name           | Value                                  |
+   | ----------------------- | -------------------------------------- |
+   | `COMPANY_ID`            | the `id` from step 1, exactly as it is |
+   | `DEFAULT_ANSWER_TOKENS` | `2048`                                 |
+
+   Leave the variables already there as they are (`GEMINI_MODEL`, `ALLOWED_MODELS`, `ALLOWED_ORIGINS`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `MAX_OUTPUT_TOKENS` = `8192`, `MAX_BODY_BYTES`) and the `GEMINI_API_KEY` secret. Between steps 2 and 3 the Worker answers every AI request with "The AI service is not set up yet": that is expected, and nobody's data is sent anywhere.
+
+4. Test `/health` (step 3.1): open `https://maham-ai-proxy.steep-band-c624.workers.dev/health` in a browser, or run `curl -i "$WORKER/health"`. Expect `200` and `{"ok":true,"model":"gemini-3.6-flash"}`.
+5. Then step 3.3 with your own sign-in: expect `200` and an answer. If you get `403` and `"code":"forbidden"`, the account isn't a member of the company, or `COMPANY_ID` isn't the exact `id` from step 1. If you get `500` and "The AI service is not set up yet", `COMPANY_ID` is empty or mistyped (an id is 8 to 64 letters, digits, `-` or `_`).
+
+With way B instead: put the `id` in `COMPANY_ID = ""` in `wrangler.toml` (`DEFAULT_ANSWER_TOKENS` is already there) and run `npx wrangler deploy`, then steps 4 and 5.
 
 ### Way B: the command line (Wrangler)
 
@@ -305,21 +332,22 @@ Google renames and retires models often. When it retires the one in `GEMINI_MODE
 
 ## Settings
 
-| Name                       | Where                 | What it does                                                                                                        |
-| -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`           | Secret                | The Gemini key. Only ever set as an encrypted secret.                                                               |
-| `GEMINI_MODEL`             | Variable              | The model used when the app names none, and shown by `/health`.                                                     |
-| `ALLOWED_MODELS`           | Variable              | The models the app may ask for, comma-separated. Others get `model_not_allowed`.                                    |
-| `ALLOWED_ORIGINS`          | Variable              | The web addresses allowed by CORS, comma-separated and exact. `*` is not accepted.                                  |
-| `SUPABASE_URL`             | Variable              | The Supabase project people sign in with.                                                                           |
-| `SUPABASE_PUBLISHABLE_KEY` | Variable              | Its publishable key (public).                                                                                       |
-| `COMPANY_ID`               | Variable (required)   | The company whose members may use the Worker (step 2.0). Empty or wrong: every AI request is refused.               |
-| `MAX_OUTPUT_TOKENS`        | Variable              | The longest answer, in tokens (Gemini counts its "thinking" in this too). Default 8192.                             |
-| `MAX_BODY_BYTES`           | Variable              | The largest request, in bytes. Default 262144 (256 KB). Raise it if the app needs to send pictures of receipts.     |
-| `GENERATE_TIMEOUT_MS`      | Variable (optional)   | `/v1/generate`: the time allowed for the **whole** answer (Google sends nothing until it is done). Default 90000.   |
-| `STREAM_START_TIMEOUT_MS`  | Variable (optional)   | `/v1/stream`: the time allowed until Google starts answering. Default 30000 (30 seconds).                           |
-| `STREAM_IDLE_TIMEOUT_MS`   | Variable (optional)   | `/v1/stream`: the longest pause allowed in the middle of an answer. A stream may run longer overall. Default 60000. |
-| `AI_RATE_LIMITER`          | Rate limiting binding | 30 requests a minute per person. Without it, there's no per-person limit in the Worker.                             |
+| Name                       | Where                 | What it does                                                                                                         |
+| -------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`           | Secret                | The Gemini key. Only ever set as an encrypted secret.                                                                |
+| `GEMINI_MODEL`             | Variable              | The model used when the app names none, and shown by `/health`.                                                      |
+| `ALLOWED_MODELS`           | Variable              | The models the app may ask for, comma-separated. Others get `model_not_allowed`.                                     |
+| `ALLOWED_ORIGINS`          | Variable              | The web addresses allowed by CORS, comma-separated and exact. `*` is not accepted.                                   |
+| `SUPABASE_URL`             | Variable              | The Supabase project people sign in with.                                                                            |
+| `SUPABASE_PUBLISHABLE_KEY` | Variable              | Its publishable key (public).                                                                                        |
+| `COMPANY_ID`               | Variable (required)   | The company whose members may use the Worker (step 2.0). Empty or wrong: every AI request is refused.                |
+| `MAX_OUTPUT_TOKENS`        | Variable              | The longest answer, in tokens (Gemini counts its "thinking" in this too). Default 8192.                              |
+| `DEFAULT_ANSWER_TOKENS`    | Variable              | The longest answer when a request doesn't say (no `maxOutputTokens`), never above `MAX_OUTPUT_TOKENS`. Default 2048. |
+| `MAX_BODY_BYTES`           | Variable              | The largest request, in bytes. Default 262144 (256 KB). Raise it if the app needs to send pictures of receipts.      |
+| `GENERATE_TIMEOUT_MS`      | Variable (optional)   | `/v1/generate`: the time allowed for the **whole** answer (Google sends nothing until it is done). Default 90000.    |
+| `STREAM_START_TIMEOUT_MS`  | Variable (optional)   | `/v1/stream`: the time allowed until Google starts answering. Default 30000 (30 seconds).                            |
+| `STREAM_IDLE_TIMEOUT_MS`   | Variable (optional)   | `/v1/stream`: the longest pause allowed in the middle of an answer. A stream may run longer overall. Default 60000.  |
+| `AI_RATE_LIMITER`          | Rate limiting binding | 30 requests a minute per person. Without it, there's no per-person limit in the Worker.                              |
 
 ---
 
@@ -352,10 +380,11 @@ data: {"error":{"code":"upstream_error","message":"The AI service stopped in the
 
 ## Who can use it, and the limits
 
-- **Only members of the company in `COMPANY_ID`**, signed in to the Maham One cloud, whatever their role. Someone who creates their own account (the app allows sign-ups), or who belongs only to another company, gets `forbidden`. The check asks Supabase with the person's own token, so the database's own rules decide; the Worker needs no Supabase admin key. Phase 2 adds the owner's switch on top.
+- **Only members of the company in `COMPANY_ID`**, signed in to the Maham One cloud, whatever their role. Someone who creates their own account (the app allows sign-ups), or who belongs only to another company, gets `forbidden`. The check asks Supabase with the person's own token, so the database's own rules decide; the Worker needs no Supabase admin key. The app adds the owner's switch (**Settings → AI assistant**) on top: nobody sees the assistant until the owner or an admin turns it on.
 - **Up to 30 requests a minute per person**, with the rate limiting binding. The limit is counted in each Cloudflare location separately, so it is a guard against runaway loops rather than an exact count. Google's quota (step 1.4) is the ceiling for everyone together.
 - **Not signed in, not served:** a company kept on this device only can't use AI.
-- **Size:** requests are at most 256 KB (`MAX_BODY_BYTES`), answers at most 8192 tokens (`MAX_OUTPUT_TOKENS`, thinking included), and always one answer per request.
+- **Size:** requests are at most 256 KB (`MAX_BODY_BYTES`), answers at most 8192 tokens (`MAX_OUTPUT_TOKENS`, thinking included), and always one answer per request. A request that doesn't say how long its answer may be gets 2048 tokens (`DEFAULT_ANSWER_TOKENS`).
+- **Thinking:** a request that sets no `thinkingConfig` is sent with `"thinkingConfig": {"thinkingLevel": "low"}`. `gemini-3.6-flash` otherwise thinks at "medium", and its thinking is billed as output and counts in the answer's length. Not "minimal": Google's docs say it needs the model's thought signatures sent back in a conversation of several turns, which the chat doesn't do, and newer Flash models no longer accept it. A request's own `thinkingConfig` is left as it is.
 - **Files:** at most 10 files sent inline per request, and only pictures (PNG, JPEG, WebP, HEIC, HEIF), PDFs and plain text. Audio, video and file links (`fileData`, which would make Google fetch a file or video of any length itself) are refused. High-resolution picture processing (`mediaResolution` HIGH) is refused.
 - **What a request costs is not just its size.** Google counts each picture, and each PDF page, as a fixed number of tokens (hundreds each, more at higher resolution), whatever its size in bytes. So a request with pictures or a PDF of many near-empty pages can cost several times what 256 KB of text would: the 10-file limit bounds pictures, but a single PDF can have up to Google's page limit. The budget alert and quota in step 1.4 are the backstop.
 - **Only the fields the app needs are passed on:** `contents`, `systemInstruction` (text only), `generationConfig`, `safetySettings`, `tools` and `toolConfig`. Other top-level fields are dropped. Inside them, only the Gemini fields the app uses, in their usual spelling (`maxOutputTokens`, not `max_output_tokens`), are accepted; anything else is refused with `bad_request`, so nothing slips past the limits under another name.
@@ -367,10 +396,10 @@ data: {"error":{"code":"upstream_error","message":"The AI service stopped in the
 
 ## For developers
 
-**Request** (both `/v1/generate` and `/v1/stream`): JSON with `contents` (required), and optionally `model` (from `ALLOWED_MODELS`), `systemInstruction`, `generationConfig`, `safetySettings`, `tools` (`[{ "functionDeclarations": [...] }]`) and `toolConfig`, as in the [Gemini API](https://ai.google.dev/api/generate-content), camelCase only. Headers: `Authorization: Bearer <Supabase access token>` and `Content-Type: application/json`. Accepted fields (the `ALLOWED_*` lists at the top of `src/worker.js`):
+**Request** (both `/v1/generate` and `/v1/stream`): JSON with `contents` (required), and optionally `model` (from `ALLOWED_MODELS`), `systemInstruction`, `generationConfig`, `safetySettings`, `tools` (`[{ "functionDeclarations": [...] }]`) and `toolConfig`, as in the [Gemini API](https://ai.google.dev/api/generate-content), camelCase only. Headers: `Authorization: Bearer <Supabase access token>` and `Content-Type: application/json`. The preflight also allows `X-Maham-Company`, `X-Maham-Feature` and `X-Maham-Shares`, which later versions of the app send; this version ignores them. Accepted fields (the `ALLOWED_*` lists at the top of `src/worker.js`):
 
 - each content: `role` (`user` or `model`), `parts`; each part: `text`, `inlineData` (`mimeType`, `data`), `functionCall` (`id`, `name`, `args`), `functionResponse` (`id`, `name`, `response`), `thought`, `thoughtSignature`. `systemInstruction` parts: `text` only.
-- `generationConfig`: `temperature`, `topP`, `topK`, `maxOutputTokens` (capped), `candidateCount` (always sent as 1), `stopSequences`, `responseMimeType`, `responseSchema`, `responseJsonSchema`, `thinkingConfig` (`thinkingBudget` capped at `MAX_OUTPUT_TOKENS`, `thinkingLevel`, `includeThoughts`), `seed`, `presencePenalty`, `frequencyPenalty`, `mediaResolution` (`MEDIA_RESOLUTION_LOW` or `MEDIA_RESOLUTION_MEDIUM`).
+- `generationConfig`: `temperature`, `topP`, `topK`, `maxOutputTokens` (capped; `DEFAULT_ANSWER_TOKENS` when left out), `candidateCount` (always sent as 1), `stopSequences`, `responseMimeType`, `responseSchema`, `responseJsonSchema`, `thinkingConfig` (`thinkingBudget` capped at `MAX_OUTPUT_TOKENS`, `thinkingLevel`, `includeThoughts`; `{"thinkingLevel": "low"}` when left out), `seed`, `presencePenalty`, `frequencyPenalty`, `mediaResolution` (`MEDIA_RESOLUTION_LOW` or `MEDIA_RESOLUTION_MEDIUM`).
 - `safetySettings` items: `category`, `threshold`, `method`. Function declarations: `name`, `description`, `behavior`, `parameters`, `parametersJsonSchema`, `response`, `responseJsonSchema`. `toolConfig`: `functionCallingConfig` (`mode`, `allowedFunctionNames`).
 
 Use `/v1/stream` for anything long (reports, summaries near the token cap): `/v1/generate` must finish within `GENERATE_TIMEOUT_MS` (90 seconds), because Google sends nothing until the answer is complete.
@@ -381,4 +410,4 @@ Use `/v1/stream` for anything long (reports, summaries near the token cap): `/v1
 
 **Tests:** from the top of the repository, `npm test` runs them with the app's tests (`npm test -- workers/ai-proxy` for these only); `npm test` in this folder does the same (it needs the app's own `npm ci` at the top first). They replace Supabase and Google with fakes; nothing goes over the network.
 
-**Phase 2** will add `VITE_AI_PROXY_URL` (this Worker's address) to the app, an owner switch, and the client that sends the person's token with each request. A `forbidden` answer means the signed-in person isn't a member of the Worker's company; the app should say so rather than offer to sign in again.
+**The app** (`src/features/ai/client.ts`) reaches this Worker at `VITE_AI_PROXY_URL` (the live address by default), with the person's token, and sends `generationConfig` with `maxOutputTokens` 2048 and `thinkingLevel` "low" on every chat request. It shows `forbidden` as "Your account is not a member of the company the AI assistant is set up for. Ask the owner.", never as a sign-in problem, and `internal` with "The AI service is not set up yet" as "The AI assistant is not set up yet. Ask the owner."

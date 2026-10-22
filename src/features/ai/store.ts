@@ -2,12 +2,16 @@ import { useSyncExternalStore } from 'react';
 import { newId } from '@/lib/ids';
 import { streamChat as defaultStreamChat, type ChatMessage, type StreamOptions } from './client';
 import { AiError, isAiError } from './errors';
+import { scrubText, type HiddenCounts, type KnownValue } from './scrub';
 
 /**
  * The AI assistant's conversation and panel, for this browser tab only.
  * Kept in memory, outside React (a change of language remounts the app):
- * never stored, never synced, gone on reload, with New chat, or when
- * another person or company takes over the tab.
+ * never stored, never synced, gone on reload, with New chat, when another
+ * person or company takes over the tab, when the person signs out or their
+ * role or access changes, and when the assistant is switched off. A
+ * question is kept as it was sent: cleaned of ID numbers, IBANs and the
+ * like first (scrub.ts); what was typed is not kept.
  */
 
 export type TurnStatus = 'streaming' | 'done' | 'stopped' | 'error';
@@ -15,7 +19,10 @@ export type TurnStatus = 'streaming' | 'done' | 'stopped' | 'error';
 export interface ChatTurn {
   id: string;
   role: 'user' | 'model';
+  /** For the person's questions, as sent: with private details replaced. */
   text: string;
+  /** The person's questions only: what was hidden before sending, when anything was. */
+  hidden?: HiddenCounts;
   /** The assistant's answers only. */
   status?: TurnStatus;
   error?: AiError;
@@ -41,6 +48,10 @@ export interface AssistantState {
 let state: AssistantState = { open: false, turns: [], draft: '', pending: null, focus: 0 };
 /** Whose conversation it is: the person and the company ("user:company"). */
 let owner: string | null = null;
+/** The role and access it was held under, once known (see claimConversation). */
+let granted: string | null = null;
+/** Bumped each time the conversation is forgotten: an answer of an older one is dropped. */
+let epoch = 0;
 let running: AbortController | null = null;
 let ask: (options: StreamOptions) => Promise<{ text: string }> = defaultStreamChat;
 const listeners = new Set<() => void>();
@@ -113,25 +124,55 @@ export function stopAnswer(): void {
   running?.abort();
 }
 
+/** Stops the answer being written and forgets it, whatever it was (it gives way to nothing). */
+function drop(): void {
+  epoch += 1;
+  running?.abort();
+  running = null;
+}
+
 /** Forgets the conversation (New chat). */
 export function newChat(): void {
-  stopAnswer();
-  running = null;
+  drop();
   set({ turns: [], draft: '', pending: null, focus: state.focus + 1 });
 }
 
 /**
- * The conversation belongs to one person in one company: when another one
- * takes over the tab, it starts again and the panel closes.
+ * The conversation belongs to one person in one company, under one role
+ * and access: when another person or company takes over the tab, it starts
+ * again and the panel closes; when the person's role or the owner's limits
+ * on them change (`access`, null while not known yet), it starts again, so
+ * nothing said under the old ones outlives them.
  */
-export function claimConversation(key: string): void {
-  if (owner === key) return;
+export function claimConversation(key: string, access: string | null = null): void {
+  if (owner === key) {
+    if (access === null || access === granted) return;
+    const before = granted;
+    granted = access;
+    if (before !== null) forget({ close: false });
+    return;
+  }
   const first = owner === null;
   owner = key;
-  if (first && state.turns.length === 0) return;
-  stopAnswer();
-  running = null;
-  set({ turns: [], draft: '', pending: null, open: false });
+  granted = access;
+  if (first && state.turns.length === 0 && running === null) return;
+  forget();
+}
+
+/**
+ * Forgets everything and stops the answer being written: the person signed
+ * out, or the assistant was switched off or is no longer theirs here.
+ */
+export function forgetConversation(): void {
+  forget();
+}
+
+function forget({ close = true }: { close?: boolean } = {}): void {
+  const empty =
+    state.turns.length === 0 && state.draft === '' && state.pending === null && running === null;
+  drop();
+  if (empty && (!close || !state.open)) return;
+  set({ turns: [], draft: '', pending: null, ...(close ? { open: false } : {}) });
 }
 
 export function isAnswering(current: AssistantState = state): boolean {
@@ -161,19 +202,19 @@ function historyBefore(turns: readonly ChatTurn[], id: string): ChatMessage[] {
 async function answer(id: string, system: string) {
   const controller = new AbortController();
   running = controller;
-  const forOwner = owner;
+  const forEpoch = epoch;
   try {
     const result = await ask({
       messages: historyBefore(state.turns, id),
       system,
       signal: controller.signal,
       onText: (_delta, text) => {
-        if (owner === forOwner && !controller.signal.aborted) updateTurn(id, { text });
+        if (epoch === forEpoch && !controller.signal.aborted) updateTurn(id, { text });
       },
     });
-    if (owner === forOwner) updateTurn(id, { text: result.text, status: 'done' });
+    if (epoch === forEpoch) updateTurn(id, { text: result.text, status: 'done' });
   } catch (error) {
-    if (owner !== forOwner) return;
+    if (epoch !== forEpoch) return;
     const failure = isAiError(error) ? error : new AiError('internal');
     updateTurn(
       id,
@@ -184,12 +225,24 @@ async function answer(id: string, system: string) {
   }
 }
 
-/** Sends a question with the page's system instruction; the answer streams into the conversation. */
-export function sendQuestion(text: string, system: string): void {
+/**
+ * Sends a question with the page's system instruction; the answer streams
+ * into the conversation. The question is cleaned first (scrubText), with
+ * `known`, this company's never-send values on this device: only the
+ * cleaned text is kept and sent.
+ */
+export function sendQuestion(
+  text: string,
+  system: string,
+  known: readonly KnownValue[] = [],
+): void {
   const question = text.trim();
   if (!question || isAnswering()) return;
+  const sent = scrubText(question, known);
+  const asked: ChatTurn = { id: newId(), role: 'user', text: sent.text };
+  if (sent.count > 0) asked.hidden = sent.hidden;
   const reply: ChatTurn = { id: newId(), role: 'model', text: '', status: 'streaming' };
-  set({ turns: [...state.turns, { id: newId(), role: 'user', text: question }, reply] });
+  set({ turns: [...state.turns, asked, reply] });
   void answer(reply.id, system);
 }
 
@@ -204,9 +257,9 @@ export function retryAnswer(id: string, system: string): void {
 export function resetAssistantForTests(
   fake: (options: StreamOptions) => Promise<{ text: string }> = defaultStreamChat,
 ): void {
-  running?.abort();
-  running = null;
+  drop();
   owner = null;
+  granted = null;
   ask = fake;
   set({ open: false, turns: [], draft: '', pending: null, focus: 0 });
 }

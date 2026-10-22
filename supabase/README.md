@@ -20,7 +20,7 @@ expiry alerts and employee letters (see "Salary approval", "Expiry alerts"
 and "Employee letters" below).
 `migrations/20261207000000_staffing_costings.sql` comes next: manpower
 costings of Maham People (see "Manpower costings" below).
-`migrations/20261214000000_ai_assistant.sql` comes last: the AI assistant's
+`migrations/20261208000000_ai_assistant.sql` comes last: the AI assistant's
 switch is the owner's and the admins' (see "The AI assistant's switch"
 below). Each file is
 run once, in this order; a release that needs more from the server adds a
@@ -274,22 +274,24 @@ signed-in users, with row-level security on. Run it with
 
 ## Scripts by phase
 
-| #   | File                                                  | Phase       | Notes                                                                   |
-| --- | ----------------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
-| 1   | `migrations/20261004000000_almailbooks_cloud.sql`     | First setup | Run once at set-up. Never again (see "Records of database version 16"). |
-| 2   | `migrations/20261006000000_sync_fixes.sql`            | Set-up      | Run once at set-up.                                                     |
-| 3   | `migrations/20261007000000_email_alerts.sql`          | Set-up      | Run once at set-up; optional (email alerts).                            |
-| 4   | `migrations/20261102000000_tables_v16.sql`            | Phases 0-2  | Can't run again once there are manpower costings.                       |
-| 5   | `migrations/20261116000000_super_admin_approvals.sql` | Phase 3     | Needs 4.                                                                |
-| 6   | `migrations/20261123000000_change_feed.sql`           | Phase 3     | Needs 5.                                                                |
-| 7   | `migrations/20261130000000_people_alerts.sql`         | Phase 4     | Needs 6.                                                                |
-| 8   | `migrations/20261207000000_staffing_costings.sql`     | Phase 5     | Needs 7.                                                                |
+| #   | File                                                  | Phase        | Notes                                                                   |
+| --- | ----------------------------------------------------- | ------------ | ----------------------------------------------------------------------- |
+| 1   | `migrations/20261004000000_almailbooks_cloud.sql`     | First setup  | Run once at set-up. Never again (see "Records of database version 16"). |
+| 2   | `migrations/20261006000000_sync_fixes.sql`            | Set-up       | Run once at set-up.                                                     |
+| 3   | `migrations/20261007000000_email_alerts.sql`          | Set-up       | Run once at set-up; optional (email alerts).                            |
+| 4   | `migrations/20261102000000_tables_v16.sql`            | Phases 0-2   | Can't run again once there are manpower costings.                       |
+| 5   | `migrations/20261116000000_super_admin_approvals.sql` | Phase 3      | Needs 4.                                                                |
+| 6   | `migrations/20261123000000_change_feed.sql`           | Phase 3      | Needs 5.                                                                |
+| 7   | `migrations/20261130000000_people_alerts.sql`         | Phase 4      | Needs 6.                                                                |
+| 8   | `migrations/20261207000000_staffing_costings.sql`     | Phase 5      | Needs 7.                                                                |
+| 9   | `migrations/20261208000000_ai_assistant.sql`          | AI assistant | Needs 8.                                                                |
 
 A file run again puts back its own version of every function, rule and
 constraint it defines. What a later file replaced must then be put back by
-running again the latest file that defines it, and so on: after 3, run 7
-and 8; after 4, 8; after 5 or 6, 7 and 8; after 7, 8 (after the first file,
-which only succeeds before there are records of version 16: 2, 5, 7 and 8).
+running again the latest file that defines it, and so on: after 3, run 7,
+8 and 9; after 4, 8 and 9; after 5 or 6, 7, 8 and 9; after 7, 8 and 9;
+after 8, 9 (after the first file, which only succeeds before there are
+records of version 16: 2, 5, 7, 8 and 9).
 `maham_closure` in `health-check.sql` is this table. The fourth file only
 succeeds before there are manpower costings: once there are, the check
 never asks for it, and what only it makes needs a fix from the developer.
@@ -320,7 +322,7 @@ one row per check in the order of the files: `step`, `check`, `status` and
   removes (`push_records`, `patch_company`, `email_alerts_config`,
   `can_read_v16_file`, `set_member_permissions`, `change_events`,
   `people_shut`, the rule "Manpower costings: kept from staff and
-  viewers"). A file that hasn't run is one MISSING row (one WARN row for the
+  viewers", `switches_ai`). A file that hasn't run is one MISSING row (one WARN row for the
   email alerts, which are optional), with that file and every later one that
   hasn't run (but the email alerts, which only their own row names), each
   with the files that put back what it replaces.
@@ -849,63 +851,42 @@ changes nothing when that file hasn't run.
 
 ## The AI assistant's switch
 
-`20261214000000_ai_assistant.sql` keeps the company's AI assistant switch
+`20261208000000_ai_assistant.sql` keeps the company's AI assistant switch
 (`ai` on the company record, Settings → AI assistant; see
 [`docs/ai-assistant.md`](../docs/ai-assistant.md)) for the owner and the
-admins. It stops with "Run 20261116000000_super_admin_approvals.sql and the
-files after it first, then this file." and changes nothing when that file
-hasn't run. Until it runs, only the app keeps the switch for them (its
-Settings page, and the device's own check before it syncs).
+admins. It stops with "Run 20261207000000_staffing_costings.sql first, then
+this file." and changes nothing when that file hasn't run. Until it runs,
+only the app keeps the switch for them (its Settings page, and the device's
+own check before it syncs), so the app works the same either way.
 
-- A trigger of its own, `records_guard_ai` (before insert or update on
-  `public.records`, after `records_guard`), replaces no earlier function, so
-  no other file needs running again after it, and running an earlier file
-  again leaves it in place. For the company record only: anyone but the
-  owner or an admin keeps `ai` as it is stored (`kept_key`, as the letters
-  switch), by a push or `patch_company` alike, so an accountant neither turns
-  it on nor off, and a copy from an older version, which has never heard of
-  it, never turns it off. The rest of their change is stored as before.
+- `records_guard` is the one of `20261130000000_people_alerts.sql`, with
+  every rule it has, and one more for the company record: anyone but the
+  owner or an admin (`switches_ai`, kept the same as `switchesAi` in
+  `src/cloud/roles.ts`) keeps `ai` as it is stored (`kept_key`, as the
+  letters switch), by a push or `patch_company` alike, so an accountant
+  neither turns it on nor off, and a copy from an older version, which has
+  never heard of it, never turns it off. The rest of their change is stored
+  as before.
 - An admin the owner made Maham Books or Maham People view only for still
   changes it: it is not one of the books' settings
   (`company_books_changed`). Staff and viewers are refused as before (staff
   change only document numbers on the company record; viewers nothing).
-- `server_features()` is unchanged: the app asks for no feature, as the
-  switch is kept on the device for the same people either way.
-- The AI service (the Cloudflare Worker) doesn't read the switch: it answers
-  anyone signed in, and the app shows the assistant only with the switch on.
-- Tests: `src/cloud/ai-assistant-sql.test.ts` (the file run twice after
-  every earlier one, before them, the owner, admins limited or not, an
-  accountant by push and `patch_company`, an older version's copy, staff and
-  viewers, and the app's fake against the server) and
-  `src/cloud/outbox.test.ts` (the device's own check).
-
-## Email alerts
-
-`20261007000000_email_alerts.sql` and the `email-alerts` Edge Function
-(`src/alerts/`, published by the deploy workflow) send owners and admins a
-morning email of what needs attention (see
-[`docs/email-alerts.md`](../docs/email-alerts.md)).
-
-- `public.email_alerts` has row-level security on, no policies and no grants:
-  the app reaches it only through `email_alert_settings(company)` (members;
-  the caller's own row) and `set_email_alerts(company, enabled, topics,
-app_url)` (owners and admins; the caller's own row). Topics are checked
-  against a fixed list; the app address must be `http(s)`.
-- A trigger on `company_members` deletes a person's row when they leave or
-  stop being an owner or admin; deleting the company deletes the rows.
-- `almailbooks.email_alerts_config` keeps the function's address (the
-  function writes it from its own `SUPABASE_URL`) and a random secret.
-  `almailbooks.run_email_alerts()` (not callable by API roles), scheduled
-  hourly with pg_cron, posts `{"action":"run"}` to the function with that
-  secret through pg_net, only when someone has alerts on.
-- The function is deployed without Supabase's JWT check
-  (`supabase/config.toml`) and checks its callers itself: the schedule's
-  secret, compared in constant time, or, for "Send it now", the person's
-  session (checked with Auth) and their role in the company. It reads the
-  database with `SUPABASE_DB_URL`, so it bypasses row-level security: it only
-  ever emails an owner or admin of the company, at their account's confirmed
-  address. Employee papers appear by type and name only, without numbers, and
-  no payroll data is read.
-- Its secrets are `RESEND_API_KEY` and `ALERTS_FROM`, set in Supabase under
-  Edge Functions → Secrets; GitHub only holds `SUPABASE_ACCESS_TOKEN` to
-  publish it.
+- `server_features()` answers every earlier name and `ai_assistant`. The
+  app waits for nothing on it: the device keeps the switch for the same
+  people either way. The fakes (`src/cloud/testing/fake-cloud.ts`) keep it
+  only once their server has `ai_assistant`, as the real one.
+- The file replaces `records_guard` and `server_features()`, so it is run
+  again after any earlier file that defines them is (the table in "Scripts
+  by phase"); the health check names it then.
+- The AI service (the Cloudflare Worker, `workers/ai-proxy`) doesn't read
+  the switch: it answers the members of the one company it is set up for
+  (`COMPANY_ID`), and the app shows the assistant only with the switch on.
+- Tests: `src/cloud/ai-assistant-sql.test.ts` (the guard, the file run twice
+  after every earlier one, `records_guard` as the latest earlier one with
+  only the rule added, `server_features()`, the owner, admins limited or
+  not, an accountant by push and `patch_company`, an older version's copy,
+  staff and viewers, and the app's fake against the server before and after
+  the file), every other `*-sql.test.ts` (their rules, now through this
+  file's `records_guard`), `src/cloud/health-check-sql.test.ts` (MISSING
+  before it, OK after it) and `src/cloud/outbox.test.ts` (the device's own
+  check).

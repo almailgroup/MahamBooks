@@ -89,14 +89,16 @@ has to be added to the app or to Vercel.
     costings, the first and fourth scripts stop with an error about
     `records_tbl_check` and change nothing.
 13. Then the ninth script,
-    [`supabase/migrations/20261214000000_ai_assistant.sql`](../supabase/migrations/20261214000000_ai_assistant.sql)
+    [`supabase/migrations/20261208000000_ai_assistant.sql`](../supabase/migrations/20261208000000_ai_assistant.sql)
     (a new query, paste, **Run**), after the eighth. It makes the database
     itself keep the AI assistant's switch (**Settings → AI assistant**) for
     the owner and the admins: anyone else's change to it is ignored. Until it
-    runs, only the app's screen keeps it for them. It stops with "Run
-    20261116000000_super_admin_approvals.sql and the files after it first" if
-    the fifth script hasn't run, and then changes nothing. Running it changes
-    nothing else, and no other script needs running again after it.
+    runs, the app keeps it for them on each device, so the app works the
+    same before and after. It stops with "Run
+    20261207000000_staffing_costings.sql first, then this file." if the
+    eighth script hasn't run, and then changes nothing. Running it changes
+    nothing else. If any script from the third to the eighth is ever run
+    again, run this one again after them.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -113,8 +115,9 @@ again, in order.
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
 daily job does it for every company. The email alerts script (step 7) turns it
 on; without email alerts, open **Database → Extensions**, search for
-**pg_cron**, enable it, then run the eighth script (step 12) once more. The fourth script schedules it too, but once there are manpower costings
-it can't run again.
+**pg_cron**, enable it, then run the eighth script (step 12) once more,
+and the ninth (step 13) after it. The fourth script schedules it too, but
+once there are manpower costings it can't run again.
 
 To check, run the health check (see "Health check" below): it says, step by
 step, whether each script has run, each as its latest version, and whether
@@ -576,14 +579,15 @@ order, in a new query of the SQL editor (paste the whole file, **Run**).
 | 6   | `20261123000000_change_feed.sql`           | Phase 3 (second of two) | Once, after 5.                                                                  |
 | 7   | `20261130000000_people_alerts.sql`         | Phase 4                 | Once, after 6.                                                                  |
 | 8   | `20261207000000_staffing_costings.sql`     | Phase 5                 | Once, after 7.                                                                  |
+| 9   | `20261208000000_ai_assistant.sql`          | AI assistant            | Once, after 8.                                                                  |
 
-Scripts 2, 3 and 5 to 8 are safe to run again. Script 4 is too, until there
+Scripts 2, 3 and 5 to 9 are safe to run again. Script 4 is too, until there
 are manpower costings: then it stops with an error about `records_tbl_check`
 and changes nothing. A script run again after a later one puts back its own,
 older version of what the later one changed. The health check finds that and
-says which scripts to run again, in order. As a rule: after script 3 run 7
-and 8 again; after 4, run 8 again; after 5 or 6, run 7 and 8 again; after 7,
-run 8 again.
+says which scripts to run again, in order. As a rule: after script 3 run 7,
+8 and 9 again; after 4, run 8 and 9 again; after 5 or 6, run 7, 8 and 9
+again; after 7, run 8 and 9 again; after 8, run 9 again.
 
 ## Health check
 
@@ -600,8 +604,8 @@ objects and statuses. Run it after running a script, or any time.
 2. Paste the whole of
    [`supabase/health-check.sql`](../supabase/health-check.sql) and click
    **Run**.
-3. You get one table: **step** (the script, 1 to 8 as in the table above, or
-   9 Schedules, 10 Email alerts, 11 Data and privacy), **check**, **status**
+3. You get one table: **step** (the script, 1 to 9 as in the table above, or
+   10 Schedules, 11 Email alerts, 12 Data and privacy), **check**, **status**
    and **detail**. The **last row** sums it up: "All good", or how many
    FAIL, MISSING and WARN there are, with the scripts to run, in order.
 
@@ -625,15 +629,16 @@ What to do:
   again after a later one, or an older copy of a script was run. Run again
   the scripts the detail names, in that order; the last row lists them all,
   for example "Run 20261130000000_people_alerts.sql again, then
-  20261207000000_staffing_costings.sql again (in this order)". Then run the
+  20261207000000_staffing_costings.sql again, then
+  20261208000000_ai_assistant.sql again (in this order)". Then run the
   health check again. The check never asks for the first script, nor for the
   fourth once there are manpower costings: if a row says something "can't be
   fixed by running a script" or "can't be put back by running it again", ask
   the developer.
 - **"Email alerts were never set up"** (WARN): they are optional. To set
   them up, follow [`email-alerts.md`](email-alerts.md), then run the scripts
-  the detail names (the email alerts script, then the Phase 4 and Phase 5
-  scripts again).
+  the detail names (the email alerts script, then the Phase 4, Phase 5 and
+  AI assistant scripts again).
 - **"pg_cron is not on"** (WARN): nothing runs on a schedule (morning
   emails, emails of team changes, the daily clean-ups). Open **Database →
   Extensions**, enable **pg_cron** and **pg_net**, then run again the

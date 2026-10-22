@@ -15,10 +15,11 @@ person types and which page they are on, never the company's records.
    **Use the AI assistant**. It is off for every company until then (D1), and
    everyone else sees the switch without being able to change it. Once the
    ninth database script has run
-   ([`20261214000000_ai_assistant.sql`](../supabase/migrations/20261214000000_ai_assistant.sql),
+   ([`20261208000000_ai_assistant.sql`](../supabase/migrations/20261208000000_ai_assistant.sql),
    step 13 of [`docs/supabase-setup.md`](supabase-setup.md)), the cloud
    keeps it so too: anyone else's change to the switch is ignored, even from
-   a modified app. Until then only the app keeps it for them.
+   a modified app. Until then only the app keeps it for them. The app works
+   the same either way.
 3. **Test the connection** on the same page checks that this device reaches
    the AI service (it asks the AI nothing).
 
@@ -46,6 +47,13 @@ show it. Turning the switch off removes the button for everyone.
 - **New chat** starts again. The conversation is kept only in that browser
   tab: it is gone on reload, never stored and never synced. Each question
   carries at most the last 20 messages of the conversation.
+- The conversation is also forgotten, and an answer being written is
+  stopped, when the person signs out, opens another company, when their
+  role or the owner's limits on them change, and when the assistant is
+  switched off.
+- Answers are kept short: the app asks for at most 2,048 tokens (about
+  1,500 words) and for the model's "low" thinking level, so each question
+  costs little.
 - Without internet the panel says so and nothing is sent.
 - The note under the box says it plainly: _AI can make mistakes. Check
   important answers._
@@ -69,7 +77,46 @@ IBAN, a salary and a customer's name, and checks none of them is in what is
 sent; the browser test does the same on a real employee page.
 
 People are asked, in Settings and in the panel, not to paste Civil IDs, IBANs
-or salaries into the chat.
+or salaries into the chat. The app also hides the ones it can recognise
+before anything is sent (below).
+
+## What is hidden automatically
+
+Before a question leaves the device, the app replaces these with a short
+placeholder, in the language of the question:
+
+| What                                                                                                                                    | Becomes                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Kuwaiti Civil IDs (12 digits that pass the Civil ID check)                                                                              | `[ID number hidden]` / `[رقم هوية مخفي]` |
+| Passport-like numbers (one or two letters and 6 to 9 digits, as K1234567)                                                               | `[ID number hidden]`                     |
+| IBANs of any country, with or without spaces (a Kuwaiti one even with a mistake in it)                                                  | `[IBAN hidden]` / `[رقم آيبان مخفي]`     |
+| Phone numbers with a country code (+965, 00965…), written as two groups of four (9876 5432), or after a word such as "mobile" or "هاتف" | `[phone number hidden]`                  |
+| Email addresses                                                                                                                         | `[email address hidden]`                 |
+| Any other run of 10 or more digits                                                                                                      | `[number hidden]`                        |
+
+It also checks the question against this company's own private numbers held
+on the device: its employees' Civil ID, passport, residency, work permit,
+central agency card and PIFSS numbers, IBANs and account numbers (and the
+copies kept on pay runs), its customers' and vendors' Civil IDs, and the
+company's own IBANs and account numbers. One found anywhere in the question
+is hidden too, however it was typed: with spaces or dashes, in capitals or
+not, in Arabic-Indic (٠١٢) or Persian (۰۱۲) digits. Numbers shorter than 5
+characters are not looked for, as they are too common.
+
+Arabic is handled carefully: the digits are compared as 0 to 9, but only the
+number itself is replaced, so the rest of the question, its letters, marks
+and digits, is sent exactly as it was typed.
+
+Left alone on purpose: invoice and order numbers (INV-000123, SO-2026-0042),
+cheque numbers and bank references of up to 9 digits, amounts and dates.
+
+The person sees their question as it was sent, placeholders included, with a
+small note under it such as "1 ID number was hidden before sending" (or
+"أُخفي قبل الإرسال: رقم هوية واحد"). What was typed is not kept: not in the
+conversation, not on the device, not in any log.
+
+This is a safety net, not a licence: describe the case instead of pasting
+someone's details, as the panel asks.
 
 The instruction for People → Leave, for the owner, in English (the guide
 follows the company's switches: VAT returns appear only with taxes on, and so
@@ -123,16 +170,24 @@ It can't:
 The app never holds an AI key. Questions go to Maham One's AI service, a
 Cloudflare Worker at
 `https://maham-ai-proxy.steep-band-c624.workers.dev` (source:
-`workers/ai-proxy` in the AI worker repository), which:
+[`workers/ai-proxy`](../workers/ai-proxy), with its own
+[README](../workers/ai-proxy/README.md)), which:
 
 - keeps the Google Gemini key as an encrypted secret and calls Gemini with it;
 - accepts only signed-in people: each request carries the person's Supabase
   access token, which the Worker checks with Supabase (the app refreshes the
   token once when the Worker refuses it);
+- **serves only the members of one company** (its `COMPANY_ID` setting):
+  anyone can create a Maham One account, so being signed in is not enough.
+  The Worker asks Supabase, with the person's own sign-in, whether they are a
+  member of that company. Anyone else is refused, and the panel says "Your
+  account is not a member of the company the AI assistant is set up for. Ask
+  the owner.";
 - answers only the web address `https://mahamone.com` (so it works from the
   live app, not from a preview or a copy on another address);
 - limits how many questions each person asks a minute, and caps the length of
-  answers;
+  answers (2,048 tokens unless the app asks for more, never more than 8,192,
+  and the model's low thinking level unless the app chooses another);
 - logs only metadata (route, status, model, token counts), never questions or
   answers.
 
@@ -145,16 +200,55 @@ by the chat yet) and `GET /health` (Test the connection). A build can point at
 another copy of the Worker with `VITE_AI_PROXY_URL`.
 
 When something goes wrong the panel says what, in the person's language:
-signed out or sign-in expired, an account the Worker doesn't serve (a Worker
-limited to one company's members answers `forbidden`), no internet, too many
-questions (with the wait in seconds), the service busy, slow or not set up,
-an answer withheld. The Worker's own message (English) is never shown in the
-chat.
+signed out or sign-in expired, an account that isn't a member of the
+company (the Worker's `forbidden`), any other refusal ("The AI assistant is
+not available for this account."), no internet, too many questions (with
+the wait in seconds), the service busy or slow, the service not set up yet
+("The AI assistant is not set up yet. Ask the owner.", when its key or
+`COMPANY_ID` is missing), an answer withheld. The Worker's own message
+(English) is never shown in the chat, and the message about the web address
+(mahamone.com) only when that is what the Worker said.
+
+## Updating the AI service (for the owner)
+
+The Worker running today is the first version, which answers anyone signed
+in. The new version, in [`workers/ai-proxy/src/worker.js`](../workers/ai-proxy/src/worker.js),
+serves only your company's members and gives shorter answers. To put it in
+place, in a few minutes:
+
+1. **Find your company's id.** In Supabase, open the project, then **SQL
+   Editor** → **New query**, paste `select id, name from public.companies;`
+   and press **Run**. Copy the `id` on the row with your company's name,
+   exactly as it is. (This only reads; it changes nothing.)
+2. **Paste the new code.** In the Cloudflare dashboard, open **Workers &
+   Pages** → `maham-ai-proxy` → **Edit code**. Delete everything in
+   `worker.js`, paste the whole of the new `src/worker.js`, and press
+   **Deploy**.
+3. **Add two settings.** On the Worker, open **Settings** → **Variables and
+   Secrets** and **Add** each of these as type **Text**, then press
+   **Deploy**:
+   - `COMPANY_ID`: the id from step 1;
+   - `DEFAULT_ANSWER_TOKENS`: `2048`.
+
+   Leave everything else as it is, the `GEMINI_API_KEY` secret included.
+   Between steps 2 and 3 the assistant answers "The AI assistant is not set
+   up yet. Ask the owner.": that is expected, and nothing is sent anywhere.
+
+4. **Check it.** Open
+   `https://maham-ai-proxy.steep-band-c624.workers.dev/health` in a browser:
+   it should show `{"ok":true,"model":"gemini-3.6-flash"}`. Then, in the app,
+   **Settings → AI assistant → Test the connection**, and ask the assistant
+   a question. If it says your account is not a member of the company, the
+   id in `COMPANY_ID` isn't exactly the one from step 1.
+
+The Worker's [README](../workers/ai-proxy/README.md) has the same steps
+("Updating the Worker that is already running"), the command-line way, and
+how to test it with `curl`.
 
 ## What comes next
 
 **Phase 2** gives the assistant what is on the page, through a redaction
 layer: the record's fields it needs, with Civil IDs, IBANs, salaries and
 other personal data removed or masked before anything leaves the device, and
-the company's choice of what it may see. Until then, describe the case in
-your own words.
+the company's choice of what it may see. What is typed is already cleaned
+the same way (above). Until then, describe the case in your own words.

@@ -4,12 +4,14 @@ import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { useCompany } from '@/app/company';
 import { useCloud } from '@/cloud/store';
+import type { MemberPermissions, MemberRole } from '@/cloud/roles';
+import { useRoleView } from '@/features/cloud/role-gates';
 import { useHasBottomBar, useTyping } from '@/features/shell/store';
 import { useAiAvailability } from './availability';
 import { AssistantPanel } from './assistant-panel';
 import {
   claimConversation,
-  closeAssistant,
+  forgetConversation,
   openAssistant,
   toggleAssistant,
   useAssistant,
@@ -25,6 +27,22 @@ export function assistantShortcutLabel(): string {
   return /mac|iphone|ipad/i.test(platform) ? '⌘J' : 'Ctrl J';
 }
 
+/** The person's role and the owner's limits on them, as one comparable text. */
+function accessKey(role: MemberRole | null, permissions?: MemberPermissions): string {
+  const sorted = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(sorted)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .filter(([, v]) => v !== undefined)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([k, v]) => [k, sorted(v)]),
+          )
+        : value;
+  return JSON.stringify([role, sorted(permissions ?? null)]);
+}
+
 /**
  * The AI assistant on every page of the app shell (not print views): the
  * Ask AI button, Ctrl J or ⌘J, and its panel. Nothing at all unless the
@@ -33,23 +51,30 @@ export function assistantShortcutLabel(): string {
 export function AiAssistant() {
   const company = useCompany();
   const { user } = useCloud();
+  const { role, known, permissions } = useRoleView();
   const availability = useAiAvailability();
   const available = availability === 'on';
   const { open } = useAssistant();
   const button = useRef<HTMLButtonElement>(null);
   // What had the keyboard's focus when the panel opened, to go back to.
   const before = useRef<HTMLElement | null>(null);
+  // Null while the company's link is read (again, when the app is drawn in another language).
+  const access = known ? accessKey(role, permissions) : null;
 
-  // A conversation is one person's in one company.
+  // A conversation is one person's in one company, under one role and
+  // access: signed out, another person or company, or another role or
+  // limits, and it is forgotten, with the answer being written.
   useEffect(() => {
-    if (user) claimConversation(`${user.id}:${company.id}`);
-  }, [user, company.id]);
+    if (user) claimConversation(`${user.id}:${company.id}`, access);
+    else forgetConversation();
+  }, [user, company.id, access]);
 
-  // Switched off, signed out or company changed: the panel goes. Not while
-  // the company's link is read again (the app drawn again in another language).
+  // Switched off, signed out, no longer shared or kept on this device: the
+  // conversation and the panel go. Not while the company's link is read
+  // again (the app drawn again in another language).
   useEffect(() => {
-    if (!available && availability !== 'loading' && open) closeAssistant();
-  }, [available, availability, open]);
+    if (!available && availability !== 'loading') forgetConversation();
+  }, [available, availability]);
 
   // Before the panel's box takes the focus (its effect runs after this one).
   useLayoutEffect(() => {

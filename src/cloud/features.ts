@@ -57,7 +57,14 @@ export type ServerFeature =
    * 20261207000000_staffing_costings.sql: manpower costings of Maham People
    * (#3), private like payroll, and their activity.
    */
-  | 'staffing_costings';
+  | 'staffing_costings'
+  /**
+   * 20261208000000_ai_assistant.sql: the cloud keeps the AI assistant's
+   * switch (Settings → AI assistant) for the owner and the admins. Nothing
+   * waits for it: until it runs the device keeps the switch for them, so
+   * the app works the same either way.
+   */
+  | 'ai_assistant';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

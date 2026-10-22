@@ -13,9 +13,11 @@ import { FakeSupabase } from './cloud-fake';
 
 const AI_URL = 'https://maham-ai-proxy.steep-band-c624.workers.dev';
 
+/** As the Worker answers a preflight (workers/ai-proxy, ALLOWED_REQUEST_HEADERS). */
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'Authorization, Content-Type',
+  'access-control-allow-headers':
+    'Authorization, Content-Type, X-Maham-Company, X-Maham-Feature, X-Maham-Shares',
   'access-control-allow-methods': 'POST, GET, OPTIONS',
   'access-control-expose-headers': 'Retry-After',
 };
@@ -265,8 +267,40 @@ test('the owner turns the assistant on; a question on an employee’s page is an
   }
   await sheet.getByRole('button', { name: 'إغلاق' }).click();
 
-  // Switched off again: the button goes.
+  // Back in English: a Civil ID and an IBAN typed into a question are hidden before it is sent.
   await page.getByRole('button', { name: 'English' }).click();
+  await page.getByRole('button', { name: 'Ask AI' }).click();
+  await expect(panel).toBeVisible();
+  await panel.getByRole('button', { name: 'New chat' }).click();
+  const ibanSpaced = EMPLOYEE.iban.replace(/(.{4})(?=.)/g, '$1 ');
+  await question.fill(
+    `My Civil ID is ${EMPLOYEE.civilId} and my IBAN is ${ibanSpaced}. How do I add them to my profile?`,
+  );
+  await question.press('Enter');
+  await expect(
+    panel.getByText(
+      'My Civil ID is [ID number hidden] and my IBAN is [IBAN hidden]. How do I add them to my profile?',
+    ),
+  ).toBeVisible();
+  await expect(panel.getByText('1 ID number was hidden before sending')).toBeVisible();
+  await expect(panel.getByText('1 IBAN was hidden before sending')).toBeVisible();
+  await expect(panel.locator('strong', { hasText: 'sick leave' })).toBeVisible();
+  expect(calls).toHaveLength(4);
+  const scrubbed = calls[3].body;
+  for (const secret of [EMPLOYEE.civilId, EMPLOYEE.iban, ibanSpaced, 'CBKU', '12345601']) {
+    expect(scrubbed, secret).not.toContain(secret);
+  }
+  expect(scrubbed).toContain('[ID number hidden]');
+  expect(scrubbed).toContain('[IBAN hidden]');
+  // A short answer, every time.
+  expect(JSON.parse(scrubbed).generationConfig).toEqual({
+    maxOutputTokens: 2048,
+    thinkingConfig: { thinkingLevel: 'low' },
+  });
+  await panel.getByRole('button', { name: 'Close' }).click();
+  await expect(panel).toBeHidden();
+
+  // Switched off again: the button goes.
   await page.goto('#/settings/ai');
   await page.getByRole('switch', { name: /Use the AI assistant/ }).click();
   await expect(page.getByText('AI assistant turned off')).toBeVisible();

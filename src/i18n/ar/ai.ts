@@ -56,8 +56,6 @@ export default {
   'Sign in to use the AI assistant.': 'سجّل الدخول لاستخدام المساعد الذكي.',
   'Your sign-in has expired. Sign in again to use the AI assistant.':
     'انتهت صلاحية تسجيل دخولك. سجّل الدخول مرة أخرى لاستخدام المساعد الذكي.',
-  'Your account may not use the AI assistant. Ask the owner of the company.':
-    'لا يمكن لحسابك استخدام المساعد الذكي. اسأل مالك الشركة.',
   'The AI assistant works only in the app at mahamone.com.':
     'يعمل المساعد الذكي فقط في التطبيق على mahamone.com.',
   'The AI service could not use this question. Try asking it another way.':

@@ -1,14 +1,27 @@
 import { useEffect, useLayoutEffect, useRef, type FormEvent } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { ArrowUp, Copy, RotateCcw, Sparkles, Square, SquarePen, WifiOff, X } from 'lucide-react';
+import {
+  ArrowUp,
+  Copy,
+  EyeOff,
+  RotateCcw,
+  Sparkles,
+  Square,
+  SquarePen,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
-import { t } from '@/i18n';
+import { t, tp } from '@/i18n';
+import { useCompany } from '@/app/company';
 import { useOnline } from '@/cloud/status';
 import { Button } from '@/components/ui/button';
 import { MAX_QUESTION_LENGTH } from './config';
 import { aiErrorMessage } from './errors';
+import { useKnownValues } from './known-values';
 import { Markdown } from './markdown';
+import { HIDDEN_KINDS, type HiddenCounts, type HiddenKind } from './scrub';
 import {
   closeAssistant,
   isAnswering,
@@ -29,7 +42,9 @@ import { useAiContext } from './use-ai-context';
  * desktop (on wide screens the page moves over to stay usable beside it,
  * see AppLayout), the whole screen on phones. The conversation and the
  * question being typed are the tab's (store.ts); each question is sent
- * with where the person is, never a record (use-ai-context.ts).
+ * with where the person is, never a record (use-ai-context.ts), and
+ * cleaned of ID numbers, IBANs and the like first, this company's own
+ * included (scrub.ts, known-values.ts), with a note on it when anything was.
  * `onClosed` puts the keyboard's focus back once the panel is gone.
  */
 export function AssistantPanel({ open, onClosed }: { open: boolean; onClosed?: () => void }) {
@@ -59,7 +74,13 @@ export function AssistantPanel({ open, onClosed }: { open: boolean; onClosed?: (
 }
 
 function PanelBody() {
-  const { system, place, starters, ready } = useAiContext();
+  const company = useCompany();
+  const context = useAiContext();
+  const { system, place, starters } = context;
+  // The company's never-send values, to hide in what is typed: nothing is
+  // asked before they are read.
+  const known = useKnownValues(company.id);
+  const ready = context.ready && known !== undefined;
   const assistant = useAssistant();
   const online = useOnline();
   const answering = isAnswering(assistant);
@@ -73,8 +94,8 @@ function PanelBody() {
   useEffect(() => {
     if (assistant.pending === null || !ready || answering) return;
     const question = takePending();
-    if (question) sendQuestion(question, system);
-  }, [assistant.pending, system, ready, answering]);
+    if (question) sendQuestion(question, system, known);
+  }, [assistant.pending, system, ready, answering, known]);
 
   // The cursor in the box, after what is in it (a question from the palette).
   useEffect(() => {
@@ -102,7 +123,7 @@ function PanelBody() {
     if (!text.trim() || answering || !online) return;
     stick.current = true;
     // Asked before the person's role is read (just opened): sent as soon as it is.
-    if (ready) sendQuestion(text, system);
+    if (ready) sendQuestion(text, system, known);
     else queueQuestion(text);
     setDraft('');
     box.current?.focus();
@@ -251,16 +272,79 @@ function Welcome({
   );
 }
 
+/** "1 ID number was hidden before sending", for each kind hidden in a question. */
+function hiddenLine(kind: HiddenKind, count: number): string {
+  switch (kind) {
+    case 'id':
+      return tp(
+        count,
+        '{count} ID number was hidden before sending',
+        '{count} ID numbers were hidden before sending',
+      );
+    case 'iban':
+      return tp(
+        count,
+        '{count} IBAN was hidden before sending',
+        '{count} IBANs were hidden before sending',
+      );
+    case 'account':
+      return tp(
+        count,
+        '{count} account number was hidden before sending',
+        '{count} account numbers were hidden before sending',
+      );
+    case 'phone':
+      return tp(
+        count,
+        '{count} phone number was hidden before sending',
+        '{count} phone numbers were hidden before sending',
+      );
+    case 'email':
+      return tp(
+        count,
+        '{count} email address was hidden before sending',
+        '{count} email addresses were hidden before sending',
+      );
+    case 'number':
+      return tp(
+        count,
+        '{count} long number was hidden before sending',
+        '{count} long numbers were hidden before sending',
+      );
+  }
+}
+
+/** Under a question: what was hidden in it before it was sent. */
+function HiddenNote({ hidden }: { hidden: HiddenCounts }) {
+  const lines = HIDDEN_KINDS.filter((kind) => (hidden[kind] ?? 0) > 0).map((kind) =>
+    hiddenLine(kind, hidden[kind]!),
+  );
+  if (lines.length === 0) return null;
+  return (
+    <div className="flex max-w-[85%] items-start gap-1.5 text-xs text-slate-500">
+      <EyeOff className="mt-px size-3.5 shrink-0" aria-hidden />
+      <p>
+        {lines.map((line) => (
+          <span key={line} className="block">
+            {line}
+          </span>
+        ))}
+      </p>
+    </div>
+  );
+}
+
 function Turn({ turn, answering, system }: { turn: ChatTurn; answering: boolean; system: string }) {
   if (turn.role === 'user') {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1">
         <p
           dir="auto"
           className="bg-primary-solid text-on-primary max-w-[85%] rounded-2xl rounded-ee-md px-3.5 py-2 text-sm whitespace-pre-wrap"
         >
           {turn.text}
         </p>
+        {turn.hidden ? <HiddenNote hidden={turn.hidden} /> : null}
       </div>
     );
   }

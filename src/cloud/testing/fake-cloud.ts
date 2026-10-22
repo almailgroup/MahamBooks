@@ -1056,9 +1056,12 @@ export class FakeCloud {
         throw fail('permission');
       }
     }
-    // The AI assistant's switch (20261214000000_ai_assistant.sql, which names
-    // no feature of its own): kept as stored for anyone but the owner or an admin.
-    if (tbl === 'companies') data = keepAiSwitch(role, old, data);
+    // The AI assistant's switch, once the server has
+    // 20261208000000_ai_assistant.sql: kept as stored for anyone but the
+    // owner or an admin.
+    if (tbl === 'companies' && this.features.includes('ai_assistant')) {
+      data = keepAiSwitch(role, old, data);
+    }
     if (!this.features.includes('approvals')) return data;
     if (tbl === 'companies') {
       if (role !== 'owner' && approvalRulesChanged(old, data)) throw fail('permission');

@@ -1,5 +1,5 @@
 import { getAccessToken } from '@/cloud/session';
-import { AI_PROXY_URL, MAX_TURNS } from './config';
+import { AI_PROXY_URL, CHAT_MAX_OUTPUT_TOKENS, CHAT_THINKING_LEVEL, MAX_TURNS } from './config';
 import { AiError, errorFromBody, isAiError } from './errors';
 import { SseParser, type SseEvent } from './sse';
 
@@ -88,13 +88,21 @@ export function recentTurns(messages: ChatMessage[], max = MAX_TURNS): ChatMessa
   return first === -1 ? [] : kept.slice(first);
 }
 
-/** The request body both /v1 routes take. */
+/**
+ * The request body both /v1 routes take: a chat answer's length and low
+ * thinking every time, so an answer stays short and cheap whichever
+ * version of the Worker passes it on.
+ */
 export function requestBody({ messages, system }: Pick<AskOptions, 'messages' | 'system'>) {
   const turns = recentTurns(messages);
   if (turns.length === 0) throw new AiError('bad_request', { detail: 'Nothing to ask.' });
   return {
     contents: turns.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
     systemInstruction: { parts: [{ text: system }] },
+    generationConfig: {
+      maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
+      thinkingConfig: { thinkingLevel: CHAT_THINKING_LEVEL },
+    },
   };
 }
 

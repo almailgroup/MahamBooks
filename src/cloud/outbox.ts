@@ -305,8 +305,9 @@ async function companiesFor(
  * rules are null while never turned on. Approval requests are kept honest,
  * and invoices numbered when they are issued are never issued without a
  * number, whether or not the rules are on. The AI assistant's switch on the
- * company record is the owner's and the admins' (records_guard_ai of
- * 20261214000000_ai_assistant.sql keeps it for anyone else's copy).
+ * company record is the owner's and the admins' (records_guard of
+ * 20261208000000_ai_assistant.sql keeps it for anyone else's copy; refused
+ * here whether or not the server has it, so the app works the same).
  */
 function refuseByRules(
   link: CloudLink,
