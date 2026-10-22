@@ -14,6 +14,8 @@ Phase 3 is built and reviewed too: #6, #7, #8 and #9, so 22 of the 30 in all. It
 
 Phase 4 is built and reviewed too: #10, #15, #18 and #19, so 26 of the 30 in all. It needs one new database script, `20261130000000_people_alerts.sql`. How to switch each one on, and what to ask the auditor first, is in [the Phase 4 release notes](release-notes-phase-4.md).
 
+Phase 5 is built and reviewed too: #3, in two parts (Maham Sales, Maham Books and Maham Inventory as a switchable app layout, and the manpower costing in Maham People with its quote), so 27 of the 30 in all. It needs one new database script, `20261207000000_staffing_costings.sql`, for the manpower costing only. How to switch each part on, and what to ask counsel and the auditor first, is in [the Phase 5 release notes](release-notes-phase-5.md).
+
 When this plan was written, none of the 30 was fully built: 25 were partly built, 4 were not built, and 1 conflicted with how invoice numbering must work (#8).
 
 Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. The phases are described under [Phases](#phases).
@@ -22,7 +24,7 @@ Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. 
 | --- | ------------------------------------------------------------------------------------------------- | ------------------------------------- | ---- | -------------------------- |
 | 1   | [Employee search across all companies](#1-employee-search-across-all-companies)                   | Built                                 | M    | 2                          |
 | 2   | [Company Type field](#2-company-type-field)                                                       | Built                                 | S    | 2                          |
-| 3   | [Separate Sales, HR, Finance and Inventory apps](#3-separate-sales-hr-finance-and-inventory-apps) | Partly built                          | XL   | 5                          |
+| 3   | [Separate Sales, HR, Finance and Inventory apps](#3-separate-sales-hr-finance-and-inventory-apps) | Built                                 | XL   | 5                          |
 | 4   | [Document finder and AI assistant](#4-document-finder-and-ai-assistant)                           | Built (finder); AI in Phase 8         | XL   | 2 (finder), 8 (AI)         |
 | 5   | [Deema, Taly and Tahseel in the sidebar](#5-integrations-in-the-sidebar-deema-taly-tahseel)       | Built (links); integration in Phase 6 | M    | 2 (links), 6 (integration) |
 | 6   | [Super Admin](#6-super-admin-with-full-control-of-roles-and-permissions)                          | Built                                 | L    | 3                          |
