@@ -2,6 +2,7 @@ import { msg, t } from '@/i18n';
 import type { AlertTopic } from '@/alerts/topics';
 import type { MemberPermissions, MemberRole } from './roles';
 import type { ChangeDigest, ImmediateKind } from './change-feed';
+import type { DocumentAlertKind } from '@/lib/compliance';
 
 /**
  * What the app asks of the cloud. The sync engine only talks to this
@@ -350,6 +351,14 @@ export interface CloudApi {
    * Throws AlertEmailError.
    */
   sendAlertEmail(companyId: string): Promise<{ to: string; count: number }>;
+  /**
+   * The kinds of paper the signed-in person is told about (#18): null for
+   * every kind. Undefined when the server doesn't have the choice yet
+   * (20261130000000_people_alerts.sql).
+   */
+  emailAlertScope(companyId: string): Promise<DocumentAlertKind[] | null | undefined>;
+  /** Chooses them (null: every kind); false when the server doesn't have the choice yet. */
+  setEmailAlertScope(companyId: string, kinds: DocumentAlertKind[] | null): Promise<boolean>;
   /**
    * Whether the signed-in person gets the changes of the team (the owner or
    * an approver who turned them on) and how many are unread. Null when the

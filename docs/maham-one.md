@@ -296,6 +296,59 @@ is asked of the server.
   entries are separate records an older version would still send). Update
   every device before turning it on; Updates report every pay run posted.
 
+## Expiry alerts with lead times and re-upload reminders
+
+- **Off until switched on.** Compliance → _Settings_ → _Expiry reminders_
+  (تذكيرات الانتهاء), for owners, admins and accountants (People's settings,
+  which staff and viewers never get). Each part has its own switch, and
+  while it is off the register, the home page and the morning email work
+  exactly as before (the alert keys stay the same, so nothing is emailed
+  again):
+  - _Reminders by document type_ (التذكير حسب نوع المستند,
+    `PeopleSettings.reminderDaysByType`): turned on, it offers the owner's
+    lead times, residency (الإقامة) 90, 60, 30 and 7 days before, passport
+    180, 90 and 30, vehicle registration and insurance 30, 14 and 7. Types
+    can be added or removed; the others use _Remind me_, and a document's
+    own days still come first (`reminderDaysFor` in `src/lib/compliance.ts`).
+  - _Remind again after expiry_ (`expiredRepeatDays`, 7 days at first): an
+    expired paper is new again every 7 days (`…:expired`, then
+    `…:expired+7`, `…:expired+14`…) until it is renewed, instead of only in
+    Sunday's summary.
+  - _Ask for the new copy after a renewal_ (`newCopyGraceDays`, 14 days at
+    first; `newCopySince` is the day it was turned on): a paper renewed with
+    _Renew_ from then on is _New copy missing_ (لم تُرفع النسخة الجديدة) once
+    the days have passed with no file marked as its copy valid until the new
+    expiry. The register has a badge and a filter for it, the home page and
+    the morning email list it (`…:noscan`, repeated like expired papers), and
+    it stops as soon as the copy is there. Renewals recorded before, and
+    expiry dates changed by hand on the employee's form, are not asked for.
+  - _Show the reminders in Updates_ (`expiryUpdates`, cloud companies whose
+    server has `20261130000000_people_alerts.sql`): the morning run writes
+    each new reminder to the change feed, for the bell (المستجدات) of the
+    owner and the approvers. They are never emailed as changes. Employees'
+    papers there say "An employee's residency…" without a name, and open the
+    employee. An older version of the app shows them as an unnamed change:
+    update the owner's and approvers' devices before turning it on.
+- **The new copy.** _Renew_ takes an optional _New copy_: kept with the
+  document (an employee's own papers in their personnel file), marked as the
+  paper's copy (`Attachment.docKey`, `validUntil`), and the renewal points at
+  it (`DocumentRenewal.newCopyId`). In the personnel file, the tag button
+  (_This file is the…_, هذا الملف هو…) marks any scan as the copy of one of
+  the employee's papers; _Add documents_ can mark a whole batch as each
+  employee's residency, passport… Making a document confidential carries the
+  marks and the link along.
+- **Who gets the email (Settings → Email alerts).** Once the server has
+  `20261130000000_people_alerts.sql` (`document_alerts`), accountants can turn
+  the morning email on too, and each person chooses the kinds of paper under
+  _Papers and licences_: the company's, vehicles', employees' or customers'
+  (`email_alerts.document_kinds`; all of them until chosen). The function
+  leaves out, per person, employees' papers for whoever the owner gave no
+  access to People, and the rest of the register and the deadlines for whoever
+  has no access to Compliance. Papers are listed by kind in the email. An
+  older server keeps the page and the email as they were (owners and admins,
+  no kinds, nobody's email cut).
+- **No WhatsApp or SMS** for now: phone push comes with the Maham App (D10).
+
 ## Contracts, customers and vehicles
 
 - **Off until switched on.** Compliance → Settings has _Contracts, customers

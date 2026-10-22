@@ -32,19 +32,26 @@ import {
   expiryStatus,
   FEE_ACCOUNT_CODES,
   isEmployeeDocumentType,
+  latestRenewals,
   missingDocuments,
   needsTitle,
+  newCopyMissing,
   normalizeReminderDays,
+  normalizeReminderDaysByType,
   overdueSince,
   registerEntries,
   statutoryContextOf,
   type ComplianceItem,
+  type CopyFile,
   type EmployeeDocumentType,
   type ExpiryInfo,
   type FeeAccountKey,
   recordKey,
   type MissingDocument,
+  type NewCopyMissing,
+  type NewCopyRules,
   type RegisterEntry,
+  type ReminderDaysByType,
   type StatutoryContext,
 } from '@/lib/compliance';
 import { CHART_TEMPLATES } from '@/lib/accounting/charts';
@@ -418,17 +425,20 @@ export async function makeDocumentConfidential(
     );
     doc.createdAt = existing.createdAt;
     await db.complianceDocuments.put(doc);
+    // Its files under new ids too: a renewal's new copy follows its file.
+    const fileIds = new Map(files.map((f) => [f.id, newId()]));
     await db.renewals.bulkPut(
       renewals.map((r) => ({
         ...r,
         id: ids.get(r.id)!,
         documentKey: recordKey(id),
         documentId: id,
+        ...(r.newCopyId ? { newCopyId: fileIds.get(r.newCopyId) ?? null } : {}),
       })),
     );
     await db.attachments.bulkPut(
       files.map((f) => {
-        const copy: Attachment = { ...f, id: newId(), ownerId: ids.get(f.ownerId)! };
+        const copy: Attachment = { ...f, id: fileIds.get(f.id)!, ownerId: ids.get(f.ownerId)! };
         // The new copy is uploaded under its own id.
         delete copy.storagePath;
         delete copy.contentHash;
@@ -627,6 +637,13 @@ export interface Register {
   employees: Employee[];
   documents: ComplianceDocument[];
   reminderDays: number[];
+  /** The company's reminders by document type (#18); empty: every type uses `reminderDays`. */
+  reminderDaysByType: ReminderDaysByType;
+  /**
+   * Renewed papers whose new copy is missing, by register key (#18): empty
+   * until the company asks for new copies.
+   */
+  newCopies: Map<string, NewCopyMissing>;
   /** The company checks drivers' licences (PeopleSettings.drivingLicences). */
   drivingLicences: boolean;
   /** What current employees need and don't hold valid; empty while nothing is checked. */
@@ -655,12 +672,16 @@ export async function loadRegister(companyId: ID): Promise<Register> {
   const files = new Map<ID, number>();
   for (const owner of owners) files.set(owner, (files.get(owner) ?? 0) + 1);
   const reminderDays = normalizeReminderDays(settings.reminderDays);
+  const reminderDaysByType = normalizeReminderDaysByType(settings.reminderDaysByType);
   const drivingLicences = checksDrivingLicences(settings);
+  const entries = registerEntries({ employees, documents, reminderDays, reminderDaysByType });
   return {
-    entries: registerEntries({ employees, documents, reminderDays }),
+    entries,
     employees,
     documents,
     reminderDays,
+    reminderDaysByType,
+    newCopies: await missingNewCopies(companyId, entries, settings, today()),
     drivingLicences,
     // The driver of a company vehicle needs a licence too.
     missing: drivingLicences
@@ -669,6 +690,65 @@ export async function loadRegister(companyId: ID): Promise<Register> {
     vehicles,
     files,
   };
+}
+
+/**
+ * What the device knows of the files that may be renewed papers' new copies
+ * (#18), for `entries` on `on`: nothing is read until the company asks for
+ * new copies. Only papers renewed long enough ago are looked at; a
+ * renewal's own new copy is found by its id alone, and only for the rest are
+ * the files marked as their copy read (their content with them, so as few
+ * as can be).
+ */
+export async function newCopyFiles(
+  companyId: ID,
+  entries: readonly RegisterEntry[],
+  latest: Map<string, DocumentRenewal>,
+  rules: NewCopyRules,
+  on: ISODate,
+): Promise<CopyFile[]> {
+  const waiting = entries.filter((e) => newCopyMissing(e, latest.get(e.key), [], rules, on));
+  if (!waiting.length) return [];
+  const claimed = [
+    ...new Set(waiting.map((e) => latest.get(e.key)?.newCopyId).filter((id): id is ID => !!id)),
+  ];
+  const kept = new Set(
+    claimed.length ? ((await db.attachments.where('id').anyOf(claimed).primaryKeys()) as ID[]) : [],
+  );
+  const files: CopyFile[] = [...kept].map((id) => ({ id }));
+  const rest = waiting.filter((e) => {
+    const id = latest.get(e.key)?.newCopyId;
+    return !id || !kept.has(id);
+  });
+  if (!rest.length) return files;
+  const tagged = (await db.attachments
+    .where('docKey')
+    .anyOf(rest.map((e) => e.key))
+    .primaryKeys()) as ID[];
+  if (!tagged.length) return files;
+  for (const file of await db.attachments.bulkGet(tagged)) {
+    if (!file || file.companyId !== companyId) continue;
+    files.push({ id: file.id, docKey: file.docKey ?? null, validUntil: file.validUntil ?? null });
+  }
+  return files;
+}
+
+/** Renewed papers whose new copy is missing on `on`, by register key (#18). */
+async function missingNewCopies(
+  companyId: ID,
+  entries: readonly RegisterEntry[],
+  rules: NewCopyRules,
+  on: ISODate,
+): Promise<Map<string, NewCopyMissing>> {
+  const out = new Map<string, NewCopyMissing>();
+  if (!rules.newCopyGraceDays) return out;
+  const latest = latestRenewals(await db.renewals.where('companyId').equals(companyId).toArray());
+  const files = await newCopyFiles(companyId, entries, latest, rules, on);
+  for (const entry of entries) {
+    const missing = newCopyMissing(entry, latest.get(entry.key), files, rules, on);
+    if (missing) out.set(entry.key, missing);
+  }
+  return out;
 }
 
 export interface ExpiringDocument {
@@ -862,6 +942,12 @@ export interface RenewInput {
   number?: string;
   note?: string;
   fee?: RenewalFee | null;
+  /**
+   * The renewed paper's new copy (#18): kept with the document (an
+   * employee's own papers in their personnel file), marked as its copy valid
+   * until the new expiry.
+   */
+  copy?: { name: string; type: string; dataUrl: string } | null;
 }
 
 /**
@@ -882,6 +968,7 @@ export async function renewDocument(
       db.companies,
       db.accounts,
       db.activities,
+      db.attachments,
     ],
     async () => {
       const company = await db.companies.get(input.companyId);
@@ -983,6 +1070,33 @@ export async function renewDocument(
         });
       }
 
+      // The new copy (#18): the file given, or one already marked as this
+      // paper's copy valid until the new expiry (filed before the renewal).
+      let newCopyId: ID | null = null;
+      if (input.copy) {
+        const ownerId = record?.id ?? employee?.id;
+        if (!ownerId) throw new ComplianceError(t('Document not found'));
+        const file = await addAttachment(company.id, ownerId, input.copy, {
+          docKey: input.key,
+          validUntil: input.newExpiry,
+        });
+        newCopyId = file.id;
+      } else {
+        const tagged = (await db.attachments
+          .where('docKey')
+          .equals(input.key)
+          .primaryKeys()) as ID[];
+        if (tagged.length) {
+          const copy = (await db.attachments.bulkGet(tagged)).find(
+            (f) =>
+              f?.companyId === company.id &&
+              Boolean(f.validUntil) &&
+              f.validUntil! >= input.newExpiry,
+          );
+          newCopyId = copy?.id ?? null;
+        }
+      }
+
       const renewal: DocumentRenewal = {
         id: newId(),
         companyId: company.id,
@@ -997,6 +1111,7 @@ export async function renewDocument(
         expenseId: expense?.id ?? null,
         note: input.note?.trim() ?? '',
         number: number || currentNumber,
+        ...(newCopyId ? { newCopyId } : {}),
         createdAt: nowStamp(),
       };
       await db.renewals.add(renewal);
@@ -1016,6 +1131,95 @@ export async function renewDocument(
       return { renewal, expense };
     },
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* New copies (#18)                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** What a file is a copy of: a register entry's key, and until when the paper in it is valid. */
+export interface CopyTag {
+  docKey: string;
+  validUntil: ISODate | null;
+}
+
+/**
+ * Keeps the latest renewal of a paper pointing at its new copy, once a file
+ * is marked as that paper's copy valid until the new expiry; a file that is
+ * no longer one (unmarked, or marked as something else) stops being any
+ * renewal's. Runs in the caller's transaction.
+ */
+async function linkNewCopy(
+  file: Attachment,
+  tag: CopyTag | null,
+  { added = false }: { added?: boolean } = {},
+): Promise<void> {
+  // A file just added is no renewal's copy yet.
+  const linked = added
+    ? []
+    : await db.renewals
+        .where('companyId')
+        .equals(file.companyId)
+        .filter((r) => r.newCopyId === file.id)
+        .toArray();
+  for (const renewal of linked) {
+    if (tag && tag.docKey === renewal.documentKey && (tag.validUntil ?? '') >= renewal.newExpiry) {
+      continue;
+    }
+    await db.renewals.put({ ...renewal, newCopyId: null });
+  }
+  if (!tag?.validUntil) return;
+  const renewals = await db.renewals
+    .where('documentKey')
+    .equals(tag.docKey)
+    .filter((r) => r.companyId === file.companyId)
+    .toArray();
+  const latest = latestRenewals(renewals).get(tag.docKey);
+  if (!latest || latest.newCopyId === file.id || tag.validUntil < latest.newExpiry) return;
+  const kept = latest.newCopyId
+    ? (await db.attachments.where('id').equals(latest.newCopyId).count()) > 0
+    : false;
+  if (!kept) await db.renewals.put({ ...latest, newCopyId: file.id });
+}
+
+/**
+ * Adds a file to a record (an employee's personnel file, a document) as the
+ * copy of one of the company's papers (#18): "This file is the…".
+ */
+export async function addNewCopy(
+  companyId: ID,
+  ownerId: ID,
+  file: { name: string; type: string; dataUrl: string },
+  tag: CopyTag,
+): Promise<Attachment> {
+  return db.transaction('rw', [db.attachments, db.renewals], async () => {
+    const added = await addAttachment(companyId, ownerId, file, tag);
+    await linkNewCopy(added, tag, { added: true });
+    return added;
+  });
+}
+
+/**
+ * Marks a file kept with a record as the copy of one of the company's papers,
+ * valid until a date (#18), or (`tag` null) as nothing in particular.
+ */
+export async function markNewCopy(fileId: ID, tag: CopyTag | null): Promise<void> {
+  await db.transaction('rw', [db.attachments, db.renewals], async () => {
+    const file = await db.attachments.get(fileId);
+    if (!file) throw new ComplianceError(t('File not found'));
+    if (
+      (file.docKey ?? null) === (tag?.docKey ?? null) &&
+      (file.validUntil ?? null) === (tag?.validUntil ?? null)
+    ) {
+      return;
+    }
+    const next: Attachment = { ...file };
+    delete next.docKey;
+    delete next.validUntil;
+    if (tag) Object.assign(next, { docKey: tag.docKey, validUntil: tag.validUntil });
+    await db.attachments.put(next);
+    await linkNewCopy(next, tag);
+  });
 }
 
 /** Renewals of one document, latest first. */

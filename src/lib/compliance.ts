@@ -4,6 +4,7 @@ import type {
   ComplianceDocumentType,
   ComplianceMark,
   DocumentOwnerType,
+  DocumentRenewal,
   Employee,
   ID,
   ISODate,
@@ -205,9 +206,105 @@ export const EXPIRY_LABELS: Record<ExpiryStatus, string> = {
 
 /** Reminder days cleaned up: whole positive numbers, no repeats, largest first. */
 export function normalizeReminderDays(days: readonly number[] | null | undefined): number[] {
-  const clean = [...new Set((days ?? []).map((d) => Math.trunc(d)).filter((d) => d > 0))];
-  clean.sort((a, b) => b - a);
+  const clean = cleanReminderDays(days);
   return clean.length ? clean : [...DEFAULT_REMINDER_DAYS];
+}
+
+/**
+ * Reminder days cleaned up as normalizeReminderDays does, but never filled
+ * in: none stay none. Anything that isn't a list of numbers is none.
+ */
+export function cleanReminderDays(days: unknown): number[] {
+  if (!Array.isArray(days)) return [];
+  // As before: numbers written as text count too, anything else is dropped.
+  const clean = [
+    ...new Set(days.map((d) => Math.trunc(d as number)).filter((d) => Number.isFinite(d) && d > 0)),
+  ];
+  return clean.sort((a, b) => b - a);
+}
+
+/** At most this many reminders before an expiry (the company's, a type's). */
+export const MAX_REMINDERS = 5;
+
+/** Days before an expiry to remind, by document type (PeopleSettings.reminderDaysByType). */
+export type ReminderDaysByType = Partial<Record<string, number[]>>;
+
+/**
+ * The lead times the owner chose (#18), offered when reminders by document
+ * type are turned on: residencies 90, 60, 30 and 7 days before, passports
+ * 180, 90 and 30, vehicles' papers 30, 14 and 7.
+ */
+export const RECOMMENDED_REMINDER_DAYS_BY_TYPE: Readonly<
+  Partial<Record<ComplianceDocumentType, readonly number[]>>
+> = {
+  residency: [90, 60, 30, 7],
+  passport: [180, 90, 30],
+  vehicle_registration: [30, 14, 7],
+  vehicle_insurance: [30, 14, 7],
+};
+
+/** Once expired, a paper is reminded of again every 7 days (the owner's choice, #18). */
+export const RECOMMENDED_EXPIRED_REPEAT_DAYS = 7;
+
+/** The new copy of a renewed paper is asked for 14 days after the renewal. */
+export const RECOMMENDED_NEW_COPY_GRACE_DAYS = 14;
+
+/**
+ * Reminders by document type cleaned up: each type's days as
+ * cleanReminderDays leaves them (at most MAX_REMINDERS), types without any
+ * left out. Types this version doesn't know are kept as they are.
+ */
+export function normalizeReminderDaysByType(value: unknown): ReminderDaysByType {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: ReminderDaysByType = {};
+  for (const [type, days] of Object.entries(value as Record<string, unknown>)) {
+    const clean = cleanReminderDays(days).slice(0, MAX_REMINDERS);
+    if (type && clean.length) out[type] = clean;
+  }
+  return out;
+}
+
+/** What a company's reminder days are set in (PeopleSettings). */
+export interface ReminderSettings {
+  reminderDays?: readonly number[] | null;
+  reminderDaysByType?: ReminderDaysByType | null;
+}
+
+/** A type's own days in the company's list, or none. */
+function typeDays(byType: ReminderDaysByType | null | undefined, type: string): number[] {
+  if (!byType || !Object.prototype.hasOwnProperty.call(byType, type)) return [];
+  return cleanReminderDays(byType[type]);
+}
+
+/**
+ * The days before its expiry a paper is reminded of: its own (`override`)
+ * first, then its type's in the company's reminders by document type (#18),
+ * then the company's days for every type (60, 30 and 7 by default). Without
+ * reminders by type, exactly what it was before.
+ */
+export function reminderDaysFor(
+  type: string,
+  settings: ReminderSettings | null | undefined,
+  override?: readonly number[] | null,
+): number[] {
+  return entryReminderDays(
+    type,
+    normalizeReminderDays(settings?.reminderDays),
+    settings?.reminderDaysByType,
+    override,
+  );
+}
+
+/** reminderDaysFor with the company's days already worked out (`fallback`). */
+function entryReminderDays(
+  type: string,
+  fallback: number[],
+  byType: ReminderDaysByType | null | undefined,
+  override?: readonly number[] | null,
+): number[] {
+  if (override?.length) return normalizeReminderDays(override);
+  const own = typeDays(byType, type);
+  return own.length ? own : fallback;
 }
 
 export interface ExpiryInfo {
@@ -304,7 +401,11 @@ export function isEmployeeDocumentType(type: ComplianceDocumentType): type is Em
  * stateless staff (who need no residency), and the end of a fixed-term
  * contract. Only documents with a number or an expiry date are listed.
  */
-export function employeeDocuments(employee: Employee, reminderDays: number[]): RegisterEntry[] {
+export function employeeDocuments(
+  employee: Employee,
+  reminderDays: number[],
+  byType?: ReminderDaysByType | null,
+): RegisterEntry[] {
   const entry = (
     type: EmployeeDocumentType,
     number: string,
@@ -321,7 +422,7 @@ export function employeeDocuments(employee: Employee, reminderDays: number[]): R
     issueDate: null,
     expiryDate,
     renewalCost: 0,
-    reminderDays,
+    reminderDays: entryReminderDays(type, reminderDays, byType),
     ownerType: 'employee',
     ownerName: '',
   });
@@ -355,7 +456,15 @@ export function employeeDocuments(employee: Employee, reminderDays: number[]): R
   return out;
 }
 
-export function recordEntry(doc: ComplianceDocument, reminderDays: number[]): RegisterEntry {
+/**
+ * A stored record as a register entry, with its own reminder days, its
+ * type's (`byType`, #18) or the company's (`reminderDays`).
+ */
+export function recordEntry(
+  doc: ComplianceDocument,
+  reminderDays: number[],
+  byType?: ReminderDaysByType | null,
+): RegisterEntry {
   return {
     key: recordKey(doc.id),
     source: 'record',
@@ -368,7 +477,7 @@ export function recordEntry(doc: ComplianceDocument, reminderDays: number[]): Re
     issueDate: doc.issueDate,
     expiryDate: doc.expiryDate,
     renewalCost: doc.renewalCost,
-    reminderDays: doc.reminderDays?.length ? normalizeReminderDays(doc.reminderDays) : reminderDays,
+    reminderDays: entryReminderDays(doc.type, reminderDays, byType, doc.reminderDays),
     ownerType: doc.ownerType,
     ownerName: doc.ownerName,
     ...(doc.purposeId ? { purposeId: doc.purposeId } : {}),
@@ -387,15 +496,151 @@ export function registerEntries(input: {
   employees: Employee[];
   documents: ComplianceDocument[];
   reminderDays: number[];
+  /** The company's reminders by document type (#18); none: every type uses `reminderDays`. */
+  reminderDaysByType?: ReminderDaysByType | null;
 }): RegisterEntry[] {
   const current = new Map(input.employees.filter(isCurrent).map((e) => [e.id, e]));
   const days = normalizeReminderDays(input.reminderDays);
+  const byType = input.reminderDaysByType;
   return [
     ...input.documents
       .filter((d) => !d.archived && (d.ownerType !== 'employee' || current.has(d.employeeId ?? '')))
-      .map((d) => recordEntry(d, days)),
-    ...[...current.values()].flatMap((e) => employeeDocuments(e, days)),
+      .map((d) => recordEntry(d, days, byType)),
+    ...[...current.values()].flatMap((e) => employeeDocuments(e, days, byType)),
   ];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reminders after expiry and the new copy (#18)                              */
+/* -------------------------------------------------------------------------- */
+
+/** The kinds of paper a person may choose to be told about (email_alerts.document_kinds). */
+export const DOCUMENT_ALERT_KINDS = ['company', 'vehicle', 'staff', 'client'] as const;
+export type DocumentAlertKind = (typeof DOCUMENT_ALERT_KINDS)[number];
+
+export function isDocumentAlertKind(value: unknown): value is DocumentAlertKind {
+  return (DOCUMENT_ALERT_KINDS as readonly unknown[]).includes(value);
+}
+
+/**
+ * Whose paper a register entry is, for the choice of kinds: an employee's
+ * (staff), a vehicle's, a customer's (client) or the company's (everything
+ * else, other owners included).
+ */
+export function documentAlertKind(
+  entry: Pick<RegisterEntry, 'ownerType' | 'clientId'>,
+): DocumentAlertKind {
+  if (entry.ownerType === 'employee') return 'staff';
+  if (entry.ownerType === 'vehicle') return 'vehicle';
+  if (entry.clientId) return 'client';
+  return 'company';
+}
+
+/** Whole days between 1 and `max`, or none (0) for anything else. */
+export function wholeDays(value: unknown, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  const days = Math.trunc(value);
+  return days >= 1 && days <= max ? days : 0;
+}
+
+/** The most days between two reminders after expiry, and before the new copy is asked for. */
+export const MAX_REPEAT_DAYS = 90;
+export const MAX_NEW_COPY_DAYS = 365;
+
+/**
+ * The stage of something that lasts (expired, new copy missing) `daysIn`
+ * days after it began (0 the first day): `base` first, then with
+ * `repeatDays` every so many days `base+7`, `base+14`… Without repeats it
+ * stays `base`.
+ */
+export function repeatedStage(base: string, daysIn: number, repeatDays: number): string {
+  const every = wholeDays(repeatDays, MAX_REPEAT_DAYS);
+  if (!every || daysIn < every) return base;
+  return `${base}+${Math.floor(daysIn / every) * every}`;
+}
+
+/**
+ * The stage of an expired paper `daysLeft` days from its expiry (-1 the
+ * day after): "expired", then every `repeatDays` days "expired+7",
+ * "expired+14"… until it is renewed.
+ */
+export function expiredStage(daysLeft: number, repeatDays: number | null | undefined): string {
+  return repeatedStage('expired', Math.max(0, -daysLeft - 1), repeatDays ?? 0);
+}
+
+/** A file kept with the company, as far as the new copy is concerned. */
+export interface CopyFile {
+  id: ID;
+  /** The register entry it is a copy of ("doc:<id>", "emp:<employeeId>:<type>"). */
+  docKey?: string | null;
+  /** The last day the paper in it is valid. */
+  validUntil?: ISODate | null;
+}
+
+/** When the new copy of a renewed paper is asked for (PeopleSettings). */
+export interface NewCopyRules {
+  /** Days after the renewal; 0 or none: never. */
+  newCopyGraceDays?: number | null;
+  /** Renewals recorded before this day are not asked for theirs. */
+  newCopySince?: ISODate | null;
+}
+
+/** Each register entry's latest renewal, by the entry's key. */
+export function latestRenewals(renewals: readonly DocumentRenewal[]): Map<string, DocumentRenewal> {
+  const latest = new Map<string, DocumentRenewal>();
+  for (const renewal of renewals) {
+    if (typeof renewal?.documentKey !== 'string' || typeof renewal.newExpiry !== 'string') continue;
+    const before = latest.get(renewal.documentKey);
+    if (
+      !before ||
+      renewal.newExpiry > before.newExpiry ||
+      (renewal.newExpiry === before.newExpiry &&
+        String(renewal.createdAt ?? '') > String(before.createdAt ?? ''))
+    ) {
+      latest.set(renewal.documentKey, renewal);
+    }
+  }
+  return latest;
+}
+
+export interface NewCopyMissing {
+  renewal: DocumentRenewal;
+  /** The last day the new copy was waited for (the renewal and the days allowed). */
+  due: ISODate;
+  /** Days since then (1 the first day it is missing). */
+  daysLate: number;
+}
+
+/**
+ * Whether the new copy of a renewed paper is missing on `on`: the paper was
+ * renewed (its latest renewal, recorded since the rule was turned on, gave
+ * it the expiry it has now), the days allowed have passed, and no file is
+ * its new copy: neither the renewal's own (`newCopyId`, still kept) nor a
+ * file marked as this paper's copy valid until the new expiry. Null when
+ * nothing is missing, or the rule is off.
+ */
+export function newCopyMissing(
+  entry: Pick<RegisterEntry, 'key' | 'expiryDate'>,
+  renewal: DocumentRenewal | undefined,
+  files: readonly CopyFile[],
+  rules: NewCopyRules | null | undefined,
+  on: ISODate,
+): NewCopyMissing | null {
+  const grace = wholeDays(rules?.newCopyGraceDays, MAX_NEW_COPY_DAYS);
+  if (!grace || !renewal || !entry.expiryDate || renewal.newExpiry !== entry.expiryDate) {
+    return null;
+  }
+  const since = rules?.newCopySince;
+  if (since && String(renewal.createdAt ?? '').slice(0, 10) < since) return null;
+  const due = addDaysISO(renewal.renewedOn, grace);
+  if (on <= due) return null;
+  const copied = files.some(
+    (f) =>
+      (Boolean(renewal.newCopyId) && f.id === renewal.newCopyId) ||
+      (f.docKey === entry.key && Boolean(f.validUntil) && f.validUntil! >= entry.expiryDate!),
+  );
+  if (copied) return null;
+  return { renewal, due, daysLate: daysBetween(due, on) };
 }
 
 /* -------------------------------------------------------------------------- */

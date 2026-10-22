@@ -24,6 +24,8 @@ import {
   OWNER_LABELS,
   registerTypesFor,
   normalizeReminderDays,
+  reminderDaysFor,
+  type ReminderDaysByType,
   recordKey,
 } from '@/lib/compliance';
 import { isKnown } from '@/lib/known';
@@ -76,12 +78,15 @@ export function DocumentDialog({
   isNew,
   employees,
   defaultReminderDays,
+  reminderDaysByType,
   onClose,
 }: {
   document: ComplianceDocument;
   isNew: boolean;
   employees: Employee[];
   defaultReminderDays: number[];
+  /** The company's reminders by document type (#18): the type's days are shown when it has some. */
+  reminderDaysByType?: ReminderDaysByType;
   onClose: () => void;
 }) {
   const company = useCompany();
@@ -531,7 +536,10 @@ export function DocumentDialog({
                     id={id}
                     value={daysText}
                     onChange={(e) => setDaysText(e.target.value)}
-                    placeholder={defaultReminderDays.join(', ')}
+                    placeholder={reminderDaysFor(draft.type, {
+                      reminderDays: defaultReminderDays,
+                      reminderDaysByType,
+                    }).join(', ')}
                     inputMode="numeric"
                     dir="ltr"
                   />

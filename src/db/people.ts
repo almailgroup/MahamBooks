@@ -15,7 +15,14 @@ import { newId, shortId } from '@/lib/ids';
 import { isISODate, today } from '@/lib/dates';
 import { currencyPrecision, normalizeDigits, round } from '@/lib/money';
 import { compactIban, normalizeKuwaitPhone } from '@/lib/kuwait';
-import { normalizeReminderDays } from '@/lib/compliance';
+import {
+  MAX_NEW_COPY_DAYS,
+  MAX_REMINDERS,
+  MAX_REPEAT_DAYS,
+  normalizeReminderDays,
+  normalizeReminderDaysByType,
+  wholeDays,
+} from '@/lib/compliance';
 import { EOSI_RULES } from '@/lib/hr/eosi';
 import { defaultPeopleSettings, withPeopleDefaults } from '@/lib/hr/people-settings';
 import { ANNUAL_LEAVE_DAYS, isOpeningRecord } from '@/lib/hr/leave';
@@ -570,7 +577,7 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
   const whole = (n: number, min: number, max: number, fallback: number) =>
     Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
   const target = input.kuwaitizationTarget;
-  return {
+  const out: PeopleSettings = {
     ...input,
     ...(input.departments ? { departments: normalizeDepartments(input.departments) } : {}),
     id: input.companyId,
@@ -579,10 +586,31 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
         ? null
         : Math.min(100, round(target, 1)),
     eosDailyDivisor: whole(input.eosDailyDivisor, 1, 31, EOSI_RULES.defaultDailyDivisor),
-    reminderDays: normalizeReminderDays(input.reminderDays).slice(0, 5),
+    reminderDays: normalizeReminderDays(input.reminderDays).slice(0, MAX_REMINDERS),
     auditFilingMonths: whole(input.auditFilingMonths, 1, 12, 3),
     pifssDueDay: whole(input.pifssDueDay, 1, 28, 15),
   };
+  // The expiry reminders (#18): each kept only while it is set, so that
+  // missing still means today's behaviour. A type's empty list is left out
+  // (never filled in with the company's days).
+  delete out.reminderDaysByType;
+  delete out.expiredRepeatDays;
+  delete out.newCopyGraceDays;
+  delete out.newCopySince;
+  delete out.expiryUpdates;
+  if (input.reminderDaysByType !== undefined) {
+    const byType = normalizeReminderDaysByType(input.reminderDaysByType);
+    if (Object.keys(byType).length) out.reminderDaysByType = byType;
+  }
+  const repeat = wholeDays(input.expiredRepeatDays, MAX_REPEAT_DAYS);
+  if (repeat) out.expiredRepeatDays = repeat;
+  const grace = wholeDays(input.newCopyGraceDays, MAX_NEW_COPY_DAYS);
+  if (grace) {
+    out.newCopyGraceDays = grace;
+    if (isISODate(input.newCopySince)) out.newCopySince = input.newCopySince;
+  }
+  if (input.expiryUpdates === true) out.expiryUpdates = true;
+  return out;
 }
 
 /**
@@ -600,6 +628,12 @@ export async function savePeopleSettings(input: PeopleSettings): Promise<PeopleS
       delete next.departments;
       if (stored.groupSearch !== undefined) next.groupSearch = stored.groupSearch;
       if (stored.departments !== undefined) next.departments = stored.departments;
+    }
+    // Asking for new copies starts with the renewals recorded from the day
+    // it is turned on: renewals recorded before aren't asked for theirs.
+    if (wholeDays(next.newCopyGraceDays, MAX_NEW_COPY_DAYS)) {
+      next.newCopySince =
+        stored?.newCopyGraceDays && stored.newCopySince ? stored.newCopySince : today();
     }
     const settings = { ...normalizePeopleSettings(next), updatedAt: nowStamp() };
     await db.peopleSettings.put(settings);

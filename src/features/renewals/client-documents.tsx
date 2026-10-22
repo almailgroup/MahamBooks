@@ -11,6 +11,7 @@ import {
   documentTypeInfo,
   expiryStatus,
   normalizeReminderDays,
+  normalizeReminderDaysByType,
   recordEntry,
 } from '@/lib/compliance';
 import { today } from '@/lib/dates';
@@ -48,10 +49,14 @@ export function ClientDocuments({ client }: { client: Client }) {
     for (const owner of owners) counts.set(owner, (counts.get(owner) ?? 0) + 1);
     return counts;
   }, [docs]);
-  const reminderDays = useLiveQuery(
-    async () => normalizeReminderDays((await getPeopleSettings(company.id)).reminderDays),
-    [company.id],
-  );
+  const reminders = useLiveQuery(async () => {
+    const settings = await getPeopleSettings(company.id);
+    return {
+      days: normalizeReminderDays(settings.reminderDays),
+      byType: normalizeReminderDaysByType(settings.reminderDaysByType),
+    };
+  }, [company.id]);
+  const reminderDays = reminders?.days;
   const [editing, setEditing] = useState<{ doc: ComplianceDocument; isNew: boolean } | null>(null);
 
   if (!extras || !docs || !reminderDays) return null;
@@ -95,7 +100,7 @@ export function ClientDocuments({ client }: { client: Client }) {
       ) : (
         <ul className="divide-y divide-slate-100">
           {listed.map((doc) => {
-            const entry = recordEntry(doc, reminderDays);
+            const entry = recordEntry(doc, reminderDays, reminders?.byType);
             const info = expiryStatus(entry.expiryDate, entry.reminderDays, on);
             const title = entryTitle(entry);
             const count = files?.get(doc.id) ?? 0;
@@ -160,6 +165,7 @@ export function ClientDocuments({ client }: { client: Client }) {
           isNew={editing.isNew}
           employees={employees ?? []}
           defaultReminderDays={reminderDays}
+          reminderDaysByType={reminders?.byType}
           onClose={() => setEditing(null)}
         />
       ) : null}

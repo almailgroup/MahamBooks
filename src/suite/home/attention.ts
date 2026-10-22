@@ -1,5 +1,13 @@
 import { db } from '@/db/db';
+import { newCopyFiles } from '@/db/renewals';
 import type { ApprovalRequest, Company } from '@/db/types';
+import {
+  latestRenewals,
+  normalizeReminderDays,
+  normalizeReminderDaysByType,
+  registerEntries,
+} from '@/lib/compliance';
+import { withPeopleDefaults } from '@/lib/hr/people-settings';
 import {
   ALERT_TOPICS,
   collectAlerts,
@@ -9,6 +17,7 @@ import {
 } from '@/alerts/collect';
 import { canOpen, type AccessMap } from '@/suite/apps';
 import { lookup } from '@/lib/known';
+import { today as localToday } from '@/lib/dates';
 import type { AppId } from '@/suite/types';
 
 /**
@@ -83,19 +92,34 @@ export async function loadHomeAlertData(company: Company, people: boolean): Prom
       .toArray(),
     db.clients.where('companyId').equals(id).toArray(),
   ]);
-  return {
+  // An employee's own papers, and confidential documents, stay with People.
+  const papers = people
+    ? complianceDocuments
+    : complianceDocuments.filter((d) => !d.employeeId && d.confidential !== true);
+  const data: AlertData = {
     company,
     employees,
-    // An employee's own papers, and confidential documents, stay with People.
-    complianceDocuments: people
-      ? complianceDocuments
-      : complianceDocuments.filter((d) => !d.employeeId && d.confidential !== true),
+    complianceDocuments: papers,
     complianceMarks,
     peopleSettings: peopleSettings ?? null,
     documents,
     payments,
     clients,
   };
+  // Renewed papers' new copies (#18), once the company asks for them.
+  const settings = withPeopleDefaults(id, peopleSettings);
+  if (settings.newCopyGraceDays) {
+    const renewals = await db.renewals.where('companyId').equals(id).toArray();
+    const entries = registerEntries({
+      employees,
+      documents: papers,
+      reminderDays: normalizeReminderDays(settings.reminderDays),
+      reminderDaysByType: normalizeReminderDaysByType(settings.reminderDaysByType),
+    });
+    data.renewals = renewals;
+    data.copies = await newCopyFiles(id, entries, latestRenewals(renewals), settings, localToday());
+  }
+  return data;
 }
 
 /** Everything that needs attention today, the most urgent first. */

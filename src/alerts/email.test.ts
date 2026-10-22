@@ -175,6 +175,66 @@ describe('the alerts email', () => {
   });
 });
 
+describe('the alerts email with the expiry reminders of #18', () => {
+  it('lists papers by whose they are, each kind under its heading', () => {
+    // As before until the database has the people alerts script.
+    expect(renderAlertEmail(input()).text).not.toContain('Employees’ papers:');
+    const email = renderAlertEmail(input({ groupKinds: true }));
+    const text = plain(email.text);
+    const company = text.indexOf('Company papers and licences:');
+    const staff = text.indexOf('Employees’ papers:');
+    expect(company).toBeGreaterThan(-1);
+    expect(staff).toBeGreaterThan(company);
+    expect(text.indexOf('Commercial licence · Acme Trading')).toBeGreaterThan(company);
+    expect(text.indexOf('Commercial licence · Acme Trading')).toBeLessThan(staff);
+    expect(text.indexOf('Civil ID · Noura Salem')).toBeGreaterThan(staff);
+    expect(visible(email.html)).toContain('Employees’ papers');
+    // One kind only: no headings.
+    const data = sampleData();
+    const only = renderAlertEmail(
+      input({
+        groupKinds: true,
+        alerts: collectAlerts(data, TODAY, ['documents']).filter(
+          (a) => a.topic === 'documents' && a.entry.ownerType === 'employee',
+        ),
+      }),
+    );
+    expect(only.text).not.toContain('Employees’ papers:');
+  });
+
+  it('asks for the new copy of a renewed paper', async () => {
+    const data = sampleData();
+    data.peopleSettings = { newCopyGraceDays: 14 };
+    data.complianceDocuments[0] = { ...data.complianceDocuments[0], expiryDate: '2027-12-01' };
+    data.renewals = [
+      {
+        id: 'renewal-licence',
+        companyId: data.company.id,
+        documentKey: 'doc:licence',
+        documentId: 'licence',
+        employeeId: null,
+        type: 'commercial_licence',
+        renewedOn: '2026-09-01',
+        previousExpiry: '2026-12-01',
+        newExpiry: '2027-12-01',
+        fee: 0,
+        expenseId: null,
+        note: '',
+        createdAt: '2026-09-01T09:00:00.000Z',
+      },
+    ];
+    const alerts = collectAlerts(data, TODAY, ['documents']);
+    const email = renderAlertEmail(input({ alerts }));
+    expect(plain(email.text)).toContain('- Commercial licence · Acme Trading · New copy missing');
+    expect(plain(email.text)).toContain(
+      'Renewed until 01/12/2027. Upload the new copy in the app.',
+    );
+    await loadLanguage('ar');
+    const arabic = renderAlertEmail(input({ alerts }));
+    expect(arabic.text).toContain('لم تُرفع النسخة الجديدة');
+  });
+});
+
 describe('safeAppUrl', () => {
   it('keeps web addresses only', () => {
     expect(safeAppUrl(' https://books.example.com/ ')).toBe('https://books.example.com/');

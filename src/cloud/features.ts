@@ -39,7 +39,13 @@ export type ServerFeature =
    * (Settings → Approvals → Pay runs): the cloud keeps a pay run's approval
    * honest, and emails the approvers its totals by department and position.
    */
-  | 'payroll_approvals';
+  | 'payroll_approvals'
+  /**
+   * The same file: accountants get the morning email alerts too, and each
+   * person chooses the kinds of paper they are told about (Settings → Email
+   * alerts); the expiry reminders can show in Updates (#18).
+   */
+  | 'document_alerts';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

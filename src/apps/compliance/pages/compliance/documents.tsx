@@ -49,9 +49,10 @@ import { t, tp } from '@/i18n';
 
 /**
  * "drivers": drivers without a valid licence, when the company checks them;
- * "nofile": documents of the register without a scan (with the register's extras).
+ * "nofile": documents of the register without a scan (with the register's extras);
+ * "newcopy": renewed papers whose new copy is missing (#18, when the company asks for them).
  */
-type StatusFilter = 'all' | ExpiryStatus | 'archived' | 'drivers' | 'nofile';
+type StatusFilter = 'all' | ExpiryStatus | 'archived' | 'drivers' | 'nofile' | 'newcopy';
 const OWNERS: DocumentOwnerType[] = ['company', 'employee', 'vehicle', 'other'];
 
 export default function DocumentsRegisterPage() {
@@ -96,6 +97,7 @@ export default function DocumentsRegisterPage() {
           title: entryTitle(entry),
           purpose: purposeName(company.documentPurposes, entry.purposeId),
           files: entry.recordId ? (register.files.get(entry.recordId) ?? 0) : null,
+          newCopy: register.newCopies.get(entry.key) ?? null,
         }))
         .sort(
           (a, b) =>
@@ -132,9 +134,16 @@ export default function DocumentsRegisterPage() {
   const drivers = checksDrivers ? register.missing : [];
   // Stored documents without a scan (an employee's own papers are scanned on their page).
   const withoutFile = rows.filter((r) => r.files === 0).length;
-  // Back to every document once drivers are no longer checked, or the extras are off.
+  // Renewed papers whose new copy is missing (#18).
+  const withoutCopy = rows.filter((r) => r.newCopy).length;
+  // Back to every document once drivers are no longer checked, the extras
+  // are off, or no new copy is missing any more.
   const status =
-    (chosen === 'drivers' && !checksDrivers) || (chosen === 'nofile' && !extras) ? 'all' : chosen;
+    (chosen === 'drivers' && !checksDrivers) ||
+    (chosen === 'nofile' && !extras) ||
+    (chosen === 'newcopy' && !withoutCopy)
+      ? 'all'
+      : chosen;
   // Customers who have papers in the register.
   const customers = extras
     ? [...new Set(rows.map((r) => r.entry.clientId).filter((id): id is string => Boolean(id)))]
@@ -149,7 +158,12 @@ export default function DocumentsRegisterPage() {
     const employee = r.entry.employeeId ? byEmployee.get(r.entry.employeeId) : undefined;
     const client = r.entry.clientId ? names.clients.get(r.entry.clientId) : undefined;
     return (
-      (status === 'all' || (status === 'nofile' ? r.files === 0 : r.info.status === status)) &&
+      (status === 'all' ||
+        (status === 'nofile'
+          ? r.files === 0
+          : status === 'newcopy'
+            ? Boolean(r.newCopy)
+            : r.info.status === status)) &&
       (!owner || r.entry.ownerType === owner) &&
       (!shownCustomer || r.entry.clientId === shownCustomer) &&
       textMatches(query, [
@@ -260,6 +274,15 @@ export default function DocumentsRegisterPage() {
                 ...(extras
                   ? [{ value: 'nofile' as const, label: t('No file'), count: withoutFile }]
                   : []),
+                ...(withoutCopy
+                  ? [
+                      {
+                        value: 'newcopy' as const,
+                        label: t('New copy missing'),
+                        count: withoutCopy,
+                      },
+                    ]
+                  : []),
               ]}
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -322,7 +345,11 @@ export default function DocumentsRegisterPage() {
                   const employee = byEmployee.get(missing.employeeId);
                   const entry =
                     missing.document && missing.reason === 'expired'
-                      ? recordEntry(missing.document, register.reminderDays)
+                      ? recordEntry(
+                          missing.document,
+                          register.reminderDays,
+                          register.reminderDaysByType,
+                        )
                       : null;
                   // A licence without an expiry date: opened to enter its dates.
                   const undated = missing.reason === 'undated' ? missing.document : null;
@@ -453,23 +480,40 @@ export default function DocumentsRegisterPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filtered.map(({ entry, info, owner: ownerName, title, purpose, files }) => (
-                    <tr key={entry.key} className="align-top">
-                      <td className="px-5 py-3">
-                        <p className="font-medium text-slate-900">
-                          {title}
-                          {entry.confidential ? (
-                            <Badge tone="violet" className="ms-2 align-middle">
-                              <Lock className="size-3" aria-hidden /> {t('Confidential')}
-                            </Badge>
-                          ) : null}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {[entry.title ? t(documentTypeInfo(entry.type).label) : '', entry.number]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </p>
-                        <p className="text-xs text-slate-500 md:hidden">
+                  {filtered.map(
+                    ({ entry, info, owner: ownerName, title, purpose, files, newCopy }) => (
+                      <tr key={entry.key} className="align-top">
+                        <td className="px-5 py-3">
+                          <p className="font-medium text-slate-900">
+                            {title}
+                            {entry.confidential ? (
+                              <Badge tone="violet" className="ms-2 align-middle">
+                                <Lock className="size-3" aria-hidden /> {t('Confidential')}
+                              </Badge>
+                            ) : null}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {[
+                              entry.title ? t(documentTypeInfo(entry.type).label) : '',
+                              entry.number,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                          <p className="text-xs text-slate-500 md:hidden">
+                            {entry.employeeId ? (
+                              <Link
+                                to={`/employees/${entry.employeeId}`}
+                                className="hover:text-primary-700"
+                              >
+                                {ownerName}
+                              </Link>
+                            ) : (
+                              ownerName
+                            )}
+                          </p>
+                        </td>
+                        <td className="hidden px-3 py-3 text-slate-700 md:table-cell">
                           {entry.employeeId ? (
                             <Link
                               to={`/employees/${entry.employeeId}`}
@@ -480,90 +524,90 @@ export default function DocumentsRegisterPage() {
                           ) : (
                             ownerName
                           )}
-                        </p>
-                      </td>
-                      <td className="hidden px-3 py-3 text-slate-700 md:table-cell">
-                        {entry.employeeId ? (
-                          <Link
-                            to={`/employees/${entry.employeeId}`}
-                            className="hover:text-primary-700"
-                          >
-                            {ownerName}
-                          </Link>
-                        ) : (
-                          ownerName
-                        )}
-                        <span className="block text-xs text-slate-500">
-                          {t(ownerLabel(entry.ownerType))}
-                        </span>
-                      </td>
-                      {extras ? (
-                        <td className="hidden px-3 py-3 text-slate-700 xl:table-cell">
-                          {purpose || '—'}
-                        </td>
-                      ) : null}
-                      <td className="px-3 py-3">
-                        <ExpiryBadge info={info} />
-                        {entry.expiryDate ? (
-                          <span className="mt-1 block text-xs text-slate-500">
-                            {fmt.date(entry.expiryDate)}
-                            {info.status === 'expired' ? ` · ${daysText(info.daysLeft ?? 0)}` : ''}
+                          <span className="block text-xs text-slate-500">
+                            {t(ownerLabel(entry.ownerType))}
                           </span>
+                        </td>
+                        {extras ? (
+                          <td className="hidden px-3 py-3 text-slate-700 xl:table-cell">
+                            {purpose || '—'}
+                          </td>
                         ) : null}
-                      </td>
-                      <td className="tabular hidden px-3 py-3 text-end text-slate-700 lg:table-cell">
-                        {entry.renewalCost ? fmt.money(entry.renewalCost) : '—'}
-                      </td>
-                      {extras ? (
-                        <td className="hidden px-2 py-3 text-slate-500 sm:table-cell">
-                          {files ? (
-                            <span
-                              className="inline-flex items-center gap-0.5 text-xs"
-                              title={tp(files, '{count} file', '{count} files')}
-                            >
-                              <Paperclip className="size-3.5" aria-hidden />
-                              <span className="sr-only">
-                                {tp(files, '{count} file', '{count} files')}
+                        <td className="px-3 py-3">
+                          <ExpiryBadge info={info} />
+                          {entry.expiryDate ? (
+                            <span className="mt-1 block text-xs text-slate-500">
+                              {fmt.date(entry.expiryDate)}
+                              {info.status === 'expired'
+                                ? ` · ${daysText(info.daysLeft ?? 0)}`
+                                : ''}
+                            </span>
+                          ) : null}
+                          {newCopy ? (
+                            <span className="mt-1 block">
+                              <Badge tone="amber">{t('New copy missing')}</Badge>
+                              <span className="mt-0.5 block text-xs text-slate-500">
+                                {t('Renewed on {date}', {
+                                  date: fmt.date(newCopy.renewal.renewedOn),
+                                })}
                               </span>
-                              <span aria-hidden>{files}</span>
                             </span>
                           ) : null}
                         </td>
-                      ) : null}
-                      <td className="px-5 py-3">
-                        <div className="flex justify-end gap-1">
-                          {readOnly ? null : (
-                            <Button
-                              variant="outline"
-                              size="xs"
-                              onClick={() => setRenewing(entry)}
-                              aria-label={t('Renew {document}', { document: title })}
-                            >
-                              <RefreshCw /> <span className="hidden sm:inline">{t('Renew')}</span>
-                            </Button>
-                          )}
-                          {entry.recordId ? (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => edit(entry)}
-                              aria-label={t('Edit {document}', { document: title })}
-                            >
-                              <Pencil />
-                            </Button>
-                          ) : (
-                            <Link
-                              to={`/employees/${entry.employeeId}/edit`}
-                              className="inline-flex size-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                              aria-label={t('Edit {document}', { document: title })}
-                            >
-                              <Pencil className="size-4" />
-                            </Link>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="tabular hidden px-3 py-3 text-end text-slate-700 lg:table-cell">
+                          {entry.renewalCost ? fmt.money(entry.renewalCost) : '—'}
+                        </td>
+                        {extras ? (
+                          <td className="hidden px-2 py-3 text-slate-500 sm:table-cell">
+                            {files ? (
+                              <span
+                                className="inline-flex items-center gap-0.5 text-xs"
+                                title={tp(files, '{count} file', '{count} files')}
+                              >
+                                <Paperclip className="size-3.5" aria-hidden />
+                                <span className="sr-only">
+                                  {tp(files, '{count} file', '{count} files')}
+                                </span>
+                                <span aria-hidden>{files}</span>
+                              </span>
+                            ) : null}
+                          </td>
+                        ) : null}
+                        <td className="px-5 py-3">
+                          <div className="flex justify-end gap-1">
+                            {readOnly ? null : (
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => setRenewing(entry)}
+                                aria-label={t('Renew {document}', { document: title })}
+                              >
+                                <RefreshCw /> <span className="hidden sm:inline">{t('Renew')}</span>
+                              </Button>
+                            )}
+                            {entry.recordId ? (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => edit(entry)}
+                                aria-label={t('Edit {document}', { document: title })}
+                              >
+                                <Pencil />
+                              </Button>
+                            ) : (
+                              <Link
+                                to={`/employees/${entry.employeeId}/edit`}
+                                className="inline-flex size-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                                aria-label={t('Edit {document}', { document: title })}
+                              >
+                                <Pencil className="size-4" />
+                              </Link>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>
@@ -585,6 +629,7 @@ export default function DocumentsRegisterPage() {
           isNew={open.isNew}
           employees={employees}
           defaultReminderDays={register.reminderDays}
+          reminderDaysByType={register.reminderDaysByType}
           onClose={closeEditing}
         />
       ) : null}

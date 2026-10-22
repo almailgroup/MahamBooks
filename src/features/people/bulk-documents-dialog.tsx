@@ -11,16 +11,22 @@ import {
   logPersonnelFilesAdded,
   setEmployeePhoto,
 } from '@/db/people';
-import { fileDrivingLicence } from '@/db/renewals';
+import { addNewCopy, fileDrivingLicence } from '@/db/renewals';
 import type { Employee } from '@/db/types';
-import { drivingLicenceToFileOn } from '@/lib/compliance';
+import {
+  DOCUMENT_TYPES,
+  drivingLicenceToFileOn,
+  EMPLOYEE_EXPIRY_FIELDS,
+  employeeDocumentKey,
+  type EmployeeDocumentType,
+} from '@/lib/compliance';
 import { documentKind, matchDocuments, type DocumentMatch } from '@/lib/hr/document-match';
 import { photoFromFile, receiptFromFile } from '@/lib/image';
 import { cn } from '@/lib/cn';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { Button } from '@/components/ui/button';
-import { Checkbox, Select } from '@/components/ui/form';
+import { Checkbox, Field, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 
 /** Scans for the personnel files, or the employees' photos. */
@@ -84,6 +90,9 @@ export function BulkDocumentsDialog({
   /** Scans go to the employees' driving licences instead of their personnel files. */
   const [asLicence, setAsLicence] = useState(false);
   const licences = !photos && drivingLicences && asLicence;
+  /** Each scan is the copy of this paper of its employee (#18); '' for none in particular. */
+  const [asCopy, setAsCopy] = useState<EmployeeDocumentType | ''>('');
+  const copyOf = !photos && !licences ? asCopy : '';
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const byId = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const sorted = useMemo(
@@ -207,7 +216,19 @@ export function BulkDocumentsDialog({
           // Photos are made smaller (JPEG, 1600 px at most); PDF files are kept as they are.
           const { dataUrl, type } = await receiptFromFile(file);
           if (licences) await fileDrivingLicence(employeeId, { name: file.name, type, dataUrl });
-          else await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
+          else if (copyOf) {
+            // Valid until the paper's expiry on the employee's record.
+            const employee = byId.get(employeeId);
+            await addNewCopy(
+              company.id,
+              employeeId,
+              { name: file.name, type, dataUrl },
+              {
+                docKey: employeeDocumentKey(employeeId, copyOf),
+                validUntil: employee?.[EMPLOYEE_EXPIRY_FIELDS[copyOf]] ?? null,
+              },
+            );
+          } else await addAttachment(company.id, employeeId, { name: file.name, type, dataUrl });
         }
         added += 1;
         people.add(employeeId);
@@ -349,6 +370,31 @@ export function BulkDocumentsDialog({
                 'Each scan goes to the employee’s driving licence in the register instead of their personnel file. Enter the expiry date on the licence afterwards.',
               )}
             />
+          )}
+          {photos || licences ? null : (
+            <Field
+              label={t('These files are each employee’s')}
+              optional
+              hint={t(
+                'Marks each scan as the copy of that paper, valid until its expiry date on the employee’s record.',
+              )}
+            >
+              {(id) => (
+                <Select
+                  id={id}
+                  value={asCopy}
+                  disabled={busy}
+                  onChange={(e) => setAsCopy(e.target.value as EmployeeDocumentType | '')}
+                >
+                  <option value="">{t('Nothing in particular')}</option>
+                  {(Object.keys(EMPLOYEE_EXPIRY_FIELDS) as EmployeeDocumentType[]).map((type) => (
+                    <option key={type} value={type}>
+                      {t(DOCUMENT_TYPES[type].label)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           )}
           <input
             ref={input}

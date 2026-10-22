@@ -333,6 +333,7 @@ export default function CompliancePage() {
           isNew
           employees={employees}
           defaultReminderDays={register.reminderDays}
+          reminderDaysByType={register.reminderDaysByType}
           onClose={() => setAdding(null)}
         />
       ) : null}

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Paperclip, X } from 'lucide-react';
+import { Paperclip, Tag, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { FileThumb, openAttachment, type AttachedFile } from '@/features/purchases/attachments';
 import { receiptFromFile } from '@/lib/image';
@@ -22,12 +22,18 @@ export function FileList({
   onRemove,
   emptyText,
   addLabel,
+  describe,
+  onTag,
 }: {
   files: AttachedFile[];
   onAdd: (file: AttachedFile) => void | Promise<unknown>;
   onRemove: (file: AttachedFile) => void | Promise<unknown>;
   emptyText?: string;
   addLabel?: string;
+  /** What a file is (#18: the paper it is a copy of); empty for nothing. */
+  describe?: (file: AttachedFile) => string;
+  /** "This file is the…": marks what the file is a copy of (#18). */
+  onTag?: (file: AttachedFile) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -79,8 +85,22 @@ export function FileList({
                   <span className="text-xs text-slate-500">
                     {f.type === 'application/pdf' ? t('PDF') : t('Photo')}
                   </span>
+                  {describe?.(f) ? (
+                    <span className="text-primary-700 block truncate text-xs">{describe(f)}</span>
+                  ) : null}
                 </span>
               </button>
+              {readOnly || !onTag ? null : (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('This file is the… ({name})', { name: f.name })}
+                  title={t('This file is the…')}
+                  onClick={() => onTag(f)}
+                >
+                  <Tag />
+                </Button>
+              )}
               {readOnly ? null : (
                 <Button
                   variant="ghost"

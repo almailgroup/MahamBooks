@@ -12,6 +12,11 @@ export function changeLink(event: ChangeEvent): string | null {
   const s = event.summary;
   const one = event.count === 1 && event.op !== 'delete' && event.op !== 'mixed';
   const id = encodeURIComponent(event.recordId);
+  // An expiry reminder (#18): the paper, or the employee whose paper it is.
+  if (event.kind === 'document_expiry') {
+    if (event.tbl === 'employees') return `/employees/${id}`;
+    return event.recordId ? `/compliance/documents?doc=${id}` : '/compliance/documents';
+  }
   switch (event.tbl) {
     case 'documents': {
       const type = String(s.type ?? '');

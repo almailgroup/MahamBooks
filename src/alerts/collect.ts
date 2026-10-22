@@ -4,6 +4,7 @@ import type {
   Company,
   ComplianceDocument,
   ComplianceMark,
+  DocumentRenewal,
   Employee,
   ID,
   InvoiceDocument,
@@ -14,12 +15,21 @@ import type {
 import { accountingSettings } from '@/db/chart-setup';
 import {
   complianceCalendar,
+  documentAlertKind,
   DUE_SOON_DAYS,
+  expiredStage,
   expiryStatus,
+  isDocumentAlertKind,
+  latestRenewals,
+  newCopyMissing,
   normalizeReminderDays,
+  normalizeReminderDaysByType,
   overdueSince,
   registerEntries,
+  repeatedStage,
   statutoryContextOf,
+  type CopyFile,
+  type DocumentAlertKind,
   type RegisterEntry,
   type StatutoryDeadline,
 } from '@/lib/compliance';
@@ -65,6 +75,10 @@ export interface AlertData {
   /** Payments (only those with an open cheque are needed). */
   payments: Payment[];
   clients: Pick<Client, 'id' | 'name' | 'nameAr'>[];
+  /** Renewals of the company's papers, for their new copies (#18); none: nothing is asked for. */
+  renewals?: DocumentRenewal[];
+  /** Files that may be renewed papers' new copies (#18). */
+  copies?: CopyFile[];
 }
 
 export type AlertTone = 'red' | 'amber';
@@ -81,7 +95,16 @@ interface AlertBase {
 }
 
 export type Alert =
-  | (AlertBase & { topic: 'documents'; entry: RegisterEntry; expired: boolean })
+  | (AlertBase & {
+      topic: 'documents';
+      entry: RegisterEntry;
+      expired: boolean;
+      /**
+       * Renewed, but its new copy is missing (#18): `date` is the last day it
+       * was waited for, and the paper's new expiry is the entry's.
+       */
+      newCopy?: boolean;
+    })
   | (AlertBase & { topic: 'deadlines'; deadline: StatutoryDeadline; overdue: boolean })
   | (AlertBase & {
       topic: 'cheques';
@@ -96,20 +119,47 @@ export type Alert =
 const isOpenDocument = (d: InvoiceDocument) =>
   (d.status === 'sent' || d.status === 'partial') && d.totals.balance > 0;
 
+/**
+ * Papers at a reminder, expired, or (#18) renewed without their new copy.
+ * The company's reminders by document type, repeats after expiry and new
+ * copies only change anything once they are set: until then the keys are
+ * the ones they always were.
+ */
 function documentAlerts(data: AlertData, today: ISODate): Alert[] {
   const settings = withPeopleDefaults(data.company.id, data.peopleSettings);
   const entries = registerEntries({
     employees: data.employees,
     documents: data.complianceDocuments,
     reminderDays: normalizeReminderDays(settings.reminderDays),
+    reminderDaysByType: normalizeReminderDaysByType(settings.reminderDaysByType),
   });
+  const repeat = settings.expiredRepeatDays ?? 0;
+  const latest = settings.newCopyGraceDays ? latestRenewals(data.renewals ?? []) : null;
   const alerts: Alert[] = [];
   for (const entry of entries) {
     if (!entry.expiryDate) continue;
     const info = expiryStatus(entry.expiryDate, entry.reminderDays, today);
-    if (info.status === 'valid' || info.daysLeft === null) continue;
+    if (info.daysLeft === null) continue;
+    if (info.status === 'valid') {
+      const missing = latest
+        ? newCopyMissing(entry, latest.get(entry.key), data.copies ?? [], settings, today)
+        : null;
+      if (missing) {
+        alerts.push({
+          topic: 'documents',
+          key: `documents:${entry.key}:${entry.expiryDate}:${repeatedStage('noscan', missing.daysLate - 1, repeat)}`,
+          date: missing.due,
+          daysLeft: -missing.daysLate,
+          tone: 'amber',
+          entry,
+          expired: false,
+          newCopy: true,
+        });
+      }
+      continue;
+    }
     const expired = info.status === 'expired';
-    const stage = expired ? 'expired' : `${info.reminder}d`;
+    const stage = expired ? expiredStage(info.daysLeft, repeat) : `${info.reminder}d`;
     alerts.push({
       topic: 'documents',
       key: `documents:${entry.key}:${entry.expiryDate}:${stage}`,
@@ -246,6 +296,37 @@ export function collectAlerts(
       (a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key),
     ),
   );
+}
+
+/** Whose papers a person is told about, and which apps they may open (D16). */
+export interface AlertAudience {
+  /** The kinds of paper they chose (email_alerts.document_kinds); null or missing: all. */
+  documentKinds?: readonly string[] | null;
+  /** They may see People: employees' papers. */
+  people?: boolean;
+  /** They may open Compliance: the other papers and the deadlines. */
+  compliance?: boolean;
+}
+
+/**
+ * The alerts one person gets: papers of the kinds they chose only, an
+ * employee's papers only when they may see People, and the company's,
+ * vehicles' and customers' papers and the deadlines only when they may open
+ * Compliance (the owner's limits). Everything else as it is.
+ */
+export function alertsFor(alerts: readonly Alert[], audience: AlertAudience): Alert[] {
+  const chosen = Array.isArray(audience.documentKinds)
+    ? new Set(audience.documentKinds.filter(isDocumentAlertKind))
+    : null;
+  const people = audience.people !== false;
+  const compliance = audience.compliance !== false;
+  return alerts.filter((alert) => {
+    if (alert.topic === 'deadlines') return compliance;
+    if (alert.topic !== 'documents') return true;
+    const kind: DocumentAlertKind = documentAlertKind(alert.entry);
+    if (chosen && !chosen.has(kind)) return false;
+    return kind === 'staff' ? people : compliance;
+  });
 }
 
 /** Names of employees and clients by id, for the email. */

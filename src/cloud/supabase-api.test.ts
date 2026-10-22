@@ -116,6 +116,46 @@ describe('what the server has (server_features)', () => {
   });
 });
 
+describe('the kinds of paper of the email alerts (#18)', () => {
+  it('are left alone on a server without them', async () => {
+    const { api } = fakeSupabase(() => MISSING);
+    expect(await api.emailAlertScope('co-00001')).toBeUndefined();
+    expect(await api.setEmailAlertScope('co-00001', ['staff'])).toBe(false);
+  });
+
+  it('are what the server keeps: null for every kind, unknown ones left out', async () => {
+    const every = fakeSupabase(() => ({
+      data: [{ document_kinds: null }],
+      error: null,
+      status: 200,
+    }));
+    expect(await every.api.emailAlertScope('co-00001')).toBeNull();
+    const some = fakeSupabase(() => ({
+      data: [{ document_kinds: ['staff', 'later_kind', 'vehicle'] }],
+      error: null,
+      status: 200,
+    }));
+    expect(await some.api.emailAlertScope('co-00001')).toEqual(['staff', 'vehicle']);
+    const saved = fakeSupabase(() => ({ data: null, error: null, status: 204 }));
+    expect(await saved.api.setEmailAlertScope('co-00001', null)).toBe(true);
+    expect(saved.calls).toEqual(['set_email_alert_scope']);
+  });
+
+  it('are refused as the server refuses them', async () => {
+    const { api } = fakeSupabase(() => ({
+      data: null,
+      error: {
+        code: '42501',
+        message: 'almail:permission Only the owner, admins and accountants can get email alerts.',
+      },
+      status: 403,
+    }));
+    await expect(api.setEmailAlertScope('co-00001', ['company'])).rejects.toMatchObject({
+      code: 'permission',
+    });
+  });
+});
+
 describe('removing files', () => {
   it('answers with the paths Storage removed', async () => {
     const { api } = fakeSupabase(

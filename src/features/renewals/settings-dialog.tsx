@@ -10,6 +10,9 @@ import { checksDrivingLicences, normalizeReminderDays, registerExtrasOn } from '
 import { newId } from '@/lib/ids';
 import { normalizeDigits } from '@/lib/money';
 import { useRoleView } from '@/features/cloud/role-gates';
+import { useCloudLink } from '@/cloud/hooks';
+import { linkHasFeature } from '@/cloud/features';
+import { ExpiryReminderSettings, expiryDraft, expirySettings } from './expiry-reminders';
 import { Button } from '@/components/ui/button';
 import { Field, Input, NumberInput, Switch } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
@@ -37,6 +40,10 @@ export function ComplianceSettingsDialog({
   const [extras, setExtras] = useState(registerExtrasOn(company));
   const [finder, setFinder] = useState(fileFinderOn(company));
   const [purposes, setPurposes] = useState<DocumentPurpose[]>(company.documentPurposes ?? []);
+  // The expiry reminders (#18): People's settings, off until turned on.
+  const [expiry, setExpiry] = useState(() => expiryDraft(settings));
+  const link = useCloudLink(company.id);
+  const updatesAvailable = Boolean(link) && linkHasFeature(link ?? null, 'document_alerts');
   const set = (patch: Partial<PeopleSettings>) => setDraft((d) => ({ ...d, ...patch }));
   const setPurpose = (id: string, patch: Partial<DocumentPurpose>) =>
     setPurposes((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -54,7 +61,12 @@ export function ComplianceSettingsDialog({
       if (extras) await saveDocumentPurposes(company.id, purposes);
       await setRegisterExtras(company.id, extras);
       await setFileFinder(company.id, finder);
-      await savePeopleSettings({ ...draft, reminderDays });
+      await savePeopleSettings({
+        ...draft,
+        reminderDays,
+        // Staff and viewers never have People's settings: theirs stay as they are.
+        ...(peopleHidden ? {} : expirySettings(expiry)),
+      });
       toast.success(t('Settings saved'));
       onClose();
     } catch (error) {
@@ -142,6 +154,13 @@ export function ComplianceSettingsDialog({
               )}
             </Field>
           </div>
+          {peopleHidden ? null : (
+            <ExpiryReminderSettings
+              draft={expiry}
+              onChange={setExpiry}
+              updatesAvailable={updatesAvailable}
+            />
+          )}
           {peopleHidden ? null : (
             <Switch
               checked={checksDrivingLicences(draft)}

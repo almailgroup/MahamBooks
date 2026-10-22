@@ -432,6 +432,8 @@ export class FakeSupabase {
   /** Email alerts by "company user", and the emails asked for from the app. */
   emailAlerts = new Map<string, { enabled: boolean; topics: string[]; appUrl: string }>();
   alertEmails: { company: string; to: string }[] = [];
+  /** The kinds of paper each person chose (#18), by "company user"; missing: every kind. */
+  alertScopes = new Map<string, string[] | null>();
   /** The change feed: the changes, each person's choice and how far they read, by "company user". */
   changes: ChangeRow[] = [];
   changeSettings = new Map<
@@ -621,7 +623,8 @@ export class FakeSupabase {
       if (!me) return json(401, { ok: false, error: 'auth', message: 'Sign in again.' });
       const company = String(b.companyId ?? '');
       const role = this.companies.get(company)?.members.get(me.id);
-      if (role !== 'owner' && role !== 'admin') {
+      // Accountants too, as 20261130000000_people_alerts.sql lets them (#18).
+      if (role !== 'owner' && role !== 'admin' && role !== 'accountant') {
         return json(403, { ok: false, error: 'permission', message: '' });
       }
       if (!this.emailAlerts.get(`${company} ${me.id}`)?.enabled) {
@@ -1093,6 +1096,7 @@ export class FakeSupabase {
           'cheque_approvals',
           'change_feed',
           'payroll_approvals',
+          'document_alerts',
         ];
       // The change feed (20261123000000_change_feed.sql).
       case 'notification_status': {
@@ -1356,10 +1360,39 @@ export class FakeSupabase {
         entry.members.set(me.id, invite.role);
         return [{ company_id: entry.id, company_name: entry.name, role: invite.role }];
       }
+      case 'email_alert_scope': {
+        if (!this.companies.get(company)?.members.has(me.id)) return refuse('almail:not_member');
+        return [{ document_kinds: this.alertScopes.get(`${company} ${me.id}`) ?? null }];
+      }
+      case 'set_email_alert_scope': {
+        const role = this.companies.get(company)?.members.get(me.id);
+        if (role !== 'owner' && role !== 'admin' && role !== 'accountant') {
+          return refuse(
+            'almail:permission Only the owner, admins and accountants can get email alerts.',
+          );
+        }
+        const all = ['company', 'vehicle', 'staff', 'client'];
+        const kinds = b.p_kinds === null ? null : ((b.p_kinds as string[]) ?? []);
+        if (kinds && kinds.some((k) => !all.includes(k))) {
+          return refuse('almail:invalid Unknown kind of paper.');
+        }
+        const chosen = kinds ? all.filter((k) => kinds.includes(k)) : null;
+        this.alertScopes.set(
+          `${company} ${me.id}`,
+          chosen && chosen.length < all.length ? chosen : null,
+        );
+        return undefined;
+      }
       case 'email_alert_settings':
       case 'set_email_alerts': {
         const key = `${company} ${me.id}`;
         if (fn === 'set_email_alerts') {
+          const role = this.companies.get(company)?.members.get(me.id);
+          if (role !== 'owner' && role !== 'admin' && role !== 'accountant') {
+            return refuse(
+              'almail:permission Only the owner, admins and accountants can get email alerts.',
+            );
+          }
           this.emailAlerts.set(key, {
             enabled: Boolean(b.p_enabled),
             topics: (b.p_topics as string[]) ?? [],

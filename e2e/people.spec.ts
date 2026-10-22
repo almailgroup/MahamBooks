@@ -517,3 +517,92 @@ test('drivers without a valid driving licence are flagged once the company check
   await page.getByRole('button', { name: 'العربية' }).click();
   await expect(page.getByRole('tab', { name: /^السائقون بدون رخصة سارية/ })).toBeVisible();
 });
+
+test('an Iqama lead time of 90 days marks an Iqama expiring in 80 days, and a renewal asks for its new copy', async ({
+  page,
+}) => {
+  await createCompany(page, 'Made-up Services');
+  await page.goto('#/employees/new');
+  await page.getByLabel('Name (English)').fill('Made-up Worker');
+  await chooseOption(page, page.getByLabel('Nationality'), {
+    placeholder: 'Search countries…',
+    query: 'India',
+  });
+  await page.getByLabel('Residency number').fill('18/2025/77');
+  await page.getByLabel('Residency expiry').fill(inDays(80));
+  await page.getByLabel('Basic salary').fill('300');
+  await page.getByRole('button', { name: 'Save employee' }).first().click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Made-up Worker');
+
+  // 80 days before its expiry, with the company's 60/30/7, the residency is valid.
+  await page.goto('#/compliance/documents');
+  const residency = page.getByRole('row').filter({ hasText: 'Residency' });
+  await expect(residency).toContainText('Valid');
+
+  // Reminders by document type: the owner's lead times are offered, a residency 90 days before.
+  await page.goto('#/compliance');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Compliance settings' });
+  await expect(
+    settings.getByRole('switch', { name: 'Reminders by document type' }),
+  ).toHaveAttribute('aria-checked', 'false');
+  await settings.getByRole('switch', { name: 'Reminders by document type' }).click();
+  await expect(settings.getByLabel('Days before expiry for Residency')).toHaveValue(
+    '90, 60, 30, 7',
+  );
+  await expect(settings.getByLabel('Days before expiry for Passport')).toHaveValue('180, 90, 30');
+  await expect(settings.getByLabel('Days before expiry for Vehicle registration')).toHaveValue(
+    '30, 14, 7',
+  );
+  // And the new copy, asked for a day after a renewal.
+  await settings.getByRole('switch', { name: 'Ask for the new copy after a renewal' }).click();
+  await settings.getByLabel('Ask for the new copy within (days)').fill('1');
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await expect(settings).toBeHidden();
+  await page.goto('#/compliance/documents');
+  await expect(residency).toContainText('Expires in 80 days');
+  await expect(residency).not.toContainText('Valid');
+
+  // Renewed ten days ago, without its new copy: the register asks for it.
+  await residency.getByRole('button', { name: 'Renew Residency' }).click();
+  const renew = page.getByRole('dialog', { name: 'Renew Residency' });
+  await renew.getByLabel('Renewed on').fill(inDays(-10));
+  await renew.getByRole('switch', { name: 'Record the fee as an expense' }).click();
+  await renew.getByRole('button', { name: 'Renew' }).click();
+  await expect(renew).toBeHidden();
+  await expect(residency).toContainText('Valid');
+  await expect(residency).toContainText('New copy missing');
+  await page.getByRole('tab', { name: /^New copy missing/ }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Made-up Worker' })).toHaveCount(1);
+
+  // The scan in the personnel file, marked as the new residency: no longer missing.
+  await page.goto('#/employees');
+  await page.getByRole('link', { name: 'Made-up Worker' }).click();
+  await page.getByLabel('Attach a file').setInputFiles({
+    name: 'residency-2027.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n'),
+  });
+  await expect(page.getByText('File added')).toBeVisible();
+  await page.getByRole('button', { name: 'This file is the… (residency-2027.pdf)' }).click();
+  const tag = page.getByRole('dialog', { name: 'This file is the…' });
+  // Its only paper with dates: the residency, valid until its new expiry.
+  await tag.getByLabel('Copy of').selectOption({ index: 1 });
+  await tag.getByRole('button', { name: 'Save' }).click();
+  await expect(tag).toBeHidden();
+  await expect(page.getByText(/^Residency, valid until/)).toBeVisible();
+  await page.goto('#/compliance/documents');
+  await expect(page.getByRole('row').filter({ hasText: 'Residency' })).not.toContainText(
+    'New copy missing',
+  );
+
+  // In Arabic.
+  await page.goto('#/compliance');
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await page.getByRole('button', { name: 'الإعدادات', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'التذكير حسب نوع المستند' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+});

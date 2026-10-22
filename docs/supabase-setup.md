@@ -69,8 +69,13 @@ has to be added to the app or to Vercel.
     approval" below), and its emails. It stops with "Run
     20261123000000_change_feed.sql first" if the sixth script hasn't run, and
     then changes nothing. Running it changes nothing by itself either: pay
-    runs are approved as before until the owner turns the switch on. If the
-    fifth or sixth script is ever run again, run this one again after them.
+    runs are approved as before until the owner turns the switch on. It also
+    lets accountants get the morning email alerts and everyone choose the
+    kinds of paper they are told about (**Settings → Email alerts**), and
+    lets the expiry reminders show under the bell (see "Expiry alerts"
+    below); until someone uses them, everything is as before. If the fifth or
+    sixth script, or the email alerts script (step 7), is ever run again, run
+    this one again after them.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -429,6 +434,36 @@ approved as before.
   by department and position (the pay run → **Register by department**,
   الكشف حسب القسم) are kept with the month's records. Nothing in the pay is
   worked out differently.
+
+## Expiry alerts
+
+**Compliance → Settings → Expiry reminders** (الامتثال ← الإعدادات ← تذكيرات
+الانتهاء), for the owner, admins and accountants. Each switch is off at first,
+and until it is on the reminders work as before:
+
+- **Reminders by document type** (التذكير حسب نوع المستند): it offers the
+  lead times the owner chose, residency 90, 60, 30 and 7 days before,
+  passport 180, 90 and 30, vehicles' papers 30, 14 and 7. They can be
+  changed, and types added or removed.
+- **Remind again after expiry** (التذكير مجدداً بعد الانتهاء): an expired
+  paper is in the morning email again every 7 days until it is renewed.
+- **Ask for the new copy after a renewal** (طلب النسخة الجديدة بعد التجديد): a
+  paper renewed with **Renew** from that day on is marked **New copy missing**
+  (لم تُرفع النسخة الجديدة) after 14 days unless its new scan was added, with
+  Renew's **New copy** or the tag button of the personnel file (**This file
+  is the…**, هذا الملف هو…).
+- **Show the reminders in Updates** (إظهار التذكيرات في المستجدات), after the
+  seventh script (step 1.11): the owner and the approvers who get the changes
+  of the team find each new reminder under the bell each morning. They are
+  not emailed again as changes.
+
+After the seventh script, **Settings → Email alerts** lets accountants turn
+the morning email on too, and each person chooses the kinds of paper under
+**Papers and licences**: the company's, vehicles', employees' or customers'.
+Someone the owner gave no access to People gets no employees' papers; no
+access to Compliance, no other papers and no deadlines. Nothing needs to be
+set up in Supabase beyond the script: the morning schedule of the email
+alerts does the rest. WhatsApp and SMS are not part of this.
 
 ## Problems
 

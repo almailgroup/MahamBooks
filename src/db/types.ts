@@ -1797,6 +1797,11 @@ export interface DocumentRenewal {
    * expense, for employees' documents (older renewals don't have it).
    */
   number?: string;
+  /**
+   * The file that is the renewed paper's new copy (an attachment marked with
+   * the paper's key and valid until the new expiry), once there is one (#18).
+   */
+  newCopyId?: ID | null;
   createdAt: Timestamp;
 }
 
@@ -1862,6 +1867,32 @@ export interface PeopleSettings {
    * false: nothing is flagged, as before.
    */
   drivingLicences?: boolean;
+  /**
+   * Days before an expiry to remind, by document type (#18): a type listed
+   * here uses its own days instead of `reminderDays` (a document's own days
+   * still come first). Missing or empty: every type uses `reminderDays`, as
+   * before.
+   */
+  reminderDaysByType?: Partial<Record<string, number[]>>;
+  /**
+   * Once a paper has expired, it is reminded of again every this many days
+   * until it is renewed (#18). Missing: once when it expires, then only in
+   * Sunday's summary, as before.
+   */
+  expiredRepeatDays?: number;
+  /**
+   * After a renewal, the new copy (a file marked as the renewed paper, valid
+   * until its new expiry) is asked for once this many days have passed (#18).
+   * Missing: never asked for, as before.
+   */
+  newCopyGraceDays?: number;
+  /** Renewals recorded from this day on are asked for their new copy (set when it is turned on). */
+  newCopySince?: ISODate;
+  /**
+   * The expiry reminders also appear in Updates (the bell) of the owner and
+   * the approvers who get the changes of the team (#18). Missing: they don't.
+   */
+  expiryUpdates?: boolean;
   updatedAt: Timestamp;
 }
 

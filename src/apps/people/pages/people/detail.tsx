@@ -17,7 +17,14 @@ import {
   employeeStatusLabel,
   needsResidency,
 } from '@/lib/hr/employees';
-import { checksDrivingLicences, documentTypeInfo, normalizeReminderDays } from '@/lib/compliance';
+import {
+  checksDrivingLicences,
+  documentTypeInfo,
+  employeeDocuments,
+  normalizeReminderDays,
+  normalizeReminderDaysByType,
+  recordEntry,
+} from '@/lib/compliance';
 import { departmentLabel } from '@/lib/hr/departments';
 import { bankFromIban, formatIban, KUWAIT_BANKS } from '@/lib/kuwait';
 import { countryName } from '@/lib/geo';
@@ -26,6 +33,7 @@ import { maskNumber } from '@/lib/format';
 import { serviceYears } from '@/lib/hr/eosi';
 import { today } from '@/lib/dates';
 import { EmployeeDocuments } from '@/features/people/employee-documents';
+import { CopyTagDialog, copyTagLabel } from '@/features/people/copy-tag-dialog';
 import { useVehicles } from '@/features/renewals/hooks';
 import { EosiCard } from '@/features/people/eosi-card';
 import { FileList } from '@/features/people/file-list';
@@ -122,6 +130,8 @@ export default function EmployeeDetailPage() {
   const settings = usePeopleSettings();
   const [params, setParams] = useSearchParams();
   const [markingLeft, setMarkingLeft] = useState(false);
+  // A file of the personnel file being marked as the copy of a paper (#18).
+  const [tagging, setTagging] = useState<string | null>(null);
   const tab = TABS.find((x) => x.value === params.get('tab'))?.value ?? 'overview';
 
   if (employee === undefined || !records || !renewals || !files || !employees || !settings) {
@@ -137,6 +147,14 @@ export default function EmployeeDetailPage() {
       </Card>
     );
   }
+
+  // The employee's papers a file may be a copy of (#18).
+  const reminderDays = normalizeReminderDays(settings.reminderDays);
+  const papers = [
+    ...employeeDocuments(employee, reminderDays),
+    ...records.filter((d) => !d.archived).map((d) => recordEntry(d, reminderDays)),
+  ];
+  const taggedFile = tagging ? files.find((f) => f.id === tagging) : undefined;
 
   const remove = async () => {
     const name = localName(employee);
@@ -313,6 +331,7 @@ export default function EmployeeDetailPage() {
               records={records}
               employees={employees}
               reminderDays={normalizeReminderDays(settings.reminderDays)}
+              reminderDaysByType={normalizeReminderDaysByType(settings.reminderDaysByType)}
               drivingLicences={checksDrivingLicences(settings)}
               vehicles={vehicles}
             />
@@ -327,6 +346,11 @@ export default function EmployeeDetailPage() {
               <CardBody>
                 <FileList
                   files={files.filter((file) => file.id !== employee.photoId)}
+                  describe={(file) => {
+                    const stored = files.find((f) => f.id === file.id);
+                    return stored ? copyTagLabel(stored, papers, fmt.date) : '';
+                  }}
+                  onTag={(file) => setTagging(file.id)}
                   onAdd={async (file) => {
                     await addAttachment(company.id, employee.id, file);
                     toast.success(t('File added'));
@@ -499,6 +523,9 @@ export default function EmployeeDetailPage() {
       )}
       {markingLeft ? (
         <MarkLeftDialog employee={employee} onClose={() => setMarkingLeft(false)} />
+      ) : null}
+      {taggedFile ? (
+        <CopyTagDialog file={taggedFile} entries={papers} onClose={() => setTagging(null)} />
       ) : null}
     </div>
   );

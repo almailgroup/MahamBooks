@@ -10,6 +10,7 @@ import {
   missingDocuments,
   recordEntry,
   type RegisterEntry,
+  type ReminderDaysByType,
 } from '@/lib/compliance';
 import { isCurrent } from '@/lib/hr/employees';
 import { today } from '@/lib/dates';
@@ -31,6 +32,7 @@ export function EmployeeDocuments({
   records,
   employees,
   reminderDays,
+  reminderDaysByType,
   drivingLicences = false,
   vehicles = [],
 }: {
@@ -38,6 +40,8 @@ export function EmployeeDocuments({
   records: ComplianceDocument[];
   employees: Employee[];
   reminderDays: number[];
+  /** The company's reminders by document type (#18). */
+  reminderDaysByType?: ReminderDaysByType;
   /** The company checks drivers' licences (PeopleSettings.drivingLicences). */
   drivingLicences?: boolean;
   /** The company's vehicles: their driver needs a licence too. */
@@ -50,8 +54,10 @@ export function EmployeeDocuments({
   const on = today();
   const current = isCurrent(employee);
   const entries = [
-    ...employeeDocuments(employee, reminderDays),
-    ...records.filter((d) => !d.archived).map((d) => recordEntry(d, reminderDays)),
+    ...employeeDocuments(employee, reminderDays, reminderDaysByType),
+    ...records
+      .filter((d) => !d.archived)
+      .map((d) => recordEntry(d, reminderDays, reminderDaysByType)),
   ];
   // An expired licence shows as expired on its own row; one never added has
   // none; one without an expiry date is marked on its row until it's entered.
@@ -185,6 +191,7 @@ export function EmployeeDocuments({
           isNew={editing.isNew}
           employees={employees}
           defaultReminderDays={reminderDays}
+          reminderDaysByType={reminderDaysByType}
           onClose={() => setEditing(null)}
         />
       ) : null}

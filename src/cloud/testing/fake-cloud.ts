@@ -28,6 +28,7 @@ import {
   deleteKeptBy,
   documentChangeNeedsApproval,
   getsChangeFeed,
+  getsEmailAlerts,
   grantableRoles,
   guardApprovalWrite,
   isApprover,
@@ -50,6 +51,11 @@ import { changeDetails, changeKind, IMMEDIATE_KINDS, isImmediateKind } from '../
 import { mergeNumbering } from '../numbering';
 import { rebaseCompany } from '../company-patch';
 import { periodKey } from '@/lib/numbering';
+import {
+  DOCUMENT_ALERT_KINDS,
+  isDocumentAlertKind,
+  type DocumentAlertKind,
+} from '@/lib/compliance';
 import type { CounterReset } from '@/db/types';
 
 /**
@@ -146,6 +152,8 @@ export class FakeCloud {
   /** Email alerts by "company user"; the emails asked for, by the same key. */
   emailAlerts = new Map<string, EmailAlertSettings & { appUrl: string }>();
   alertEmails: string[] = [];
+  /** The kinds of paper each person chose (#18), by "company user"; missing: every kind. */
+  alertScopes = new Map<string, DocumentAlertKind[] | null>();
   /**
    * The change feed (20261123000000_change_feed.sql, once `features` has
    * 'change_feed'): the changes, each person's choice and how far they read,
@@ -843,7 +851,10 @@ export class FakeCloud {
         guard('setEmailAlerts');
         if (this.legacy) return null;
         const role = member(company);
-        if (role !== 'owner' && role !== 'admin') throw fail('permission');
+        // Accountants too once the server has 20261130000000_people_alerts.sql (#18).
+        if (!getsEmailAlerts(role, this.features.includes('document_alerts'))) {
+          throw fail('permission');
+        }
         if (settings.enabled && !settings.topics.length) throw fail('invalid');
         const key = `${company} ${user}`;
         const before = this.emailAlerts.get(key);
@@ -859,10 +870,33 @@ export class FakeCloud {
         const { appUrl: _appUrl, ...saved } = this.emailAlerts.get(key)!;
         return saved;
       },
+      // Mirror public.email_alert_scope and public.set_email_alert_scope (#18).
+      emailAlertScope: async (company) => {
+        guard('emailAlertScope');
+        if (this.legacy || !this.features.includes('document_alerts')) return undefined;
+        member(company);
+        return this.alertScopes.get(`${company} ${user}`) ?? null;
+      },
+      setEmailAlertScope: async (company, kinds) => {
+        guard('setEmailAlertScope');
+        if (this.legacy || !this.features.includes('document_alerts')) return false;
+        const role = member(company);
+        if (!getsEmailAlerts(role, true)) throw fail('permission');
+        if (kinds && kinds.some((k) => !isDocumentAlertKind(k))) throw fail('invalid');
+        if (kinds && !kinds.length) throw fail('invalid');
+        const chosen = kinds ? DOCUMENT_ALERT_KINDS.filter((k) => kinds.includes(k)) : null;
+        this.alertScopes.set(
+          `${company} ${user}`,
+          chosen && chosen.length < DOCUMENT_ALERT_KINDS.length ? chosen : null,
+        );
+        return true;
+      },
       sendAlertEmail: async (company) => {
         guard('sendAlertEmail');
         const role = member(company);
-        if (role !== 'owner' && role !== 'admin') throw new AlertEmailError('permission');
+        if (!getsEmailAlerts(role, this.features.includes('document_alerts'))) {
+          throw new AlertEmailError('permission');
+        }
         const saved = this.emailAlerts.get(`${company} ${user}`);
         if (!saved?.enabled) throw new AlertEmailError('not_enabled');
         this.alertEmails.push(`${company} ${user}`);

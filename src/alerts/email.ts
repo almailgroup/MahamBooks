@@ -4,7 +4,8 @@ import { bankName } from '@/lib/cheques';
 import { formatDate, formatMoney } from '@/lib/format';
 import { parseISODate } from '@/lib/dates';
 import { daysLeftLabel, daysText, entryOwner, entryTitle } from '@/features/renewals/text';
-import { currentLanguage, interfaceLocale, t, tp } from '@/i18n';
+import { DOCUMENT_ALERT_KINDS, documentAlertKind, type DocumentAlertKind } from '@/lib/compliance';
+import { currentLanguage, interfaceLocale, msg, t, tp } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { ALERT_TOPICS, TOPIC_LABELS, type Alert, type AlertTone, type AlertTopic } from './collect';
 import type { ChangeEvent } from '@/cloud/api';
@@ -45,6 +46,11 @@ export interface AlertEmailInput {
   to: string;
   employees: Map<ID, Employee>;
   clients: Map<ID, Pick<Client, 'name' | 'nameAr'>>;
+  /**
+   * Papers listed by whose they are (#18), once the database has the people
+   * alerts script; without it, as they always were.
+   */
+  groupKinds?: boolean;
 }
 
 export interface AlertEmail {
@@ -61,8 +67,18 @@ export interface AlertLine {
   tone: AlertTone;
   amount: string;
   isNew: boolean;
+  /** Whose paper it is (papers and licences only), to list them together. */
+  kind?: DocumentAlertKind;
 }
 type Line = AlertLine;
+
+/** The kinds of paper, in words (English keys): the groups of the email, and Settings → Email alerts. */
+export const DOCUMENT_KIND_LABELS: Record<DocumentAlertKind, string> = {
+  company: msg('Company papers and licences'),
+  vehicle: msg('Vehicles’ papers'),
+  staff: msg('Employees’ papers'),
+  client: msg('Customers’ papers'),
+};
 
 /** Names of the company's people and clients, for the lines. */
 export interface AlertLookups {
@@ -142,9 +158,23 @@ function describe(alert: Alert, input: AlertLookups, fmt: ReturnType<typeof form
     case 'documents': {
       const { entry } = alert;
       const owner = entryOwner(entry, input.employees, input.company);
+      const title = [entryTitle(entry), owner].filter(Boolean).join(' · ');
+      const kind = documentAlertKind(entry);
+      if (alert.newCopy) {
+        return {
+          ...base,
+          kind,
+          title,
+          detail: t('Renewed until {date}. Upload the new copy in the app.', {
+            date: fmt.date(entry.expiryDate ?? alert.date),
+          }),
+          status: t('New copy missing'),
+        };
+      }
       return {
         ...base,
-        title: [entryTitle(entry), owner].filter(Boolean).join(' · '),
+        kind,
+        title,
         detail: alert.expired
           ? `${t('Expired on {date}', { date: fmt.date(alert.date) })} · ${daysText(alert.daysLeft)}`
           : t('Expires on {date}', { date: fmt.date(alert.date) }),
@@ -221,6 +251,8 @@ function describe(alert: Alert, input: AlertLookups, fmt: ReturnType<typeof form
 
 interface Section {
   topic: AlertTopic;
+  /** Its papers are listed by kind, with a heading for each. */
+  grouped?: boolean;
   label: string;
   count: number;
   /** Total of the amounts in the company's currency, for bills and invoices. */
@@ -247,13 +279,21 @@ function sections(input: AlertEmailInput, fmt: ReturnType<typeof formatter>): Se
       );
       if (sum > 0) total = fmt.money(sum, input.company.currency);
     }
+    const lines = sorted.slice(0, MAX_PER_TOPIC).map((a) => describe(a, input, fmt));
+    // Papers listed by whose they are (the company's, vehicles', employees',
+    // customers'), each kind in the order above.
+    if (topic === 'documents' && input.groupKinds) {
+      const order = (l: Line) => DOCUMENT_ALERT_KINDS.indexOf(l.kind ?? 'company');
+      lines.sort((a, b) => order(a) - order(b));
+    }
     return [
       {
         topic,
+        grouped: topic === 'documents' && Boolean(input.groupKinds),
         label: t(TOPIC_LABELS[topic]),
         count: alerts.length,
         total,
-        lines: sorted.slice(0, MAX_PER_TOPIC).map((a) => describe(a, input, fmt)),
+        lines,
         more: Math.max(0, sorted.length - MAX_PER_TOPIC),
       },
     ];
@@ -299,6 +339,19 @@ function wording(input: AlertEmailInput) {
   return { subject, intro };
 }
 
+/**
+ * The heading of whose papers start at line `i` of a section: only for
+ * papers and licences, and only when the lines are of more than one kind.
+ */
+function groupOf(section: Section, i: number): string {
+  if (!section.grouped) return '';
+  const kinds = new Set(section.lines.map((l) => l.kind ?? 'company'));
+  if (kinds.size < 2) return '';
+  const kind = section.lines[i].kind ?? 'company';
+  if (i > 0 && (section.lines[i - 1].kind ?? 'company') === kind) return '';
+  return t(DOCUMENT_KIND_LABELS[kind]);
+}
+
 /** The email for these alerts. */
 export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
   const ar = currentLanguage() === 'ar';
@@ -331,7 +384,8 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
     ...list.flatMap((s) => [
       '',
       `${s.label} (${s.count})${s.total ? ` · ${s.total}` : ''}`,
-      ...s.lines.flatMap((l) => [
+      ...s.lines.flatMap((l, i) => [
+        ...(groupOf(s, i) ? [`${groupOf(s, i)}:`] : []),
         `- ${l.isNew ? `[${t('New')}] ` : ''}${l.title} · ${l.status}${l.amount ? ` · ${l.amount}` : ''}`,
         `  ${l.detail}`,
       ]),
@@ -344,6 +398,10 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
 
   // HTML version.
   const e = escapeHtml;
+  const groupRow = (label: string) => `
+              <tr>
+                <td colspan="2" style="${cell(`padding:12px 0 4px;text-align:${start};font-size:12px;font-weight:600;color:${COLORS.muted};`)}">${e(label)}</td>
+              </tr>`;
   const cell = (style: string) => `font-family:${font};color:${COLORS.text};${style}`;
   const pill = (label: string, colors: { bg: string; fg: string }) =>
     `<span style="display:inline-block;padding:2px 8px;border-radius:999px;background:${colors.bg};color:${colors.fg};font-size:12px;font-weight:600;line-height:18px;white-space:nowrap;">${e(label)}</span>`;
@@ -371,7 +429,7 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
         </tr>
         <tr>
           <td style="padding:0 24px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${s.lines.map(row).join('')}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${s.lines.map((l, i) => (groupOf(s, i) ? groupRow(groupOf(s, i)) : '') + row(l)).join('')}
             </table>${s.more ? `\n            <p style="${cell(`margin:8px 0 0;font-size:13px;color:${COLORS.muted};text-align:${start};`)}">${e(more(s.more))}</p>` : ''}
           </td>
         </tr>`;

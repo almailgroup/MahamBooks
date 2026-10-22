@@ -19,9 +19,11 @@ import {
 import { useCloud } from '@/cloud/store';
 import { useCloudLink } from '@/cloud/hooks';
 import { linkHasFeature } from '@/cloud/features';
-import { getsChangeFeed } from '@/cloud/roles';
+import { getsChangeFeed, getsEmailAlerts } from '@/cloud/roles';
 import { ChangesForm } from './change-alerts';
 import { ALERT_TOPICS, TOPIC_DESCRIPTIONS, TOPIC_LABELS, type AlertTopic } from '@/alerts/topics';
+import { DOCUMENT_KIND_LABELS } from '@/alerts/email';
+import { DOCUMENT_ALERT_KINDS, type DocumentAlertKind } from '@/lib/compliance';
 import { SaveBar, SettingsSection } from './shared';
 
 const NOT_READ_ONLY = { readOnly: false, reason: '' };
@@ -29,7 +31,7 @@ const NOT_READ_ONLY = { readOnly: false, reason: '' };
 const SEND_ERRORS: Record<AlertEmailErrorCode, string> = {
   offline: msg('No connection. Try again when you are online.'),
   auth: msg('Your session has ended. Sign in again.'),
-  permission: msg('Only the owner and admins can get email alerts.'),
+  permission: msg('Only the owner, admins and accountants can get email alerts.'),
   invalid: msg('The email could not be sent.'),
   not_enabled: msg('Turn email alerts on and save first.'),
   too_soon: msg('Wait a minute before sending another email.'),
@@ -57,8 +59,10 @@ function appAddress(): string {
 }
 
 /**
- * Settings → Email alerts: the signed-in owner or admin turns their own
- * morning email for this company on or off and chooses what it covers.
+ * Settings → Email alerts: the signed-in owner or admin (and accountant,
+ * once the server has 20261130000000_people_alerts.sql) turns their own
+ * morning email for this company on or off and chooses what it covers, and
+ * with that server which kinds of paper (#18).
  */
 export default function AlertSettings() {
   const company = useCompany();
@@ -95,7 +99,7 @@ export default function AlertSettings() {
     );
   }
 
-  const morning = link.role === 'owner' || link.role === 'admin';
+  const morning = getsEmailAlerts(link.role, linkHasFeature(link, 'document_alerts'));
   // The changes of the team (#7): the owner and approvers, once the server has the feed.
   const changes = linkHasFeature(link, 'change_feed') && getsChangeFeed(link.role, link.approver);
 
@@ -125,12 +129,19 @@ export default function AlertSettings() {
 interface Draft {
   enabled: boolean;
   topics: AlertTopic[];
+  /** The kinds of paper (#18); every kind until chosen. */
+  kinds: DocumentAlertKind[];
 }
 
+const sameList = <T,>(a: readonly T[], b: readonly T[]) =>
+  a.length === b.length && a.every((x) => b.includes(x));
+
 const sameDraft = (a: Draft, b: Draft) =>
-  a.enabled === b.enabled &&
-  a.topics.length === b.topics.length &&
-  a.topics.every((topic) => b.topics.includes(topic));
+  a.enabled === b.enabled && sameList(a.topics, b.topics) && sameList(a.kinds, b.kinds);
+
+/** Every kind, for null (what is kept for "all"). */
+const kindsOf = (scope: DocumentAlertKind[] | null | undefined): DocumentAlertKind[] =>
+  scope?.length ? DOCUMENT_ALERT_KINDS.filter((k) => scope.includes(k)) : [...DOCUMENT_ALERT_KINDS];
 
 function AlertsForm({
   api,
@@ -145,7 +156,13 @@ function AlertsForm({
   const fmt = useFormat();
   // undefined while loading; null when the cloud doesn't have email alerts yet.
   const [saved, setSaved] = useState<EmailAlertSettings | null | undefined>(undefined);
-  const [draft, setDraft] = useState<Draft>({ enabled: false, topics: [...ALERT_TOPICS] });
+  // The kinds of paper as saved: undefined when the server can't keep them yet.
+  const [scope, setScope] = useState<DocumentAlertKind[] | undefined>(undefined);
+  const [draft, setDraft] = useState<Draft>({
+    enabled: false,
+    topics: [...ALERT_TOPICS],
+    kinds: [...DOCUMENT_ALERT_KINDS],
+  });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -154,12 +171,23 @@ function AlertsForm({
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .emailAlerts(companyId)
-      .then((settings) => {
+    Promise.all([
+      api.emailAlerts(companyId),
+      // An older server keeps no kinds of paper: the page stays as it was.
+      api.emailAlertScope(companyId).catch(() => undefined),
+    ])
+      .then(([settings, chosen]) => {
         if (cancelled) return;
         setSaved(settings);
-        if (settings) setDraft({ enabled: settings.enabled, topics: settings.topics });
+        const kinds = chosen === undefined ? undefined : kindsOf(chosen);
+        setScope(kinds);
+        if (settings) {
+          setDraft({
+            enabled: settings.enabled,
+            topics: settings.topics,
+            kinds: kinds ?? [...DOCUMENT_ALERT_KINDS],
+          });
+        }
         setError('');
       })
       .catch((err) => {
@@ -197,7 +225,12 @@ function AlertsForm({
     );
   }
 
-  const dirty = !sameDraft(draft, { enabled: saved.enabled, topics: saved.topics });
+  const savedKinds = scope ?? [...DOCUMENT_ALERT_KINDS];
+  const dirty = !sameDraft(draft, {
+    enabled: saved.enabled,
+    topics: saved.topics,
+    kinds: savedKinds,
+  });
   const name = localName(company);
 
   const sendNow = async (first: boolean, functionReady: boolean) => {
@@ -228,16 +261,37 @@ function AlertsForm({
       toast.error(t('Choose at least one kind of alert.'));
       return;
     }
+    if (scope && draft.topics.includes('documents') && !draft.kinds.length) {
+      toast.error(t('Choose at least one kind of paper.'));
+      return;
+    }
     setSaving(true);
     try {
-      const next = await api.setEmailAlerts(companyId, { ...draft, appUrl: appAddress() });
+      // The kinds first: the first email, sent as alerts are turned on, follows them.
+      let kinds = scope;
+      if (scope && draft.kinds.length && !sameList(draft.kinds, scope)) {
+        const all = draft.kinds.length === DOCUMENT_ALERT_KINDS.length;
+        if (await api.setEmailAlertScope(companyId, all ? null : draft.kinds)) {
+          kinds = kindsOf(draft.kinds);
+          setScope(kinds);
+        }
+      }
+      const next = await api.setEmailAlerts(companyId, {
+        enabled: draft.enabled,
+        topics: draft.topics,
+        appUrl: appAddress(),
+      });
       if (!next) {
         setSaved(null);
         return;
       }
       const turnedOn = next.enabled && !saved.enabled;
       setSaved(next);
-      setDraft({ enabled: next.enabled, topics: next.topics });
+      setDraft({
+        enabled: next.enabled,
+        topics: next.topics,
+        kinds: kinds ?? [...DOCUMENT_ALERT_KINDS],
+      });
       if (turnedOn) {
         await sendNow(true, next.functionReady);
       } else {
@@ -249,6 +303,14 @@ function AlertsForm({
       setSaving(false);
     }
   };
+
+  const toggleKind = (kind: DocumentAlertKind, on: boolean) =>
+    setDraft((d) => ({
+      ...d,
+      kinds: on
+        ? DOCUMENT_ALERT_KINDS.filter((x) => x === kind || d.kinds.includes(x))
+        : d.kinds.filter((x) => x !== kind),
+    }));
 
   const toggleTopic = (topic: AlertTopic, on: boolean) =>
     setDraft((d) => ({
@@ -289,13 +351,30 @@ function AlertsForm({
             {t('What to include')}
           </legend>
           {ALERT_TOPICS.map((topic) => (
-            <Checkbox
-              key={topic}
-              checked={draft.topics.includes(topic)}
-              onChange={(e) => toggleTopic(topic, e.target.checked)}
-              label={t(TOPIC_LABELS[topic])}
-              description={t(TOPIC_DESCRIPTIONS[topic])}
-            />
+            <div key={topic} className="space-y-3">
+              <Checkbox
+                checked={draft.topics.includes(topic)}
+                onChange={(e) => toggleTopic(topic, e.target.checked)}
+                label={t(TOPIC_LABELS[topic])}
+                description={t(TOPIC_DESCRIPTIONS[topic])}
+              />
+              {topic === 'documents' && scope ? (
+                <fieldset
+                  disabled={!draft.topics.includes('documents')}
+                  className="space-y-2 ps-7 disabled:opacity-60"
+                >
+                  <legend className="sr-only">{t('Kinds of paper')}</legend>
+                  {DOCUMENT_ALERT_KINDS.map((kind) => (
+                    <Checkbox
+                      key={kind}
+                      checked={draft.kinds.includes(kind)}
+                      onChange={(e) => toggleKind(kind, e.target.checked)}
+                      label={t(DOCUMENT_KIND_LABELS[kind])}
+                    />
+                  ))}
+                </fieldset>
+              ) : null}
+            </div>
           ))}
         </fieldset>
         {!saved.functionReady ? (
@@ -331,7 +410,9 @@ function AlertsForm({
         dirty={dirty}
         saving={saving}
         onSave={() => void save()}
-        onReset={() => setDraft({ enabled: saved.enabled, topics: saved.topics })}
+        onReset={() =>
+          setDraft({ enabled: saved.enabled, topics: saved.topics, kinds: savedKinds })
+        }
       />
     </div>
   );

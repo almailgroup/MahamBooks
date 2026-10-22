@@ -228,6 +228,7 @@ describe('the file', () => {
       'cheque_approvals',
       'change_feed',
       'payroll_approvals',
+      'document_alerts',
     ]);
     const early = await startDatabase(1, MIGRATIONS.indexOf(FILE));
     const someone = await early.user('people-early@example.com');

@@ -580,6 +580,52 @@ approvalId}` with the email alerts secret. Each part inside its own
   twice, and the app's stand-ins), `src/alerts/payroll-approval.test.ts` and
   `src/db/payroll-approvals.test.ts`.
 
+## Expiry alerts
+
+`20261130000000_people_alerts.sql` also carries #18 of
+docs/requirements-plan.md (lead times by type, reminders after expiry and the
+new copy are the company's People settings, kept in its private
+`peopleSettings` record: no rule of the server looks at them).
+
+- `public.email_alerts.document_kinds text[]` (null: every kind, what every
+  row has until someone chooses), checked against `company`, `vehicle`,
+  `staff` and `client`. Added only when the email alerts table is there
+  (without `20261007000000_email_alerts.sql` the file says so and goes on).
+- `set_email_alerts` (the same four arguments) and
+  `almailbooks.email_alerts_member_changed` are replaced with the email
+  alerts file's definitions, with accountants: they may turn their own email
+  on, and only someone who stops being an owner, admin or accountant loses
+  their row. Saving there leaves `document_kinds` as it is, so older
+  versions of the app keep someone's choice.
+- `email_alert_scope(company) → table(document_kinds)` (members; the
+  caller's own row) and `set_email_alert_scope(company, kinds) → void`
+  (owners, admins and accountants; their own row, created off if there is
+  none): an unknown kind is refused with 42501, an empty list with 22023;
+  all four, or null, is kept as null. No new topic: older versions drop
+  topics they don't know when they save (`src/cloud/supabase-api.ts`).
+- `almailbooks.run_email_alerts()` is replaced with the email alerts file's
+  definition plus: it also calls the function when a company wants its
+  expiry reminders in Updates (`peopleSettings.expiryUpdates`) and someone
+  there has the changes of the team on. `run_change_notifications` (above)
+  leaves the reminders (`change_events.kind = 'document_expiry'`) out.
+- The function (`src/alerts/server.ts`) emails owners, admins and
+  accountants; per person it keeps the kinds chosen, drops employees' papers
+  for whoever the owner gave no access to People and the other papers and
+  deadlines for no access to Compliance, and lists papers by kind. It reads
+  the column as `to_jsonb(a) -> 'document_kinds'`: on a database without it
+  (this file not run), every email is exactly as before.
+  It reads renewals and the files marked as copies (`docKey`, `validUntil`,
+  never content). `runExpiryUpdates` writes one `change_events` row per new
+  reminder (no actor; private for employees' and confidential papers, then
+  without names; `fold_key` `expiry:<key>` with `on conflict do nothing`).
+- `server_features()` answers every earlier name, `payroll_approvals` and
+  `document_alerts`. Nothing here touches `public.records`' triggers.
+- Tests: `src/cloud/email-alerts-sql.test.ts` (before and after the file,
+  accountants, every role, kinds, older saves, the file run twice, member
+  changes, the hourly and 5-minute schedules), `src/alerts/server.test.ts`,
+  `src/alerts/collect.test.ts`, `src/lib/expiry-reminders.test.ts` and
+  `src/db/expiry-reminders.test.ts`.
+
 ## Email alerts
 
 `20261007000000_email_alerts.sql` and the `email-alerts` Edge Function

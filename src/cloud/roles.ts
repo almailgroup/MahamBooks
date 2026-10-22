@@ -199,6 +199,18 @@ export function isApprover(
 }
 
 /**
+ * May get the morning email alerts of a company (Settings → Email alerts):
+ * owners and admins, and accountants once the server has
+ * 20261130000000_people_alerts.sql (`documentAlerts`), as set_email_alerts.
+ */
+export function getsEmailAlerts(
+  role: MemberRole | null | undefined,
+  documentAlerts: boolean,
+): boolean {
+  return role === 'owner' || role === 'admin' || (documentAlerts && role === 'accountant');
+}
+
+/**
  * Gets the changes of the team (the bell and its emails): the owner and the
  * approvers, as notification_feed of 20261123000000_change_feed.sql.
  */

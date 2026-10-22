@@ -15,6 +15,8 @@ import { expenseCategoryOptions, PaidFromSelect } from './account-fields';
 import { entryTitle } from './display';
 import { currentLanguage, t } from '@/i18n';
 import { DateField } from '@/components/ui/date-field';
+import { FileList } from '@/features/people/file-list';
+import type { AttachedFile } from '@/features/purchases/attachments';
 
 /** Category value meaning "the fee account, created when the company doesn't have it". */
 const NEW_FEE_ACCOUNT = '__fee_account__';
@@ -53,6 +55,8 @@ export function RenewDialog({
   const [paidFrom, setPaidFrom] = useState<string | null>(null);
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
+  // The renewed paper's new copy (#18), kept with the document and marked as it.
+  const [copy, setCopy] = useState<AttachedFile | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +92,7 @@ export function RenewDialog({
         renewedOn,
         number: number.trim() || undefined,
         note,
+        copy: copy ? { name: copy.name, type: copy.type, dataUrl: copy.dataUrl } : null,
         fee:
           recordFee && fee > 0
             ? {
@@ -220,6 +225,24 @@ export function RenewDialog({
                 </Field>
               </div>
             ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-700">
+              {t('New copy')}
+              <span className="ms-1 font-normal text-slate-500">({t('optional')})</span>
+            </p>
+            <p className="text-xs text-slate-500">
+              {entry.source === 'employee'
+                ? t('A scan of the renewed paper. It goes to the employee’s personnel file.')
+                : t('A scan of the renewed paper. It is kept with the document.')}
+            </p>
+            <FileList
+              files={copy ? [copy] : []}
+              onAdd={(file) => setCopy(file)}
+              onRemove={() => setCopy(null)}
+              addLabel={copy ? t('Choose another file') : t('Add the new copy')}
+            />
           </div>
 
           <Field label={t('Note')} optional>

@@ -1,11 +1,19 @@
 # Email alerts
 
 Maham One can email the owner and admins of a company every morning with
-what needs attention:
+what needs attention (and its accountants too, once
+[`supabase/migrations/20261130000000_people_alerts.sql`](../supabase/migrations/20261130000000_people_alerts.sql)
+has run):
 
 - **Papers and licences**: Civil IDs, residencies, passports, work permits,
   fixed-term contracts and the company's licences, at the company's reminder
-  days (60, 30 and 7 days before, by default) and when they expire.
+  days (60, 30 and 7 days before, by default) and when they expire. With the
+  company's _Expiry reminders_ (Compliance → Settings, each off until turned
+  on): each type's own lead times (residency 90/60/30/7, passport 180/90/30,
+  vehicles' papers 30/14/7 are offered), an expired paper again every 7 days
+  until it is renewed, and a renewed paper whose new copy hasn't been added
+  (_New copy missing_). Each person chooses whose papers they get: the
+  company's, vehicles', employees' or customers'.
 - **Deadlines**: PIFSS payments, MOCI filings and the other dates of the
   compliance calendar that are due within 14 days or late, until they are
   marked as done.
@@ -21,14 +29,24 @@ email lists everything that needs attention, the new things first and marked
 **New**. It is in the person's language (Arabic or English, from their
 account).
 
-Each owner or admin turns their own email on in the app, in **Settings →
-Email alerts**, and it goes to **the email address of their account**: if you
-sign in as `admin@almailgroup.com`, that is where it goes. Nobody can send it
-to anyone else, and someone who stops being an owner or admin stops getting
-it. Accountants, staff and viewers can't get it.
+Each owner, admin or accountant turns their own email on in the app, in
+**Settings → Email alerts**, and it goes to **the email address of their
+account**: if you sign in as `admin@almailgroup.com`, that is where it goes.
+Nobody can send it to anyone else, and someone who stops being an owner,
+admin or accountant stops getting it. Staff and viewers can't get it.
+Accountants can only once the people alerts script has run.
 
 The email names the paper and the person ("Residency · Ravi Kumar") but never
 shows Civil ID, passport or residency numbers, salaries or other payroll data.
+Once the people alerts script has run, it leaves out employees' papers for
+anyone the owner gave no access to People, and the other papers and the
+deadlines for anyone with no access to Compliance (Settings → Team →
+Permissions).
+
+With **Show the reminders in Updates** on (Compliance → Settings), the same
+morning run also puts each new reminder under the bell (المستجدات) of the
+owner and the approvers who get the changes of the team; employees' papers
+show there without names. They are never emailed as changes.
 
 ## Changes by your team
 
@@ -251,6 +269,17 @@ Sundays); a quiet day without an email is expected.
   [`supabase/README.md`](../supabase/README.md).
 - Tests: `src/alerts/*.test.ts` and `src/cloud/email-alerts-sql.test.ts` run
   the function against the real database scripts with Resend faked.
+- Expiry alerts (#18): `collect.ts` works out each type's lead times
+  (`reminderDaysFor`), the stages after expiry (`…:expired`, `…:expired+7`…)
+  and the missing new copies (`…:noscan`) from the company's People settings,
+  its renewals and the files marked as copies (`docKey`, `validUntil`; never
+  their content). `alertsFor` keeps, per person, the kinds of paper they
+  chose (`email_alerts.document_kinds`, read with `to_jsonb` so an older
+  database means every kind) and what the owner lets them open.
+  `runExpiryUpdates` writes the new reminders to `public.change_events`
+  (kind `document_expiry`, no actor, `fold_key` `expiry:<alert key>` so each
+  stage goes once) for companies with `expiryUpdates`; `runChangeNotifications`
+  and `run_change_notifications` leave them out.
 - The changes of the team: `{"action":"notify"}` with the same secret, from
   `almailbooks.run_change_notifications()` every 5 minutes. `changes.ts` puts
   the changes in words (the app's bell uses the same) and decides when to

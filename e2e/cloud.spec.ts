@@ -214,6 +214,41 @@ test('an owner turns on email alerts and gets the first email at once', async ({
   expect(cloud.alertEmails).toHaveLength(2);
 });
 
+test('an owner chooses whose papers their email alerts cover', async ({ page }) => {
+  const { companyId } = await companyInTheCloud(page, 'Pearl Coast Trading');
+  await page.goto('#/settings/alerts');
+  await page.getByRole('switch', { name: 'Email me alerts for Pearl Coast Trading' }).click();
+  // Every kind of paper at first, under Papers and licences.
+  for (const kind of [
+    'Company papers and licences',
+    'Vehicles’ papers',
+    'Employees’ papers',
+    'Customers’ papers',
+  ]) {
+    await expect(page.getByRole('checkbox', { name: kind })).toBeChecked();
+  }
+  await page.getByRole('checkbox', { name: 'Vehicles’ papers' }).uncheck();
+  await page.getByRole('checkbox', { name: 'Customers’ papers' }).uncheck();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(
+    page.getByText(`Email alerts are on. The first email is on its way to ${OWNER.email}.`),
+  ).toBeVisible();
+  const [scope] = cloud.calls('set_email_alert_scope');
+  expect(scope.body).toMatchObject({ p_company: companyId, p_kinds: ['company', 'staff'] });
+  // The topics are saved as before, for older versions too.
+  expect(cloud.calls('set_email_alerts')[0].body).toMatchObject({
+    p_topics: ['documents', 'deadlines', 'cheques', 'bills', 'invoices'],
+  });
+
+  // Kept: the page opens with them.
+  await page.reload();
+  await expect(page.getByRole('checkbox', { name: 'Employees’ papers' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Vehicles’ papers' })).not.toBeChecked();
+  // Papers and licences off: their kinds can't be chosen.
+  await page.getByRole('checkbox', { name: /Papers and licences/ }).uncheck();
+  await expect(page.getByRole('checkbox', { name: 'Employees’ papers' })).toBeDisabled();
+});
+
 test('staff open only the apps of their role', async ({ page }) => {
   test.slow();
   const { account } = await companyInTheCloud(page, 'Sea Breeze Trading');

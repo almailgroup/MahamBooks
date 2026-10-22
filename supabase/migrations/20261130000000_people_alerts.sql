@@ -1,5 +1,6 @@
 -- =============================================================================
--- Maham One cloud: People alerts (salary approval by the Super Admin)
+-- Maham One cloud: People alerts (salary approval by the Super Admin, and
+-- expiry alerts with lead times and re-upload reminders)
 -- =============================================================================
 --
 -- The owner runs this once in the Supabase SQL editor (paste the whole file
@@ -7,10 +8,13 @@
 -- again. If 20261116000000_super_admin_approvals.sql or
 -- 20261123000000_change_feed.sql is ever run again, run this file again
 -- after them. The emails need 20261007000000_email_alerts.sql too (the
--- address of the email-alerts function and its secret).
+-- address of the email-alerts function and its secret, and the email
+-- alerts themselves); if that one is run again (or for the first time)
+-- after this file, run this file again after it.
 --
 -- Until it runs, the app keeps working as before: it asks the server what it
--- has (server_features) and keeps Settings → Approvals → Pay runs hidden.
+-- has (server_features) and keeps Settings → Approvals → Pay runs, and the
+-- kinds of paper of Settings → Email alerts, hidden.
 -- Once it has run, nothing changes either until the owner (the Super Admin)
 -- turns on "Pay runs need the Super Admin's approval" there: until then a
 -- pay run is approved (posted) as before, and nothing here looks at it.
@@ -40,7 +44,26 @@
 --     feed asks again for any not sent yet, for three days.
 --     almailbooks.approval_emails keeps what was sent to whom. A problem
 --     there never stops a sync.
---   * public.server_features() also answers 'payroll_approvals'.
+--   * Expiry alerts (#18): accountants may get the morning email alerts too
+--     (set_email_alerts, same four arguments, now takes them; someone who
+--     stops being the owner, an admin or an accountant stops getting them),
+--     and each person chooses the kinds of paper they are told about
+--     (email_alerts.document_kinds: company, vehicle, staff, client; null is
+--     all of them, as before) with email_alert_scope and
+--     set_email_alert_scope. The email-alerts function leaves out, for each
+--     person, the papers of the apps the owner gave them no access to. No
+--     new kind of alert: older versions of the app keep the ones they know.
+--     The lead times by document type, the reminders after expiry and the
+--     new copy asked for after a renewal are the company's (its People
+--     settings record); nothing here changes while they are not set.
+--   * With "Show the reminders in Updates" on (the company's People
+--     settings), the function also writes each new reminder to the change
+--     feed (kind document_expiry, by nobody), for the bell of the owner and
+--     the approvers; the 5-minute emails of the changes leave them out. The
+--     hourly schedule of the email alerts asks the function for them too.
+--     Reminders about employees' papers are private, without names.
+--   * public.server_features() also answers 'payroll_approvals' and
+--     'document_alerts'.
 -- =============================================================================
 
 do $$
@@ -458,9 +481,10 @@ create trigger records_payroll_approval_email
   execute function almailbooks.payroll_approval_email();
 
 -- Called every 5 minutes by the change feed's schedule: as in
--- 20261123000000_change_feed.sql, and also when a pay run's approval email
--- hasn't gone yet (for three days, at most five tries each). Returns pg_net's
--- request id, or null when there is nothing to do.
+-- 20261123000000_change_feed.sql (expiry reminders in the feed left out, as
+-- they are emailed by the morning alerts), and also when a pay run's
+-- approval email hasn't gone yet (for three days, at most five tries each).
+-- Returns pg_net's request id, or null when there is nothing to do.
 create or replace function almailbooks.run_change_notifications()
 returns bigint
 language plpgsql
@@ -491,6 +515,8 @@ begin
         where e.company_id = s.company_id
           and e.id > s.emailed_upto
           and e.actor is distinct from s.user_id
+          -- Expiry reminders are in the bell only: the morning alerts email them.
+          and e.kind <> 'document_expiry'
       )
   ) and not exists (
     select 1
@@ -511,8 +537,219 @@ begin
 end
 $$;
 
+-- Expiry alerts (#18) ---------------------------------------------------------------
+
+-- The kinds of paper each person is told about: null is every kind (and
+-- what older versions of the app, which never set it, leave it as).
+do $$
+begin
+  if to_regclass('public.email_alerts') is null then
+    raise notice 'This database has no email alerts (20261007000000_email_alerts.sql): run it, then this file again.';
+    return;
+  end if;
+  alter table public.email_alerts add column if not exists document_kinds text[];
+  alter table public.email_alerts drop constraint if exists email_alerts_document_kinds_check;
+  alter table public.email_alerts
+    add constraint email_alerts_document_kinds_check
+    check (
+      document_kinds is null
+      or document_kinds <@ array['company', 'vehicle', 'staff', 'client']::text[]
+    );
+end
+$$;
+
+-- Who stops being the owner, an admin or an accountant (or leaves) stops
+-- getting the emails. As in 20261007000000_email_alerts.sql, with
+-- accountants (#18).
+create or replace function almailbooks.email_alerts_member_changed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    delete from public.email_alerts a where a.company_id = old.company_id and a.user_id = old.user_id;
+    return old;
+  end if;
+  if new.role not in ('owner', 'admin', 'accountant') then
+    delete from public.email_alerts a where a.company_id = new.company_id and a.user_id = new.user_id;
+  end if;
+  return new;
+end
+$$;
+
+-- Called every hour by the schedule: asks the function to send what is due.
+-- As in 20261007000000_email_alerts.sql, and also when a company wants its
+-- expiry reminders in Updates (the bell) and someone there gets the changes
+-- of the team. Returns pg_net's request id (its answer is kept for a while
+-- in net._http_response), or null when there is nothing to do yet.
+create or replace function almailbooks.run_email_alerts()
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_url text;
+  v_secret text;
+begin
+  select c.function_url, c.secret into v_url, v_secret
+  from almailbooks.email_alerts_config c
+  where c.id;
+  -- The function hasn't run yet, so its address isn't known.
+  if coalesce(v_url, '') = '' then
+    return null;
+  end if;
+  if not exists (select 1 from public.email_alerts a where a.enabled)
+    and not exists (
+      select 1
+      from public.notification_settings s
+      join public.records r
+        on r.company_id = s.company_id and r.tbl = 'peopleSettings' and r.id = s.company_id
+      where s.enabled and r.data ->> 'expiryUpdates' = 'true'
+    ) then
+    return null;
+  end if;
+  return net.http_post(
+    url := v_url,
+    body := jsonb_build_object('action', 'run'),
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-alerts-secret', v_secret),
+    timeout_milliseconds := 120000
+  );
+end
+$$;
+
+-- Turns the signed-in person's email alerts for a company on or off. As in
+-- 20261007000000_email_alerts.sql (the same four arguments, so older
+-- versions of the app keep working), and accountants may now too (#18). The
+-- email goes to their own account's address. The kinds of paper are set
+-- apart (set_email_alert_scope): saving here leaves them as they are.
+create or replace function public.set_email_alerts(
+  p_company text,
+  p_enabled boolean,
+  p_topics text[],
+  p_app_url text
+)
+returns table (
+  enabled boolean,
+  topics text[],
+  last_sent_at timestamptz,
+  last_error text,
+  last_error_at timestamptz,
+  function_ready boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_me public.member_role := almailbooks.member_role(p_company);
+  v_all text[] := array['documents', 'deadlines', 'cheques', 'bills', 'invoices'];
+  v_topics text[];
+  v_url text := btrim(coalesce(p_app_url, ''));
+begin
+  if v_me is null or v_me not in ('owner', 'admin', 'accountant') then
+    raise exception 'almail:permission Only the owner, admins and accountants can get email alerts.'
+      using errcode = '42501';
+  end if;
+  if exists (
+    select 1 from unnest(coalesce(p_topics, '{}'::text[])) t where t is null or not t = any (v_all)
+  ) then
+    raise exception 'almail:invalid Unknown kind of alert.' using errcode = '22023';
+  end if;
+  -- In the usual order, without repeats.
+  select coalesce(array_agg(t order by array_position(v_all, t)), '{}'::text[]) into v_topics
+  from (select distinct t from unnest(coalesce(p_topics, '{}'::text[])) t) chosen;
+  if coalesce(p_enabled, false) and cardinality(v_topics) = 0 then
+    raise exception 'almail:invalid Choose at least one kind of alert.' using errcode = '22023';
+  end if;
+  if v_url <> '' and (v_url !~ '^https?://[^[:space:]"''<>]+$' or char_length(v_url) > 300) then
+    v_url := '';
+  end if;
+
+  insert into public.email_alerts as a (company_id, user_id, enabled, topics, app_url)
+  values (p_company, auth.uid(), coalesce(p_enabled, false), v_topics, v_url)
+  on conflict (company_id, user_id) do update
+    set enabled = excluded.enabled,
+        topics = excluded.topics,
+        app_url = case when excluded.app_url <> '' then excluded.app_url else a.app_url end,
+        updated_at = now(),
+        -- Turned on again: the next email lists everything again.
+        sent_keys = case when a.enabled then a.sent_keys else null end,
+        checked_on = case when a.enabled then a.checked_on else null end,
+        last_error = case when excluded.enabled then a.last_error else '' end,
+        last_error_at = case when excluded.enabled then a.last_error_at else null end;
+
+  return query select * from public.email_alert_settings(p_company);
+end
+$$;
+
+-- The kinds of paper the signed-in person is told about in a company: null
+-- for every kind (what everyone has until they choose). Members only.
+create or replace function public.email_alert_scope(p_company text)
+returns table (document_kinds text[])
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if almailbooks.member_role(p_company) is null then
+    raise exception 'almail:not_member You are not a member of this company.' using errcode = '42501';
+  end if;
+  return query
+    select a.document_kinds
+    from (select 1) one
+    left join public.email_alerts a on a.company_id = p_company and a.user_id = auth.uid();
+end
+$$;
+
+-- Chooses the kinds of paper the signed-in person is told about (the owner,
+-- an admin or an accountant, for their own email alerts only): company,
+-- vehicle, staff (employees' papers) or client (customers' papers). Null,
+-- or all four, is every kind. Anything else is refused.
+create or replace function public.set_email_alert_scope(p_company text, p_kinds text[])
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_me public.member_role := almailbooks.member_role(p_company);
+  v_all text[] := array['company', 'vehicle', 'staff', 'client'];
+  v_kinds text[];
+begin
+  if v_me is null or v_me not in ('owner', 'admin', 'accountant') then
+    raise exception 'almail:permission Only the owner, admins and accountants can get email alerts.'
+      using errcode = '42501';
+  end if;
+  if p_kinds is not null and exists (
+    select 1 from unnest(p_kinds) k where k is null or not k = any (v_all)
+  ) then
+    raise exception 'almail:invalid Unknown kind of paper.' using errcode = '42501';
+  end if;
+  if p_kinds is not null and cardinality(p_kinds) = 0 then
+    raise exception 'almail:invalid Choose at least one kind of paper.' using errcode = '22023';
+  end if;
+  -- In the usual order, without repeats; every kind is kept as null.
+  select array_agg(k order by array_position(v_all, k)) into v_kinds
+  from (select distinct k from unnest(p_kinds) k) chosen;
+  if cardinality(v_kinds) = cardinality(v_all) then
+    v_kinds := null;
+  end if;
+  insert into public.email_alerts as a (company_id, user_id, document_kinds)
+  values (p_company, auth.uid(), v_kinds)
+  on conflict (company_id, user_id) do update
+    set document_kinds = excluded.document_kinds,
+        updated_at = now();
+end
+$$;
+
 -- What this server has beyond the first files: as the change feed file
--- says, and payroll_approvals this one.
+-- says, and payroll_approvals and document_alerts this one.
 create or replace function public.server_features()
 returns text[]
 language sql
@@ -521,7 +758,7 @@ set search_path = ''
 as $$
   select array[
     'tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed',
-    'payroll_approvals'
+    'payroll_approvals', 'document_alerts'
   ]::text[]
 $$;
 
@@ -530,11 +767,23 @@ $$;
 revoke all on function
   almailbooks.payroll_approval_on(text),
   almailbooks.payroll_approval_email(),
-  almailbooks.run_change_notifications()
+  almailbooks.run_change_notifications(),
+  almailbooks.email_alerts_member_changed(),
+  almailbooks.run_email_alerts()
 from public, anon, authenticated;
 revoke all on function almailbooks.records_guard() from public, anon;
-revoke all on function public.server_features() from public, anon;
-grant execute on function public.server_features() to authenticated;
+revoke all on function
+  public.server_features(),
+  public.set_email_alerts(text, boolean, text[], text),
+  public.email_alert_scope(text),
+  public.set_email_alert_scope(text, text[])
+from public, anon;
+grant execute on function
+  public.server_features(),
+  public.set_email_alerts(text, boolean, text[], text),
+  public.email_alert_scope(text),
+  public.set_email_alert_scope(text, text[])
+to authenticated;
 
 -- The Data API learns about the changes at once.
 notify pgrst, 'reload schema';

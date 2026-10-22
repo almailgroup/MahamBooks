@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALERT_TOPICS, isAlertTopic } from '@/alerts/topics';
+import { isDocumentAlertKind } from '@/lib/compliance';
 import { isMemberRole, readPermissions, type MemberRole } from './roles';
 import { IMMEDIATE_KINDS, isImmediateKind } from './change-feed';
 import { FILES_BUCKET } from './config';
@@ -534,6 +535,31 @@ export function supabaseApi(supabase: SupabaseClient): CloudApi {
         p_app_url: settings.appUrl,
       });
       return rows === MISSING ? null : emailAlertSettings(rows[0]);
+    },
+
+    async emailAlertScope(companyId) {
+      const rows = await optionalRpc<{ document_kinds: string[] | null }[]>('email_alert_scope', {
+        p_company: companyId,
+      });
+      if (rows === MISSING) return undefined;
+      const kinds = rows[0]?.document_kinds;
+      return Array.isArray(kinds) ? kinds.filter(isDocumentAlertKind) : null;
+    },
+
+    async setEmailAlertScope(companyId, kinds) {
+      const { error, status } = await supabase.rpc('set_email_alert_scope', {
+        p_company: companyId,
+        p_kinds: kinds,
+      });
+      if (error) {
+        if (error.code === 'PGRST202' || status === 404) return false;
+        throw cloudError({
+          ...error,
+          status: status || undefined,
+          name: status === 0 ? 'TypeError' : '',
+        });
+      }
+      return true;
     },
 
     async sendAlertEmail(companyId) {

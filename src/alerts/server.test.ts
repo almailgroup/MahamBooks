@@ -761,3 +761,333 @@ describe('changes by the team ("notify")', () => {
     expect((await state(c.id, c.owner)).last_error).toContain('no confirmed email');
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Expiry alerts with lead times and re-upload reminders (#18)                */
+/* -------------------------------------------------------------------------- */
+
+describe('expiry alerts (#18)', () => {
+  const push = (user: string, companyId: string, changes: unknown[]) =>
+    h.rpc(user, 'push_records', { p_company: companyId, p_changes: JSON.stringify(changes) });
+
+  /** An accountant of the company, signed in with a session. */
+  async function accountant(companyId: string, owner: string) {
+    const email = `accountant-${companyId}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const user = await h.user(email, { name: 'Accountant' });
+    const [invite] = await h.rpc<{ token: string }>(owner, 'create_invite', {
+      p_company: companyId,
+      p_email: email,
+      p_role: 'accountant',
+    });
+    await h.rpc(user, 'accept_invite', { p_token: invite.token });
+    sessions.set(`token-${user}`, user);
+    return { user, email, token: `token-${user}` };
+  }
+
+  const peopleSettings = (companyId: string, extra: Record<string, unknown>) => ({
+    tbl: 'peopleSettings',
+    id: companyId,
+    data: {
+      id: companyId,
+      companyId,
+      reminderDays: [60, 30, 7],
+      eosDailyDivisor: 26,
+      auditFilingMonths: 3,
+      pifssDueDay: 15,
+      kuwaitizationTarget: null,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      ...extra,
+    },
+  });
+
+  it('emails accountants who turn alerts on, as owners and admins', async () => {
+    const c = await company();
+    const a = await accountant(c.id, c.owner);
+    await turnOn(a.user, c.id);
+    expect((await run()).body).toMatchObject({ sent: 1, failed: 0 });
+    expect(sent[0].body.to).toEqual([a.email]);
+    expect(sent[0].body.subject).toBe('Acme Trading: 12 things need attention');
+    // "Send me the email now" too.
+    expect((await sendNow(a.token, c.id)).status).toBe(200);
+  });
+
+  it('sends each person the kinds of paper they chose', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id, ['documents']);
+    await turnOn(c.admin, c.id, ['documents']);
+    await h.rpc(c.admin, 'set_email_alert_scope', { p_company: c.id, p_kinds: ['company'] });
+    await run();
+    const toOwner = sent.find((s) => s.body.to[0] === c.ownerEmail)!;
+    const toAdmin = sent.find((s) => s.body.to[0] === c.adminEmail)!;
+    expect(toOwner.body.text).toContain('Residency · Ravi Kumar');
+    expect(toOwner.body.text).toContain('Commercial licence');
+    expect(toAdmin.body.text).not.toContain('Ravi Kumar');
+    expect(toAdmin.body.text).toContain('Commercial licence');
+    expect((await row(c.id, c.admin)).sent_keys).toEqual(['documents:doc:licence:2026-12-01:60d']);
+  });
+
+  it("leaves employees' papers out for whoever the owner gave no access to People", async () => {
+    const c = await company();
+    await turnOn(c.admin, c.id, ['documents', 'deadlines']);
+    await h.rpc(c.owner, 'set_member_permissions', {
+      p_company: c.id,
+      p_user: c.admin,
+      p_permissions: JSON.stringify({ apps: { people: 'none' } }),
+      p_can_approve: false,
+    });
+    await run();
+    expect(sent[0].body.text).not.toContain('Ravi Kumar');
+    expect(sent[0].body.text).not.toContain('Noura');
+    expect(sent[0].body.text).toContain('Commercial licence');
+    expect(sent[0].body.text).toContain('PIFSS');
+    // And no Compliance: neither the register nor the deadlines.
+    const d = await company();
+    await turnOn(d.admin, d.id, ['documents', 'deadlines', 'invoices']);
+    await h.rpc(d.owner, 'set_member_permissions', {
+      p_company: d.id,
+      p_user: d.admin,
+      p_permissions: JSON.stringify({ apps: { compliance: 'none' } }),
+      p_can_approve: false,
+    });
+    sent = [];
+    await run();
+    expect(sent[0].body.text).toContain('Ravi Kumar');
+    expect(sent[0].body.text).not.toContain('Commercial licence');
+    expect(sent[0].body.text).not.toContain('PIFSS');
+    expect(sent[0].body.text).toContain('INV-LATE');
+  });
+
+  it('never emails anyone who is no longer an owner, admin or accountant', async () => {
+    const c = await company();
+    const a = await accountant(c.id, c.owner);
+    await turnOn(a.user, c.id);
+    await h.rpc(c.owner, 'set_member_role', { p_company: c.id, p_user: a.user, p_role: 'staff' });
+    expect((await run()).body).toMatchObject({ checked: 0, sent: 0 });
+    expect((await sendNow(a.token, c.id)).body).toMatchObject({ error: 'permission' });
+  });
+
+  it("uses the company's lead times by type, and reminds again after expiry", async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id, ['documents']);
+    await push(c.owner, c.id, [
+      peopleSettings(c.id, {
+        reminderDaysByType: { residency: [90, 60, 30, 7], passport: [180, 90, 30] },
+        expiredRepeatDays: 7,
+      }),
+    ]);
+    await run();
+    expect((await row(c.id, c.owner)).sent_keys).toEqual([
+      'documents:emp:emp-noura:civil_id:2026-10-01:expired',
+      'documents:emp:emp-omar:civil_id:2026-10-11:7d',
+      'documents:emp:emp-ravi:residency:2026-10-31:30d',
+      'documents:doc:licence:2026-12-01:60d',
+      'documents:emp:emp-maria:passport:2027-01-04:90d',
+    ]);
+    // A week and a day after it expired, the Civil ID is new again.
+    clock = new Date('2026-10-09T05:07:00Z');
+    sent = [];
+    await run();
+    expect(sent[0].body.subject).toBe('Acme Trading: 1 new alert');
+    expect(sent[0].body.text).toContain('- [New] Civil ID · Noura Salem');
+  });
+
+  it('asks for the new copy of a renewed paper until a file is marked as it', async () => {
+    const c = await company();
+    await turnOn(c.owner, c.id, ['documents']);
+    const licence = sampleData().complianceDocuments[0];
+    await push(c.owner, c.id, [
+      peopleSettings(c.id, { newCopyGraceDays: 14, newCopySince: '2026-09-01' }),
+      {
+        tbl: 'complianceDocuments',
+        id: 'licence',
+        data: { ...licence, companyId: c.id, expiryDate: '2027-12-01' },
+      },
+      {
+        tbl: 'renewals',
+        id: 'renewal-licence',
+        data: {
+          id: 'renewal-licence',
+          companyId: c.id,
+          documentKey: 'doc:licence',
+          documentId: 'licence',
+          employeeId: null,
+          type: 'commercial_licence',
+          renewedOn: '2026-09-20',
+          previousExpiry: '2026-12-01',
+          newExpiry: '2027-12-01',
+          fee: 0,
+          expenseId: null,
+          note: '',
+          createdAt: '2026-09-20T09:00:00.000Z',
+        },
+      },
+    ]);
+    await run();
+    expect(sent[0].body.text).toContain('Commercial licence · Acme Trading · New copy missing');
+    expect((await row(c.id, c.owner)).sent_keys).toContain(
+      'documents:doc:licence:2027-12-01:noscan',
+    );
+    // The new copy, marked as the licence's valid until its new expiry.
+    await push(c.owner, c.id, [
+      {
+        tbl: 'attachments',
+        id: 'scan-1',
+        data: {
+          id: 'scan-1',
+          companyId: c.id,
+          ownerId: 'licence',
+          name: 'licence.pdf',
+          type: 'application/pdf',
+          size: 10,
+          dataUrl: '',
+          docKey: 'doc:licence',
+          validUntil: '2027-12-01',
+          createdAt: '2026-10-06T09:00:00.000Z',
+        },
+      },
+    ]);
+    sent = [];
+    expect((await sendNow(c.tokens.owner, c.id)).status).toBe(200);
+    expect(sent[0].body.text).not.toContain('New copy missing');
+  });
+
+  it("keeps an older server's email as it was: every kind, owners and admins", async () => {
+    // A database without 20261130000000_people_alerts.sql.
+    const { MIGRATIONS } = await import('@/cloud/sql-harness');
+    const older = await startDatabase(1, MIGRATIONS.length - 1);
+    const olderSql: Sql = async (query, params = []) =>
+      (await older.db.query(query, params)).rows as never[];
+    const owner = await older.user('older-owner@example.com');
+    await older.rpc(owner, 'create_company', { p_id: 'older-co-1', p_name: 'Acme Trading' });
+    const data = sampleData();
+    await older.rpc(owner, 'push_records', {
+      p_company: 'older-co-1',
+      p_changes: JSON.stringify([
+        { tbl: 'companies', id: 'older-co-1', data: { ...data.company, id: 'older-co-1' } },
+        ...data.employees.map((r) => ({
+          tbl: 'employees',
+          id: r.id,
+          data: { ...r, companyId: 'older-co-1' },
+        })),
+      ]),
+    });
+    await older.rpc(owner, 'set_email_alerts', {
+      p_company: 'older-co-1',
+      p_enabled: true,
+      p_topics: ['documents'],
+      p_app_url: '',
+    });
+    const [config] = await older.admin<{ secret: string }>(
+      'select secret from almailbooks.email_alerts_config',
+    );
+    const response = await handleAlertsRequest(
+      new Request(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-alerts-secret': config.secret },
+        body: JSON.stringify({ action: 'run' }),
+      }),
+      { ...deps(), sql: olderSql },
+    );
+    expect(await response.json()).toMatchObject({ ok: true, sent: 1, failed: 0 });
+    expect(sent[0].body.text).toContain('Residency · Ravi Kumar');
+    // Listed as before, without headings by kind.
+    expect(sent[0].body.text).not.toContain('Employees’ papers:');
+    // An owner's limits on a member leave the email as it was too (#6's
+    // limits cut it only once the script has run).
+    const admin = await older.user('older-admin@example.com');
+    const [invite] = await older.rpc<{ token: string }>(owner, 'create_invite', {
+      p_company: 'older-co-1',
+      p_email: 'older-admin@example.com',
+      p_role: 'admin',
+    });
+    await older.rpc(admin, 'accept_invite', { p_token: invite.token });
+    await older.rpc(owner, 'set_member_permissions', {
+      p_company: 'older-co-1',
+      p_user: admin,
+      p_permissions: JSON.stringify({ apps: { people: 'none' } }),
+      p_can_approve: false,
+    });
+    await older.rpc(admin, 'set_email_alerts', {
+      p_company: 'older-co-1',
+      p_enabled: true,
+      p_topics: ['documents'],
+      p_app_url: '',
+    });
+    sent = [];
+    const again = await handleAlertsRequest(
+      new Request(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-alerts-secret': config.secret },
+        body: JSON.stringify({ action: 'run' }),
+      }),
+      { ...deps(), sql: olderSql },
+    );
+    expect(await again.json()).toMatchObject({ sent: 1 });
+    expect(sent[0].body.text).toContain('Residency · Ravi Kumar');
+  }, 60_000);
+
+  it('writes the new reminders to Updates once, where the company wants them, and never emails them', async () => {
+    const c = await company();
+    await h.rpc(c.owner, 'set_change_notifications', {
+      p_company: c.id,
+      p_enabled: true,
+      p_immediate_kinds: ['document', 'cheque', 'approval', 'member', 'settings', 'people'],
+      p_digest: 'daily',
+      p_app_url: 'https://books.example.com/',
+    });
+    const events = () =>
+      h.admin<{
+        kind: string;
+        tbl: string;
+        record_id: string;
+        private: boolean;
+        actor: string | null;
+        summary: Record<string, unknown>;
+      }>(
+        `select kind, tbl, record_id, private, actor, summary from public.change_events
+         where company_id = $1 and kind = 'document_expiry' order by record_id`,
+        [c.id],
+      );
+    // Not asked for: nothing written.
+    await run();
+    expect(await events()).toEqual([]);
+    await push(c.owner, c.id, [peopleSettings(c.id, { expiryUpdates: true })]);
+    expect((await run()).body.updates).toMatchObject({ written: 4, failed: 0 });
+    const written = await events();
+    expect(written.map((e) => [e.tbl, e.record_id, e.private, e.summary.what])).toEqual([
+      ['employees', 'emp-noura', true, 'expired'],
+      ['employees', 'emp-omar', true, 'expiring'],
+      ['employees', 'emp-ravi', true, 'expiring'],
+      ['complianceDocuments', 'licence', false, 'expiring'],
+    ]);
+    expect(written.every((e) => e.actor === null)).toBe(true);
+    // Employees' papers carry no names.
+    expect(JSON.stringify(written.filter((e) => e.private))).not.toMatch(/Ravi|Noura|Omar|R-1/);
+    // The next hour: nothing new.
+    clock = new Date('2026-10-06T06:07:00Z');
+    expect((await run()).body.updates).toMatchObject({ written: 0 });
+    // The owner sees them in the feed; the 5-minute emails leave them out.
+    const feed = await h.rpc<{ kind: string; actor_name: string }>(c.owner, 'notification_feed', {
+      p_company: c.id,
+    });
+    expect(feed.filter((e) => e.kind === 'document_expiry')).toHaveLength(4);
+    const [owner] = await h.rpc<{ unread: number }>(c.owner, 'notification_status', {
+      p_company: c.id,
+    });
+    expect(Number(owner.unread)).toBeGreaterThanOrEqual(4);
+    // Anyone else still gets no feed at all.
+    await expect(h.rpc(c.admin, 'notification_feed', { p_company: c.id })).rejects.toThrow(
+      /almail:permission/,
+    );
+    const response = await handleAlertsRequest(
+      new Request(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-alerts-secret': await secret() },
+        body: JSON.stringify({ action: 'notify' }),
+      }),
+      deps(),
+    );
+    expect(await response.json()).toMatchObject({ ok: true });
+    expect(sent.filter((s) => s.body.to[0] === c.ownerEmail)).toEqual([]);
+  });
+});

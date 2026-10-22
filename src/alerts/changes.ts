@@ -5,6 +5,7 @@ import { ROLE_LABELS } from '@/cloud/roles';
 import { kindLabel as requestLabel } from '@/features/approvals/labels';
 import { currentLanguage, msg, t, tp } from '@/i18n';
 import { lookup } from '@/lib/known';
+import { documentTypeInfo } from '@/lib/compliance';
 
 /**
  * The changes of the team in words, for the bell, the Updates page and the
@@ -29,6 +30,7 @@ export const CHANGE_KIND_LABELS: Record<string, string> = {
   expense: msg('Expenses'),
   accounting: msg('Accounting'),
   file: msg('Files'),
+  document_expiry: msg('Expiry reminders'),
 };
 
 /** A kind in words, also one a newer version records. */
@@ -282,9 +284,46 @@ function detailText(event: ChangeEvent, format?: ChangeFormat): string {
   return [client, money].filter(Boolean).join(' · ');
 }
 
+/**
+ * An expiry reminder of the morning alerts in Updates (#18): what is due, by
+ * nobody. Employees' papers and confidential ones say whose they are only
+ * through their link.
+ */
+function expiryText(event: ChangeEvent, format?: ChangeFormat): string {
+  const s = event.summary;
+  const type = t(documentTypeInfo(str(s.type)).label);
+  const title = str(s.title);
+  const name = str(s.name);
+  const paper = event.private
+    ? s.employee === true
+      ? t('An employee’s {document}', { document: lower(type) })
+      : t('A confidential document')
+    : joined(title || type, name ? `· ${name}` : '');
+  const rawDate = str(s.date);
+  const date = rawDate && format ? format.date(rawDate) : rawDate;
+  switch (s.what) {
+    case 'expired':
+      return t('{document} expired on {date}', { document: paper, date });
+    case 'noscan':
+      return t('{document}: the new copy is not uploaded yet', { document: paper });
+    default:
+      return t('{document} expires on {date}', { document: paper, date });
+  }
+}
+
 /** A change in words, in the interface language. */
 export function describeChange(event: ChangeEvent, format?: ChangeFormat): ChangeLine {
   const actor = event.actorName.trim() || t('Someone in the team');
+  if (event.kind === 'document_expiry') {
+    return {
+      actor,
+      text: expiryText(event, format),
+      detail: '',
+      important: event.important,
+      // Nobody did it: it reads without anyone before it.
+      named: true,
+    };
+  }
   let text: string;
   if (event.kind === 'member') text = teamText(event);
   else if (event.count > 1) text = foldText(event);

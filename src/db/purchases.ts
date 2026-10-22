@@ -3,7 +3,7 @@ import { logActivity } from './activity';
 import { assertUnlocked } from './accounting';
 import { defaultNumbering, nowStamp } from './defaults';
 import { withoutImage } from './product-images';
-import type { Attachment, Client, Expense, ID } from './types';
+import type { Attachment, Client, Expense, ID, ISODate } from './types';
 import { allocateNumber } from '@/lib/numbering';
 import { newId } from '@/lib/ids';
 import { today } from '@/lib/dates';
@@ -128,6 +128,8 @@ export async function addAttachment(
   companyId: ID,
   ownerId: ID,
   file: { name: string; type: string; dataUrl: string },
+  /** What the file is a copy of, and until when the paper in it is valid (#18). */
+  tag?: { docKey: string; validUntil: ISODate | null },
 ): Promise<Attachment> {
   const attachment: Attachment = {
     id: newId(),
@@ -138,6 +140,7 @@ export async function addAttachment(
     // Data URL length is a good-enough size estimate for display.
     size: Math.round((file.dataUrl.length * 3) / 4),
     dataUrl: file.dataUrl,
+    ...(tag ? { docKey: tag.docKey, validUntil: tag.validUntil } : {}),
     createdAt: nowStamp(),
   };
   await db.attachments.add(attachment);

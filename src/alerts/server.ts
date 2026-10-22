@@ -3,6 +3,7 @@ import type {
   ComplianceDocument,
   ComplianceMark,
   Department,
+  DocumentRenewal,
   Employee,
   InvoiceDocument,
   ISODate,
@@ -14,8 +15,11 @@ import { corsHeaders } from '@supabase/supabase-js/cors';
 import { loadLanguage, type Language } from '@/i18n';
 import {
   alertLookups,
+  alertsFor,
   collectAlerts,
   isAlertTopic,
+  type Alert,
+  type AlertAudience,
   type AlertData,
   type AlertTopic,
 } from './collect';
@@ -26,6 +30,8 @@ import type { ChangeEvent } from '@/cloud/api';
 import { addPeriods, payrollBreakdown, payRunTotals } from '@/lib/hr/payroll';
 import { normalizeDepartments } from '@/lib/hr/departments';
 import { currencyPrecision } from '@/lib/money';
+import { appLimit, canSeePeople, isMemberRole, readPermissions } from '@/cloud/roles';
+import type { CopyFile } from '@/lib/compliance';
 
 /**
  * The email-alerts function (a Supabase Edge Function; see edge.ts for how
@@ -33,8 +39,11 @@ import { currencyPrecision } from '@/lib/money';
  *
  *   - the hourly schedule (POST {"action":"run"} with the secret from
  *     almailbooks.email_alerts_config): from 8:00 Kuwait time it emails each
- *     owner or admin who turned alerts on, at most once a day, when
- *     something new needs attention, and on Sundays a summary;
+ *     owner, admin or accountant (#18) who turned alerts on, at most once a
+ *     day, when something new needs attention, and on Sundays a summary
+ *     (the kinds of paper each one chose, of the apps they may open); and
+ *     writes the companies' new expiry reminders to the change feed, for
+ *     the bell, where a company asks for that;
  *   - the app (POST {"action":"send","companyId"} with the person's
  *     session): emails that person what needs attention now;
  *   - anything else (a GET after deploying): it answers whether it is ready.
@@ -53,8 +62,9 @@ import { currencyPrecision } from '@/lib/money';
  *
  * Every call writes the function's own address to the config, where the
  * schedule reads it. It reads the company's records with the database's
- * own connection, so it checks itself who may get what: only owners and
- * admins, only for their companies, only at their account's address.
+ * own connection, so it checks itself who may get what: only owners,
+ * admins and accountants, only for their companies, only what the owner
+ * lets them open, only at their account's address.
  */
 
 export type Sql = <T = Record<string, unknown>>(query: string, params?: unknown[]) => Promise<T[]>;
@@ -185,6 +195,38 @@ interface Subscription {
   app_url: string;
   sent_keys: unknown;
   send_key: string | null;
+  /** The kinds of paper chosen (#18); null, or no such column yet: every kind. */
+  document_kinds?: unknown;
+  /**
+   * The database has 20261130000000_people_alerts.sql (the column of the
+   * kinds is there): only then is each person's email cut to what they may
+   * see, and its papers listed by kind. Before, every email is as it was.
+   */
+  scoped?: boolean | null;
+  /** Their role and the owner's limits on them, for what they may see (D16). */
+  role?: string | null;
+  permissions?: unknown;
+}
+
+/**
+ * What one person gets (D16): the kinds of paper they chose, employees'
+ * papers only when they may see People, the rest of the register and the
+ * deadlines only when the owner left them Compliance. Before the people
+ * alerts script has run (`scoped` false), everything, as before.
+ */
+export function audienceOf(
+  sub: Pick<Subscription, 'document_kinds' | 'role' | 'permissions' | 'scoped'>,
+): AlertAudience {
+  if (!sub.scoped) return {};
+  const role = isMemberRole(sub.role) ? sub.role : null;
+  const permissions = readPermissions(sub.permissions);
+  return {
+    documentKinds: Array.isArray(sub.document_kinds)
+      ? sub.document_kinds.filter((k): k is string => typeof k === 'string')
+      : null,
+    people: role !== null && canSeePeople(role) && appLimit(role, permissions, 'people') !== 'none',
+    compliance: appLimit(role, permissions, 'compliance') !== 'none',
+  };
 }
 
 interface Person {
@@ -219,7 +261,8 @@ export async function loadAlertData(sql: Sql, companyId: string): Promise<AlertD
     `select tbl, data from public.records
      where company_id = $1
        and (
-         tbl in ('companies', 'employees', 'complianceDocuments', 'complianceMarks', 'peopleSettings')
+         tbl in ('companies', 'employees', 'complianceDocuments', 'complianceMarks', 'peopleSettings',
+                 'renewals')
          or (tbl = 'documents' and data->>'type' in ('invoice', 'bill')
              and data->>'status' in ('sent', 'partial'))
          or (tbl = 'payments' and data->>'method' = 'cheque'
@@ -229,7 +272,12 @@ export async function loadAlertData(sql: Sql, companyId: string): Promise<AlertD
      union all
      select 'clients', jsonb_build_object('id', id, 'name', coalesce(data->>'name', ''), 'nameAr', data->>'nameAr')
      from public.records
-     where company_id = $1 and tbl = 'clients'`,
+     where company_id = $1 and tbl = 'clients'
+     union all
+     -- Files marked as the copy of a paper (#18): what they are, never their content.
+     select 'copies', jsonb_build_object('id', id, 'docKey', data->>'docKey', 'validUntil', data->>'validUntil')
+     from public.records
+     where company_id = $1 and tbl = 'attachments' and data->>'docKey' is not null`,
     [companyId],
   );
   const of = <T>(tbl: string) => rows.filter((r) => r.tbl === tbl).map((r) => r.data as T);
@@ -266,6 +314,10 @@ export async function loadAlertData(sql: Sql, companyId: string): Promise<AlertD
         : p,
     ),
     clients: of<{ id: string; name: string; nameAr?: string }>('clients'),
+    renewals: of<DocumentRenewal>('renewals').filter(
+      (r) => typeof r.documentKey === 'string' && typeof r.newExpiry === 'string',
+    ),
+    copies: of<CopyFile>('copies'),
   };
 }
 
@@ -398,17 +450,21 @@ export async function runDueAlerts(deps: AlertsDeps): Promise<RunSummary> {
   const summary: RunSummary = { waiting: false, checked: 0, sent: 0, failed: 0 };
   if (clock.hour < ALERT_HOUR) return { ...summary, waiting: true };
 
-  // Owners and admins with alerts on, not checked today, that no other run is working on.
+  // Owners, admins and accountants with alerts on, not checked today, that
+  // no other run is working on. The kinds of paper and the owner's limits
+  // are read whether or not the scripts that add them have run.
   const due = await deps.sql<Subscription>(
     `update public.email_alerts a
      set claimed_until = now() + interval '10 minutes'
      from public.company_members m
      where m.company_id = a.company_id and m.user_id = a.user_id
-       and m.role in ('owner', 'admin')
+       and m.role in ('owner', 'admin', 'accountant')
        and a.enabled
        and (a.checked_on is null or a.checked_on < $1::date)
        and (a.claimed_until is null or a.claimed_until < now())
-     returning a.company_id, a.user_id, a.topics, a.app_url, a.sent_keys, a.send_key`,
+     returning a.company_id, a.user_id, a.topics, a.app_url, a.sent_keys, a.send_key,
+       to_jsonb(a) -> 'document_kinds' as document_kinds, to_jsonb(a) ? 'document_kinds' as scoped,
+       m.role::text as role, to_jsonb(m) -> 'permissions' as permissions`,
     [clock.date],
   );
 
@@ -453,7 +509,7 @@ export async function runDueAlerts(deps: AlertsDeps): Promise<RunSummary> {
           continue;
         }
         const topics = sub.topics.filter(isAlertTopic);
-        const alerts = collectAlerts(data, clock.date, topics);
+        const alerts = alertsFor(collectAlerts(data, clock.date, topics), audienceOf(sub));
         const keys = alerts.map((a) => a.key);
         const before = Array.isArray(sub.sent_keys) ? new Set(sub.sent_keys as string[]) : null;
         const fresh = before ? keys.filter((k) => !before.has(k)) : keys;
@@ -479,6 +535,7 @@ export async function runDueAlerts(deps: AlertsDeps): Promise<RunSummary> {
             newKeys: kind === 'new' ? new Set(fresh) : null,
             appUrl: sub.app_url,
             to: who.email,
+            groupKinds: Boolean(sub.scoped),
             ...alertLookups(data!),
           }),
         );
@@ -571,6 +628,8 @@ async function waitingChanges(
      where e.company_id = $1 and e.id > $2::bigint
        and ($3::bigint is null or e.id <= $3::bigint)
        and e.actor is distinct from $4::uuid
+       -- Expiry reminders (#18) are in the bell only: the morning alerts email them.
+       and e.kind <> '${EXPIRY_KIND}'
      order by e.id
      limit ${CHANGES_PER_EMAIL}`,
     [sub.company_id, Number(sub.emailed_upto) || 0, upto, sub.user_id],
@@ -696,6 +755,7 @@ export async function runChangeNotifications(deps: AlertsDeps): Promise<NotifySu
          select 1 from public.change_events e
          where e.company_id = s.company_id and e.id > s.emailed_upto
            and e.actor is distinct from s.user_id
+           and e.kind <> '${EXPIRY_KIND}'
        )
      returning s.company_id, s.user_id, s.immediate_kinds, s.digest, s.app_url, s.emailed_upto,
        s.digest_on::text as digest_on, s.sent_on::text as sent_on, s.sent_count,
@@ -789,6 +849,117 @@ export async function runChangeNotifications(deps: AlertsDeps): Promise<NotifySu
     } catch (error) {
       deps.log(`email-alerts: changes ${sub.company_id}/${sub.user_id}: ${String(error)}`);
       await notifyFailed(deps, sub, error);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Expiry reminders in Updates (#18, 20261130000000_people_alerts.sql)        */
+/* -------------------------------------------------------------------------- */
+
+/** The kind of the change feed's rows that are expiry reminders, not changes. */
+export const EXPIRY_KIND = 'document_expiry';
+
+export interface ExpiryUpdatesSummary {
+  /** Companies looked at. */
+  companies: number;
+  /** Reminders written to the feed (each stage of each paper once). */
+  written: number;
+  failed: number;
+}
+
+/**
+ * A reminder about a paper as a row of the change feed, by nobody: what it
+ * is about (the stage, the type, the dates) and, only when it isn't private,
+ * whose it is. Employees' papers and confidential ones are private: only
+ * owners, admins and accountants see them, without a name.
+ */
+export function expiryEvent(alert: Alert): {
+  tbl: string;
+  record_id: string;
+  private: boolean;
+  fold_key: string;
+  summary: Record<string, unknown>;
+} | null {
+  if (alert.topic !== 'documents') return null;
+  const { entry } = alert;
+  const isPrivate = Boolean(entry.employeeId) || entry.confidential === true;
+  const what = alert.newCopy ? 'noscan' : alert.expired ? 'expired' : 'expiring';
+  return {
+    tbl: entry.recordId ? 'complianceDocuments' : 'employees',
+    record_id: entry.recordId ?? entry.employeeId ?? '',
+    private: isPrivate,
+    fold_key: `expiry:${alert.key}`,
+    summary: {
+      what,
+      type: entry.type,
+      date: entry.expiryDate,
+      ...(entry.employeeId ? { employee: true } : {}),
+      ...(isPrivate
+        ? {}
+        : {
+            title: entry.title,
+            owner: entry.ownerType,
+            ...(entry.ownerName ? { name: entry.ownerName } : {}),
+          }),
+    },
+  };
+}
+
+/**
+ * Writes the new expiry reminders of the companies that want them in
+ * Updates (PeopleSettings.expiryUpdates, with someone there getting the
+ * changes of the team) to the change feed: each stage of each paper once,
+ * all kinds of paper (the feed keeps employees' papers private). From 8:00
+ * Kuwait time; nothing is emailed for them (runChangeNotifications leaves
+ * them out). Without the change feed, nothing to do.
+ */
+export async function runExpiryUpdates(deps: AlertsDeps): Promise<ExpiryUpdatesSummary> {
+  const clock = kuwaitClock(deps.now());
+  const summary: ExpiryUpdatesSummary = { companies: 0, written: 0, failed: 0 };
+  if (clock.hour < ALERT_HOUR) return summary;
+  let companies: { company_id: string }[];
+  try {
+    companies = await deps.sql<{ company_id: string }>(
+      `select distinct s.company_id
+       from public.notification_settings s
+       join public.records r
+         on r.company_id = s.company_id and r.tbl = 'peopleSettings' and r.id = s.company_id
+       where s.enabled and r.data ->> 'expiryUpdates' = 'true'`,
+    );
+  } catch (error) {
+    // 20261123000000_change_feed.sql hasn't run: no feed.
+    if (!/does not exist/i.test(String(error))) {
+      deps.log(`email-alerts: expiry updates not ready (${String(error)})`);
+    }
+    return summary;
+  }
+  for (const { company_id: companyId } of companies) {
+    summary.companies += 1;
+    try {
+      const data = await loadAlertData(deps.sql, companyId);
+      if (!data) continue;
+      const events = collectAlerts(data, clock.date, ['documents'])
+        .map(expiryEvent)
+        .filter(
+          (e): e is NonNullable<ReturnType<typeof expiryEvent>> => e !== null && !!e.record_id,
+        );
+      if (!events.length) continue;
+      const written = await deps.sql<{ id: string }>(
+        `insert into public.change_events
+           (company_id, actor, op, tbl, record_id, kind, important, private, count, fold_key, summary)
+         select $1, null, 'update', e ->> 'tbl', e ->> 'record_id', '${EXPIRY_KIND}', false,
+                (e ->> 'private')::boolean, 1, e ->> 'fold_key', coalesce(e -> 'summary', '{}'::jsonb)
+         from jsonb_array_elements($2::jsonb) e
+         on conflict (company_id, fold_key) do nothing
+         returning id::text as id`,
+        [companyId, JSON.stringify(events)],
+      );
+      summary.written += written.length;
+    } catch (error) {
+      deps.log(`email-alerts: expiry updates ${companyId}: ${String(error)}`);
       summary.failed += 1;
     }
   }
@@ -1077,12 +1248,19 @@ export async function sendNow(
   if (typeof companyId !== 'string' || !COMPANY_ID.test(companyId)) {
     throw new AlertsError(400, 'invalid', 'Which company?');
   }
-  const [member] = await deps.sql<{ role: string }>(
-    'select role::text as role from public.company_members where company_id = $1 and user_id = $2',
+  const [member] = await deps.sql<{ role: string; permissions: unknown }>(
+    `select m.role::text as role, to_jsonb(m) -> 'permissions' as permissions
+     from public.company_members m where m.company_id = $1 and m.user_id = $2`,
     [companyId, user.id],
   );
-  if (member?.role !== 'owner' && member?.role !== 'admin') {
-    throw new AlertsError(403, 'permission', 'Only the owner and admins can get email alerts.');
+  // Accountants too (#18): set_email_alerts lets them turn alerts on once
+  // 20261130000000_people_alerts.sql has run, and none of them has a row before.
+  if (member?.role !== 'owner' && member?.role !== 'admin' && member?.role !== 'accountant') {
+    throw new AlertsError(
+      403,
+      'permission',
+      'Only the owner, admins and accountants can get email alerts.',
+    );
   }
   const problem = senderProblem(deps.env);
   if (problem) throw new AlertsError(503, 'not_configured', problem);
@@ -1092,7 +1270,9 @@ export async function sendNow(
      set last_test_at = now()
      where company_id = $1 and user_id = $2 and enabled
        and (last_test_at is null or last_test_at < now() - interval '1 minute')
-     returning company_id, user_id, topics, app_url, sent_keys, send_key`,
+     returning company_id, user_id, topics, app_url, sent_keys, send_key,
+       to_jsonb(email_alerts) -> 'document_kinds' as document_kinds,
+       to_jsonb(email_alerts) ? 'document_kinds' as scoped`,
     [companyId, user.id],
   );
   if (!sub) {
@@ -1112,7 +1292,10 @@ export async function sendNow(
   if (!data) throw new AlertsError(404, 'no_company', 'The company is not in the cloud yet.');
   const clock = kuwaitClock(deps.now());
   const topics = sub.topics.filter(isAlertTopic) as AlertTopic[];
-  const alerts = collectAlerts(data, clock.date, topics);
+  const alerts = alertsFor(
+    collectAlerts(data, clock.date, topics),
+    audienceOf({ ...sub, role: member.role, permissions: member.permissions }),
+  );
   const email = await inLanguage(who.language, () =>
     renderAlertEmail({
       kind: 'now',
@@ -1121,6 +1304,7 @@ export async function sendNow(
       newKeys: null,
       appUrl: sub.app_url,
       to: who.email,
+      groupKinds: Boolean(sub.scoped),
       ...alertLookups(data),
     }),
   );
@@ -1175,7 +1359,12 @@ export async function handleAlertsRequest(request: Request, deps: AlertsDeps): P
       }
       const summary = await runDueAlerts(deps);
       deps.log(`email-alerts: ${JSON.stringify(summary)}`);
-      return json(200, { ok: true, ...summary });
+      // The expiry reminders in Updates (#18), where companies want them.
+      const updates = await runExpiryUpdates(deps);
+      if (updates.written || updates.failed) {
+        deps.log(`email-alerts: expiry updates ${JSON.stringify(updates)}`);
+      }
+      return json(200, { ok: true, ...summary, updates });
     }
     if (body.action === 'notify') {
       const secret = await schedulerSecret(deps);

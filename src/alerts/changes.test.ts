@@ -37,6 +37,68 @@ function change(overrides: Partial<ChangeEvent> = {}): ChangeEvent {
 
 const money = { money: (a: number, c: string) => `${a.toFixed(3)} ${c}`, date: (d: string) => d };
 
+describe('an expiry reminder in Updates (#18)', () => {
+  const reminder = (summary: Record<string, unknown>, extra: Partial<ChangeEvent> = {}) =>
+    change({
+      kind: 'document_expiry',
+      actor: null,
+      actorName: '',
+      tbl: 'complianceDocuments',
+      recordId: 'licence',
+      summary,
+      ...extra,
+    });
+
+  it('says what is due, by nobody', () => {
+    expect(
+      describeChange(
+        reminder({ what: 'expiring', type: 'commercial_licence', date: '2026-12-01', title: '' }),
+        money,
+      ),
+    ).toEqual({
+      actor: 'Someone in the team',
+      text: 'Commercial licence expires on 2026-12-01',
+      detail: '',
+      important: false,
+      named: true,
+    });
+    expect(
+      describeChange(
+        reminder({
+          what: 'expired',
+          type: 'vehicle_registration',
+          date: '2026-10-01',
+          name: '18/62417',
+        }),
+        money,
+      ).text,
+    ).toBe('Vehicle registration · 18/62417 expired on 2026-10-01');
+    expect(
+      describeChange(reminder({ what: 'noscan', type: 'other', title: 'Site lease' }), money).text,
+    ).toBe('Site lease: the new copy is not uploaded yet');
+  });
+
+  it("names nobody for an employee's paper or a confidential one", async () => {
+    const employee = reminder(
+      { what: 'expiring', type: 'residency', date: '2026-10-31', employee: true },
+      { private: true, tbl: 'employees', recordId: 'emp-1' },
+    );
+    expect(describeChange(employee, money).text).toBe(
+      'An employee’s residency expires on 2026-10-31',
+    );
+    expect(
+      describeChange(
+        reminder({ what: 'expired', type: 'customer_cost', date: '2026-10-01' }, { private: true }),
+        money,
+      ).text,
+    ).toBe('A confidential document expired on 2026-10-01');
+    await loadLanguage('ar');
+    expect(describeChange(employee, money).text).toBe(
+      'تنتهي صلاحية الإقامة لأحد الموظفين في 2026-10-31',
+    );
+  });
+});
+
 describe('a change in words', () => {
   it('says what was done to what, with the customer and the amount', () => {
     const voided = change({

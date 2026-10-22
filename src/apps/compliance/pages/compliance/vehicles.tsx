@@ -294,7 +294,11 @@ export default function VehiclesPage() {
                     ) : (
                       <ul className="mt-3 space-y-2 border-s-2 border-slate-100 ps-4">
                         {own.map((doc) => {
-                          const entry = recordEntry(doc, register.reminderDays);
+                          const entry = recordEntry(
+                            doc,
+                            register.reminderDays,
+                            register.reminderDaysByType,
+                          );
                           const info = expiryStatus(entry.expiryDate, entry.reminderDays, on);
                           const title = entryTitle(entry);
                           return (
@@ -371,6 +375,7 @@ export default function VehiclesPage() {
           isNew={paper.isNew}
           employees={employees}
           defaultReminderDays={register.reminderDays}
+          reminderDaysByType={register.reminderDaysByType}
           onClose={() => setPaper(null)}
         />
       ) : null}
