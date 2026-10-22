@@ -12,6 +12,8 @@ Production has real data and is in daily use, so every change here is additive a
 
 Phase 3 is built and reviewed too: #6, #7, #8 and #9, so 22 of the 30 in all. It needs two new database scripts. How to switch each one on is in [the Phase 3 release notes](release-notes-phase-3.md).
 
+Phase 4 is built and reviewed too: #10, #15, #18 and #19, so 26 of the 30 in all. It needs one new database script, `20261130000000_people_alerts.sql`. How to switch each one on, and what to ask the auditor first, is in [the Phase 4 release notes](release-notes-phase-4.md).
+
 When this plan was written, none of the 30 was fully built: 25 were partly built, 4 were not built, and 1 conflicted with how invoice numbering must work (#8).
 
 Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. The phases are described under [Phases](#phases).
@@ -27,16 +29,16 @@ Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. 
 | 7   | [Change notifications to the Super Admin](#7-change-notifications-to-the-super-admin)             | Built                                 | L    | 3                          |
 | 8   | [Invoice approval and Void invoices](#8-invoice-approval-and-void-invoices)                       | Built                                 | XL   | 3                          |
 | 9   | [Cheque confirmation](#9-cheque-confirmation-by-the-super-admin)                                  | Built                                 | L    | 3                          |
-| 10  | [Salary approval](#10-salary-approval-by-the-super-admin)                                         | Partly built                          | XL   | 4                          |
+| 10  | [Salary approval](#10-salary-approval-by-the-super-admin)                                         | Built                                 | XL   | 4                          |
 | 11  | [Leave requests from the Maham App](#11-leave-requests-from-the-maham-app)                        | Not built                             | XL   | 7                          |
 | 12  | [Departments and a Stateless option](#12-departments-and-a-stateless-option)                      | Built                                 | L    | 2                          |
 | 13  | [Driving licences for drivers](#13-driving-licences-for-drivers)                                  | Built                                 | M    | 2                          |
 | 14  | [Default leave policy of 30 days](#14-default-leave-policy-of-30-days)                            | Built                                 | M    | 2                          |
-| 15  | [Custom leave reasons](#15-custom-leave-reasons-with-automatic-pay-and-balance-effects)           | Partly built                          | XL   | 4                          |
+| 15  | [Custom leave reasons](#15-custom-leave-reasons-with-automatic-pay-and-balance-effects)           | Built                                 | XL   | 4                          |
 | 16  | [Messages to guards in the Maham App](#16-messages-to-guards-in-the-maham-app)                    | Not built                             | L    | 7                          |
 | 17  | [Company documents, contracts and vehicles](#17-company-documents-contracts-and-vehicles)         | Built                                 | L    | 2                          |
-| 18  | [Expiry alerts](#18-expiry-alerts-with-lead-times-and-re-upload-reminders)                        | Partly built                          | L    | 4                          |
-| 19  | [Employee letter templates](#19-employee-letter-templates)                                        | Not built                             | XL   | 4                          |
+| 18  | [Expiry alerts](#18-expiry-alerts-with-lead-times-and-re-upload-reminders)                        | Built                                 | L    | 4                          |
+| 19  | [Employee letter templates](#19-employee-letter-templates)                                        | Built                                 | XL   | 4                          |
 | 20  | [Zoho-style dashboard](#20-zoho-style-books-dashboard)                                            | Built                                 | L    | 1                          |
 | 21  | [Scanned attachments on payments](#21-scanned-attachments-on-payments)                            | Built                                 | M    | 1                          |
 | 22  | [Invoice QR, signature and stamp](#22-invoice-qr-signature-and-stamp-signature-in-blue)           | Built                                 | M    | 1                          |
