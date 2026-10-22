@@ -117,6 +117,8 @@ const ATTACHMENT_OWNERS = [
 const COMPANY_BOOKS = [
   'accounting',
   'payment',
+  'bankAccount',
+  'emailTemplates',
   'defaults',
   'taxesEnabled',
   'openingBalances',
@@ -660,6 +662,16 @@ export class FakeSupabase {
   private booksChanged(old: Record<string, unknown> | null, data: Record<string, unknown>) {
     if (!old) return false;
     if (COMPANY_BOOKS.some((key) => canonical(old[key]) !== canonical(data[key]))) return true;
+    // The WAMD number printed with the payment details, empty and none alike.
+    const wamd = (row: Record<string, unknown>) => {
+      const kuwait = row.kuwait;
+      const phone =
+        kuwait && typeof kuwait === 'object' && !Array.isArray(kuwait)
+          ? (kuwait as Record<string, unknown>).wamdPhone
+          : null;
+      return canonical(phone === '' ? null : phone);
+    };
+    if (wamd(old) !== wamd(data)) return true;
     const rules = (row: Record<string, unknown>) =>
       (row.numbering && typeof row.numbering === 'object' ? row.numbering : {}) as Record<
         string,
@@ -761,13 +773,14 @@ export class FakeSupabase {
       if (content(old) !== content(data) || stage(old.status) !== stage(data.status)) {
         return approvalRequired();
       }
-      // Its payment link, once it has one (almailbooks.payment_link_changed).
+      // Its payment link, once it has one (almailbooks.payment_link_changed):
+      // anyone else's copy keeps the stored link.
       const was = linkUrl(old);
-      return was !== '' && was !== linkUrl(data)
-        ? refuse(
-            'almail:permission Only an approver changes or removes the payment link of an issued document.',
-          )
-        : data;
+      if (was === '' || was === linkUrl(data)) return data;
+      const kept: Record<string, unknown> = { ...data };
+      if ('paymentLink' in old && old.paymentLink !== undefined) kept.paymentLink = old.paymentLink;
+      else delete kept.paymentLink;
+      return kept;
     }
     // Approval requests, whether or not the rules are on.
     const now = new Date().toISOString();

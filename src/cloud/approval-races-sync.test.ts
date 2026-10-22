@@ -5,7 +5,13 @@ import { createClient } from '@/db/defaults';
 import { saveClient, saveCompany, setupCompany } from '@/db/records';
 import { accountingSettings } from '@/db/chart-setup';
 import { deleteDocument, draftDocument, saveDocument } from '@/db/documents';
-import { createPayment, ensurePaymentAccount, newCheque, savePayment } from '@/db/payments';
+import {
+  createPayment,
+  ensurePaymentAccount,
+  newCheque,
+  savePayment,
+  setPaymentLink,
+} from '@/db/payments';
 import {
   ApprovalRequiredError,
   applyApproval,
@@ -517,5 +523,120 @@ describe('a change the cloud refuses', () => {
       status: 'pending',
       kind: 'invoice_void',
     });
+  });
+});
+
+describe('a payment link added on another device', () => {
+  const STAFF_2 = 'user-staff-2';
+  const link = (url: string) => ({ provider: 'myfatoorah' as const, url, expiresAt: null });
+
+  /** The owner's company in the cloud with the rules on, an issued invoice of 100, two staff devices. */
+  async function invoiced() {
+    const created = await setupCompany({ name: 'Gulf Pearl Trading', currency: 'KWD' });
+    const owned = await saveCompany({
+      ...created,
+      approvalRules: { documentTypes: ['invoice', 'credit'], voidInsteadOfDelete: true },
+    });
+    const customer = await saveClient(createClient(owned.id, { name: 'Made-up Customer' }));
+    const draft = await draftDocument(owned, 'invoice', customer);
+    draft.items[0] = { ...draft.items[0], name: 'Work', quantity: 1, unitPrice: 100, taxes: [] };
+    const invoice = await saveDocument({ ...draft, status: 'sent' });
+    await startUpload(owned.id, ctx(OWNER));
+    await syncCompany(owned.id, ctx(OWNER));
+    server.addMember(owned.id, STAFF, 'staff');
+    server.addMember(owned.id, STAFF_2, 'staff');
+    const c = { companyId: owned.id, name: owned.name };
+    await device('staff-1', c, STAFF, 'staff');
+    await device('staff-2', c, STAFF_2, 'staff');
+    return { ...c, customer, invoice };
+  }
+
+  /** Staff 2, on a device that hasn't heard of the link, records the invoice paid in cash and syncs. */
+  async function paidOnStaleDevice(c: Awaited<ReturnType<typeof invoiced>>) {
+    await on('staff-2');
+    expect((await db.documents.get(c.invoice.id))?.paymentLink ?? null).toBeNull();
+    const payment = await savePayment(
+      createPayment(c.companyId, {
+        direction: 'in',
+        clientId: c.customer.id,
+        date: c.invoice.issueDate,
+        amount: 100,
+        currency: 'KWD',
+        method: 'cash',
+        reference: '',
+        allocations: [{ documentId: c.invoice.id, amount: 100 }],
+      }),
+    );
+    await syncCompany(c.companyId, ctx(STAFF_2));
+    return payment;
+  }
+
+  it('stays, and the payment a device that is behind records goes through', async () => {
+    const c = await invoiced();
+    // Staff 1 adds a link where there was none (anyone may) and syncs.
+    await on('staff-1');
+    await setPaymentLink(c.invoice.id, link('https://pay.example.com/a'));
+    await syncCompany(c.companyId, ctx(STAFF));
+    expect(server.record(c.companyId, 'documents', c.invoice.id)).toMatchObject({
+      paymentLink: { url: 'https://pay.example.com/a' },
+    });
+    const payment = await paidOnStaleDevice(c);
+    // Nothing is kept aside: the payment is in the cloud, and the link stays.
+    expect(await parkedEntries(c.companyId)).toEqual([]);
+    expect(server.record(c.companyId, 'payments', payment.id)).toMatchObject({ amount: 100 });
+    expect(server.record(c.companyId, 'documents', c.invoice.id)).toMatchObject({
+      status: 'paid',
+      paymentLink: { url: 'https://pay.example.com/a' },
+    });
+    // The device that was behind now has it too.
+    expect(await db.documents.get(c.invoice.id)).toMatchObject({
+      status: 'paid',
+      paymentLink: { url: 'https://pay.example.com/a' },
+    });
+  });
+
+  it('stays as an approver changed it while a device was behind', async () => {
+    const c = await invoiced();
+    await on('staff-1');
+    await setPaymentLink(c.invoice.id, link('https://pay.example.com/a'));
+    await syncCompany(c.companyId, ctx(STAFF));
+    // Staff 2's device gets that link, and is then put away.
+    await on('staff-2');
+    await syncCompany(c.companyId, ctx(STAFF_2));
+    // The owner changes it on a phone.
+    await device('phone', c, OWNER, 'owner');
+    await setPaymentLink(c.invoice.id, link('https://pay.example.com/b'));
+    await syncCompany(c.companyId, ctx(OWNER));
+    // Staff 2's copy, still with the old link, goes up with a payment.
+    await on('staff-2');
+    expect((await db.documents.get(c.invoice.id))?.paymentLink?.url).toBe(
+      'https://pay.example.com/a',
+    );
+    const payment = await savePayment(
+      createPayment(c.companyId, {
+        direction: 'in',
+        clientId: c.customer.id,
+        date: c.invoice.issueDate,
+        amount: 40,
+        currency: 'KWD',
+        method: 'cash',
+        reference: '',
+        allocations: [{ documentId: c.invoice.id, amount: 40 }],
+      }),
+    );
+    await syncCompany(c.companyId, ctx(STAFF_2));
+    expect(await parkedEntries(c.companyId)).toEqual([]);
+    expect(server.record(c.companyId, 'payments', payment.id)).toBeTruthy();
+    expect(server.record(c.companyId, 'documents', c.invoice.id)).toMatchObject({
+      status: 'partial',
+      paymentLink: { url: 'https://pay.example.com/b' },
+    });
+    expect((await db.documents.get(c.invoice.id))?.paymentLink?.url).toBe(
+      'https://pay.example.com/b',
+    );
+    // Changing it on purpose is still refused on the device, before anything is sent.
+    await expect(setPaymentLink(c.invoice.id, link('https://pay.example.com/c'))).rejects.toThrow(
+      /Only an approver can change or remove the payment link/,
+    );
   });
 });

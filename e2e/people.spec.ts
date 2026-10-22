@@ -221,6 +221,11 @@ test('a company where the person is staff adds nobody to the search across compa
   await signOut.getByText('Remove them from this device').click();
   await signOut.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
+  // Signed out too, not only the companies removed: the app has then gone home
+  // (a toast from an earlier sign-out may still be showing, so not by that).
+  await expect(
+    page.getByRole('heading', { name: 'Work from any device, with your team' }),
+  ).toBeVisible();
 
   // On this device the staff member also keeps two companies of their own.
   await createCompany(page, 'Made-up Own One');

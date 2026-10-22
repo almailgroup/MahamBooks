@@ -158,6 +158,11 @@ test('staff look at the quote design but don’t change it', async ({ page }) =>
   await signOut.getByText('Remove them from this device').click();
   await signOut.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
+  // Signed out too, not only the companies removed: the app has then gone home
+  // (a toast from an earlier sign-out may still be showing, so not by that).
+  await expect(
+    page.getByRole('heading', { name: 'Work from any device, with your team' }),
+  ).toBeVisible();
 
   // Staff join, and find the design to look at only.
   await page.goto(link);

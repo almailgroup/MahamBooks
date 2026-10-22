@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { DBCore, Middleware } from 'dexie';
 import { db } from '@/db/db';
 import { createClient } from '@/db/defaults';
 import { deleteCompany, saveClient, setupCompany, UnsentChangesError } from '@/db/records';
@@ -7,9 +8,10 @@ import { checkMarkSent, draftDocument, saveDocument } from '@/db/documents';
 import { addAttachment } from '@/db/purchases';
 import { wipeAllData } from '@/db/backup';
 import type { Company } from '@/db/types';
+import { kuwaitProfile } from '@/lib/kuwait-rules';
 import { CloudPermissionError, markRemote, onLocalChange } from './outbox';
 import type { CloudLink } from './types';
-import type { MemberRole } from './roles';
+import { ATTACHMENT_OWNER_TABLES, type MemberRole } from './roles';
 
 beforeEach(async () => {
   await db.delete();
@@ -238,6 +240,28 @@ describe('roles on this device', () => {
         },
       }),
     ).rejects.toThrow(CloudPermissionError);
+    // Where customers pay: the WAMD number printed with the payment details, and the emails.
+    await expect(
+      db.companies.put({
+        ...current,
+        kuwait: { ...kuwaitProfile(current), wamdPhone: '+965 9999 9999' },
+      }),
+    ).rejects.toThrow(/The owner has made this app view only for you/);
+    await expect(
+      db.companies.put({
+        ...current,
+        emailTemplates: {
+          ...current.emailTemplates,
+          invoice: { ...current.emailTemplates.invoice, body: 'Pay at {paymentLink}.' },
+        },
+      }),
+    ).rejects.toThrow(CloudPermissionError);
+    // The rest of the Kuwaiti details are the company's, an empty WAMD number
+    // as none (a company made before they were asked for has none).
+    const bare: Company = { ...current };
+    delete bare.kuwait;
+    await db.companies.put(bare);
+    await db.companies.put({ ...bare, kuwait: { ...kuwaitProfile(bare), licenceNumber: 'L-1' } });
     // Counters move with whatever is numbered.
     await db.companies.put({
       ...current,
@@ -276,6 +300,74 @@ describe('roles on this device', () => {
     await addAttachment(acme.id, invoice.id, scan);
     await addAttachment(acme.id, 'pay-waiting', scan);
     expect(await queued()).toHaveLength(2);
+  });
+
+  it('look up the records files are kept with only for someone the owner limited', async () => {
+    // Counts what the change capture reads of those records, below it.
+    const owners = new Set<string>(ATTACHMENT_OWNER_TABLES);
+    const reads: string[] = [];
+    const counter: Middleware<DBCore> = {
+      stack: 'dbcore',
+      name: 'CountOwnerReads',
+      level: 10,
+      create: (down) => ({
+        ...down,
+        table(name) {
+          const table = down.table(name);
+          if (!owners.has(name)) return table;
+          return {
+            ...table,
+            getMany: (req) => {
+              reads.push(name);
+              return table.getMany(req);
+            },
+          };
+        },
+      }),
+    };
+    db.close();
+    db.use(counter);
+    await db.open();
+    try {
+      const acme = await company();
+      const scan = { name: 'civil-id.pdf', type: 'application/pdf', dataUrl: 'data:,x' };
+      const files = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({
+          id: `att-${i}`,
+          companyId: acme.id,
+          ownerId: `emp-${i}`,
+          name: `scan-${i}.pdf`,
+          type: 'application/pdf',
+          size: 1,
+          dataUrl: 'data:,x',
+          createdAt: '2026-10-21T08:00:00.000Z',
+        }));
+      // Kept on this device only: a restore, a wipe or an upload reads none of them.
+      await db.attachments.bulkPut(files(30));
+      await addAttachment(acme.id, 'emp-1', scan);
+      await db.attachments.clear();
+      expect(reads).toEqual([]);
+      // In the cloud, for members without limits, the same.
+      for (const permissions of [undefined, {}, { apps: { books: 'manage' as const } }]) {
+        await link(acme, 'accountant', permissions);
+        await db.attachments.bulkPut(files(30));
+        await addAttachment(acme.id, 'emp-1', scan);
+        await db.attachments.clear();
+        await link(acme, 'admin', permissions);
+        await addAttachment(acme.id, 'emp-1', scan);
+      }
+      expect(reads).toEqual([]);
+      expect(await db.attachments.count()).toBe(1);
+      // Someone the owner limited: looked up, and refused where the record is People's.
+      await db.employees.put({ id: 'emp-1', companyId: acme.id, name: 'Made-up Person' } as never);
+      await link(acme, 'accountant', { apps: { people: 'view' } });
+      await expect(addAttachment(acme.id, 'emp-1', scan)).rejects.toThrow(CloudPermissionError);
+      expect(reads.length).toBeGreaterThan(0);
+    } finally {
+      db.close();
+      db.unuse({ stack: 'dbcore', name: 'CountOwnerReads' });
+      await db.open();
+    }
   });
 
   it('tell before a draft is sent whether it may be marked as sent, queuing nothing', async () => {

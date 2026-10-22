@@ -32,9 +32,9 @@ import {
   isApprover,
   isPrivateRecord,
   issuesWithoutNumber,
+  keepPaymentLink,
   limitBlocksWrite,
   MAX_APPROVERS,
-  paymentLinkNeedsApprover,
   readPermissions,
   sameData,
   seesChange,
@@ -1034,10 +1034,8 @@ export class FakeCloud {
     if (rules && old && !approver && documentChangeNeedsApproval(rules, old, data)) {
       throw fail('approval_required');
     }
-    if (rules && old && !approver && paymentLinkNeedsApprover(rules, old, data)) {
-      throw fail('permission');
-    }
-    return data;
+    // Anyone else's copy keeps the stored payment link (records_guard).
+    return rules && old && !approver ? keepPaymentLink(rules, old, data) : data;
   }
 
   private applyChange(

@@ -323,11 +323,13 @@ person.
   `records_guard` also refuses (`almail:permission`) a member whose Books is
   `none` or `view` a change of the books' settings on the company record
   (`almailbooks.company_books_changed`: accounting with the lock date,
-  payment, defaults, taxes, opening balances, vouchers, items, cheque
-  printing and numbering rules; counters and employees' numbering stay open),
-  by a push or `patch_company`. Owners are never limited. `'{}'`, every
-  member's value until the owner sets one, gives the first file's answers
-  (the regular tests run with it). Reading is unchanged.
+  payment, `bankAccount`, `emailTemplates`, `kuwait.wamdPhone` (empty and
+  none alike), defaults, taxes, opening balances, vouchers, items, cheque
+  printing and numbering rules; counters, employees' numbering and the rest
+  of `kuwait` stay open), by a push or `patch_company`. Owners are never
+  limited. `'{}'`, every member's value until the owner sets one, gives the
+  first file's answers (the regular tests run with it). Reading is
+  unchanged.
 - `company_members.can_approve` (false by default): admins and accountants
   only, two at most; `almailbooks.is_approver(company)` is the owner or one of
   them. A trigger clears it when the role changes to anything else, and
@@ -375,9 +377,12 @@ does nothing while it is null, except those on approval requests themselves
     changes (draft, issued, void). Totals, status within issued, paid and sent
     times, retention releases, the posting snapshot and internal notes are
     written by payments and sync, and stay open. The payment link
-    (`almailbooks.payment_link_changed`): once there is one, anyone but an
-    approver is refused `almail:permission` changing or removing it; adding
-    one where there was none stays open. Refusal:
+    (`almailbooks.payment_link_changed`): once there is one, a write by
+    anyone but an approver that changes or removes it keeps the stored link
+    (`almailbooks.kept_key`) and goes through, since documents travel whole
+    and such a copy is most often from a device that hadn't received the
+    link, sent with a payment (the app refuses a change made on purpose);
+    adding one where there was none stays open. Refusal:
     `almail:approval_required`, SQLSTATE 42501, which older versions of the app
     park as a permission problem.
   - `approvals`, whether or not the rules are on: a new request waits

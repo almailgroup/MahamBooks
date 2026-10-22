@@ -223,9 +223,9 @@ In **Settings → Team**, the owner (badge **Owner (Super Admin)**, المالك
   role, and the cloud refuses what the member saves in that app, the files
   of its records included (a scan in an employee's personnel file is
   People's). Settings and activity follow the role, except the books'
-  settings (the lock date, numbering, payment details and document
-  defaults), which follow the limit on Maham Books. What is already on their
-  device stays there.
+  settings (the lock date, numbering, payment details with the bank account
+  and WAMD number, email templates and document defaults), which follow the
+  limit on Maham Books. What is already on their device stays there.
 - **Can approve** (صلاحية الاعتماد), in the same dialog: up to two admins or
   accountants may approve requests besides the owner. Off for everyone at
   first.
@@ -249,7 +249,9 @@ until the owner turns something on:
   and **Request void** instead of Void (or Delete), with a reason. Payments,
   credit notes applied to it and retention releases go on as before. A
   payment link can still be added to one that has none; once it has one,
-  only an approver changes or removes it (it is where the customer pays).
+  only an approver changes or removes it (it is where the customer pays). A
+  device that hasn't received the link yet keeps it when it sends the
+  invoice, with a payment for example.
   Drafts and new invoices are anyone's.
 - **Void instead of delete** (الإبطال بدلاً من الحذف), on by default: issued
   invoices and credit notes are voided, never deleted, so their numbers stay

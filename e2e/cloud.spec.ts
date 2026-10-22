@@ -40,6 +40,11 @@ async function signOutRemovingCompanies(page: Page, account: ReturnType<Page['ge
   await dialog.getByText('Remove them from this device').click();
   await dialog.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Welcome to Maham One' })).toBeVisible();
+  // Signed out too, not only the companies removed: the app has then gone home
+  // (a toast from an earlier sign-out may still be showing, so not by that).
+  await expect(
+    page.getByRole('heading', { name: 'Work from any device, with your team' }),
+  ).toBeVisible();
 }
 
 test('creating an account asks to confirm the email address', async ({ page }) => {

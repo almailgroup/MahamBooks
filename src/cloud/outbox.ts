@@ -351,9 +351,10 @@ async function capture(
     return { ...change, companyId: companyOf(name, change) };
   });
   const companyIds = changes.map((c) => c.companyId);
+  const linked = linksFor(down, trans, companyIds);
   // All at once: Dexie keeps its transaction across only so many waits.
   const [links, companies, owners] = await Promise.all([
-    linksFor(down, trans, companyIds),
+    linked,
     RULED.has(name) && down.schema.tables.some((t) => t.name === 'companies')
       ? companiesFor(
           down,
@@ -361,7 +362,17 @@ async function capture(
           companyIds.filter((id): id is string => !!id),
         )
       : null,
-    name === 'attachments' ? ownersFor(down, trans, changes) : undefined,
+    // The records files are kept with, looked up only for someone the owner
+    // limited: never for a company kept on this device, nor for anyone else.
+    name === 'attachments'
+      ? linked.then((found) => {
+          const limited = changes.filter((change) => {
+            const link = change.companyId ? found.get(change.companyId) : null;
+            return !!link && hasLimits(link.role, link.permissions);
+          });
+          return limited.length ? ownersFor(down, trans, limited) : undefined;
+        })
+      : undefined,
   ]);
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;

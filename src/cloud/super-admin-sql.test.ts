@@ -1,7 +1,13 @@
 // @vitest-environment node
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS, startDatabase, type Harness } from './sql-harness';
-import { companyBooksChanged, recordApp, type MemberPermissions, type MemberRole } from './roles';
+import {
+  COMPANY_BOOKS_FIELDS,
+  companyBooksChanged,
+  recordApp,
+  type MemberPermissions,
+  type MemberRole,
+} from './roles';
 import { FakeCloud } from './testing/fake-cloud';
 
 /**
@@ -580,6 +586,11 @@ describe('a member’s limits on the records', () => {
       [{ path: ['numbering', 'invoice', 'pattern'], value: 'X-{counter}' }],
       [{ path: ['payment', 'bankDetails'], value: 'Somewhere else' }],
       [{ path: ['defaults', 'numberOnIssue'], value: true }],
+      // Where customers pay: the WAMD number printed with the payment
+      // details, the bank account they are made from, the emails' wording.
+      [{ path: ['kuwait', 'wamdPhone'], value: '+965 9999 9999' }],
+      [{ path: ['bankAccount', 'iban'], value: 'KW00XXXX0000000000000000000000' }],
+      [{ path: ['emailTemplates', 'invoice', 'body'], value: 'Pay at {paymentLink}.' }],
     ]) {
       await expect(patch(ops), json(ops)).rejects.toThrow(
         /almail:permission The owner has made Maham Books view only for you/,
@@ -599,9 +610,18 @@ describe('a member’s limits on the records', () => {
     await patch([{ path: ['numbering', 'employee', 'pattern'], value: 'EMP-{counter}' }]);
     await patch([{ path: ['holidays'], value: [{ date: '2026-02-25', name: 'National Day' }] }]);
     await patch([{ path: ['numbering', 'journal'], value: { pattern: 'MJ-{counter}', next: 2 } }]);
+    // The rest of the Kuwaiti registration details too, with an empty WAMD number as before.
+    await patch([
+      {
+        path: ['kuwait'],
+        value: { licenceNumber: 'L-1', wamdPhone: '', legalForm: 'wll', activity: 'trading' },
+      },
+    ]);
+    await patch([{ path: ['kuwait', 'licenceNumber'], value: 'L-2' }]);
     // An accountant with no limits, and the owner, change the books' settings as before.
     await limit(t, t.accountant, null);
     await patch([{ path: ['accounting', 'lockDate'], value: '2026-12-31' }]);
+    await patch([{ path: ['kuwait', 'wamdPhone'], value: '+965 9999 9999' }]);
     await h.rpc(t.owner, 'patch_company', {
       p_company: c,
       p_ops: json([{ path: ['accounting', 'lockDate'], value: '2027-01-31' }]),
@@ -643,6 +663,23 @@ describe('a member’s limits on the records', () => {
       },
       { ...base, numbering: { invoice: 'odd' } },
       { ...base, numbering: null },
+      { ...base, kuwait: { licenceNumber: 'L-1', wamdPhone: '' } },
+      { ...base, kuwait: { licenceNumber: 'L-2' } },
+      { ...base, kuwait: { licenceNumber: 'L-1', wamdPhone: null } },
+      { ...base, kuwait: { licenceNumber: 'L-1', wamdPhone: '+965 9871 2046' } },
+      { ...base, kuwait: { wamdPhone: '+965 9999 9999' } },
+      { ...base, kuwait: { wamdPhone: 99999999 } },
+      { ...base, kuwait: 'odd' },
+      { ...base, kuwait: ['+965 9999 9999'] },
+      { ...base, kuwait: null },
+      { ...base, bankAccount: { bank: 'NBOK', iban: 'KW00' } },
+      { ...base, bankAccount: { bank: 'NBOK', iban: 'KW99' } },
+      {
+        ...base,
+        emailTemplates: { invoice: { subject: 'Invoice', body: 'Pay at {paymentLink}' } },
+      },
+      { ...base, emailTemplates: { invoice: { subject: 'Invoice', body: 'Pay elsewhere' } } },
+      { ...base, labels: { invoice: 'Bill' } },
     ];
     for (const before of samples) {
       for (const after of samples) {
@@ -655,6 +692,12 @@ describe('a member’s limits on the records', () => {
         );
       }
     }
+    // The same settings listed in both.
+    const [fn] = await h.admin<{ body: string }>(
+      `select prosrc as body from pg_proc where proname = 'company_books_changed'`,
+    );
+    const listed = fn.body.match(/array\[([^\]]*)\]/)![1].match(/'(\w+)'/g)!;
+    expect(listed.map((key) => key.slice(1, -1))).toEqual([...COMPANY_BOOKS_FIELDS]);
   });
 
   it('never apply to the owner', async () => {

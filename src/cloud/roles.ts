@@ -396,9 +396,11 @@ export function hasLimits(
 }
 
 /** The books' settings on the company record (see companyBooksChanged). */
-const COMPANY_BOOKS_FIELDS = [
+export const COMPANY_BOOKS_FIELDS = [
   'accounting',
   'payment',
+  'bankAccount',
+  'emailTemplates',
   'defaults',
   'taxesEnabled',
   'openingBalances',
@@ -407,20 +409,32 @@ const COMPANY_BOOKS_FIELDS = [
   'chequePrinting',
 ] as const;
 
+/** The WAMD number printed with the payment details (kuwait.wamdPhone), empty and none alike. */
+function wamdPhoneOf(row: Row): unknown {
+  const kuwait = row?.kuwait;
+  if (!kuwait || typeof kuwait !== 'object' || Array.isArray(kuwait)) return undefined;
+  const phone = (kuwait as Record<string, unknown>).wamdPhone;
+  return phone === '' ? undefined : phone;
+}
+
 /**
  * Whether the books' settings on the company record differ, as
  * almailbooks.company_books_changed: the lock date and the rest of the
- * accounting settings, the payment details, the document defaults
- * (numbering on issue included), taxes, opening balances, vouchers, items,
- * cheque printing and the numbering rules. Counters (a rule's next and
- * period) move with whatever is numbered, and employees' numbering is
- * People's, so they stay open; so does a rule added or removed. A member
- * the owner made Maham Books view only for (or gave no access) doesn't
- * change them.
+ * accounting settings, where customers pay (the payment details, the bank
+ * account they are made from and the WAMD number printed with them), the
+ * email templates (the wording documents are sent with, payment link
+ * included), the document defaults (numbering on issue included), taxes,
+ * opening balances, vouchers, items, cheque printing and the numbering
+ * rules. Counters (a rule's next and period) move with whatever is
+ * numbered, and employees' numbering is People's, so they stay open; so do
+ * a rule added or removed and the rest of the Kuwaiti registration
+ * details. A member the owner made Maham Books view only for (or gave no
+ * access) doesn't change them.
  */
 export function companyBooksChanged(before: Row, after: Row): boolean {
   if (!before || !after) return false;
   if (COMPANY_BOOKS_FIELDS.some((field) => !sameData(before[field], after[field]))) return true;
+  if (!sameData(wamdPhoneOf(before), wamdPhoneOf(after))) return true;
   const rules = (row: Row) => {
     const numbering = row?.numbering;
     return numbering && typeof numbering === 'object' && !Array.isArray(numbering)
@@ -632,7 +646,8 @@ function paymentLinkUrl(row: Row): string {
  * of an issued document the rules cover, as records_guard
  * (almailbooks.payment_link_changed): printed on it and in its QR code, it
  * is where the customer pays, so only an approver changes it. Adding one
- * where there was none stays open.
+ * where there was none stays open. The app refuses such a change made on
+ * this device; the server keeps the stored link instead (keepPaymentLink).
  */
 export function paymentLinkNeedsApprover(
   rules: AnyRecord,
@@ -647,6 +662,24 @@ export function paymentLinkNeedsApprover(
   }
   const was = paymentLinkUrl(old);
   return was !== '' && was !== paymentLinkUrl(next);
+}
+
+/**
+ * What the cloud stores when anyone but an approver writes a document, as
+ * records_guard: a copy that would change or remove its payment link (see
+ * paymentLinkNeedsApprover) keeps the stored link. Documents travel whole,
+ * so a device that has not yet received the link, recording a payment on
+ * the invoice, must neither undo the link nor be refused with the payment.
+ */
+export function keepPaymentLink(
+  rules: AnyRecord,
+  before: AnyRecord,
+  after: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!paymentLinkNeedsApprover(rules, before, after)) return after;
+  const data = { ...after };
+  keptKey(data, asRow(before) ?? {}, 'paymentLink');
+  return data;
 }
 
 /**

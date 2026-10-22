@@ -47,11 +47,12 @@
 --     "almail:approval_required" (SQL state 42501, which older versions of
 --     the app keep aside as a permission problem). The payment link of one,
 --     once it has one, is changed or removed by an approver only (adding
---     one stays open). Payments, which change an invoice's balance and
---     status, go through as before. Only the owner changes the rules.
---     Requests are never deleted, and with "Void instead of delete" issued
---     documents keep their numbers: they are voided, never deleted (drafts
---     still are).
+--     one stays open; anyone else's copy keeps the stored link, so an older
+--     copy sent with a payment neither undoes it nor is refused). Payments,
+--     which change an invoice's balance and status, go through as before.
+--     Only the owner changes the rules. Requests are never deleted, and with
+--     "Void instead of delete" issued documents keep their numbers: they are
+--     voided, never deleted (drafts still are).
 --   * Cheque confirmation (Settings → Approvals → Cheques, also off until the
 --     owner turns it on). With it on, a cheque the company writes (and, if
 --     the owner chooses, a security cheque it hands over or a cheque it
@@ -192,12 +193,16 @@ as $$
 $$;
 
 -- Whether the books' settings on the company record differ: the lock date
--- and the rest of the accounting settings, the payment details, the
+-- and the rest of the accounting settings, where customers pay (the payment
+-- details, the bank account they are made from and the WAMD number printed
+-- with them, kuwait.wamdPhone, empty and none alike), the email templates
+-- (the wording documents are sent with, payment link included), the
 -- document defaults (numbering on issue included), taxes, opening balances,
 -- vouchers, items, cheque printing and the numbering rules. Counters (a
 -- rule's next and period) move with whatever is numbered, and employees'
 -- numbering is People's, so they stay open; so does a rule added or
--- removed. Kept the same as companyBooksChanged in src/cloud/roles.ts.
+-- removed, and the rest of the Kuwaiti registration details. Kept the same
+-- as companyBooksChanged in src/cloud/roles.ts.
 create or replace function almailbooks.company_books_changed(p_old jsonb, p_new jsonb)
 returns boolean
 language sql
@@ -207,10 +212,13 @@ as $$
   select exists (
     select 1
     from unnest(array[
-      'accounting', 'payment', 'defaults', 'taxesEnabled', 'openingBalances', 'vouchers',
-      'items', 'chequePrinting'
+      'accounting', 'payment', 'bankAccount', 'emailTemplates', 'defaults', 'taxesEnabled',
+      'openingBalances', 'vouchers', 'items', 'chequePrinting'
     ]) as k(key)
     where not almailbooks.json_same(p_old -> k.key, p_new -> k.key)
+  ) or not almailbooks.json_same(
+    nullif(p_old #> '{kuwait,wamdPhone}', '""'::jsonb),
+    nullif(p_new #> '{kuwait,wamdPhone}', '""'::jsonb)
   ) or exists (
     select 1
     from jsonb_each(
@@ -906,8 +914,9 @@ $$;
 
 -- The payment link of an issued document the rules cover: printed on it and
 -- in its QR code, it is where the customer pays. Once there is one, only an
--- approver changes or removes it; adding one where there was none stays
--- open (links are often made after the invoice is issued). Kept the same as
+-- approver changes or removes it (records_guard keeps the stored one for
+-- anyone else); adding one where there was none stays open (links are often
+-- made after the invoice is issued). Kept the same as
 -- paymentLinkNeedsApprover in src/cloud/roles.ts.
 create or replace function almailbooks.payment_link_changed(p_old jsonb, p_new jsonb)
 returns boolean
@@ -1234,9 +1243,14 @@ begin
       raise exception 'almail:approval_required This change to an issued document needs approval. Send it for approval instead.'
         using errcode = '42501';
     end if;
+    -- Its payment link, once it has one, is changed or removed by approvers
+    -- only. Documents travel whole, so anyone else's copy keeps the stored
+    -- link instead of being refused: a device that had not yet received the
+    -- link (or its change) and records a payment on the invoice must neither
+    -- undo it nor lose the payment. The app refuses a change made on purpose
+    -- before it is sent (paymentLinkNeedsApprover).
     if almailbooks.payment_link_changed(old.data, new.data) then
-      raise exception 'almail:permission Only an approver changes or removes the payment link of an issued document.'
-        using errcode = '42501';
+      new.data := almailbooks.kept_key(new.data, old.data, 'paymentLink');
     end if;
     return new;
   end if;

@@ -335,13 +335,27 @@ describe('with the rules on: issued invoices', () => {
       await push(user, c, [doc(invoice(c, id))]);
       // Adding one where there was none stays open.
       await push(user, c, [linked(id, 'https://pay.example.com/a')]);
+      // Anyone else's copy that changes or removes it keeps the stored one:
+      // documents travel whole, so it is most often a copy from before the
+      // link was added, sent with a payment.
       for (const url of ['https://pay.example.com/b', null]) {
-        await expect(push(user, c, [linked(id, url)])).rejects.toThrow(
-          /almail:permission Only an approver changes or removes the payment link/,
-        );
+        await push(user, c, [
+          doc(
+            invoice(c, id, {
+              paymentLink: url === null ? null : link(url),
+              privateNotes: `Sent with ${String(url)}`,
+            }),
+          ),
+        ]);
+        expect(await stored(c, 'documents', id)).toMatchObject({
+          paymentLink: { url: 'https://pay.example.com/a' },
+          privateNotes: `Sent with ${String(url)}`,
+        });
       }
+      await push(user, c, [doc(invoice(c, id, { privateNotes: 'No link at all' }))]);
       expect(await stored(c, 'documents', id)).toMatchObject({
         paymentLink: { url: 'https://pay.example.com/a' },
+        privateNotes: 'No link at all',
       });
       // The same link with a new expiry date, and a payment, still go through.
       await push(user, c, [
@@ -380,6 +394,55 @@ describe('with the rules on: issued invoices', () => {
     });
     await push(t.staff, c, [doc(quote)]);
     await push(t.staff, c, [doc({ ...quote, paymentLink: null })]);
+  });
+
+  it('takes a payment sent with a copy of the invoice from before its link, keeping the link', async () => {
+    const t = await team();
+    const c = t.company;
+    await rulesOn(t);
+    await push(t.owner, c, [doc(invoice(c, 'stale-1'))]);
+    // Staff 1 adds a link where there was none.
+    const linkA = { provider: 'tap', url: 'https://pay.example.com/a', expiresAt: null };
+    await push(t.staff, c, [doc(invoice(c, 'stale-1', { paymentLink: linkA }))]);
+    // Staff 2 (here the admin, no approver), on a device that hasn't pulled
+    // since, records the invoice paid: the payment and its copy of the invoice.
+    const payment = {
+      id: 'pay-stale-1',
+      companyId: c,
+      direction: 'in',
+      clientId: 'cl-1',
+      date: '2026-10-05',
+      amount: 300,
+      currency: 'KWD',
+      method: 'cash',
+      reference: '',
+      allocations: [{ documentId: 'stale-1', amount: 300 }],
+    };
+    await push(t.admin, c, [
+      { tbl: 'payments', id: payment.id, data: payment },
+      doc(
+        invoice(c, 'stale-1', {
+          status: 'paid',
+          paidAt: '2026-10-05T08:00:00.000Z',
+          totals: { subtotal: 300, discount: 0, taxTotal: 0, total: 300, paid: 300, balance: 0 },
+        }),
+      ),
+    ]);
+    expect(await stored(c, 'payments', payment.id)).toMatchObject({ amount: 300 });
+    expect(await stored(c, 'documents', 'stale-1')).toMatchObject({
+      status: 'paid',
+      paymentLink: linkA,
+    });
+    // The same once an approver changed it, from a copy with the old link.
+    const linkB = { ...linkA, url: 'https://pay.example.com/b' };
+    await push(t.owner, c, [doc(invoice(c, 'stale-1', { status: 'paid', paymentLink: linkB }))]);
+    await push(t.staff, c, [
+      doc(invoice(c, 'stale-1', { status: 'paid', paymentLink: linkA, privateNotes: 'Called' })),
+    ]);
+    expect(await stored(c, 'documents', 'stale-1')).toMatchObject({
+      paymentLink: linkB,
+      privateNotes: 'Called',
+    });
   });
 
   it('lets payments move an invoice’s balance and status, and leaves drafts and new invoices free', async () => {
@@ -895,27 +958,32 @@ describe('the payment link of an issued document (payment_link_changed)', () => 
     const link = (url: string | null) => ({
       paymentLink: url ? { provider: 'tap', url, expiresAt: null } : null,
     });
+    // Whether each took it, and the link each then has.
+    const urlOf = (data: unknown) =>
+      String((data as { paymentLink?: { url?: string } | null } | undefined)?.paymentLink?.url);
     const answer = async (changes: Change[]) => {
       const inSql = await push(t.staff, c, changes).then(
-        () => 'ok',
+        async () => `ok ${urlOf(await stored(c, 'documents', 'fake-link'))}`,
         (e: Error) => (/almail:permission/.test(e.message) ? 'permission' : 'refused'),
       );
       const inFake = await fake
         .client(t.staff)
         .pushRecords(c, changes as never)
         .then(
-          () => 'ok',
+          async () =>
+            `ok ${urlOf((await fake.client(t.staff).getRecord(c, 'documents', 'fake-link'))?.data)}`,
           (e: { code?: string }) => (e.code === 'permission' ? 'permission' : 'refused'),
         );
-      return `${inFake} ${inSql}`;
+      return `${inFake} | ${inSql}`;
     };
+    const a = 'https://pay.example.com/a';
     const steps: [string | null, string][] = [
-      ['https://pay.example.com/a', 'ok ok'],
-      ['https://pay.example.com/b', 'permission permission'],
-      [null, 'permission permission'],
-      ['https://pay.example.com/a', 'ok ok'],
+      [a, `ok ${a} | ok ${a}`],
+      ['https://pay.example.com/b', `ok ${a} | ok ${a}`],
+      [null, `ok ${a} | ok ${a}`],
+      [a, `ok ${a} | ok ${a}`],
     ];
-    expect(await answer([doc(invoice(c, 'fake-link'))])).toBe('ok ok');
+    expect(await answer([doc(invoice(c, 'fake-link'))])).toBe('ok undefined | ok undefined');
     for (const [url, expected] of steps) {
       expect(await answer([doc(invoice(c, 'fake-link', link(url)))]), String(url)).toBe(expected);
     }
