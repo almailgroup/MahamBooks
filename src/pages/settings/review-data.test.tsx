@@ -376,4 +376,43 @@ describe('Restore', () => {
     await waitFor(async () => expect(await db.syncState.count()).toBe(0));
     expect(await db.companies.get(company.id)).toBeDefined();
   });
+
+  it('says that numbers carry on from the highest given, and keeps them', async () => {
+    const company = await setupCompany({ name: 'Review Trading' });
+    const { exportBackup } = await import('@/db/backup');
+    const file = new File([JSON.stringify(await exportBackup(company.id))], 'backup.json', {
+      type: 'application/json',
+    });
+    // Invoices, bills and letters numbered after the backup was made.
+    const here = (await db.companies.get(company.id))!;
+    const after = (rule: Company['numbering']['invoice']) => ({ ...rule, next: rule.next + 3 });
+    await db.companies.put({
+      ...here,
+      numbering: {
+        ...here.numbering,
+        invoice: after(here.numbering.invoice),
+        bill: after(here.numbering.bill),
+        letter: after(here.numbering.letter!),
+      },
+    });
+    const user = userEvent.setup();
+    renderPage(<DataSettings />);
+    await screen.findByRole('button', { name: 'Choose backup file…' });
+    await user.upload(document.querySelector<HTMLInputElement>('input[type=file]')!, file);
+    const dialog = await screen.findByRole('dialog', { name: 'Restore backup' });
+    await user.click(within(dialog).getByRole('button', { name: 'Replace everything' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Replace all data?' });
+    expect(confirm).toHaveTextContent(
+      'Everything stored in this browser is deleted and replaced by the backup.',
+    );
+    expect(confirm).toHaveTextContent(
+      'Numbers are the exception: invoices, bills, letters and everything else numbered carry on from the highest number given, on this device or in the backup, so none is used twice.',
+    );
+    await user.click(within(confirm).getByRole('button', { name: 'Replace everything' }));
+    expect(await screen.findByText('Backup restored')).toBeVisible();
+    const restored = (await db.companies.get(company.id))!.numbering;
+    expect(restored.invoice.next).toBe(here.numbering.invoice.next + 3);
+    expect(restored.bill.next).toBe(here.numbering.bill.next + 3);
+    expect(restored.letter!.next).toBe(here.numbering.letter!.next + 3);
+  });
 });

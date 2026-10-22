@@ -238,6 +238,12 @@ export default function DataSettings() {
         description: (
           <div className="space-y-2">
             <p>{t('Everything stored in this browser is deleted and replaced by the backup.')}</p>
+            {/* keepCounters (src/db/backup.ts): numbers are never given again (D12). */}
+            <p>
+              {t(
+                'Numbers are the exception: invoices, bills, letters and everything else numbered carry on from the highest number given, on this device or in the backup, so none is used twice.',
+              )}
+            </p>
             {impact.inCloud.length ? (
               <p>
                 {tp(

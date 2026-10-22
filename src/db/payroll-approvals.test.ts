@@ -29,7 +29,7 @@ import {
 } from './payroll-approvals';
 import { CloudPermissionError } from '@/cloud/outbox';
 import type { MemberRole } from '@/cloud/roles';
-import type { ApprovalRules, Company, PayRun } from './types';
+import type { ApprovalRequest, ApprovalRules, Company, PayRun } from './types';
 
 /**
  * Salary approval by the Super Admin (#10): with the owner's switch on, a
@@ -408,6 +408,50 @@ describe('salary approval switched on', () => {
     await signedInAs(company, 'owner');
     expect(await expirePending(company.id, '2026-12-31')).toBe(1);
     expect(await db.approvals.get(request.id)).toMatchObject({
+      status: 'cancelled',
+      expired: true,
+    });
+  });
+
+  it('an approver the owner gave no access to People expires the other old requests, not the pay run’s', async () => {
+    const { company, run } = await seed({ ...RULES, documentTypes: ['invoice'] });
+    await signedInAs(company, 'accountant');
+    const payroll = await requestPayrollApproval(run.id);
+    // A request of Books waiting too, as pulled from the cloud.
+    const books: ApprovalRequest = {
+      id: 'made-up-books-request',
+      companyId: company.id,
+      kind: 'invoice_void',
+      subjectTbl: 'documents',
+      subjectId: 'made-up-invoice',
+      subjectNumber: 'INV-0001',
+      before: { status: 'sent' },
+      after: { status: 'void', voidReason: 'Made-up' },
+      reason: 'Made-up',
+      status: 'pending',
+      requestedBy: 'user-accountant',
+      requestedAt: '2026-10-01T08:00:00.000Z',
+      decidedBy: null,
+      decidedAt: null,
+      decisionNote: '',
+      createdAt: '2026-10-01T08:00:00.000Z',
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    };
+    await db.approvals.put(books);
+    await db.outbox.clear();
+    await signedInAs(company, 'admin', { approver: true, user: 'user-shut' });
+    await db.syncState.update(company.id, { permissions: { apps: { people: 'none' } } });
+    // The cloud would refuse them the pay run's (no access to People): it is
+    // left to those who decide it, and the other expires all the same.
+    expect(await expirePending(company.id, '2026-12-31')).toBe(1);
+    expect(await db.approvals.get(books.id)).toMatchObject({ status: 'cancelled', expired: true });
+    expect(await db.approvals.get(payroll.id)).toMatchObject({ status: 'pending' });
+    expect(await db.outbox.where('[table+id]').equals(['approvals', books.id]).count()).toBe(1);
+    expect(await db.outbox.where('[table+id]').equals(['approvals', payroll.id]).count()).toBe(0);
+    // An approver who sees payroll expires it.
+    await signedInAs(company, 'owner');
+    expect(await expirePending(company.id, '2026-12-31')).toBe(1);
+    expect(await db.approvals.get(payroll.id)).toMatchObject({
       status: 'cancelled',
       expired: true,
     });

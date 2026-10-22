@@ -669,7 +669,10 @@ export async function applyApproval(id: ID): Promise<void> {
 /**
  * Cancels requests that waited longer than the company's rules allow
  * (expireDays). Done on approvers' devices, as the cloud lets only them
- * decide. Returns how many were cancelled.
+ * decide, and only for the requests the person is shown (requestShownTo): a
+ * pay run's is left to approvers who see payroll, as the cloud refuses its
+ * cancelling by a member the owner gave no access to People (#10, D16), and
+ * the others expire all the same. Returns how many were cancelled.
  */
 export async function expirePending(companyId: ID, on = today()): Promise<number> {
   if (Dexie.currentTransaction) return 0;
@@ -683,7 +686,9 @@ export async function expirePending(companyId: ID, on = today()): Promise<number
     .where('[companyId+status]')
     .equals([companyId, 'pending'])
     .toArray();
-  const old = waiting.filter((r) => addDaysISO(r.requestedAt.slice(0, 10), days) < on);
+  const old = waiting.filter(
+    (r) => addDaysISO(r.requestedAt.slice(0, 10), days) < on && requestShownTo(r, link),
+  );
   if (old.length === 0) return 0;
   await db.transaction('rw', REQUEST_TABLES(), async () => {
     for (const request of old) {

@@ -278,6 +278,49 @@ describe('backup', () => {
     expect((await db.companies.get(a.id))!.numbering.letter).toMatchObject(at(4));
   });
 
+  it('keeps the higher counter of every numbering rule of every company on Replace', async () => {
+    const a = await setupCompany({ name: 'A' });
+    const b = await setupCompany({ name: 'B' });
+    const bump = async (id: string, counters: Record<string, number>) => {
+      const company = (await db.companies.get(id))!;
+      const numbering = { ...company.numbering };
+      for (const [key, next] of Object.entries(counters)) {
+        const entity = key as keyof typeof numbering;
+        numbering[entity] = { ...numbering[entity]!, next };
+      }
+      await db.companies.put({ ...company, numbering });
+    };
+    await bump(a.id, { invoice: 3, bill: 5, letter: 2, quote: 9 });
+    await bump(b.id, { invoice: 10, payment: 4 });
+    // Every company in one backup.
+    const backup = await exportBackup();
+    const pattern = (await db.companies.get(a.id))!.numbering.invoice.pattern;
+    // Given after the backup was made; A's quotes set back by hand.
+    await bump(a.id, { invoice: 4, bill: 7, letter: 3, quote: 2 });
+    await bump(b.id, { invoice: 12, payment: 6 });
+    const here = (await db.companies.get(a.id))!;
+    await db.companies.put({
+      ...here,
+      numbering: {
+        ...here.numbering,
+        invoice: { ...here.numbering.invoice, pattern: 'NEW-{counter}' },
+      },
+    });
+    await importBackup(backup, 'replace');
+    const restoredA = (await db.companies.get(a.id))!.numbering;
+    const restoredB = (await db.companies.get(b.id))!.numbering;
+    // Invoices, bills and letters carry on from the highest given here…
+    expect(restoredA.invoice.next).toBe(4);
+    expect(restoredA.bill.next).toBe(7);
+    expect(restoredA.letter!.next).toBe(3);
+    // …or in the backup, when that is higher.
+    expect(restoredA.quote.next).toBe(9);
+    expect(restoredB.invoice.next).toBe(12);
+    expect(restoredB.payment.next).toBe(6);
+    // The rest is the backup's.
+    expect(restoredA.invoice.pattern).toBe(pattern);
+  });
+
   it('merges without deleting existing data', async () => {
     const a = await setupCompany({ name: 'A' });
     const backup = await exportBackup(a.id);

@@ -25,6 +25,7 @@ Nothing works differently until a switch is on. A few small things look differen
 - Every pay run has **Register by department (الكشف حسب القسم)**. It is a printable register of the pay run by department and position, in English and Arabic, with lines for signatures. It adds up to the pay run's totals. Nothing in the pay changes.
 - **Renew (تجديد)** on a paper offers an optional **New copy (النسخة الجديدة)**: a scan of the renewed paper. The personnel file has **This file is the… (هذا الملف هو…)** to mark a scan as the copy of a paper. Add documents can mark a batch the same way (**These files are each employee’s**, هذه الملفات لكل موظف هي). Nothing asks for a new copy until its switch is on.
 - Restoring a backup with **Replace everything (استبدال الكل)** in Settings → Backup & data keeps the numbering counters of the companies already on the device when they are higher. A number given after the backup was made is never given again.
+- Its confirmation, **Replace all data? (استبدال جميع البيانات؟)**, now says so: invoices, bills, letters and everything else numbered carry on from the highest number given, on this device or in the backup, so no number is used twice.
 - Once the script has run:
   - Settings → Approvals shows a **Pay runs (مسيرات الرواتب)** section. Its switch is off.
   - Settings → Email alerts lets accountants get the morning email too. Each person can choose the kinds of paper they are told about. All are ticked at first.
