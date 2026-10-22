@@ -95,8 +95,9 @@ later scripts are safe to run again (they create what is missing and replace
 their own rules with the same ones), but **don't run the first script again**:
 once the app keeps cheque layouts, vehicles, approval requests or HR letters,
 it stops with an error about `records_tbl_check` and changes nothing. If it
-was run again and finished without an error, run the later scripts again
-after it, in order.
+was run again and finished without an error, or any script was run again
+after a later one, run the health check: it names the scripts to run again,
+in order.
 
 **Optional, recommended: the daily clean-up.** Deleted records leave a small
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
@@ -106,10 +107,9 @@ on; without email alerts, open **Database → Extensions**, search for
 12). The fourth script schedules it too, but once there are manpower costings
 it can't run again.
 
-To check: **Table Editor** now lists `profiles`, `companies`,
-`company_members`, `company_invites`, `records`, `deleted_records` and
-`sync_signals`, each marked **RLS enabled**; **Storage** has a private bucket
-called `company-files`.
+To check, run the health check (see "Health check" below): it says, step by
+step, whether each script has run, each as its latest version, and whether
+everything works, and which scripts to run, in which order, if not.
 
 Don't add policies of your own to these tables or to Storage (for example a
 template like "Give users access to all buckets"): policies add up, so a
@@ -550,6 +550,101 @@ manpower costing** (استخدام تسعير العمالة) on that page.
 - Staff and viewers never see costings, their rate card or their activity;
   the cloud refuses them as it refuses payroll. A member the owner gave view
   only or no access to Maham People doesn't change them.
+
+## Scripts by phase
+
+The database scripts are in
+[`supabase/migrations/`](../supabase/migrations/). Each is run once, in this
+order, in a new query of the SQL editor (paste the whole file, **Run**).
+
+| #   | Script                                     | Phase                   | When                                                                            |
+| --- | ------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------- |
+| 1   | `20261004000000_almailbooks_cloud.sql`     | First setup             | Run once at set-up (done). **Never run it again.**                              |
+| 2   | `20261006000000_sync_fixes.sql`            | Set-up                  | Run once at set-up (done).                                                      |
+| 3   | `20261007000000_email_alerts.sql`          | Set-up: email alerts    | Run once at set-up (done), with [`email-alerts.md`](email-alerts.md). Optional. |
+| 4   | `20261102000000_tables_v16.sql`            | Phases 0-2              | Once, after 1 to 3.                                                             |
+| 5   | `20261116000000_super_admin_approvals.sql` | Phase 3 (first of two)  | Once, after 4.                                                                  |
+| 6   | `20261123000000_change_feed.sql`           | Phase 3 (second of two) | Once, after 5.                                                                  |
+| 7   | `20261130000000_people_alerts.sql`         | Phase 4                 | Once, after 6.                                                                  |
+| 8   | `20261207000000_staffing_costings.sql`     | Phase 5                 | Once, after 7.                                                                  |
+
+Scripts 2 to 8 are safe to run again, but a script run again after a later
+one puts back its own, older version of what the later one changed. The
+health check finds that and says which scripts to run again, in order. As a
+rule: after script 3 run 7 and 8 again; after 4, run 8 again; after 5 or 6,
+run 7 and 8 again; after 7, run 8 again.
+
+## Health check
+
+[`supabase/health-check.sql`](../supabase/health-check.sql) checks the
+database: that every script has run, each as its latest version, and that
+what they set up works (tables, functions, triggers, row-level security,
+grants, Storage, the schedules, email alerts, and that staff and viewers
+can't read payroll and people data). It **changes nothing** and never shows
+names, email addresses, phone numbers, Civil IDs, salaries, IBANs, keys or
+what any record says: only counts, yes or no, versions, names of database
+objects and statuses. Run it after running a script, or any time.
+
+1. **SQL Editor** → **New query**.
+2. Paste the whole of
+   [`supabase/health-check.sql`](../supabase/health-check.sql) and click
+   **Run**.
+3. You get one table: **step** (the script, 1 to 8 as in the table above, or
+   9 Schedules, 10 Email alerts, 11 Data and privacy), **check**, **status**
+   and **detail**. The **last row** sums it up: "All good", or how many
+   FAIL, MISSING and WARN there are, with the scripts to run, in order.
+
+What each status means:
+
+- **OK**: as it should be.
+- **MISSING**: that step's script has not run yet. Run the scripts the
+  detail names, in that order (the last row lists all of them).
+- **WARN**: it works, but something optional is off or worth a look. The
+  detail says what to do. Nothing in a WARN row stops the app.
+- **FAIL**: something is broken, or an older version is in place. The
+  detail says what to do.
+
+What to do:
+
+- **"This script has not run yet"** (MISSING): run it, then the ones the
+  detail names after it, in order.
+- **"An older version"**, **"not taken"**, **"not answered"** or **"not
+  private"** (FAIL): an earlier script was run again after a later one. Run
+  again the scripts the detail names, in that order; the last row lists them
+  all, for example "Run 20261130000000_people_alerts.sql again, then
+  20261207000000_staffing_costings.sql again (in this order)". Then run the
+  health check again. The check never asks for the first script: if a row
+  says something "can't be fixed by running a script", ask the developer.
+- **"Email alerts were never set up"** (WARN): they are optional. To set
+  them up, follow [`email-alerts.md`](email-alerts.md), then run the scripts
+  the detail names (the email alerts script, then the Phase 4 and Phase 5
+  scripts again).
+- **"pg_cron is not on"** (WARN): nothing runs on a schedule (morning
+  emails, emails of team changes, the daily clean-ups). Open **Database →
+  Extensions**, enable **pg_cron** and **pg_net**, then run again the
+  scripts the detail names.
+- **"The email-alerts function hasn't run yet"** (WARN): publish it
+  ([`email-alerts.md`](email-alerts.md), steps 4 and 5), then in the app open
+  **Settings → Email alerts** and press **Send it now**.
+- **A job "is switched off"** (WARN): turn it on in **Integrations → Cron →
+  Jobs**. **"It is not scheduled"** (FAIL): run again the script the detail
+  names. **"Its last run … ended "failed""** (FAIL): open the job there to
+  see why, or ask the developer.
+- **Emails that had a problem** or **calls to the email-alerts function that
+  failed** (WARN): the people concerned see the message in **Settings →
+  Email alerts**; see "If no email arrives" in
+  [`email-alerts.md`](email-alerts.md).
+- **"Rules added by hand to the app's tables"** (FAIL) or **"Other rules on
+  Storage"** (WARN): someone added a policy in the dashboard. Policies add
+  up, so one can open what the scripts keep closed: unless the developer
+  added it, delete it in **Database → Policies** (or **Storage →
+  Policies**).
+- **The bucket company-files is "public"** (FAIL): in **Storage**, edit the
+  `company-files` bucket and turn **Public bucket** off.
+- **"Deletion markers"** or **"Old changes"** older than they should be
+  (WARN): the daily clean-up isn't running; see the pg_cron rows.
+- **A company with no owner**, **records of kinds the app doesn't sync**,
+  or **a role that bypasses row-level security** (FAIL): ask the developer.
 
 ## Problems
 

@@ -24,7 +24,9 @@ run once, in this order; a release that needs more from the server adds a
 file, and only that one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
 step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
-and [`docs/email-alerts.md`](../docs/email-alerts.md).
+and [`docs/email-alerts.md`](../docs/email-alerts.md). `health-check.sql`
+tells whether every file has run, each as its latest version, and whether
+everything works (see "Health check" below).
 
 The app stays local-first: every screen reads IndexedDB on the device, and the
 cloud keeps a copy of each company that is synced in the background. A company
@@ -265,6 +267,99 @@ app, or anywhere public.
 roles (`src/cloud/sql-harness.ts`), then checks the matrix above as real
 signed-in users, with row-level security on. Run it with
 `npx vitest run src/cloud/sql.test.ts`.
+
+## Scripts by phase
+
+| #   | File                                                  | Phase       | Notes                                                                   |
+| --- | ----------------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
+| 1   | `migrations/20261004000000_almailbooks_cloud.sql`     | First setup | Run once at set-up. Never again (see "Records of database version 16"). |
+| 2   | `migrations/20261006000000_sync_fixes.sql`            | Set-up      | Run once at set-up.                                                     |
+| 3   | `migrations/20261007000000_email_alerts.sql`          | Set-up      | Run once at set-up; optional (email alerts).                            |
+| 4   | `migrations/20261102000000_tables_v16.sql`            | Phases 0-2  |                                                                         |
+| 5   | `migrations/20261116000000_super_admin_approvals.sql` | Phase 3     | Needs 4.                                                                |
+| 6   | `migrations/20261123000000_change_feed.sql`           | Phase 3     | Needs 5.                                                                |
+| 7   | `migrations/20261130000000_people_alerts.sql`         | Phase 4     | Needs 6.                                                                |
+| 8   | `migrations/20261207000000_staffing_costings.sql`     | Phase 5     | Needs 7.                                                                |
+
+A file run again puts back its own version of every function, rule and
+constraint it defines. What a later file replaced must then be put back by
+running again the latest file that defines it, and so on: after 3, run 7
+and 8; after 4, 8; after 5 or 6, 7 and 8; after 7, 8 (after the first file,
+which only succeeds before there are records of version 16: 2, 5, 7 and 8).
+`maham_closure` in `health-check.sql` is this table.
+
+## Health check
+
+`health-check.sql` is pasted into the SQL editor whole; the owner's guide is
+"Health check" in [`docs/supabase-setup.md`](../docs/supabase-setup.md). It
+ends with one result set (the SQL editor shows only the last statement's),
+one row per check in the order of the files: `step`, `check`, `status` and
+`detail`, and a summary row last.
+
+- **Read-only.** It creates five functions in `pg_temp` (gone with the
+  connection), and the check's first statement sets
+  `transaction_read_only`, so nothing after it can write: not the dynamic
+  calls, not a function they reach. It reads the catalog (`pg_proc`,
+  `pg_policy`, `pg_trigger`, `pg_constraint`, `pg_class`, the
+  `has_*_privilege` functions), counts rows, calls
+  `public.server_features()` and `almailbooks.record_is_private` (with no
+  record, so it reads nothing), and reads `cron.job`,
+  `cron.job_run_details` (status only) and `net._http_response` (status
+  codes only). It never calls anything that writes, sends or schedules.
+- **Private.** It shows counts, yes or no, versions, object names and
+  statuses only: no record content, names, emails, salaries, the
+  schedule's secret or the function's address. Kinds of record it names are
+  the `tbl` values; error messages are reduced to their SQL state.
+- **Which files ran.** Each file has objects no other file makes or
+  removes (`push_records`, `patch_company`, `email_alerts_config`,
+  `can_read_v16_file`, `set_member_permissions`, `change_events`,
+  `people_shut`, the rule "Manpower costings: kept from staff and
+  viewers"). A file that hasn't run is one MISSING row (one WARN row for the
+  email alerts, which are optional), with that file and every later one that
+  hasn't run, plus the files that put back what it replaces.
+- **Latest versions.** Every function, trigger, rule, table, column and
+  constraint of each file, and its grants (what the app calls: signed-in
+  members only; what the rules call: signed-in members; jobs and triggers:
+  not the members; anonymous visitors: nothing). A function a later file
+  replaces is checked at each later version by text only that version (and
+  the ones after it) has; `server_features()` by what it answers, against
+  the names in `src/cloud/features.ts`; `records_tbl_check` against every
+  kind the app syncs; `record_is_private` by asking it about each payroll
+  and people kind. Something wrong after its file ran is a FAIL that names
+  the latest file defining it that has run, and the files that put back what
+  that one replaces (the table above). What only the first file makes can't
+  be fixed by a script: the row says to ask the developer.
+- **Schedules and email alerts.** With pg_cron, each job the files schedule
+  (`almailbooks-purge-deleted-records`, `maham-books-email-alerts`,
+  `maham-change-notifications`, `maham-change-feed-purge`): there, running
+  the files' command, on, and how its last run ended. Without pg_cron, one
+  WARN with what stops. With the email alerts: the settings row and its
+  secret (length only), whether the function has registered its address,
+  recent errors of each kind of email (counts), pay-run approval emails
+  given up, and recent pg_net answers. The function's own secrets (Resend
+  key, sender) are Edge Function secrets the database can't see; no file
+  uses Vault.
+- **Data and privacy.** Companies, one owner each, members by role,
+  approvers, records by kind (none of a kind the app doesn't sync),
+  approval requests waiting, deletion markers and changes past their
+  clean-up, and that staff and viewers can't read payroll and people data:
+  row-level security on, the restrictive rules there, `record_is_private`
+  knows every private kind, no rule added by hand that opens records, and
+  the API roles neither bypass row-level security nor own the tables.
+  Nobody is impersonated.
+
+`src/cloud/health-check-sql.test.ts` runs it on PGlite: OK after every file
+(WARN only for pg_cron and the unpublished function, which PGlite can't
+have; "All good" with stand-ins for both), MISSING for exactly the later
+files after each prefix, FAIL with the right files after each earlier file is
+run again (and OK once they have run), nothing changed in the catalog,
+grants, schedules or any table after running it twice, and none of a set of
+seeded secrets, emails and salaries in its output. It also checks its lists
+against the files: every function with the files that define it, each
+marker present in its version and the later ones only, every trigger, rule
+and table, the kinds, the private kinds and the features. A new file adds
+its objects to the lists in `health-check.sql` (and a line to
+`maham_closure`), or that test fails.
 
 ## Known limits
 
