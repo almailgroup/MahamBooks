@@ -540,9 +540,13 @@ manpower costing** (استخدام تسعير العمالة) on that page.
   margin. The quote and the costing point to each other.
 - **Cost sheet** (كشف التكلفة) downloads the internal sheet of a costing. It
   is never attached to the quote or emailed.
-- A post that needs more than 2 hours of overtime a day is flagged: article
-  66 of Labour Law 6/2010 allows that only with an exemption. Confirm with
-  counsel before quoting it.
+- Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days
+  a week and 180 hours a year unless an exemption applies. A post past any
+  of these is flagged: more than 2 hours of overtime a day, or overtime on
+  more than 3 days a week or for more than 180 hours a year. Staying within
+  2 hours a day is not enough on its own: a 10-hour post worked 26 days a
+  month is past the last two. Confirm with counsel before quoting such a
+  post, or add people to it.
 - Staff and viewers never see costings, their rate card or their activity;
   the cloud refuses them as it refuses payroll. A member the owner gave view
   only or no access to Maham People doesn't change them.

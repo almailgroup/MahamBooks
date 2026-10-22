@@ -80,6 +80,17 @@ describe('the home’s round tiles', () => {
     expect(tools('sales')).toContain('/invoices');
     expect(tools('books')).toContain('/bills');
     expect(tools('inventory')).toContain('/inventory');
+    // Each tool opens with its own app's sidebar (launcher.tsx remembers it).
+    for (const group of groups) {
+      expect(group.tiles.every((tile) => tile.app === group.app.id)).toBe(true);
+    }
+    // In the classic layout a tool tile names no app: it never changes the
+    // app remembered, as before the split layout.
+    expect(
+      toolGroups(owner)
+        .flatMap((group) => group.tiles)
+        .filter((tile) => tile.app !== undefined),
+    ).toEqual([]);
     // A tile each, filtered once by where it goes.
     expect(appTiles(split, 'ar', SPLIT_APPS).map((tile) => tile.label)).toEqual([
       'مهام سيلز',

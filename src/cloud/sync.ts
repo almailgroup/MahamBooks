@@ -1047,8 +1047,10 @@ async function confirm(
   result.pushed += batch.length;
   for (const item of batch) noteDecision(companyId, item);
   if (removedFiles.length) await removeFiles(companyId, removedFiles, ctx);
+  // What makes a conflict's note private, worked out once for them all.
+  const privateOwners = conflicts.length ? await privateOwnerIds(companyId) : new Set<string>();
   for (const item of conflicts) {
-    if (await logConflict(companyId, item.change)) result.conflicts += 1;
+    if (await logConflict(companyId, item.change, privateOwners)) result.conflicts += 1;
   }
   for (const item of batch) {
     if (
@@ -1099,9 +1101,33 @@ const QUIET = new Set<string>([
   'approvals',
 ]);
 
-async function logConflict(companyId: string, change: PushChange): Promise<boolean> {
+/**
+ * Whether the record a conflict is about is payroll or people data (a
+ * manpower costing, a letter, an employee's or a confidential paper, the
+ * renewal or a file of one; `privateOwners` from privateOwnerIds): its note
+ * names it, so it is logged confidential, which every build since Phase 0
+ * and every server rule keep from staff and viewers, even builds that don't
+ * know its entity or drop the _private mark.
+ */
+function conflictIsPrivate(
+  change: PushChange,
+  data: Record<string, unknown>,
+  privateOwners: Set<string>,
+): boolean {
+  // As cloudCopy: any owner in the set makes the record private.
+  const lookup = (_table: string, id: string) =>
+    privateOwners.has(id) ? { employeeId: id } : null;
+  return isPrivateRecord(change.tbl, data, lookup);
+}
+
+async function logConflict(
+  companyId: string,
+  change: PushChange,
+  privateOwners: Set<string>,
+): Promise<boolean> {
   if (QUIET.has(change.tbl)) return false;
   const data = (change.data ?? {}) as Record<string, unknown>;
+  const confidential = conflictIsPrivate(change, data, privateOwners);
   const label =
     (typeof data.number === 'string' && data.number) ||
     (typeof data.name === 'string' && data.name) ||
@@ -1130,7 +1156,10 @@ async function logConflict(companyId: string, change: PushChange): Promise<boole
             ),
             vars: { record: label },
           },
-      { documentId: change.tbl === 'documents' ? change.id : null },
+      {
+        documentId: change.tbl === 'documents' ? change.id : null,
+        ...(confidential ? { confidential: true } : {}),
+      },
     );
     return true;
   } catch {

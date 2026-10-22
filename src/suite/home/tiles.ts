@@ -30,7 +30,12 @@ export interface Tile {
   href?: string;
   /** Marks a tile that creates something. */
   plus?: boolean;
-  /** The app an app tile opens, or whose tool a tool tile is (its sidebar opens with it). */
+  /**
+   * The app an app tile opens. On a tool tile, only in the split layout: the
+   * app whose tool it is, so Sales' and Inventory's tools open with their own
+   * sidebars on pages Books lists too. Classic tool tiles have none and keep
+   * the sidebar of the app open, as before.
+   */
   app?: AppId;
   /** What the filter matches, normalised. */
   terms: string;
@@ -69,13 +74,16 @@ export function toolGroups(
   language: Language = currentLanguage(),
   apps: readonly SuiteApp[] = APPS,
 ): ToolGroup[] {
+  // In the classic layout a tool tile never changes the app remembered (CRM's
+  // Customers from Books keeps Books' sidebar, as before the split layout).
+  const split = apps !== APPS;
   return apps
     .filter((app) => canOpen(access[app.id]))
     .map((app) => ({
       app,
       tiles: app.tools.map((tool) => ({
         key: `tool:${app.id}:${tool.to}`,
-        app: app.id,
+        ...(split ? { app: app.id } : {}),
         label: t(tool.label),
         icon: tool.icon,
         tone: app.tone,

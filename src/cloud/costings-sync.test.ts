@@ -235,3 +235,112 @@ describe('costing activity', () => {
     expect(logged.every((a) => a.confidential === true)).toBe(true);
   });
 });
+
+describe('a conflict on payroll or people data', () => {
+  /**
+   * Changed on another device, then here before this device synced: the
+   * note this device logs names the record.
+   */
+  async function conflictOn(
+    companyId: string,
+    tbl: string,
+    id: string,
+    changeHere: () => Promise<unknown>,
+  ) {
+    const theirs = server.record(companyId, tbl, id)!;
+    await server
+      .client(OWNER)
+      .pushRecords(companyId, [{ tbl, id, data: { ...theirs, updatedAt: 'elsewhere' } }]);
+    await changeHere();
+    const result = await syncCompany(companyId, ctx);
+    expect(result.conflicts).toBe(1);
+    const notes = await db.activities
+      .filter((a) => a.action === 'sync_conflict' && a.entityId === id)
+      .toArray();
+    expect(notes).toHaveLength(1);
+    return notes[0];
+  }
+
+  it('is logged confidential for a costing, so builds that don’t know costings keep it from staff', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    const costing = await saveCosting({
+      ...newCosting(company.id, await getCostingSettings(company.id)),
+      name: 'Tower B night guards',
+    });
+    await syncCompany(company.id, ctx);
+
+    const note = await conflictOn(company.id, 'staffingCostings', costing.id, () =>
+      saveCosting({ ...costing, notes: 'Two more posts from January' }),
+    );
+    expect(note).toMatchObject({ entity: 'costing', entityId: costing.id, confidential: true });
+    expect(note.message).toContain('Tower B night guards');
+    await syncCompany(company.id, ctx);
+    // As the cloud keeps it: what a Phase 4 build pulls, without the _private mark.
+    expect(server.record(company.id, 'activities', note.id)).toMatchObject({
+      entity: 'costing',
+      confidential: true,
+    });
+  });
+
+  it('is logged confidential for the renewal of a confidential paper, and not for a customer', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    const now = new Date().toISOString();
+    await db.complianceDocuments.put({
+      id: 'doc-1',
+      companyId: company.id,
+      type: 'commercial_licence',
+      title: 'Guards’ cost sheet for a made-up customer',
+      number: 'CS-0001',
+      issuer: '',
+      issueDate: null,
+      expiryDate: '2027-01-31',
+      renewalCost: 0,
+      reminderDays: null,
+      ownerType: 'company',
+      employeeId: null,
+      ownerName: '',
+      notes: '',
+      archived: false,
+      confidential: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const renewal = {
+      id: 'ren-1',
+      companyId: company.id,
+      documentKey: 'doc:doc-1',
+      documentId: 'doc-1',
+      employeeId: null,
+      type: 'commercial_licence' as const,
+      renewedOn: '2026-10-01',
+      previousExpiry: '2026-01-31',
+      newExpiry: '2027-01-31',
+      fee: 0,
+      expenseId: null,
+      note: '',
+      number: 'CS-0001',
+      createdAt: now,
+    };
+    await db.renewals.put(renewal);
+    await syncCompany(company.id, ctx);
+
+    const note = await conflictOn(company.id, 'renewals', 'ren-1', () =>
+      db.renewals.put({ ...renewal, note: 'Paid at the counter' }),
+    );
+    expect(note.message).toContain('CS-0001');
+    expect(note.confidential).toBe(true);
+
+    // A customer is no one's private data: its note stays as it always was.
+    const client = await saveClient(createClient(company.id, { name: 'Made-up Towers Co.' }));
+    await syncCompany(company.id, ctx);
+    const plain = await conflictOn(company.id, 'clients', client.id, () =>
+      saveClient({ ...client, phone: '+965 0000 0000' }),
+    );
+    expect(plain.entity).toBe('client');
+    expect(plain.confidential).toBeUndefined();
+  });
+});

@@ -330,8 +330,9 @@ function RoundTile({
       ) : (
         <Link
           to={tile.to ?? '/'}
-          // An app, or one of its tools, opens with that app's sidebar,
-          // even on a page the last app shares (src/suite/current-app.ts).
+          // An app, or in the split layout one of its tools (toolGroups),
+          // opens with that app's sidebar, even on a page the last app
+          // shares (src/suite/current-app.ts).
           onClick={tile.app ? () => rememberApp(tile.app!) : undefined}
           className={className}
           aria-label={tile.name ?? (describedBy ? tile.label : undefined)}

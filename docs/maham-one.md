@@ -143,10 +143,12 @@ What changes and what doesn't:
 - **The last app used** on Settings and the home is remembered in the
   browser. When it isn't in the layout any more (Sales, after the switch
   went off), the sidebar is Books'. An app chosen as a whole (the switcher,
-  the phone's app tiles, the home's app and tool tiles, the palette's apps)
-  is remembered as it opens, so Maham Sales opens at its invoices with its
-  own sidebar even when Books, which lists them under Receivables, was the
-  last app. When neither the page's app nor the last one can be opened (CRM
+  the phone's app tiles, the home's app tiles, the palette's apps, and in
+  the split layout the home's tool tiles) is remembered as it opens, so
+  Maham Sales opens at its invoices with its own sidebar even when Books,
+  which lists them under Receivables, was the last app. In the classic
+  layout a tool tile changes nothing, as before: CRM's Customers, opened
+  from Books, keeps Books' sidebar. When neither the page's app nor the last one can be opened (CRM
   closed by the owner's limits), the page's owner in the layout is shown.
 - Sales is violet and Inventory teal; every theme, light and dark, has both.
 
