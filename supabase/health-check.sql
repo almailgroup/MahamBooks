@@ -39,8 +39,10 @@
 --   7  20261130000000_people_alerts.sql           Phase 4
 --   8  20261207000000_staffing_costings.sql       Phase 5
 --
--- For developers: a new script needs its objects added to the lists below;
--- src/cloud/health-check-sql.test.ts compares the lists with the scripts.
+-- For developers: a new script needs its objects added to the lists below,
+-- and the fingerprints of the functions it defines added to bd;
+-- src/cloud/health-check-sql.test.ts compares the lists with the scripts (and
+-- prints the lines bd should have when they differ).
 -- =============================================================================
 
 -- Script p_script, run again, puts back its own version of what later scripts
@@ -215,6 +217,9 @@ declare
     'finalSettlements', 'letterTemplates', 'employeeLetters', 'staffingCostings'
   ];
   v_ran boolean[];
+  -- There are manpower costings: the fourth script can't run again then.
+  v_costings boolean := false;
+  v_manual boolean;
   v_rows jsonb := '[]'::jsonb;
   v_extra jsonb := '[]'::jsonb;
   v_anon boolean;
@@ -285,8 +290,15 @@ begin
 
   for v_s in 1..8 loop
     if not v_ran[v_s] then
-      v_fix := pg_temp.maham_closure(v_s)
-        || array(select t from generate_series(v_s + 1, 8) as t where not v_ran[t]);
+      -- That script and each later one that hasn't run either (but the
+      -- optional email alerts, said in their own row), each with the scripts
+      -- that put back what it replaces.
+      v_fix := array(
+        select distinct u.s
+        from generate_series(v_s, 8) as t(t), unnest(pg_temp.maham_closure(t.t)) as u(s)
+        where t.t = v_s or (not v_ran[t.t] and t.t <> 3)
+        order by u.s
+      );
       if v_s = 3 then
         v_rows := pg_temp.maham_row(v_rows, 300, v_steps[3], 'Email alerts', 'WARN',
           'Email alerts were never set up. They are optional: without them nobody gets the '
@@ -311,6 +323,15 @@ begin
       from jsonb_array_elements(pg_temp.maham_summary(v_rows, v_ran)) as x;
     return;
   end if;
+
+  -- Once there are manpower costings, the fourth script can't run again: its
+  -- first statements list the kinds of record (records_tbl_check) without
+  -- them, and it stops there. What only it makes then needs the developer.
+  begin
+    v_costings := exists (select 1 from public.records r where r.tbl = 'staffingCostings');
+  exception when others then
+    v_costings := false;
+  end;
 
   -- What can only be asked by calling or parsing --------------------------------
 
@@ -509,6 +530,11 @@ begin
           ('public.email_alert_scope(text)', 7, 'app', '{7}'),
           ('public.set_email_alert_scope(text,text[])', 7, 'app', '{7}')
       ),
+      -- Functions whose grants only some of the scripts that define them set:
+      -- the scripts that grant or revoke them (the others keep the grants).
+      fg (sig, versions) as (
+        values ('almailbooks.can_write_record(text,text,jsonb)', '{1}'::integer[])
+      ),
       -- Functions a later script replaces: text only its version (and later
       -- ones) has. An older version in place means an earlier script was run
       -- again after this one.
@@ -533,6 +559,138 @@ begin
           (8, 'almailbooks.can_read_v16_record(text,text,jsonb)', '''staffingCostings'''),
           (8, 'almailbooks.record_app(text,jsonb)', '''staffingCostings'''),
           (8, 'almailbooks.change_kind(text,jsonb)', '''staffingCostings''')
+      ),
+      -- Each function's body as each script that defines it has it, as a
+      -- fingerprint (md5, with comments and spacing left out, so a paste that
+      -- changed them still matches). A body none of them has comes from an
+      -- older copy of the script, or was changed by hand.
+      bd (sig, script, hash) as (
+        values
+          ('public.create_company(text,text)', 1, '261c96a7d57fa669270ecdacabcbc5e0'),
+          ('public.push_records(text,jsonb)', 1, '13911780ca9b31b7201a132ea6b829d9'),
+          ('public.pull_records(text,bigint,integer)', 1, 'd1e25c9ba54c3e6a33b77e1655b1a5f7'),
+          ('public.company_record_ids(text,text,text,text,integer)', 1, '32041108f536556e643fad8ad95bfa6f'),
+          ('public.company_sync_info(text)', 1, '8d6e211ac4d68538961d9271fe740449'),
+          ('public.my_companies()', 1, 'cb11863c18e79cbb9e149a6605b4a4d4'),
+          ('public.company_team(text)', 1, '8748a4c4e47dd008a387fba7058da0f4'),
+          ('public.create_invite(text,text,public.member_role)', 1, 'd280ecccc6c078a042a805a4f331357d'),
+          ('public.list_invites(text)', 1, '11c1ecd522886da462fe76f272a0990b'),
+          ('public.revoke_invite(uuid)', 1, 'cd37b2d4adc438a1f5079538061a9b86'),
+          ('public.invite_details(text)', 1, '56bd20651c3ff1356daa24ca270ccc29'),
+          ('public.accept_invite(text)', 1, 'b84930ee22214bf7d751bebc1f0f5154'),
+          ('public.set_member_role(text,uuid,public.member_role)', 1, 'fc77b38bba3bce2312f520cdb9b26d8d'),
+          ('public.remove_member(text,uuid)', 1, 'e9fbc6dafa250bc96eed713e8ef93701'),
+          ('public.transfer_ownership(text,uuid)', 1, 'c20d1d202fee5d57752a6c4da99b03eb'),
+          ('public.delete_company(text)', 1, '4c68cc56877703dcb87aa3d59a2514f3'),
+          ('almailbooks.member_role(text)', 1, '59d1fffcddac91e5d912fef385bb6e7d'),
+          ('almailbooks.record_is_private(text,text,jsonb)', 1, 'ce87fd7768294b4bbfda974bd5b49399'),
+          ('almailbooks.staff_can_write(text,jsonb)', 1, '0f087a48d5751833e20c598263fcd64b'),
+          ('almailbooks.can_read_record(text,text,jsonb)', 1, '84ff79c3aa68cd40faad464c7fc4d0fc'),
+          ('almailbooks.can_write_record(text,text,jsonb)', 1, '5d0b36ad1aa02dfd49858b1592464880'),
+          ('almailbooks.can_delete_record(text,text,jsonb)', 1, '716ec076263055de2d3c60be22a05928'),
+          ('almailbooks.can_read_marker(text,boolean)', 1, '4dcf4e881cb8b4de1a413bc98d7904c2'),
+          ('almailbooks.can_use_file(text,text,boolean)', 1, 'cfcd81f184fce1deb1f3283c2a564b94'),
+          ('almailbooks.merge_numbering_rule(jsonb,jsonb)', 1, '6490e0c0bf08276a3447a558957ddc16'),
+          ('almailbooks.merge_numbering(jsonb,jsonb)', 1, '6fee2d93b247b2bb0fb349ab0f545a0c'),
+          ('almailbooks.counters_only(jsonb,jsonb)', 1, '3897a4d03bced275308697004e16f206'),
+          ('almailbooks.lock_company(text)', 1, '6ac1ed3394f2b50f1624fc10b8daf461'),
+          ('almailbooks.purge_deleted_records(text)', 1, '6ec8be469fef33932bcc170b99b8accc'),
+          ('almailbooks.purge_all_deleted_records()', 1, '6c193f957bd081f5b8c69f63d3355cf8'),
+          ('almailbooks.touch_sync_signal(text,bigint)', 1, '08bd686b512941a49926276c604b061a'),
+          ('almailbooks.records_before_write()', 1, '08cfdf01e7c9dd7d479935c89b530d02'),
+          ('almailbooks.records_after_delete()', 1, '9f5969db55ecc04623afc0578c3ce73f'),
+          ('almailbooks.records_after_insert()', 1, '66e404524472d66065eb90afdc1c2fd1'),
+          ('almailbooks.handle_new_user()', 1, '629dd17886c23ecf68c2679522548123'),
+          ('almailbooks.handle_user_email_change()', 1, '840e3e52cbd1f8b7506bd51590d8a0f1'),
+          ('almailbooks.company_members_after_delete()', 1, 'c5e92904af74833999422547c49ec768'),
+          ('public.create_company(text,text)', 2, 'f410831019ea34df2bcc63b40b4de405'),
+          ('almailbooks.jsonb_set_path(jsonb,text[],jsonb)', 2, '6bcc9f3a0bc988a64fea9274f4847912'),
+          ('almailbooks.company_deleting(text)', 2, 'b5618c3c90a7dd529deecb637710006c'),
+          ('public.patch_company(text,jsonb)', 2, '26ba4df34855b7c44a43302042a21db5'),
+          ('public.reserve_number(text,text,text,bigint)', 2, '7bcc8421ee5638776869aa4e963233f8'),
+          ('public.begin_delete_company(text)', 2, '0253aae3c864eedd50a0fd8091ec8c7d'),
+          ('public.stored_files(text,text[])', 2, '6426cef44a439f8b026bcd6f15e696eb'),
+          ('almailbooks.email_alerts_member_changed()', 3, '2f2682608f41e1731440966f28bb49d4'),
+          ('almailbooks.run_email_alerts()', 3, '858167150096415947ad2556517b74b6'),
+          ('public.email_alert_settings(text)', 3, '64739a9adcfbaeeb7cf03992351296f4'),
+          ('public.set_email_alerts(text,boolean,text[],text)', 3, '64ddb39ee7b58b28608f9b93f42e7cae'),
+          ('almailbooks.record_is_private(text,text,jsonb)', 4, '3db8621e687f7c34585abb4005a100be'),
+          ('almailbooks.document_is_private(jsonb)', 4, '03616643cf1f73feca8d603d4cf2eb63'),
+          ('almailbooks.renewed_document_id(jsonb)', 4, 'dc380823247f639a1d964cee564adbca'),
+          ('almailbooks.renewal_is_private(text,jsonb)', 4, '98ebda0dc3483c8ac42d034d57294d21'),
+          ('almailbooks.is_v16_private_owner(text,text)', 4, '1a10d9b3739369732edf413b7ead330a'),
+          ('almailbooks.can_read_v16_record(text,text,jsonb)', 4, '45552b954a06bd45b0e93e8cafc1084c'),
+          ('almailbooks.can_read_v16_file(text)', 4, '3f7c3d3ef72aa29d8b869970f598d5c7'),
+          ('public.server_features()', 4, '6af4a0c2dbbfa7288e7971c0cc152976'),
+          ('public.create_invite(text,text,public.member_role)', 5, '69314361507670244909865bf0a4f1e8'),
+          ('public.revoke_invite(uuid)', 5, 'a3341159d2ac60b4037c198669ddfb6e'),
+          ('public.set_member_role(text,uuid,public.member_role)', 5, 'd613de4de35d197c329ca96b66b8c3d8'),
+          ('public.remove_member(text,uuid)', 5, '455b64eb845b5511039fdab60bcef175'),
+          ('almailbooks.staff_can_write(text,jsonb)', 5, '9d6a6292212a5ffd399b7677a0244eb0'),
+          ('almailbooks.can_write_record(text,text,jsonb)', 5, 'f1ecc85dc372ebf14462ff14ef0204ac'),
+          ('almailbooks.can_delete_record(text,text,jsonb)', 5, '953a6b0dc4d509502c0556b99d00a48a'),
+          ('public.server_features()', 5, '44b8e09f92298ab3ff3544c75fb07f64'),
+          ('almailbooks.senior_roles_owner_only(text)', 5, '35b674f3050a9d9b18553c12923a13b1'),
+          ('almailbooks.is_approver(text)', 5, '128afda17d246d7263ca25733a638569'),
+          ('almailbooks.record_app(text,jsonb)', 5, '01263852fe8bec57844b83d8d79bfca7'),
+          ('almailbooks.attachment_app(text,text)', 5, '71e917508fa4082de6f38bfda0b17d14'),
+          ('almailbooks.json_same(jsonb,jsonb)', 5, 'ce57c617bfbe47d19481aa976b357ce3'),
+          ('almailbooks.company_books_changed(jsonb,jsonb)', 5, 'dde5ba81c29f89826f0da02d81bbb964'),
+          ('almailbooks.books_limited(text)', 5, '3cbbb89d977cb020355eb270f4887800'),
+          ('almailbooks.company_members_before_write()', 5, 'da9f9e493a202c37ab77b7a68e963a84'),
+          ('almailbooks.company_members_audit()', 5, '3cefde0e34a385ca773c618fdb7763ab'),
+          ('public.set_member_permissions(text,uuid,jsonb,boolean)', 5, '237e7baa5bdcf1e70c8685256a7576b5'),
+          ('public.team_permissions(text)', 5, '729804163435e4e7c427558f0f718ad1'),
+          ('public.my_permissions(text)', 5, '1eef11491ac1243565c7d12138c00ad0'),
+          ('public.set_team_rules(text,boolean)', 5, '8a9df499436d5d6294c37c8285dd46d9'),
+          ('public.owned_companies_overview()', 5, 'b79e218aa0b5076713422159eec08525'),
+          ('almailbooks.approval_rules(text)', 5, '36d16276889700bfa19fd49d4c114fb3'),
+          ('almailbooks.rules_cover_document(jsonb,text)', 5, '154ff3857653abd615e0da6d71f0f329'),
+          ('almailbooks.document_stage(text)', 5, '0033f492cbc377b5cda2df22e1b5bdca'),
+          ('almailbooks.invoice_content(jsonb)', 5, 'eac3b5d1d1ce7bdbf46dc3cd6ee2d7d6'),
+          ('almailbooks.payment_link_changed(jsonb,jsonb)', 5, '44781e19eb870246ab1c9ce7aa8ac0de'),
+          ('almailbooks.rules_cover_cheque(jsonb,jsonb)', 5, '25014a1984afcb6e1ae536c2b923802e'),
+          ('almailbooks.rules_cover_security_cheque(jsonb,jsonb)', 5, '8c43c155e02db10a3d921cfd22081391'),
+          ('almailbooks.cheque_content(jsonb)', 5, '322f6e3b31633de5d7f9b25b537cbe33'),
+          ('almailbooks.security_cheque_content(jsonb)', 5, 'c54f8b6e72a72b3f47426f055c0b90ff'),
+          ('almailbooks.cheque_change_needs_approver(jsonb,text,jsonb,jsonb)', 5, '9b34cc3e1f36b3a2504bf2b023eeb397'),
+          ('almailbooks.numbers_on_issue(text)', 5, '57aad70405d5f3f12f9bf0a7df95a9e0'),
+          ('almailbooks.kept_key(jsonb,jsonb,text)', 5, 'aacb1d9f22b442315be5364cfec2afd3'),
+          ('almailbooks.records_guard()', 5, '850dd92618cf75aa64346d231124e7c7'),
+          ('public.server_features()', 6, '2cc9d0298e5ca7732fdc239859bc7199'),
+          ('almailbooks.change_kind(text,jsonb)', 6, '3dfcd5a6fe301de9bdb0b642a5b5b347'),
+          ('almailbooks.change_details(text,text,jsonb,jsonb,boolean)', 6, 'd34a01687b19cd0672c31f9cd5abf212'),
+          ('almailbooks.records_change_event()', 6, '36b6e664880a2265526d7679962b5553'),
+          ('almailbooks.change_events_before_insert()', 6, '634610bbd698f71a177a21167886af4c'),
+          ('almailbooks.notification_member_changed()', 6, '847a05403c7be298b6fc51ffe2467b1a'),
+          ('almailbooks.run_change_notifications()', 6, '9c33d92010fb3c074d31ca5527220c22'),
+          ('almailbooks.purge_change_events()', 6, '45e405bbea42aae562f1e06e458afce3'),
+          ('public.notification_status(text)', 6, 'cc1baa780f9bb8e12aa184c83134dd37'),
+          ('public.notification_feed(text,bigint,bigint,integer)', 6, '854eb52b4483bfbb6957cdfc4bd4678c'),
+          ('public.mark_notifications_read(text,bigint)', 6, 'de44edf92f3f2a00dd5d6a3c33da6b00'),
+          ('public.change_notification_settings(text)', 6, '4ec7cce2d03f7f7d4328402c34a08f2b'),
+          ('public.set_change_notifications(text,boolean,text[],text,text)', 6, '4826a3e1e9b266a0ad4f934bcae3370c'),
+          ('almailbooks.can_delete_record(text,text,jsonb)', 7, '25c1e97247c5fc11a907b098bd072058'),
+          ('almailbooks.email_alerts_member_changed()', 7, '0adbcc8d32659fa2dec157bd556c129a'),
+          ('almailbooks.run_email_alerts()', 7, '903bdd5c71fdffd6fa43434fdd95e99a'),
+          ('public.set_email_alerts(text,boolean,text[],text)', 7, '788a10065eae0c0c9d1a372355fc8c94'),
+          ('public.server_features()', 7, '18d6b878052367d87e585628ce7c354b'),
+          ('almailbooks.records_guard()', 7, 'e082905f90a7ee4a025b973a4e953366'),
+          ('almailbooks.run_change_notifications()', 7, '4d9c14dca6349bfd989956a6978d3920'),
+          ('almailbooks.payroll_approval_on(text)', 7, '16d143051c4a06b45f1d0d63b3d939ba'),
+          ('almailbooks.letters_on(text)', 7, 'bb2152860483c5198d5a552562ed8260'),
+          ('almailbooks.issues_letters(text)', 7, 'fb699f81fde1cc1310c4b9390d06ba5e'),
+          ('almailbooks.letter_content(jsonb)', 7, 'a1413a2bb93f1eea6edec1d4a8baf9ca'),
+          ('almailbooks.issued_letter_kept(jsonb,jsonb)', 7, '88b4928b213eaca50011e93423191dab'),
+          ('almailbooks.people_shut(text)', 7, '5d8a4f54ab927bcca9db0bfa543d2b4e'),
+          ('almailbooks.payroll_approval_email()', 7, '6379444d70eb5f60608487f410b58c6b'),
+          ('public.email_alert_scope(text)', 7, '2576aa0f36acb16486c48f48a03ac57b'),
+          ('public.set_email_alert_scope(text,text[])', 7, '2eb325d46a5d3aa5c9527d6d8c0c39bd'),
+          ('almailbooks.record_is_private(text,text,jsonb)', 8, 'd1d698ad42d33a326045d69c1104f3e5'),
+          ('almailbooks.can_read_v16_record(text,text,jsonb)', 8, '2dea031ee9ae6db47b401272c665749f'),
+          ('public.server_features()', 8, 'ea691cbea0c7c110f8d4756cacbba5fe'),
+          ('almailbooks.record_app(text,jsonb)', 8, '5203cd0527553ae3e02765d8a5319225'),
+          ('almailbooks.change_kind(text,jsonb)', 8, '38d0a17b093a01525378c09db7110b69')
       ),
       -- Tables, and whether row-level security must be on.
       tb (step, rel, rls) as (
@@ -657,6 +815,24 @@ begin
         join fn as f on f.sig = m.sig
         left join pg_proc as p on p.oid = to_regprocedure(m.sig)
         union all
+        -- Their body is one a script has, checked under the latest script that
+        -- defines it and has run (an older version is said by its marker).
+        select (select max(v.v) from unnest(f.versions) as v(v) where v_ran[v.v]),
+          'updated', split_part(f.sig, '(', 1),
+          case
+            when p.oid is null then null
+            when not exists (
+              select 1
+              from bd as b
+              where b.sig = f.sig
+                and b.hash = md5(btrim(regexp_replace(regexp_replace(p.prosrc, '-{2}.*$', '', 'gn'),
+                  '[[:space:]]+', ' ', 'g')))
+            ) then 'not as the script has it'
+          end,
+          f.versions
+        from fn as f
+        left join pg_proc as p on p.oid = to_regprocedure(f.sig)
+        union all
         -- Who may run them.
         select f.step, 'grants', split_part(f.sig, '(', 1),
           case
@@ -670,8 +846,9 @@ begin
               and has_function_privilege('authenticated', p.oid, 'EXECUTE')
               then 'signed-in members can run it'
           end,
-          f.versions
+          coalesce(x.versions, f.versions)
         from fn as f
+        left join fg as x on x.sig = f.sig
         left join pg_proc as p on p.oid = to_regprocedure(f.sig)
         union all
         -- Tables, with row-level security.
@@ -773,7 +950,12 @@ begin
             when exists (select 1 from storage.buckets b where b.id = 'company-files' and b.public)
               then 'public: anyone with a link could download its files'
           end,
-          array[1]
+          -- Made public by hand: a switch in Storage puts it right, not a script.
+          case
+            when exists (select 1 from storage.buckets b where b.id = 'company-files' and b.public)
+              then '{}'::integer[]
+            else array[1]
+          end
         union all
         select 1, 'storage', 'row-level security on storage.objects',
           case
@@ -928,7 +1110,7 @@ begin
       v_label := case g.grp
         when 'tables' then 'Tables, columns and constraints'
         when 'functions' then 'Functions'
-        when 'updated' then 'Functions it replaces are up to date'
+        when 'updated' then 'Functions are its latest version'
         when 'kinds' then 'Kinds of record the cloud takes'
         when 'triggers' then 'Triggers'
         when 'policies' then 'Row-level security rules'
@@ -949,35 +1131,53 @@ begin
           when g.grp = 'private'
             then format('record_is_private keeps all %s kinds of payroll and people data from staff and viewers.', g.total)
           when g.grp = 'updated'
-            then format('Up to date (%s checked): this script''s version or a later one.', g.total)
+            then format('Up to date (%s checked): as this script or a later one has them.', g.total)
           when g.grp = 'grants'
             then format('All as the scripts set them (%s checked); anonymous visitors may use nothing.', g.total)
           else format('All in place (%s checked).', g.total)
         end;
         v_rows := pg_temp.maham_row(v_rows, v_n, v_steps[g.step], v_label, 'OK', v_text);
       else
+        -- The scripts to run again: the latest that sets each wrong item, and
+        -- those that put back what it replaces. Never the first script, nor
+        -- the fourth once there are manpower costings.
         v_fix := array(
           select distinct u.s
           from unnest(g.lrs) as l(l), unnest(pg_temp.maham_closure(l.l)) as u(s)
-          where l.l > 1
+          where l.l > 1 and not (l.l = 4 and v_costings)
           order by u.s
         );
+        v_manual := false;
         v_text := 'Not right: ' || array_to_string(g.bad[1:8], ', ')
           || case when cardinality(g.bad) > 8 then format(' and %s more', cardinality(g.bad) - 8) else '' end
-          || '. ';
+          || '.';
         if cardinality(v_fix) > 0 then
           v_text := v_text || case
-              when g.grp = 'grants' then 'The grants were changed after the script ran. '
-              else 'An earlier script was run again after this one, or something was changed by hand. '
+              when g.grp = 'grants' then ' The grants were changed after the script ran. '
+              else ' An earlier script was run again after this one, an older copy of this script '
+                || 'was run, or something was changed by hand. '
             end
             || pg_temp.maham_advice(v_fix, v_ran);
         end if;
-        if 1 = any (g.lrs) then
-          v_text := v_text || case when cardinality(v_fix) > 0 then ' ' else '' end
-            || 'What only the first script makes can''t be fixed by running a script (never run '
-            || '20261004000000_almailbooks_cloud.sql again): ask the developer for a fix.';
+        if coalesce(1 = any (g.lrs), false) then
+          v_manual := true;
+          v_text := v_text || ' What only the first script sets up can''t be fixed by running a script '
+            || '(never run 20261004000000_almailbooks_cloud.sql again): ask the developer for a fix.';
         end if;
-        v_rows := pg_temp.maham_row(v_rows, v_n, v_steps[g.step], v_label, 'FAIL', v_text, v_fix);
+        if v_costings and coalesce(4 = any (g.lrs), false) then
+          v_manual := true;
+          v_text := v_text || ' What only the Phase 0-2 script (tables_v16) sets up can''t be put '
+            || 'back by running it again now that there are manpower costings (it would stop with an '
+            || 'error about records_tbl_check): ask the developer for a fix.';
+        end if;
+        if g.grp = 'storage' and exists (
+          select 1 from unnest(g.bad) as b(b) where b.b like 'bucket company-files (public%'
+        ) then
+          v_manual := true;
+          v_text := v_text || ' In Storage, edit the bucket company-files and turn Public bucket off.';
+        end if;
+        v_rows := pg_temp.maham_row(v_rows, v_n, v_steps[g.step], v_label, 'FAIL', v_text, v_fix,
+          v_manual or cardinality(v_fix) = 0);
       end if;
     end loop;
   exception when others then
@@ -1024,7 +1224,7 @@ begin
         case
           when v_ran[3] then pg_temp.maham_closure(3)
           when v_ran[8] then array[8]
-          when v_ran[4] then array[4]
+          when v_ran[4] and not v_costings then array[4]
           else '{}'::integer[]
         end
         || case when v_ran[6] then pg_temp.maham_closure(6) else '{}'::integer[] end
@@ -1061,7 +1261,9 @@ begin
         values
           (902, 'almailbooks-purge-deleted-records', '17 3 * * *',
             'select almailbooks.purge_all_deleted_records()', 'daily clean-up of deletion markers',
-            true, coalesce(case when v_ran[8] then 8 when v_ran[4] then 4 when v_ran[3] then 3 end, 4)),
+            true, coalesce(case
+              when v_ran[8] then 8 when v_ran[4] and not v_costings then 4 when v_ran[3] then 3
+            end, 4)),
           (903, 'maham-books-email-alerts', '7 * * * *', 'select almailbooks.run_email_alerts()',
             'morning email alerts, every hour', v_ran[3], 3),
           (904, 'maham-change-notifications', '*/5 * * * *',
@@ -1438,7 +1640,9 @@ begin
       )
   loop
     v_problems := v_problems || ('the rule "' || v_job.name || '" on ' || v_job.rel || ' is missing');
-    if v_job.step = 1 then
+    -- Neither the first script nor, once there are manpower costings, the
+    -- fourth can run again.
+    if v_job.step = 1 or (v_job.step = 4 and v_costings) then
       v_bool := true;
     else
       v_fix := v_fix || pg_temp.maham_closure(v_job.step);

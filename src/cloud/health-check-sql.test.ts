@@ -215,6 +215,55 @@ const checkMarkers = () =>
     ),
   ].map((m) => ({ step: Number(m[1]), sig: m[2], marker: m[3].replace(/''/g, "'") }));
 
+/** A function's body as the check takes it: comments and spacing left out. */
+const FINGERPRINT =
+  "md5(btrim(regexp_replace(regexp_replace(p.prosrc, '-{2}.*$', '', 'gn'), '[[:space:]]+', ' ', 'g')))";
+
+const checkBodies = () =>
+  [
+    ...CHECK.matchAll(
+      /\('((?:public|almailbooks)\.[a-z0-9_]+\([^)]*\))', (\d), '([0-9a-f]{32})'\)/g,
+    ),
+  ].map((m) => `('${m[1]}', ${m[2]}, '${m[3]}')`);
+
+/**
+ * The scripts that grant or revoke each function, and what each does with it
+ * ("grant authenticated", "revoke anon", ...). The first script's revoke on
+ * every function of its schema counts for those it defines.
+ */
+function grantScripts(): Map<string, { scripts: number[]; by: Map<number, Set<string>> }> {
+  const defined = scriptFunctions();
+  const found = new Map<string, { scripts: number[]; by: Map<number, Set<string>> }>();
+  const add = (sig: string, script: number, what: string[]) => {
+    const known = found.get(sig) ?? { scripts: [], by: new Map<number, Set<string>>() };
+    if (!known.scripts.includes(script)) known.scripts.push(script);
+    known.by.set(script, new Set([...(known.by.get(script) ?? []), ...what]));
+    found.set(sig, known);
+  };
+  SOURCES.forEach((source, i) => {
+    const code = source.replace(/--.*$/gm, '');
+    for (const m of code.matchAll(
+      /\b(grant|revoke)\s[^;]*?\bon\s+(?:all\s+functions\s+in\s+schema\s+([a-z_]+)|function\s+([^;]*?))\s+(?:to|from)\s+([^;]*);/gi,
+    )) {
+      const what = m[4].split(',').map((role) => `${m[1].toLowerCase()} ${role.trim()}`);
+      if (m[2]) {
+        for (const [sig, versions] of defined) {
+          if (sig.startsWith(`${m[2]}.`) && versions.includes(i + 1)) add(sig, i + 1, what);
+        }
+        continue;
+      }
+      for (const f of m[3].matchAll(/([a-z0-9_.]+)\(([^)]*)\)/g)) {
+        const types = f[2]
+          .split(',')
+          .map((type) => type.trim())
+          .filter(Boolean);
+        add(`${f[1]}(${types.join(',')})`, i + 1, what);
+      }
+    }
+  });
+  return found;
+}
+
 const checkTriggers = () =>
   [
     ...CHECK.matchAll(
@@ -363,6 +412,59 @@ describe('the health check’s lists are the scripts’', () => {
       expect(CHECK).toContain(`'${command}'`);
     }
   });
+
+  it('names, for each function’s grants, the scripts that set them', () => {
+    const fromScripts = grantScripts();
+    const overrides = new Map(
+      [
+        ...CHECK.matchAll(
+          /\('((?:public|almailbooks)\.[a-z0-9_]+\([^)]*\))', '\{([\d,]+)\}'(?:::integer\[\])?\)/g,
+        ),
+      ].map((m) => [m[1], versionsOf(m[2])]),
+    );
+    const listed = checkFunctions();
+    for (const sig of overrides.keys()) expect(listed.map((f) => f.sig)).toContain(sig);
+    expect(
+      Object.fromEntries(listed.map((f) => [f.sig, overrides.get(f.sig) ?? f.versions])),
+    ).toEqual(Object.fromEntries([...fromScripts].map(([sig, g]) => [sig, g.scripts])));
+    // Each of those scripts sets all of them: run again, it puts them right.
+    for (const f of listed) {
+      for (const script of fromScripts.get(f.sig)!.scripts) {
+        const done = fromScripts.get(f.sig)!.by.get(script)!;
+        const what = `${f.sig} in script ${script}`;
+        expect(done.has('revoke public') && done.has('revoke anon'), what).toBe(true);
+        if (f.access === 'app' || f.access === 'rls') {
+          expect(done.has('grant authenticated'), what).toBe(true);
+        }
+        if (f.access === 'internal') expect(done.has('revoke authenticated'), what).toBe(true);
+      }
+    }
+  });
+
+  it('knows the body of every function as each script that defines it has it', async () => {
+    // The scripts have no unusual spaces, so "[[:space:]]" means the same on every server.
+    for (const source of SOURCES) {
+      expect(source).not.toMatch(
+        /[\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/,
+      );
+    }
+    expect(CHECK.replace(/\s+/g, ' ')).toContain(`b.hash = ${FINGERPRINT}`);
+    const listed = checkFunctions();
+    const expected: string[] = [];
+    const h = await startDatabase(1, 0);
+    for (let n = 1; n <= SOURCES.length; n++) {
+      await h.db.exec(SOURCES[n - 1]);
+      for (const f of listed.filter((f) => f.versions.includes(n))) {
+        const [row] = await h.admin<{ hash: string }>(
+          `select ${FINGERPRINT} as hash from pg_proc p where p.oid = to_regprocedure($1)`,
+          [f.sig],
+        );
+        expected.push(`('${f.sig}', ${n}, '${row.hash}')`);
+      }
+    }
+    // On a change to a script, paste these lines into bd in health-check.sql.
+    expect(checkBodies().join(',\n'), 'bd in health-check.sql').toBe(expected.join(',\n'));
+  }, 60_000);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -459,8 +561,40 @@ describe('before the later scripts', () => {
       [8, 'MISSING'],
       [12, 'MISSING'],
     ]);
-    expect(scriptsIn(summary(rows).detail)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // The optional email alerts only in their own row, with what they need after them.
+    expect(scriptsIn(summary(rows).detail)).toEqual([1, 2, 4, 5, 6, 7, 8]);
+    expect(scriptsIn(rows.find((row) => row.step.startsWith('3.'))!.detail)).toEqual([
+      3, 4, 5, 6, 7, 8,
+    ]);
   }, 60_000);
+
+  // Set-up scripts skipped: what the last row says leads to no FAIL or MISSING,
+  // and the email alerts' own row then to nothing but what PGlite can't have.
+  const skipped: [number[], number[]][] = [
+    [[1, 4, 5, 6, 7, 8], [2]],
+    [
+      [1, 4, 5, 6, 7],
+      [2, 8],
+    ],
+  ];
+  for (const [ran, fix] of skipped) {
+    it(`with scripts ${ran.join(', ')}, says to run ${fix.join(', ')}, and that is enough`, async () => {
+      const h = await databaseWith(ran);
+      let rows = await runCheck(h);
+      expect(scriptsIn(summary(rows).detail)).toEqual(fix);
+      for (const n of fix) await h.db.exec(SOURCES[n - 1]);
+      rows = await runCheck(h);
+      expect(rows.filter((row) => row.status === 'FAIL' || row.status === 'MISSING')).toEqual([]);
+      const email = rows.find((row) => row.step.startsWith('3.'))!;
+      expect(email.status).toBe('WARN');
+      expect(scriptsIn(email.detail)).toEqual([3, 7, 8]);
+      expect(email.detail).toContain(
+        `Run ${FILE_NAMES[2]}, then ${FILE_NAMES[6]} again, then ${FILE_NAMES[7]} again`,
+      );
+      for (const n of scriptsIn(email.detail)) await h.db.exec(SOURCES[n - 1]);
+      expectOnlyStandInWarnings(await runCheck(h));
+    }, 60_000);
+  }
 });
 
 describe('an earlier script run again after the later ones', () => {
@@ -513,14 +647,159 @@ describe('an earlier script run again after the later ones', () => {
     const rows = await runCheck(h);
     expect(notOk(rows).find((row) => row.status === 'FAIL')).toMatchObject({
       step: '7. Phase 4: people_alerts',
-      check: 'Functions it replaces are up to date',
+      check: 'Functions are its latest version',
       detail: expect.stringContaining('almailbooks.records_guard (an older version)'),
     });
     expect(scriptsIn(summary(rows).detail)).toEqual([7, 8]);
   }, 60_000);
+
+  /** company_books_changed as the Super Admin script had it before its last fixes. */
+  function olderBooksChanged(): string {
+    const definition =
+      /create or replace function almailbooks\.company_books_changed\([\s\S]*?\$\$;/.exec(
+        SOURCES[4],
+      )![0];
+    const older = definition
+      .replace(
+        / or not almailbooks\.json_same\(\s*nullif\(p_old #> '\{kuwait,wamdPhone\}'[\s\S]*?\)\s*\) or exists/,
+        ' or exists',
+      )
+      .replace(`'bankAccount', 'emailTemplates', `, '');
+    expect(older).not.toContain('wamdPhone');
+    return older;
+  }
+
+  it('finds a function an older copy of its script left, and which scripts put it right', async () => {
+    const h = await startDatabase();
+    await h.db.exec(olderBooksChanged());
+    const rows = await runCheck(h);
+    const failed = rows.filter((row) => row.status === 'FAIL' && row !== summary(rows));
+    expect(failed.map((row) => [row.step, row.check])).toEqual([
+      ['5. Phase 3: super_admin_approvals', 'Functions are its latest version'],
+    ]);
+    expect(failed[0].detail).toContain(
+      'almailbooks.company_books_changed (not as the script has it)',
+    );
+    expect(failed[0].detail).toContain('an older copy of this script was run');
+    expect(scriptsIn(summary(rows).detail)).toEqual([5, 7, 8]);
+    for (const n of [5, 7, 8]) await h.db.exec(SOURCES[n - 1]);
+    expectOnlyStandInWarnings(await runCheck(h));
+  }, 60_000);
+
+  it('takes a body pasted with other line ends, spacing or comments as the same', async () => {
+    const h = await startDatabase();
+    const definition =
+      /create or replace function almailbooks\.company_books_changed\([\s\S]*?\$\$;/.exec(
+        SOURCES[4],
+      )![0];
+    await h.db.exec(
+      definition
+        .replace('select exists (', 'select exists ( -- a note pasted along\n')
+        .replace(/\n/g, '  \r\n\t'),
+    );
+    expectOnlyStandInWarnings(await runCheck(h));
+  }, 60_000);
 });
 
 describe('what goes wrong besides the scripts', () => {
+  /** A company with one manpower costing: the fourth script can't run again then. */
+  async function withCosting(h: Harness) {
+    const owner = await h.user('owner-costing@example.com');
+    await h.rpc(owner, 'create_company', { p_id: 'costing-company', p_name: 'Costing' });
+    await h.rpc(owner, 'push_records', {
+      p_company: 'costing-company',
+      p_changes: JSON.stringify([
+        {
+          tbl: 'companies',
+          id: 'costing-company',
+          data: { id: 'costing-company', companyId: 'costing-company' },
+        },
+        {
+          tbl: 'staffingCostings',
+          id: 'cost-1',
+          data: { id: 'cost-1', companyId: 'costing-company', posts: [] },
+        },
+      ]),
+    });
+  }
+
+  /** What only the fourth script makes, changed by hand: one of its rules and a grant. */
+  async function breakTablesV16(h: Harness) {
+    await h.admin(`drop policy "People data: kept from staff and viewers" on storage.objects`);
+    await h.admin(`grant execute on function almailbooks.document_is_private(jsonb) to anon`);
+  }
+
+  it('never asks for tables_v16 again once there are manpower costings', async () => {
+    const h = await startDatabase();
+    await withCosting(h);
+    await breakTablesV16(h);
+    // It couldn't: it stops at the kinds of record, and changes nothing.
+    await expect(h.db.exec(SOURCES[3])).rejects.toThrow(/records_tbl_check/);
+    const rows = await runCheck(h);
+    const failed = rows.filter((row) => row.status === 'FAIL' && row !== summary(rows));
+    expect(failed.map((row) => [row.step, row.check])).toEqual([
+      ['4. Phase 0-2: tables_v16', 'Row-level security rules'],
+      ['4. Phase 0-2: tables_v16', 'Who may use what (grants)'],
+      ['11. Data and privacy', "Staff and viewers can't read payroll and people data"],
+    ]);
+    for (const row of rows) expect(row.detail).not.toContain(FILE_NAMES[3]);
+    for (const row of failed) {
+      expect(scriptsIn(row.detail)).toEqual([]);
+      expect(row.detail).toContain('ask the developer');
+    }
+    expect(failed[0].detail).toContain('now that there are manpower costings');
+    expect(scriptsIn(summary(rows).detail)).toEqual([]);
+    expect(summary(rows).detail).toContain('3 FAIL rows need more than a script');
+  }, 60_000);
+
+  it('asks for tables_v16 again, then staffing_costings, while there are no costings', async () => {
+    const h = await startDatabase();
+    await breakTablesV16(h);
+    const rows = await runCheck(h);
+    expect(scriptsIn(summary(rows).detail)).toEqual([4, 8]);
+    expect(summary(rows).detail).not.toMatch(/needs? more than a script/);
+    for (const n of [4, 8]) await h.db.exec(SOURCES[n - 1]);
+    expectOnlyStandInWarnings(await runCheck(h));
+  }, 60_000);
+
+  it('asks the developer for grants only the first script sets', async () => {
+    const h = await startDatabase();
+    await h.admin(
+      `revoke execute on function almailbooks.can_write_record(text, text, jsonb) from authenticated`,
+    );
+    const rows = await runCheck(h);
+    const failed = rows.filter((row) => row.status === 'FAIL' && row !== summary(rows));
+    expect(failed.map((row) => [row.step, row.check])).toEqual([
+      ['1. First setup: almailbooks_cloud', 'Who may use what (grants)'],
+    ]);
+    expect(failed[0].detail).toContain(
+      "almailbooks.can_write_record (signed-in members can't run it)",
+    );
+    // The first script named only as the one never to run again.
+    expect(failed[0].detail).toContain(`never run ${FILE_NAMES[0]} again): ask the developer`);
+    expect(scriptsIn(failed[0].detail)).toEqual([1]);
+    expect(scriptsIn(summary(rows).detail)).toEqual([]);
+    expect(summary(rows).detail).toContain('1 FAIL row needs more than a script');
+  }, 60_000);
+
+  it('says how to make the bucket private again', async () => {
+    const h = await startDatabase();
+    await h.admin(`update storage.buckets set public = true where id = 'company-files'`);
+    const rows = await runCheck(h);
+    const failed = rows.filter((row) => row.status === 'FAIL' && row !== summary(rows));
+    expect(failed).toEqual([
+      expect.objectContaining({
+        step: '1. First setup: almailbooks_cloud',
+        check: 'Storage: bucket company-files and its rules',
+      }),
+    ]);
+    expect(failed[0].detail).toBe(
+      'Not right: bucket company-files (public: anyone with a link could download its files). ' +
+        'In Storage, edit the bucket company-files and turn Public bucket off.',
+    );
+    expect(summary(rows).detail).toContain('1 FAIL row needs more than a script');
+  }, 60_000);
+
   it('finds a rule added by hand, a public bucket and a role that bypasses the rules', async () => {
     const h = await startDatabase();
     await h.admin(

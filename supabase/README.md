@@ -21,8 +21,9 @@ and "Employee letters" below).
 `migrations/20261207000000_staffing_costings.sql` comes last: manpower
 costings of Maham People (see "Manpower costings" below). Each file is
 run once, in this order; a release that needs more from the server adds a
-file, and only that one is run. The files after the first are safe to run again; the first is
-not, once there are records of version 16 (see below). The owner's
+file, and only that one is run. The files after the first are safe to run again, except the
+fourth once there are manpower costings; the first is not, once there are records of version
+16 (see below). The owner's
 step-by-step guides are [`docs/supabase-setup.md`](../docs/supabase-setup.md)
 and [`docs/email-alerts.md`](../docs/email-alerts.md). `health-check.sql`
 tells whether every file has run, each as its latest version, and whether
@@ -275,7 +276,7 @@ signed-in users, with row-level security on. Run it with
 | 1   | `migrations/20261004000000_almailbooks_cloud.sql`     | First setup | Run once at set-up. Never again (see "Records of database version 16"). |
 | 2   | `migrations/20261006000000_sync_fixes.sql`            | Set-up      | Run once at set-up.                                                     |
 | 3   | `migrations/20261007000000_email_alerts.sql`          | Set-up      | Run once at set-up; optional (email alerts).                            |
-| 4   | `migrations/20261102000000_tables_v16.sql`            | Phases 0-2  |                                                                         |
+| 4   | `migrations/20261102000000_tables_v16.sql`            | Phases 0-2  | Can't run again once there are manpower costings.                       |
 | 5   | `migrations/20261116000000_super_admin_approvals.sql` | Phase 3     | Needs 4.                                                                |
 | 6   | `migrations/20261123000000_change_feed.sql`           | Phase 3     | Needs 5.                                                                |
 | 7   | `migrations/20261130000000_people_alerts.sql`         | Phase 4     | Needs 6.                                                                |
@@ -286,7 +287,9 @@ constraint it defines. What a later file replaced must then be put back by
 running again the latest file that defines it, and so on: after 3, run 7
 and 8; after 4, 8; after 5 or 6, 7 and 8; after 7, 8 (after the first file,
 which only succeeds before there are records of version 16: 2, 5, 7 and 8).
-`maham_closure` in `health-check.sql` is this table.
+`maham_closure` in `health-check.sql` is this table. The fourth file only
+succeeds before there are manpower costings: once there are, the check
+never asks for it, and what only it makes needs a fix from the developer.
 
 ## Health check
 
@@ -316,7 +319,8 @@ one row per check in the order of the files: `step`, `check`, `status` and
   `people_shut`, the rule "Manpower costings: kept from staff and
   viewers"). A file that hasn't run is one MISSING row (one WARN row for the
   email alerts, which are optional), with that file and every later one that
-  hasn't run, plus the files that put back what it replaces.
+  hasn't run (but the email alerts, which only their own row names), each
+  with the files that put back what it replaces.
 - **Latest versions.** Every function, trigger, rule, table, column and
   constraint of each file, and its grants (what the app calls: signed-in
   members only; what the rules call: signed-in members; jobs and triggers:
@@ -325,10 +329,18 @@ one row per check in the order of the files: `step`, `check`, `status` and
   the ones after it) has; `server_features()` by what it answers, against
   the names in `src/cloud/features.ts`; `records_tbl_check` against every
   kind the app syncs; `record_is_private` by asking it about each payroll
-  and people kind. Something wrong after its file ran is a FAIL that names
-  the latest file defining it that has run, and the files that put back what
-  that one replaces (the table above). What only the first file makes can't
-  be fixed by a script: the row says to ask the developer.
+  and people kind. Every function's body is also compared with the body
+  each file that defines it has (`bd`: an md5 of `prosrc` with `--`
+  comments and spacing left out, so a paste that changed them still
+  matches): a body none of them has comes from an older copy of a file, or
+  was changed by hand. Something wrong after its file ran is a FAIL that
+  names the latest file setting it that has run (for grants, the files that
+  grant or revoke the function, which `fg` lists where they aren't all the
+  files that define it), and the files that put back what that one replaces
+  (the table above). What only the first file sets up can't be fixed by a
+  script, nor, once there are manpower costings, what only the fourth sets
+  up: the row says to ask the developer. A public `company-files` bucket is
+  put right in Storage: the row says how.
 - **Schedules and email alerts.** With pg_cron, each job the files schedule
   (`almailbooks-purge-deleted-records`, `maham-books-email-alerts`,
   `maham-change-notifications`, `maham-change-feed-purge`): there, running
@@ -352,14 +364,19 @@ one row per check in the order of the files: `step`, `check`, `status` and
 (WARN only for pg_cron and the unpublished function, which PGlite can't
 have; "All good" with stand-ins for both), MISSING for exactly the later
 files after each prefix, FAIL with the right files after each earlier file is
-run again (and OK once they have run), nothing changed in the catalog,
-grants, schedules or any table after running it twice, and none of a set of
-seeded secrets, emails and salaries in its output. It also checks its lists
-against the files: every function with the files that define it, each
-marker present in its version and the later ones only, every trigger, rule
-and table, the kinds, the private kinds and the features. A new file adds
-its objects to the lists in `health-check.sql` (and a line to
-`maham_closure`), or that test fails.
+run again (and OK once they have run), advice that leads to no FAIL or
+MISSING when set-up files were skipped, an older copy of a function found
+(and a body pasted with other spacing not), the fourth file never advised
+once there is a manpower costing, nothing changed in the catalog, grants,
+schedules or any table after running it twice, and none of a set of seeded
+secrets, emails and salaries in its output. It also checks its lists against
+the files: every function with the files that define it and those that set
+its grants (and that each of those sets all of them), each marker present in
+its version and the later ones only, each body's fingerprint in each file,
+every trigger, rule and table, the kinds, the private kinds and the
+features. A new file adds its objects to the lists in `health-check.sql`
+(the fingerprints of its functions to `bd`, which the test prints when they
+differ, and a line to `maham_closure`), or that test fails.
 
 ## Known limits
 

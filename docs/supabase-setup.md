@@ -94,10 +94,11 @@ database comes with a new script: run just that one, after the others. The
 later scripts are safe to run again (they create what is missing and replace
 their own rules with the same ones), but **don't run the first script again**:
 once the app keeps cheque layouts, vehicles, approval requests or HR letters,
-it stops with an error about `records_tbl_check` and changes nothing. If it
-was run again and finished without an error, or any script was run again
-after a later one, run the health check: it names the scripts to run again,
-in order.
+it stops with an error about `records_tbl_check` and changes nothing. The
+fourth script stops the same way once there are manpower costings. If the
+first was run again and finished without an error, or any script was run
+again after a later one, run the health check: it names the scripts to run
+again, in order.
 
 **Optional, recommended: the daily clean-up.** Deleted records leave a small
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
@@ -562,17 +563,19 @@ order, in a new query of the SQL editor (paste the whole file, **Run**).
 | 1   | `20261004000000_almailbooks_cloud.sql`     | First setup             | Run once at set-up (done). **Never run it again.**                              |
 | 2   | `20261006000000_sync_fixes.sql`            | Set-up                  | Run once at set-up (done).                                                      |
 | 3   | `20261007000000_email_alerts.sql`          | Set-up: email alerts    | Run once at set-up (done), with [`email-alerts.md`](email-alerts.md). Optional. |
-| 4   | `20261102000000_tables_v16.sql`            | Phases 0-2              | Once, after 1 to 3.                                                             |
+| 4   | `20261102000000_tables_v16.sql`            | Phases 0-2              | Once, after 1 to 3. It can't run again once there are manpower costings.        |
 | 5   | `20261116000000_super_admin_approvals.sql` | Phase 3 (first of two)  | Once, after 4.                                                                  |
 | 6   | `20261123000000_change_feed.sql`           | Phase 3 (second of two) | Once, after 5.                                                                  |
 | 7   | `20261130000000_people_alerts.sql`         | Phase 4                 | Once, after 6.                                                                  |
 | 8   | `20261207000000_staffing_costings.sql`     | Phase 5                 | Once, after 7.                                                                  |
 
-Scripts 2 to 8 are safe to run again, but a script run again after a later
-one puts back its own, older version of what the later one changed. The
-health check finds that and says which scripts to run again, in order. As a
-rule: after script 3 run 7 and 8 again; after 4, run 8 again; after 5 or 6,
-run 7 and 8 again; after 7, run 8 again.
+Scripts 2, 3 and 5 to 8 are safe to run again. Script 4 is too, until there
+are manpower costings: then it stops with an error about `records_tbl_check`
+and changes nothing. A script run again after a later one puts back its own,
+older version of what the later one changed. The health check finds that and
+says which scripts to run again, in order. As a rule: after script 3 run 7
+and 8 again; after 4, run 8 again; after 5 or 6, run 7 and 8 again; after 7,
+run 8 again.
 
 ## Health check
 
@@ -607,14 +610,18 @@ What each status means:
 What to do:
 
 - **"This script has not run yet"** (MISSING): run it, then the ones the
-  detail names after it, in order.
-- **"An older version"**, **"not taken"**, **"not answered"** or **"not
-  private"** (FAIL): an earlier script was run again after a later one. Run
-  again the scripts the detail names, in that order; the last row lists them
-  all, for example "Run 20261130000000_people_alerts.sql again, then
+  detail names after it, in order. The last row never adds the optional
+  email alerts script: its own row says what to run for it.
+- **"An older version"**, **"not as the script has it"**, **"not taken"**,
+  **"not answered"** or **"not private"** (FAIL): an earlier script was run
+  again after a later one, or an older copy of a script was run. Run again
+  the scripts the detail names, in that order; the last row lists them all,
+  for example "Run 20261130000000_people_alerts.sql again, then
   20261207000000_staffing_costings.sql again (in this order)". Then run the
-  health check again. The check never asks for the first script: if a row
-  says something "can't be fixed by running a script", ask the developer.
+  health check again. The check never asks for the first script, nor for the
+  fourth once there are manpower costings: if a row says something "can't be
+  fixed by running a script" or "can't be put back by running it again", ask
+  the developer.
 - **"Email alerts were never set up"** (WARN): they are optional. To set
   them up, follow [`email-alerts.md`](email-alerts.md), then run the scripts
   the detail names (the email alerts script, then the Phase 4 and Phase 5
