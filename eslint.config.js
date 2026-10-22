@@ -5,7 +5,18 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'coverage', 'playwright-report', 'test-results', 'supabase/functions'] },
+  {
+    ignores: [
+      'dist',
+      'coverage',
+      'playwright-report',
+      'test-results',
+      'supabase/functions',
+      // Wrangler's local state and dry-run output in workers/*.
+      'workers/*/.wrangler',
+      'workers/*/dist-check',
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
@@ -25,6 +36,20 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+    },
+  },
+  {
+    // The Cloudflare Worker in workers/ai-proxy: plain JavaScript that runs in
+    // the Workers runtime (web APIs, no Node), and its tests.
+    extends: [js.configs.recommended],
+    files: ['workers/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.serviceworker },
+    },
+    rules: {
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
 );

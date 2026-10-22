@@ -64,7 +64,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    // workers/: the Cloudflare Worker in workers/ai-proxy (plain JavaScript).
+    include: ['src/**/*.test.{ts,tsx}', 'workers/**/*.test.js'],
     css: false,
   },
 });

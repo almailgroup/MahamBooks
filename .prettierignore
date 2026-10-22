@@ -6,3 +6,6 @@ playwright-report
 test-results
 src/pdf/fonts
 supabase/functions
+# Wrangler's local state and dry-run output in workers/* (as in eslint.config.js).
+workers/*/.wrangler
+workers/*/dist-check

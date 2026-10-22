@@ -1,0 +1,4 @@
+# Secrets for running the Worker on this computer (npm run dev).
+# Copy this file to .dev.vars and fill it in. .dev.vars is git-ignored:
+# never commit it, and use a separate test key, not the production one.
+GEMINI_API_KEY=paste-a-test-key-here
