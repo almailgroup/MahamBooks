@@ -10,6 +10,8 @@ Production has real data and is in daily use, so every change here is additive a
 
 **Update, 21 October 2026:** Phases 0, 1 and 2 are built, reviewed and released: 18 of the 30 requirements (#4 and #5 in part). How to switch each one on is in [the release notes](release-notes-phases-0-2.md).
 
+Phase 3 is built and reviewed too: #6, #7, #8 and #9, so 22 of the 30 in all. It needs two new database scripts. How to switch each one on is in [the Phase 3 release notes](release-notes-phase-3.md).
+
 When this plan was written, none of the 30 was fully built: 25 were partly built, 4 were not built, and 1 conflicted with how invoice numbering must work (#8).
 
 Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. The phases are described under [Phases](#phases).
@@ -21,10 +23,10 @@ Size: S is under a day, M is 1–3 days, L is 3–7 days and XL is over a week. 
 | 3   | [Separate Sales, HR, Finance and Inventory apps](#3-separate-sales-hr-finance-and-inventory-apps) | Partly built                          | XL   | 5                          |
 | 4   | [Document finder and AI assistant](#4-document-finder-and-ai-assistant)                           | Built (finder); AI in Phase 8         | XL   | 2 (finder), 8 (AI)         |
 | 5   | [Deema, Taly and Tahseel in the sidebar](#5-integrations-in-the-sidebar-deema-taly-tahseel)       | Built (links); integration in Phase 6 | M    | 2 (links), 6 (integration) |
-| 6   | [Super Admin](#6-super-admin-with-full-control-of-roles-and-permissions)                          | Partly built                          | L    | 3                          |
-| 7   | [Change notifications to the Super Admin](#7-change-notifications-to-the-super-admin)             | Partly built                          | L    | 3                          |
-| 8   | [Invoice approval and Void invoices](#8-invoice-approval-and-void-invoices)                       | Needs a decision                      | XL   | 3                          |
-| 9   | [Cheque confirmation](#9-cheque-confirmation-by-the-super-admin)                                  | Partly built                          | L    | 3                          |
+| 6   | [Super Admin](#6-super-admin-with-full-control-of-roles-and-permissions)                          | Built                                 | L    | 3                          |
+| 7   | [Change notifications to the Super Admin](#7-change-notifications-to-the-super-admin)             | Built                                 | L    | 3                          |
+| 8   | [Invoice approval and Void invoices](#8-invoice-approval-and-void-invoices)                       | Built                                 | XL   | 3                          |
+| 9   | [Cheque confirmation](#9-cheque-confirmation-by-the-super-admin)                                  | Built                                 | L    | 3                          |
 | 10  | [Salary approval](#10-salary-approval-by-the-super-admin)                                         | Partly built                          | XL   | 4                          |
 | 11  | [Leave requests from the Maham App](#11-leave-requests-from-the-maham-app)                        | Not built                             | XL   | 7                          |
 | 12  | [Departments and a Stateless option](#12-departments-and-a-stateless-option)                      | Built                                 | L    | 2                          |
@@ -131,17 +133,17 @@ These are fixed for the whole plan. Sections refer to them by number (D1…D16) 
 
 ## Phases
 
-| Phase | Theme                                     | Requirements                                       |
-| ----- | ----------------------------------------- | -------------------------------------------------- |
-| 0     | Groundwork, no visible change             | D2, D3, D4 (`tables_v16`)                          |
-| 1     | Books quick wins (local, no server work)  | Built                                              |
-| 2     | Company, People and Compliance quick wins | Built                                              |
-| 3     | Super Admin control                       | #6, approvals service (D6), #8, #9, #7 (D7, D8)    |
-| 4     | HR workflows and alerts                   | Built (finder); AI in Phase 8                      |
-| 5     | Suite structure                           | Built (links); integration in Phase 6              |
-| 6     | Online payments                           | #26, #5 part B (Taly, Deema, Tahseel integrations) |
-| 7     | Maham App                                 | D9, D10, #11, #16                                  |
-| 8     | AI assistant                              | #4 part B                                          |
+| Phase | Theme                                     | Requirements                                                               |
+| ----- | ----------------------------------------- | -------------------------------------------------------------------------- |
+| 0     | Groundwork, no visible change             | D2, D3, D4 (`tables_v16`)                                                  |
+| 1     | Books quick wins (local, no server work)  | #21, #22, #24, #25, #28, #29, #30, #23, #27, #20                           |
+| 2     | Company, People and Compliance quick wins | #2, #1, #5 (links), #12, #13, #14, #17, #4 part A (document finder, no AI) |
+| 3     | Super Admin control                       | #6, approvals service (D6), #8, #9, #7 (D7, D8)                            |
+| 4     | HR workflows and alerts                   | #15, #10, #18, #19                                                         |
+| 5     | Suite structure                           | #3 (Sales / HR / Finance / Inventory apps; staffing quotes)                |
+| 6     | Online payments                           | #26, #5 part B (Taly, Deema, Tahseel integrations)                         |
+| 7     | Maham App                                 | D9, D10, #11, #16                                                          |
+| 8     | AI assistant                              | #4 part B                                                                  |
 
 ## The 30 requirements
 
@@ -537,7 +539,7 @@ The Super Admin is the company owner (D5): Mr. AbdulAziz Almail takes ownership 
 **Database**
 
 - Local: no Dexie change. `CloudLink` (`src/cloud/types.ts:11`) gets optional `permissions?: {apps?: Partial<Record<AppId, AppAccess>>}` and `approver?: boolean`, filled on refresh (`src/cloud/manager.ts:182`); not synced or backed up. `src/cloud/roles.ts`: `isSuperAdmin`, `effectiveAccess` (lower of role default and limit).
-- Cloud: `20261116000000_super_admin_approvals.sql` (D4). `company_members.permissions jsonb default '{}'` and `can_approve boolean default false` (admin or accountant rows only, so deputies see People data for #10). `almailbooks.is_approver(p_company)` = owner or `can_approve`. `can_write_record` applies app limits through a table→app map; `'{}'` gives today's result. `create_invite`, `set_member_role`, `remove_member` keep their signatures; only the owner touches admin or accountant. A `company_members` trigger records role, permission and succession changes as kind `member` in `change_events` (D7), doing nothing until `20261123000000_change_feed.sql` creates it. No `super_admin` enum value: checks read `role in ('owner','admin','accountant')` and would deny it. No platform admin: sign-up is open (`src/cloud/auth.ts:83`).
+- Cloud: `20261116000000_super_admin_approvals.sql` (D4). `company_members.permissions jsonb default '{}'` and `can_approve boolean default false` (admin or accountant rows only, so deputies see People data for #10). `almailbooks.is_approver(p_company)` = owner or `can_approve`. `can_write_record` applies app limits through a table→app map; a file follows the record it is kept with (`almailbooks.attachment_app`), and the books' settings on the company record (lock date, numbering rules, payment details with the bank account and WAMD number, email templates, document defaults) are Books' (`records_guard`, `almailbooks.company_books_changed`); `'{}'` gives today's result. `create_invite`, `set_member_role`, `remove_member` keep their signatures; only the owner touches admin or accountant. A `company_members` trigger records role, permission and succession changes as kind `member` in `change_events` (D7), doing nothing until `20261123000000_change_feed.sql` creates it. No `super_admin` enum value: checks read `role in ('owner','admin','accountant')` and would deny it. No platform admin: sign-up is open (`src/cloud/auth.ts:83`).
 
 **Server API**
 
@@ -672,7 +674,7 @@ Edits, voids and deletes of issued invoices by non-approvers become requests in 
 
 - Local: Dexie v16 `approvals` (D3) with D6 fields; kinds `invoice_edit`, `invoice_void`, `invoice_unvoid`; type `ApprovalRequest`. Optional on `InvoiceDocument`: `voidedAt`, `voidedBy`, `voidReason`, `approvalId`, `replacesId`, `replacedById`. `Company.approvalRules?: {documentTypes?, voidInsteadOfDelete?, expireDays?, cheques?, payroll?}` (`cheques` from #9, `payroll` from #10), absent = off (D1). `DocumentDefaults.numberOnIssue?` (`types.ts:117`). Catch-up after upgrade: D2.
 - Cloud: tbl `approvals` comes with `20261102000000_tables_v16.sql`. `20261116000000_super_admin_approvals.sql` adds:
-  - `almailbooks.approval_rules(p_company) → jsonb`; `almailbooks.invoice_content(p jsonb) → jsonb`, the printed fields (party, dates, currency, lines, discounts, taxes, charges, deposit, retention terms, wording, template, payment link). Totals, paid status, posting and retention releases stay out: payments and sync write them.
+  - `almailbooks.approval_rules(p_company) → jsonb`; `almailbooks.invoice_content(p jsonb) → jsonb`, the printed fields (party, dates, currency, lines, discounts, taxes, charges, deposit, retention terms, wording, template). Totals, paid status, posting and retention releases stay out: payments and sync write them. The payment link (printed, and in the QR code) has its own rule, `almailbooks.payment_link_changed`: once an issued invoice has one, only an approver changes or removes it (the app refuses it; the server keeps the stored link from anyone else's copy, since documents travel whole and a device that hasn't received the link may send the invoice with a payment); adding one where there was none stays open, as links are often made after the invoice is issued.
   - `records_guard`, BEFORE INSERT OR UPDATE on `public.records`, firing after `records_before_write` by name. `approvals`: a new row is forced to `pending` with server `requestedBy`/`requestedAt`; a non-approver may only cancel their own pending request; an approver moves `pending` to `approved`, `rejected` or `applied` with server `decidedBy`/`decidedAt`, so an offline copy can't undo a decision. `documents` of a ruled type, not draft: a non-approver is refused when `invoice_content` changes or status moves in or out of `void`/`draft`. `companies`: only the owner changes `approvalRules` (covers `patch_company`). Refusal `almail:approval_required`, SQLSTATE 42501.
   - An upsert fires the INSERT trigger first (`20261004000000_almailbooks_cloud.sql:588-589`): an insert of an existing row is checked as an update.
   - `can_delete_record`: never `approvals`; no ruled issued invoice when `voidInsteadOfDelete` is on. Counters unchanged.
