@@ -1,5 +1,7 @@
 import type { CompanyLink, LinkPresetId } from '@/db/types';
+import { LIMIT_APPS, limitAppOf } from '@/cloud/roles';
 import { newId } from '@/lib/ids';
+import type { AppId, CoreAppId } from '@/suite/types';
 
 /** Most links a company can put in the sidebar. */
 export const MAX_LINKS = 8;
@@ -170,6 +172,19 @@ export interface LinkPlace {
   open: readonly string[];
   /** Every app this build has. */
   apps: readonly string[];
+}
+
+/**
+ * The apps a link is chosen for: the four of the classic layout
+ * (CompanyLink.apps keeps these ids). In the split layout Maham Sales and
+ * Maham Inventory are Books' pages: they show the links chosen for Maham
+ * Books, as Maham Books (finance) does, and nothing stored is rewritten.
+ */
+export const LINK_APPS: readonly CoreAppId[] = LIMIT_APPS;
+
+/** Where links show for the apps `open` (of either layout), as `sidebarLinks` reads it. */
+export function linkPlace(open: readonly AppId[]): LinkPlace {
+  return { open: [...new Set(open.map(limitAppOf))], apps: LINK_APPS };
 }
 
 /**

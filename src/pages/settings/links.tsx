@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import type { CompanyLink } from '@/db/types';
 import { newId } from '@/lib/ids';
 import {
+  LINK_APPS,
   LINK_PRESETS,
   MAX_LINKS,
   chosenElsewhereOnly,
@@ -14,7 +15,8 @@ import {
   presetLink,
   toggleLinkApp,
 } from '@/lib/links';
-import { APPS, appTitle } from '@/suite/apps';
+import { limitTitle } from '@/suite/apps';
+import { useApps } from '@/suite/current-app';
 import { localName } from '@/i18n/names';
 import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
@@ -22,7 +24,12 @@ import { Button } from '@/components/ui/button';
 import { Checkbox, Field, Input, Select } from '@/components/ui/form';
 import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 
-const APP_IDS: readonly string[] = APPS.map((app) => app.id);
+/**
+ * The apps a link is chosen for: kept with the ids of the four apps. In the
+ * split layout Books' box stands for Maham Sales, Maham Books and Maham
+ * Inventory, which show the same links.
+ */
+const APP_IDS = LINK_APPS;
 
 /** What's wrong with a link before it can be saved, or ''. */
 function linkProblem(link: CompanyLink): string {
@@ -43,6 +50,7 @@ function linkProblem(link: CompanyLink): string {
 export default function LinkSettings() {
   const { draft, setDraft, dirty, saving, saveWith, reset } = useCompanyDraft();
   const { language } = useLanguage();
+  const layout = useApps();
   const links = draft.links ?? [];
   const setLinks = (next: CompanyLink[]) => setDraft((d) => ({ ...d, links: next }));
   const change = (id: string, patch: Partial<CompanyLink>) =>
@@ -172,16 +180,16 @@ export default function LinkSettings() {
                         {t('Show in')}
                       </legend>
                       <div className="flex flex-wrap gap-x-5 gap-y-2">
-                        {APPS.map((app) => (
+                        {APP_IDS.map((app) => (
                           <Checkbox
-                            key={app.id}
-                            checked={linkShowsIn(link, app.id, APP_IDS)}
+                            key={app}
+                            checked={linkShowsIn(link, app, APP_IDS)}
                             onChange={(e) =>
                               change(link.id, {
-                                apps: toggleLinkApp(link, app.id, e.target.checked, APP_IDS),
+                                apps: toggleLinkApp(link, app, e.target.checked, APP_IDS),
                               })
                             }
-                            label={appTitle(app, language)}
+                            label={limitTitle(app, layout, language)}
                           />
                         ))}
                       </div>

@@ -1,5 +1,5 @@
 import { msg } from '@/i18n';
-import type { AppAccess, AppId } from '@/suite/types';
+import type { AppAccess, AppId, CoreAppId } from '@/suite/types';
 
 /**
  * What each role may do, as the database enforces it (see
@@ -264,13 +264,26 @@ export function canChangeMember(
  * (every member until the owner sets some) means the role's access.
  */
 export interface MemberPermissions {
-  apps?: Partial<Record<AppId, AppAccess>>;
+  apps?: Partial<Record<CoreAppId, AppAccess>>;
 }
 
 const ACCESS_ORDER: readonly AppAccess[] = ['none', 'view', 'edit', 'manage'];
 
-/** The apps the owner can limit: every app of Maham One. */
-export const LIMIT_APPS: readonly AppId[] = ['books', 'people', 'crm', 'compliance'];
+/**
+ * The apps the owner can limit: every app of Maham One's classic layout.
+ * In the split layout Maham Sales and Maham Inventory are Books' pages and
+ * follow its limit (limitAppOf); the stored ids stay these four.
+ */
+export const LIMIT_APPS: readonly CoreAppId[] = ['books', 'people', 'crm', 'compliance'];
+
+/**
+ * The app whose limit (and whose links, CompanyLink.apps) an app follows:
+ * Maham Sales and Maham Inventory of the split layout are Books' pages and
+ * records, so Books'; every other app its own.
+ */
+export function limitAppOf(app: AppId): CoreAppId {
+  return app === 'sales' || app === 'inventory' ? 'books' : app;
+}
 
 /**
  * Limits as the server sent them, keeping only apps and levels this version
@@ -279,7 +292,7 @@ export const LIMIT_APPS: readonly AppId[] = ['books', 'people', 'crm', 'complian
 export function readPermissions(value: unknown): MemberPermissions {
   const apps = (value as { apps?: unknown } | null)?.apps;
   if (!apps || typeof apps !== 'object' || Array.isArray(apps)) return {};
-  const known: Partial<Record<AppId, AppAccess>> = {};
+  const known: Partial<Record<CoreAppId, AppAccess>> = {};
   for (const app of LIMIT_APPS) {
     const limit = (apps as Record<string, unknown>)[app];
     if (typeof limit === 'string' && (ACCESS_ORDER as string[]).includes(limit)) {
@@ -295,14 +308,17 @@ export function lowerAccess(access: AppAccess, limit: AppAccess | undefined): Ap
   return ACCESS_ORDER.indexOf(limit) < ACCESS_ORDER.indexOf(access) ? limit : access;
 }
 
-/** The owner's limit on an app for a member; never for the owner. */
+/**
+ * The owner's limit on an app for a member; never for the owner. Sales and
+ * Inventory (the split layout) follow the limit on Books.
+ */
 export function appLimit(
   role: MemberRole | null | undefined,
   permissions: MemberPermissions | undefined,
   app: AppId,
 ): AppAccess | undefined {
   if (role == null || role === 'owner') return undefined;
-  const limit = permissions?.apps?.[app];
+  const limit = permissions?.apps?.[limitAppOf(app)];
   return limit && ACCESS_ORDER.includes(limit) ? limit : undefined;
 }
 
@@ -359,7 +375,7 @@ export const ATTACHMENT_OWNER_TABLES = [
  * `lookup`, or when that record isn't found, it has none. Maham CRM works on
  * Books' customers and quotes, so it has none of its own.
  */
-export function recordApp(table: string, record: Row, lookup?: RecordLookup): AppId | null {
+export function recordApp(table: string, record: Row, lookup?: RecordLookup): CoreAppId | null {
   if (table === 'attachments') {
     const owner = typeof record?.ownerId === 'string' ? record.ownerId : '';
     if (!owner || !lookup) return null;

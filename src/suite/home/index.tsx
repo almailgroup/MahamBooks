@@ -39,7 +39,7 @@ import { useApprovalView, useCaughtUp, usePendingRequests } from '@/features/app
 import { expirePending, requestShownTo } from '@/db/approvals';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
-import { useAppAccess } from '../current-app';
+import { useAppAccess, useApps } from '../current-app';
 import type { AppId } from '../types';
 import { Launcher } from './launcher';
 import {
@@ -80,6 +80,9 @@ export default function SuiteHome() {
   const fmt = useFormat();
   const { known } = useRoleView();
   const access = useAppAccess();
+  const apps = useApps();
+  // Maham Books in three (Settings → Team): Sales, Books (finance), Inventory.
+  const split = apps.some((app) => app.id === 'sales');
   const people = access.people !== 'none';
   const now = today();
 
@@ -98,9 +101,22 @@ export default function SuiteHome() {
     [company.id],
   );
 
+  // Items for Maham Inventory's line, in the split layout only.
+  const items = useLiveQuery(
+    (): Promise<number | null> | null =>
+      split
+        ? db.products
+            .where('companyId')
+            .equals(company.id)
+            .filter((p) => !p.archived)
+            .count()
+        : null,
+    [company.id, split],
+  );
+
   const alerts = useMemo(
-    () => (data ? homeAlerts(data, now, homeTopics(access)) : undefined),
-    [data, now, access],
+    () => (data ? homeAlerts(data, now, homeTopics(access, apps)) : undefined),
+    [data, now, access, apps],
   );
 
   const stats = useMemo(() => {
@@ -109,17 +125,28 @@ export default function SuiteHome() {
       const overdue = data.documents.filter(
         (d) => d.type === 'invoice' && displayStatus(d, now) === 'overdue',
       ).length;
-      result.books = overdue
+      // Invoices are Maham Sales' in the split layout.
+      result[split ? 'sales' : 'books'] = overdue
         ? tp(overdue, '{count} overdue invoice', '{count} overdue invoices')
         : t('Nothing overdue');
       const staff = data.employees.filter(isCurrent).length;
       result.people = tp(staff, '{count} employee', '{count} employees');
     }
     if (alerts) {
-      const due = alerts.filter((a) => topicApp(a.topic) === 'compliance').length;
+      const due = alerts.filter((a) => topicApp(a.topic, apps) === 'compliance').length;
       result.compliance = due
         ? tp(due, '{count} needs attention', '{count} need attention')
         : t('All up to date');
+      if (split) {
+        // Maham Books (finance): bills and cheques.
+        const finance = alerts.filter((a) => topicApp(a.topic, apps) === 'books').length;
+        result.books = finance
+          ? tp(finance, '{count} needs attention', '{count} need attention')
+          : t('All up to date');
+      }
+    }
+    if (split && typeof items === 'number') {
+      result.inventory = tp(items, '{count} item', '{count} items');
     }
     if (quotes) {
       const waiting = followUps(pipelineQuotes(quotes), now).length;
@@ -128,7 +155,7 @@ export default function SuiteHome() {
         : t('No follow-ups due');
     }
     return result;
-  }, [data, alerts, quotes, now]);
+  }, [data, alerts, quotes, now, split, apps, items]);
 
   return (
     <div className="flex flex-col gap-5 lg:gap-6">

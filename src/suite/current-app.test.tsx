@@ -1,0 +1,115 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router';
+import { db } from '@/db/db';
+import { saveCompany, setupCompany } from '@/db/records';
+import type { Company } from '@/db/types';
+import { CompanyProvider } from '@/app/company';
+import { rememberApp, resetLastApp, useApps, useCurrentApp, useRememberApp } from './current-app';
+
+/**
+ * The app the shell shows, in each layout of the apps (#3): the page's app,
+ * or the last one used on the suite's own pages, and Books when the last
+ * one isn't in the company's layout any more. Made-up data only.
+ */
+
+function Probe() {
+  const app = useCurrentApp();
+  const apps = useApps();
+  useRememberApp();
+  return (
+    <p>
+      {app.id} of {apps.map((a) => a.id).join(',')}
+    </p>
+  );
+}
+
+async function show(path: string) {
+  const router = createMemoryRouter(
+    [
+      {
+        path: '*',
+        element: (
+          <CompanyProvider fallback={<p>Loading</p>} onboarding={<p>Welcome</p>}>
+            <Probe />
+          </CompanyProvider>
+        ),
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
+const shown = async (text: string) => expect(await screen.findByText(text)).toBeInTheDocument();
+
+let company: Company;
+
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
+  resetLastApp();
+  company = await setupCompany({ name: 'Made-up Trading', currency: 'KWD' });
+});
+afterEach(cleanup);
+
+const CLASSIC = 'books,people,crm,compliance';
+const SPLIT = 'sales,books,inventory,people,crm,compliance';
+
+describe('the app open in the classic layout', () => {
+  it('is the app of the page, as before', async () => {
+    const router = await show('/invoices');
+    await shown(`books of ${CLASSIC}`);
+    await act(() => router.navigate('/payroll'));
+    await shown(`people of ${CLASSIC}`);
+    // Settings keeps the last app.
+    await act(() => router.navigate('/settings/team'));
+    await shown(`people of ${CLASSIC}`);
+  });
+
+  it('is Books on the suite’s own pages when the last app was Sales of the split layout', async () => {
+    rememberApp('sales');
+    await show('/settings/team');
+    await shown(`books of ${CLASSIC}`);
+  });
+});
+
+describe('the app open in the split layout', () => {
+  beforeEach(async () => {
+    company = await saveCompany({ ...company, appLayout: 'split' });
+  });
+
+  it('is Sales, Books or Inventory by the page', async () => {
+    const router = await show('/invoices/1');
+    await shown(`sales of ${SPLIT}`);
+    // The items Sales sells, opened from Sales, keep its sidebar.
+    await act(() => router.navigate('/products'));
+    await shown(`sales of ${SPLIT}`);
+    await act(() => router.navigate('/inventory/count'));
+    await shown(`inventory of ${SPLIT}`);
+    await act(() => router.navigate('/products'));
+    await shown(`inventory of ${SPLIT}`);
+    // Bills, opened from Inventory, keep its sidebar.
+    await act(() => router.navigate('/bills'));
+    await shown(`inventory of ${SPLIT}`);
+    await act(() => router.navigate('/cheques'));
+    await shown(`books of ${SPLIT}`);
+    // Receivables in Books.
+    await act(() => router.navigate('/invoices'));
+    await shown(`books of ${SPLIT}`);
+    await act(() => router.navigate('/settings/company'));
+    await shown(`books of ${SPLIT}`);
+  });
+
+  it('keeps the last app on the suite’s own pages, and forgets it once the layout is back to four', async () => {
+    rememberApp('inventory');
+    await show('/settings/team');
+    await shown(`inventory of ${SPLIT}`);
+    await act(async () => {
+      const { appLayout: _layout, ...classic } = company;
+      await saveCompany(classic);
+    });
+    await shown(`books of ${CLASSIC}`);
+  });
+});

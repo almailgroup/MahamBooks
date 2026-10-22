@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { AccessGrid } from './access-grid';
+import { SPLIT_APPS } from './apps';
 
 afterEach(cleanup);
 
@@ -24,5 +25,34 @@ describe('the access grid', () => {
     expect(row('Staff')).toEqual(['Works in it', 'No access', 'Works in it', 'View only']);
     expect(row('Viewer')).toEqual(['View only', 'No access', 'View only', 'View only']);
     expect(screen.getByRole('rowheader', { name: /^Staff/ })).toHaveTextContent('You');
+  });
+
+  it('shows Sales and Inventory with Books’ access in the split layout', () => {
+    render(<AccessGrid mine="owner" apps={SPLIT_APPS} />);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Role',
+      'Maham Sales',
+      'Maham Books',
+      'Maham Inventory',
+      'Maham People',
+      'Maham CRM',
+      'Maham Compliance',
+    ]);
+    expect(row('Staff')).toEqual([
+      'Works in it',
+      'Works in it',
+      'Works in it',
+      'No access',
+      'Works in it',
+      'View only',
+    ]);
+    expect(row('Viewer')).toEqual([
+      'View only',
+      'View only',
+      'View only',
+      'No access',
+      'View only',
+      'View only',
+    ]);
   });
 });

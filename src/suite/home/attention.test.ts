@@ -4,13 +4,14 @@ import { setupCompany } from '@/db/records';
 import { createEmployee, saveEmployee } from '@/db/people';
 import { newId } from '@/lib/ids';
 import type { ComplianceDocument } from '@/db/types';
-import { accessMap } from '../apps';
+import { accessMap, SPLIT_APPS } from '../apps';
 import {
   alertPage,
   approvalsWaiting,
   homeAlerts,
   homeTopics,
   loadHomeAlertData,
+  topicApp,
 } from './attention';
 
 beforeEach(async () => {
@@ -28,6 +29,21 @@ describe('what needs attention on the home', () => {
       'invoices',
     ]);
     expect(homeTopics(accessMap('staff'))).toEqual(homeTopics(accessMap('owner')));
+  });
+
+  it('puts overdue invoices with Maham Sales in the split layout', () => {
+    const split = accessMap('owner', true, undefined, SPLIT_APPS);
+    expect(homeTopics(split, SPLIT_APPS)).toEqual(homeTopics(accessMap('owner')));
+    expect(topicApp('invoices', SPLIT_APPS)).toBe('sales');
+    expect(topicApp('bills', SPLIT_APPS)).toBe('books');
+    expect(topicApp('cheques', SPLIT_APPS)).toBe('books');
+    expect(topicApp('documents', SPLIT_APPS)).toBe('compliance');
+    expect(topicApp('approvals', SPLIT_APPS)).toBeNull();
+    // The classic layout as before.
+    expect(topicApp('invoices')).toBe('books');
+    expect(homeTopics(accessMap('staff', true, undefined, SPLIT_APPS), SPLIT_APPS)).toEqual(
+      homeTopics(accessMap('staff')),
+    );
   });
 
   it('leaves out employees and their papers for those who may not see People', async () => {

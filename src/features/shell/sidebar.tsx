@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { CompanyLink } from '@/db/types';
 import { cn } from '@/lib/cn';
-import { linkSections, sidebarLinks } from '@/lib/links';
+import { linkPlace, linkSections, sidebarLinks } from '@/lib/links';
 import { useCompanyContext } from '@/app/company';
 import {
   DropdownContent,
@@ -28,10 +28,10 @@ import { fileFinderOn } from '@/db/files';
 import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
 import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
-import { APPS } from '@/suite/apps';
 import { useCurrentApp } from '@/suite/current-app';
 import { AppTiles, CurrentApp } from '@/suite/switcher';
 import { SuiteLogo } from '@/suite/logo';
+import type { AppId } from '@/suite/types';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
 import {
@@ -216,7 +216,7 @@ function CompanyLinks({
   onToggle,
   onNavigate,
 }: {
-  app: string;
+  app: AppId;
   /** Whether the Integrations group shows its links. */
   open: boolean;
   onToggle: () => void;
@@ -224,9 +224,7 @@ function CompanyLinks({
 }) {
   const { company } = useCompanyContext();
   const panelId = useId();
-  const { links, integrations } = linkSections(
-    sidebarLinks(company.links, { open: [app], apps: APPS.map((a) => a.id) }),
-  );
+  const { links, integrations } = linkSections(sidebarLinks(company.links, linkPlace([app])));
   return (
     <>
       {links.length ? (

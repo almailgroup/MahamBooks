@@ -8,7 +8,7 @@ import { suiteName } from '@/lib/brand';
 import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
 import { appTitle, visibleApps } from './apps';
-import { useAppAccess, useCurrentApp } from './current-app';
+import { useAppAccess, useApps, useCurrentApp } from './current-app';
 import type { AppTone, SuiteApp } from './types';
 import { SuiteLogo } from './logo';
 
@@ -18,6 +18,8 @@ export const APP_TONES: Record<AppTone, string> = {
   emerald: 'bg-emerald-100 text-emerald-700',
   sky: 'bg-sky-100 text-sky-700',
   amber: 'bg-amber-100 text-amber-800',
+  violet: 'bg-violet-100 text-violet-700',
+  teal: 'bg-teal-100 text-teal-800',
 };
 
 const SIZES = {
@@ -73,7 +75,7 @@ export function AppSwitcher({ className }: { className?: string }) {
   const navigate = useNavigate();
   const { language } = useLanguage();
   const current = useCurrentApp();
-  const apps = visibleApps(useAppAccess());
+  const apps = visibleApps(useAppAccess(), useApps());
   return (
     <Menu.Root>
       <Menu.Trigger asChild>
@@ -90,7 +92,8 @@ export function AppSwitcher({ className }: { className?: string }) {
           <Menu.Label className="px-2 pt-1 pb-2.5" aria-hidden>
             <SuiteLogo className="h-6" />
           </Menu.Label>
-          <div className="grid grid-cols-4 gap-1">
+          {/* Six apps in the split layout: two rows of three. */}
+          <div className={apps.length > 4 ? 'grid grid-cols-3 gap-1' : 'grid grid-cols-4 gap-1'}>
             {apps.map((app) => {
               const active = app.id === current.id;
               return (
@@ -153,9 +156,12 @@ export function AppTiles({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
   const { language } = useLanguage();
   const current = useCurrentApp();
-  const apps = visibleApps(useAppAccess());
+  const apps = visibleApps(useAppAccess(), useApps());
   return (
-    <ul aria-label={t('Apps')} className="grid grid-cols-4 gap-1">
+    <ul
+      aria-label={t('Apps')}
+      className={apps.length > 4 ? 'grid grid-cols-3 gap-1' : 'grid grid-cols-4 gap-1'}
+    >
       {apps.map((app) => (
         <li key={app.id} className="min-w-0">
           <button

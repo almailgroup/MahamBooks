@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/misc';
 import { useLanguage } from '@/i18n/provider';
 import { msg, t } from '@/i18n';
 import { APPS, appAccess, appTitle } from './apps';
-import type { AppAccess } from './types';
+import type { AppAccess, SuiteApp } from './types';
 
 /** What each level means, in a word. */
 export const ACCESS_LABELS: Record<AppAccess, string> = {
@@ -32,21 +32,28 @@ export const ACCESS_TONES: Record<AppAccess, string> = {
 };
 
 /**
- * Which apps of Maham One each role opens, and what it may do there. The
- * same rules the app and the cloud apply; `mine` marks the reader's role.
+ * Which apps of Maham One each role opens, and what it may do there, in the
+ * layout of `apps` (the company's: useApps). The same rules the app and the
+ * cloud apply; `mine` marks the reader's role.
  */
-export function AccessGrid({ mine }: { mine?: MemberRole | null }) {
+export function AccessGrid({
+  mine,
+  apps = APPS,
+}: {
+  mine?: MemberRole | null;
+  apps?: readonly SuiteApp[];
+}) {
   const { language } = useLanguage();
   return (
     <div className="-mx-4 overflow-x-auto sm:mx-0">
-      <table className="w-full min-w-[34rem] text-sm">
+      <table className={cn('w-full text-sm', apps.length > 4 ? 'min-w-[46rem]' : 'min-w-[34rem]')}>
         <caption className="sr-only">{t('What each role can open')}</caption>
         <thead>
           <tr className="border-b border-slate-200 text-start text-xs text-slate-500">
             <th scope="col" className="px-4 py-2 text-start font-medium sm:ps-0">
               {t('Role')}
             </th>
-            {APPS.map((app) => (
+            {apps.map((app) => (
               <th key={app.id} scope="col" className="px-3 py-2 text-start font-medium">
                 {appTitle(app, language)}
               </th>
@@ -64,7 +71,7 @@ export function AccessGrid({ mine }: { mine?: MemberRole | null }) {
                   </Badge>
                 ) : null}
               </th>
-              {APPS.map((app) => {
+              {apps.map((app) => {
                 const access = appAccess(app.id, role);
                 const Icon = ACCESS_ICONS[access];
                 return (

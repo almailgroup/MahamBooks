@@ -21,6 +21,7 @@ import {
   allThemes,
   type ThemePreference,
 } from './themes';
+import { APP_TONES } from '@/suite/switcher';
 
 const ROOT = join(__dirname, '..', '..');
 const THEMES = allThemes();
@@ -191,6 +192,19 @@ describe('contrast in every theme', () => {
     // The header is translucent over the page.
     const header = over(v['--color-surface'], 0.85, v['--color-page']);
     expect(contrast(v['--color-slate-900'], header)).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('the apps’ colours in every theme', () => {
+  it.each(THEMES.map((theme) => [theme.id, theme] as const))('%s', (id, theme) => {
+    // Sales (violet) and Inventory (teal) of the split layout too.
+    expect(Object.keys(APP_TONES)).toEqual(['indigo', 'emerald', 'sky', 'amber', 'violet', 'teal']);
+    for (const [tone, classes] of Object.entries(APP_TONES)) {
+      const [, bg] = /\bbg-([a-z]+-\d+)\b/.exec(classes)!;
+      const [, fg] = /\btext-([a-z]+-\d+)\b/.exec(classes)!;
+      const ratio = contrast(theme.vars[`--color-${fg}`], theme.vars[`--color-${bg}`]);
+      expect(ratio, `${id}: ${tone}`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 

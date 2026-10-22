@@ -653,6 +653,16 @@ export interface Company {
   /** How the Books dashboard is laid out; missing shows it as before. */
   dashboard?: DashboardSettings;
   /**
+   * How Maham One lays out its apps (Settings → Team), for everyone in the
+   * company: 'split' takes Maham Sales (quotes, orders, invoices, payments
+   * received, customers) and Maham Inventory (items and stock) out of Maham
+   * Books, which keeps purchases, cheques, banking, accounting and reports
+   * and lists invoices under Receivables. The same pages at the same
+   * addresses either way. Missing (or a value this build doesn't know):
+   * today's four apps.
+   */
+  appLayout?: 'split';
+  /**
    * The owner's approval rules (Settings → Approvals), for companies kept in
    * the cloud. Missing (every company until the owner turns them on):
    * nothing waits for approval, as before. Only the owner changes them.

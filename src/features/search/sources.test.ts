@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accessMap } from '@/suite/apps';
+import { accessMap, SPLIT_APPS } from '@/suite/apps';
 import { createCompany } from '@/db/defaults';
 import { createEmployee } from '@/db/people';
 import type { CloudLink } from '@/cloud/types';
@@ -50,6 +50,35 @@ describe('the pages and actions search finds', () => {
     ]) {
       expect(all).toContain(key);
     }
+  });
+
+  it('find Maham Sales and Maham Inventory and their pages in the split layout', () => {
+    const access = accessMap('owner', true, undefined, SPLIT_APPS);
+    const entries = staticEntries(true, { apps: SPLIT_APPS, access, current: 'sales' });
+    const all = entries.map((e) => e.key);
+    expect(all.filter((k, i) => all.indexOf(k) !== i)).toEqual([]);
+    for (const key of ['app:sales', 'app:books', 'app:inventory', 'page:/inventory/count']) {
+      expect(all).toContain(key);
+    }
+    const subtitle = (key: string) => entries.find((e) => e.key === key)?.subtitle;
+    // A page says which app it is in, as before; Maham Books' own say nothing.
+    expect(subtitle('page:/invoices')).toBe('Maham Sales');
+    expect(subtitle('page:/inventory')).toBe('Maham Inventory');
+    expect(subtitle('page:/bills')).toBe('Purchases');
+    // The same pages and actions as the classic layout, each once.
+    const pages = (list: string[]) => list.filter((k) => k.startsWith('page:')).sort();
+    const actions = (list: string[]) => list.filter((k) => k.startsWith('action:')).sort();
+    expect(pages(all)).toEqual(expect.arrayContaining(pages(keys(true))));
+    expect(actions(all)).toEqual(actions(keys(true)));
+    // From Books (finance), an invoice is under Receivables.
+    const fromBooks = staticEntries(true, { apps: SPLIT_APPS, access, current: 'books' });
+    expect(fromBooks.find((e) => e.key === 'page:/invoices')?.subtitle).toBe('Receivables');
+    // Staff: nothing of People.
+    const staff = staticEntries(true, {
+      apps: SPLIT_APPS,
+      access: accessMap('staff', true, undefined, SPLIT_APPS),
+    }).map((e) => e.key);
+    expect(staff.filter((k) => /\/(people|employees|payroll)\b|employee/.test(k))).toEqual([]);
   });
 
   it('leave out People for staff and viewers, and creating for viewers', () => {

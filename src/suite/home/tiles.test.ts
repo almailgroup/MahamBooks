@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accessMap } from '../apps';
+import { accessMap, SPLIT_APPS } from '../apps';
 import {
   appTiles,
   createTiles,
@@ -63,6 +63,45 @@ describe('the home’s round tiles', () => {
     expect(createTiles('books', accessMap('viewer'), false)).toEqual([]);
     // No longer shared, or view only: nothing to create.
     expect(createTiles('books', owner, true)).toEqual([]);
+  });
+
+  it('show Sales, Books and Inventory in the split layout, with their tools', () => {
+    const split = accessMap('owner', true, undefined, SPLIT_APPS);
+    expect(keys(appTiles(split, 'en', SPLIT_APPS))).toEqual([
+      'app:sales',
+      'app:books',
+      'app:inventory',
+      'app:people',
+      'app:crm',
+      'app:compliance',
+    ]);
+    const groups = toolGroups(split, 'en', SPLIT_APPS);
+    const tools = (id: string) => groups.find((g) => g.app.id === id)!.tiles.map((t) => t.to);
+    expect(tools('sales')).toContain('/invoices');
+    expect(tools('books')).toContain('/bills');
+    expect(tools('inventory')).toContain('/inventory');
+    // A tile each, filtered once by where it goes.
+    expect(appTiles(split, 'ar', SPLIT_APPS).map((tile) => tile.label)).toEqual([
+      'مهام سيلز',
+      'مهام بوكس',
+      'مهام إنفنتوري',
+      'مهام بيبول',
+      'مهام CRM',
+      'مهام الامتثال',
+    ]);
+    const staff = accessMap('staff', true, undefined, SPLIT_APPS);
+    expect(keys(appTiles(staff, 'en', SPLIT_APPS))).not.toContain('app:people');
+    expect(keys(createTiles('sales', split, false, SPLIT_APPS))).toEqual([
+      'action:invoice',
+      'action:quote',
+      'action:expense',
+      'action:payment_in',
+      'action:bill',
+      'action:employee',
+    ]);
+    expect(
+      createTiles('sales', accessMap('viewer', true, undefined, SPLIT_APPS), false, SPLIT_APPS),
+    ).toEqual([]);
   });
 
   it('show the company’s links with their initials', () => {

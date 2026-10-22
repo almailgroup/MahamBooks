@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider, type RouteObject } from 'react-router';
 import { db } from '@/db/db';
-import { saveClient, setupCompany } from '@/db/records';
+import { saveClient, saveCompany, setupCompany } from '@/db/records';
 import { createClient } from '@/db/defaults';
 import { createPayment, newCheque } from '@/db/payments';
 import { CompanyProvider } from '@/app/company';
@@ -13,6 +13,7 @@ import type { CloudLink } from '@/cloud/types';
 import type { MemberPermissions, MemberRole } from '@/cloud/roles';
 import { booksRoutes } from '@/apps/books/routes';
 import { AppGate } from './app-gate';
+import { resetLastApp } from './current-app';
 import type { AppId } from './types';
 
 /**
@@ -159,6 +160,35 @@ describe('an app opened from a page outside the apps', () => {
     expect(screen.getByText('books page')).toBeInTheDocument();
     expect(mounts).toBe(1);
     expect(readOnlySeen[readOnlySeen.length - 1]).toBe(true);
+  });
+
+  it('names the app around the page in the split layout, whose limit is Books’', async () => {
+    const made = await company('accountant', { apps: { books: 'view' } });
+    await saveCompany({ ...made, appLayout: 'split' });
+    resetLastApp();
+    const at = (path: string): RouteObject => ({
+      path,
+      element: (
+        <AppGate app="books">
+          <Page name={path} />
+        </AppGate>
+      ),
+    });
+    for (const [path, app] of [
+      ['invoices', 'Maham Sales'],
+      ['products', 'Maham Inventory'],
+      ['bills', 'Maham Books'],
+    ] as const) {
+      const open = await openFromHome(at(path), `/${path}`);
+      expect(
+        await screen.findByText(
+          `The owner has made ${app} view only for you. Ask the owner if you need to change something.`,
+        ),
+      ).toBeInTheDocument();
+      await open.settle();
+      expect(readOnlySeen[readOnlySeen.length - 1]).toBe(true);
+      cleanup();
+    }
   });
 
   it('says the owner turned People off, and never shows the page, when they did', async () => {

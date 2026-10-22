@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { APPS as SUITE_APPS } from '@/suite/apps';
 import {
+  LINK_APPS,
   LINK_PRESETS,
   PRESET_APPS,
   chosenElsewhereOnly,
   cleanLink,
   hasSecretParameter,
   linkApps,
+  linkPlace,
   linkShowsIn,
   linkPreset,
   linkSections,
@@ -102,6 +104,36 @@ describe('integrations and where links show', () => {
     expect(ids(sidebarLinks(links))).toEqual(ids(links));
     expect(linkApps({ apps: ['crm', 'inventory', 'books'] }, APPS)).toEqual(['books', 'crm']);
     expect(linkApps({}, APPS)).toEqual(APPS);
+  });
+
+  it('show the links chosen for Books in Sales, Books and Inventory in the split layout', () => {
+    const url = 'https://portal.example.com/';
+    // As saved: Deema and the others for Books and CRM, never rewritten.
+    const deema = { ...presetLink(LINK_PRESETS[0]), url };
+    const links = [
+      deema,
+      { id: 'every', label: 'Every', url },
+      { id: 'people', label: 'People', url, apps: ['people'] },
+      { id: 'crm', label: 'CRM', url, apps: ['crm'] },
+    ];
+    expect(deema.apps).toEqual(['books', 'crm']);
+    expect(LINK_APPS).toEqual(APPS);
+    const inApp = (app: Parameters<typeof linkPlace>[0][number]) =>
+      ids(sidebarLinks(links, linkPlace([app])));
+    for (const app of ['sales', 'books', 'inventory'] as const) {
+      expect(inApp(app), app).toEqual([deema.id, 'every']);
+    }
+    expect(inApp('crm')).toEqual([deema.id, 'every', 'crm']);
+    expect(inApp('people')).toEqual(['every', 'people']);
+    // The home: the apps someone may open, each stored id once.
+    expect(linkPlace(['sales', 'books', 'inventory', 'compliance'])).toEqual({
+      open: ['books', 'compliance'],
+      apps: LINK_APPS,
+    });
+    // The classic layout reads the links as before.
+    for (const app of APPS) {
+      expect(linkPlace([app as 'books'])).toEqual({ open: [app], apps: APPS });
+    }
   });
 
   it('keep links without a section, or with one this build does not know, in the list', () => {

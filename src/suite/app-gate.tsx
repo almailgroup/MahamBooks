@@ -7,7 +7,9 @@ import { ReadOnlyContext, useReadOnly } from '@/components/ui/read-only';
 import { PeopleLocked, useRoleView, type RoleView } from '@/features/cloud/role-gates';
 import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
+import { limitAppOf } from '@/cloud/roles';
 import { appAccess, appById, appTitle, roleAccess } from './apps';
+import { useCurrentApp } from './current-app';
 import type { AppId } from './types';
 
 /**
@@ -37,9 +39,12 @@ export function AppGate({ app, children }: { app: AppId; children: ReactNode }) 
 function Limited({ app, view, children }: { app: AppId; view: RoleView; children: ReactNode }) {
   const outer = useReadOnly();
   const { language } = useLanguage();
+  // In the split layout Books' pages are also Maham Sales' and Maham
+  // Inventory's: named as the app around them, whose limit is Books'.
+  const current = useCurrentApp();
   // Not known yet (Books only): the page as it always was, with nothing said.
   const access = view.known ? appAccess(app, view.role, true, view.permissions) : null;
-  const name = appTitle(appById(app), language);
+  const name = appTitle(limitAppOf(current.id) === app ? current : appById(app), language);
   // Taken away by the owner, not by the role.
   const byOwner = access !== null && access !== roleAccess(app, view.role);
   if (access === 'none') {

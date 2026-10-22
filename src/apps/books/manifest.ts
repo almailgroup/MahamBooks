@@ -200,3 +200,133 @@ export const BOOKS: SuiteApp = {
     viewer: 'view',
   },
 };
+
+/** What Maham Sales and Maham Inventory own in the split layout. */
+const SPLIT_OUT = new Set([
+  'quotes',
+  'proformas',
+  'sales-orders',
+  'invoices',
+  'delivery-notes',
+  'credits',
+  'recurring',
+  'payments',
+  'clients',
+  'products',
+  'inventory',
+]);
+
+/**
+ * Maham Books in the split layout (Company.appLayout): the finance app,
+ * still called Maham Books. Sales (src/apps/sales) and Inventory
+ * (src/apps/inventory) own their pages; Books keeps purchases, cheques,
+ * banking, accounting, VAT and reports, and lists what customers owe
+ * (customers, invoices, payments received, credit notes) under Receivables
+ * and the items and stock it values. Opened from here, those pages keep
+ * this sidebar. Same id, access and addresses as in the classic layout.
+ */
+export const FINANCE: SuiteApp = {
+  ...BOOKS,
+  description: msg('Purchases, cheques, banking, accounting and reports.'),
+  owns: BOOKS.owns.filter((segment) => !SPLIT_OUT.has(segment)),
+  shares: ['clients', 'invoices', 'payments', 'credits', 'products', 'inventory'],
+  nav: [
+    { kind: 'link', to: '/', label: msg('Home'), icon: House, end: true },
+    {
+      kind: 'link',
+      to: '/books',
+      label: msg('Dashboard'),
+      icon: LayoutDashboard,
+      end: true,
+      keywords: 'books overview',
+    },
+    {
+      kind: 'group',
+      id: 'receivables',
+      label: msg('Receivables'),
+      icon: HandCoins,
+      children: [
+        { to: '/clients', label: msg('Clients'), keywords: 'customers' },
+        { to: '/invoices', label: msg('Invoices') },
+        { to: '/payments', label: msg('Payments received'), keywords: 'receipts' },
+        { to: '/credits', label: msg('Credit notes') },
+      ],
+    },
+    {
+      kind: 'group',
+      id: 'purchases',
+      label: msg('Purchases'),
+      icon: ShoppingCart,
+      children: [
+        { to: '/vendors', label: msg('Vendors'), keywords: 'suppliers' },
+        { to: '/purchase-orders', label: msg('Purchase orders'), keywords: 'lpo' },
+        { to: '/bills', label: msg('Bills') },
+        { to: '/expenses', label: msg('Expenses') },
+        { to: '/payments-made', label: msg('Payments made') },
+        { to: '/vendor-credits', label: msg('Vendor credits') },
+      ],
+    },
+    { kind: 'link', to: '/cheques', label: msg('Cheques'), icon: WalletCards, keywords: 'pdc' },
+    {
+      kind: 'group',
+      id: 'inventory',
+      label: msg('Inventory'),
+      icon: Boxes,
+      children: [
+        { to: '/products', label: msg('Products & services'), keywords: 'items' },
+        { to: '/inventory', label: msg('Stock and warehouses'), keywords: 'stock' },
+      ],
+    },
+    { kind: 'link', to: '/banking', label: msg('Banking'), icon: Banknote },
+    {
+      kind: 'group',
+      id: 'accounting',
+      label: msg('Accounting'),
+      icon: BookOpen,
+      children: [
+        { to: '/accounts', label: msg('Chart of accounts') },
+        { to: '/journals', label: msg('Manual journals') },
+        { to: '/assets', label: msg('Fixed assets'), keywords: 'depreciation' },
+        { to: '/year-end', label: msg('Year-end close') },
+        { to: '/vat', label: msg('VAT returns'), taxesOnly: true },
+      ],
+    },
+    { kind: 'link', to: '/reports', label: msg('Reports'), icon: ChartColumn },
+    {
+      kind: 'link',
+      to: '/approvals',
+      label: msg('Approvals'),
+      icon: ClipboardCheck,
+      keywords: 'approval requests void',
+      approvalsOnly: true,
+    },
+  ],
+  create: [
+    {
+      label: msg('Purchases'),
+      column: 1,
+      actions: [A.bill, A.expense, A.purchase_order, A.payment_out, A.vendor_credit, A.vendor],
+    },
+    { label: msg('Accounting'), column: 0, actions: [A.journal, A.asset] },
+  ],
+  tools: [
+    { to: '/bills', label: msg('Bills'), icon: Receipt, keywords: 'purchases' },
+    { to: '/expenses', label: msg('Expenses'), icon: Wallet },
+    { to: '/vendors', label: msg('Vendors'), icon: Truck, keywords: 'suppliers' },
+    { to: '/cheques', label: msg('Cheques'), icon: WalletCards, keywords: 'pdc' },
+    { to: '/banking', label: msg('Banking'), icon: Landmark, keywords: 'bank statement' },
+    {
+      to: '/reports/aging',
+      label: msg('Receivables aging'),
+      icon: HandCoins,
+      keywords: 'who owes receivables',
+    },
+    { to: '/accounts', label: msg('Chart of accounts'), icon: BookOpen, keywords: 'ledger' },
+    { to: '/reports', label: msg('Reports'), icon: ChartColumn },
+  ],
+  tabs: [
+    { to: '/', label: msg('Home'), icon: House, end: true },
+    { to: '/bills', label: msg('Bills'), icon: Receipt },
+    { to: '/expenses', label: msg('Expenses'), icon: Wallet },
+  ],
+};

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { MemberAccess, TeamMember } from '@/cloud/api';
 import {
   isApprover,
+  LIMIT_APPS,
   lowerAccess,
   MAX_APPROVERS,
   ROLE_LABELS,
@@ -14,8 +15,9 @@ import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { ACCESS_ICONS, ACCESS_LABELS, ACCESS_TONES } from '@/suite/access-grid';
-import { APPS, appTitle, roleAccess } from '@/suite/apps';
-import type { AppAccess, AppId } from '@/suite/types';
+import { limitTitle, roleAccess } from '@/suite/apps';
+import { useApps } from '@/suite/current-app';
+import type { AppAccess, CoreAppId } from '@/suite/types';
 
 /**
  * What the owner (the Super Admin) lets one member do, app by app, and
@@ -25,7 +27,7 @@ import type { AppAccess, AppId } from '@/suite/types';
  */
 
 /** The levels the owner may give in an app, below the role's own access. */
-export function limitChoices(app: AppId, access: AppAccess): AppAccess[] {
+export function limitChoices(app: CoreAppId, access: AppAccess): AppAccess[] {
   const lower: AppAccess[] = [];
   if (access === 'manage' || access === 'edit') lower.push('view');
   // Books is never hidden: the other apps use its customers and items.
@@ -36,13 +38,13 @@ export function limitChoices(app: AppId, access: AppAccess): AppAccess[] {
 /** The limits as chosen, keeping only those below the role's own access. */
 export function chosenPermissions(
   role: TeamMember['role'],
-  chosen: Partial<Record<AppId, AppAccess>>,
+  chosen: Partial<Record<CoreAppId, AppAccess>>,
 ): MemberPermissions {
-  const apps: Partial<Record<AppId, AppAccess>> = {};
-  for (const app of APPS) {
-    const limit = chosen[app.id];
-    if (limit && limitChoices(app.id, roleAccess(app.id, role)).includes(limit)) {
-      apps[app.id] = limit;
+  const apps: Partial<Record<CoreAppId, AppAccess>> = {};
+  for (const app of LIMIT_APPS) {
+    const limit = chosen[app];
+    if (limit && limitChoices(app, roleAccess(app, role)).includes(limit)) {
+      apps[app] = limit;
     }
   }
   return Object.keys(apps).length ? { apps } : {};
@@ -67,7 +69,9 @@ export function MemberPermissionsDialog({
   onSave: (permissions: MemberPermissions, canApprove: boolean) => Promise<boolean>;
 }) {
   const { language } = useLanguage();
-  const [chosen, setChosen] = useState<Partial<Record<AppId, AppAccess>>>(
+  // In the split layout, Books' limit is also Maham Sales' and Maham Inventory's.
+  const layout = useApps();
+  const [chosen, setChosen] = useState<Partial<Record<CoreAppId, AppAccess>>>(
     () => access?.permissions.apps ?? {},
   );
   const [approve, setApprove] = useState(() => isApprover(member.role, access?.canApprove));
@@ -88,16 +92,16 @@ export function MemberPermissionsDialog({
       >
         <DialogBody>
           <ul className="divide-y divide-slate-100">
-            {APPS.map((app) => {
-              const base = roleAccess(app.id, member.role);
-              const choices = limitChoices(app.id, base);
-              const current = chosen[app.id];
+            {LIMIT_APPS.map((app) => {
+              const base = roleAccess(app, member.role);
+              const choices = limitChoices(app, base);
+              const current = chosen[app];
               const value = current && choices.includes(current) ? current : ROLE;
               const shown = lowerAccess(base, value === ROLE ? undefined : current);
               const Icon = ACCESS_ICONS[shown];
-              const title = appTitle(app, language);
+              const title = limitTitle(app, layout, language);
               return (
-                <li key={app.id} className="flex flex-wrap items-center gap-3 py-3">
+                <li key={app} className="flex flex-wrap items-center gap-3 py-3">
                   <div className="min-w-0 flex-1 basis-40">
                     <p className="font-medium text-slate-900">{title}</p>
                     <p className={cn('flex items-center gap-1.5 text-xs', ACCESS_TONES[shown])}>
@@ -111,7 +115,7 @@ export function MemberPermissionsDialog({
                       onChange={(e) =>
                         setChosen((c) => ({
                           ...c,
-                          [app.id]:
+                          [app]:
                             e.target.value === ROLE ? undefined : (e.target.value as AppAccess),
                         }))
                       }

@@ -9,9 +9,27 @@ import type { CreateGroup } from '@/features/shell/create';
  * and Maham Compliance (licences and deadlines). Each app describes itself
  * in a manifest; the shell (sidebar, app switcher, phone tabs, New menus,
  * command palette, suite home) is built from the manifests.
+ *
+ * A company can split Maham Books in three (Settings → Team, the app
+ * layout): Maham Sales, Maham Books (finance) and Maham Inventory, over the
+ * same pages at the same addresses (src/suite/apps.ts).
  */
 
-export type AppId = 'books' | 'people' | 'crm' | 'compliance';
+/**
+ * The four apps of the classic layout. The owner's limits on a member
+ * (company_members.permissions, #6) and the apps a company link shows in
+ * (CompanyLink.apps, #5) are kept with these ids, whatever the layout.
+ */
+export type CoreAppId = 'books' | 'people' | 'crm' | 'compliance';
+
+/** Every app: the classic four, and Sales and Inventory of the split layout. */
+export type AppId = CoreAppId | 'sales' | 'inventory';
+
+/**
+ * How the apps are laid out: 'classic' is today's four; 'split' takes
+ * Maham Sales and Maham Inventory out of Maham Books (Company.appLayout).
+ */
+export type AppLayout = 'classic' | 'split';
 
 /**
  * What someone may do in an app: nothing (it is hidden), look, work in it,
@@ -21,7 +39,7 @@ export type AppId = 'books' | 'people' | 'crm' | 'compliance';
 export type AppAccess = 'none' | 'view' | 'edit' | 'manage';
 
 /** The colour of an app's icon tile; one of the palettes every theme defines. */
-export type AppTone = 'indigo' | 'emerald' | 'sky' | 'amber';
+export type AppTone = 'indigo' | 'emerald' | 'sky' | 'amber' | 'violet' | 'teal';
 
 /** A tab of the phone's bottom bar. */
 export interface AppTab {

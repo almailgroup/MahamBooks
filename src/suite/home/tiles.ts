@@ -44,32 +44,44 @@ export interface ToolGroup {
 const terms = (...parts: (string | undefined)[]) =>
   normalizeSearch(parts.filter(Boolean).join(' '));
 
-/** The apps someone may open, as tiles. */
-export function appTiles(access: AccessMap, language: Language = currentLanguage()): Tile[] {
-  return APPS.filter((app) => canOpen(access[app.id])).map((app) => ({
-    key: `app:${app.id}`,
-    app: app.id,
-    label: appTitle(app, language),
-    icon: app.icon,
-    tone: app.tone,
-    to: app.home,
-    terms: terms(app.name, app.nameAr, t(app.description)),
-  }));
+/** The apps someone may open, of the layout's `apps`, as tiles. */
+export function appTiles(
+  access: AccessMap,
+  language: Language = currentLanguage(),
+  apps: readonly SuiteApp[] = APPS,
+): Tile[] {
+  return apps
+    .filter((app) => canOpen(access[app.id]))
+    .map((app) => ({
+      key: `app:${app.id}`,
+      app: app.id,
+      label: appTitle(app, language),
+      icon: app.icon,
+      tone: app.tone,
+      to: app.home,
+      terms: terms(app.name, app.nameAr, t(app.description)),
+    }));
 }
 
-/** Each app's main tools, for the apps someone may open. */
-export function toolGroups(access: AccessMap, language: Language = currentLanguage()): ToolGroup[] {
-  return APPS.filter((app) => canOpen(access[app.id])).map((app) => ({
-    app,
-    tiles: app.tools.map((tool) => ({
-      key: `tool:${app.id}:${tool.to}`,
-      label: t(tool.label),
-      icon: tool.icon,
-      tone: app.tone,
-      to: tool.to,
-      terms: terms(t(tool.label), tool.label, tool.keywords, appTitle(app, language)),
-    })),
-  }));
+/** Each app's main tools, for the apps of the layout's `apps` someone may open. */
+export function toolGroups(
+  access: AccessMap,
+  language: Language = currentLanguage(),
+  apps: readonly SuiteApp[] = APPS,
+): ToolGroup[] {
+  return apps
+    .filter((app) => canOpen(access[app.id]))
+    .map((app) => ({
+      app,
+      tiles: app.tools.map((tool) => ({
+        key: `tool:${app.id}:${tool.to}`,
+        label: t(tool.label),
+        icon: tool.icon,
+        tone: app.tone,
+        to: tool.to,
+        terms: terms(t(tool.label), tool.label, tool.keywords, appTitle(app, language)),
+      })),
+    }));
 }
 
 /** What the home offers to create, the most used first. */
@@ -92,15 +104,22 @@ export const MAX_CREATE = 6;
  * employee" even though Books fills the row); none for those who can't save
  * (viewers, or a company no longer shared).
  */
-export function createTiles(current: AppId, access: AccessMap, readOnly: boolean): Tile[] {
+export function createTiles(
+  current: AppId,
+  access: AccessMap,
+  readOnly: boolean,
+  apps: readonly SuiteApp[] = APPS,
+): Tile[] {
   if (readOnly) return [];
   const allowed = new Set(
-    createGroups(current, access).flatMap((group) => group.actions.map((action) => action.id)),
+    createGroups(current, access, apps).flatMap((group) =>
+      group.actions.map((action) => action.id),
+    ),
   );
   const offered = QUICK_CREATE.filter((id) => allowed.has(id));
   // Each app's first, then the rest in order of use, never more than MAX_CREATE.
   const chosen = new Set<string>();
-  for (const app of APPS) {
+  for (const app of apps) {
     if (!canEdit(access[app.id])) continue;
     const own = new Set(app.create.flatMap((group) => group.actions.map((action) => action.id)));
     const first = offered.find((id) => own.has(id));

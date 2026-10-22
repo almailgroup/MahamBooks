@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { createGroups } from '@/suite/apps';
-import { useAppAccess, useCurrentApp } from '@/suite/current-app';
+import { useAppAccess, useApps, useCurrentApp } from '@/suite/current-app';
 import { useHasStickyActions, useTyping } from './store';
 
 /**
@@ -114,10 +114,11 @@ function Tab({
  */
 export function useCreateGroups() {
   const app = useCurrentApp();
+  const apps = useApps();
   const access = useAppAccess();
   // The header and tab bar sit outside the page's read-only context.
   const { readOnly } = useRoleView().readOnly;
-  return readOnly ? [] : createGroups(app.id, access);
+  return readOnly ? [] : createGroups(app.id, access, apps);
 }
 
 /** Everything that can be created, as a sheet from the bottom of the screen. */

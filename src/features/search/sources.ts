@@ -16,8 +16,16 @@ import { loadFileIndex } from '@/features/files/file-index';
 import { today } from '@/lib/dates';
 import { isCustomer, isVendor } from '@/db/purchases';
 import { visibleNav } from '@/features/shell/nav';
-import { APPS, appTitle, canOpen, createGroups, type AccessMap } from '@/suite/apps';
-import type { AppId } from '@/suite/types';
+import {
+  appForPath,
+  APPS,
+  appTitle,
+  canOpen,
+  createGroups,
+  SPLIT_APPS,
+  type AccessMap,
+} from '@/suite/apps';
+import type { AppId, SuiteApp } from '@/suite/types';
 import { currentLanguage, msg, t } from '@/i18n';
 import { localName } from '@/i18n/names';
 import { makeEntry, type SearchEntry } from './rank';
@@ -115,13 +123,16 @@ const SUB_PAGES: {
 ];
 
 /** Every app open to everyone: for tests and for companies kept on this device. */
-const FULL_ACCESS = Object.fromEntries(APPS.map((app) => [app.id, 'manage'])) as AccessMap;
+const FULL_ACCESS = Object.fromEntries(
+  [...APPS, ...SPLIT_APPS].map((app) => [app.id, 'manage']),
+) as AccessMap;
 
 /**
- * Pages and actions: the same for every company, in the interface language.
- * Only the apps the person may open (`current` first), and only the things
- * they may create; nothing at all without `create` (view-only, or no longer
- * shared), like the New menus.
+ * Pages and actions: the same for every company of a layout (`apps`, the
+ * classic four by default), in the interface language. Only the apps the
+ * person may open (`current` first), and only the things they may create;
+ * nothing at all without `create` (view-only, or no longer shared), like
+ * the New menus. A page says which app it is in, except Maham Books' own.
  */
 export function staticEntries(
   taxesOn: boolean,
@@ -134,7 +145,9 @@ export function staticEntries(
     chequePrinting = false,
     approvals = false,
     payrollApprovals = false,
+    apps: layout = APPS,
   }: {
+    apps?: readonly SuiteApp[];
     access?: AccessMap;
     current?: AppId;
     create?: boolean;
@@ -164,9 +177,18 @@ export function staticEntries(
     );
   };
   const language = currentLanguage();
-  const apps = APPS.filter((app) => canOpen(access[app.id]));
+  const apps = layout.filter((app) => canOpen(access[app.id]));
   // The open app's pages first, so a shared page shows under it.
   apps.sort((a, b) => Number(b.id === current) - Number(a.id === current));
+  // Then each page under the app that owns it, before another app that
+  // shares it (in the split layout, Inventory's stock before Books').
+  const open = new Set(apps.map((app) => app.id));
+  const deferred: (() => void)[] = [];
+  const listed = (app: SuiteApp, to: string, add: () => void) => {
+    const owner = appForPath(to, null, layout);
+    if (app.id !== current && owner && owner !== app.id && open.has(owner)) deferred.push(add);
+    else add();
+  };
   for (const app of apps) {
     const name = appTitle(app, language);
     // The app itself: "people" opens Maham People. Its own entry, so the
@@ -192,23 +214,26 @@ export function staticEntries(
       payrollApprovals,
     )) {
       if (entry.kind === 'link') {
-        page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
+        listed(app, entry.to, () =>
+          page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name),
+        );
       } else {
         for (const child of entry.children) {
           const where = app.id === 'books' ? t(entry.label) : `${name} · ${t(entry.label)}`;
-          page(child.to, child.label, 30, child.keywords, where);
+          listed(app, child.to, () => page(child.to, child.label, 30, child.keywords, where));
         }
       }
     }
-    for (const link of app.footer) page(link.to, link.label, 20);
+    for (const link of app.footer) listed(app, link.to, () => page(link.to, link.label, 20));
   }
+  for (const add of deferred) add();
   for (const sub of SUB_PAGES) {
     if (sub.app && !canOpen(access[sub.app])) continue;
     if (sub.chequePrinting && !chequePrinting) continue;
     page(sub.to, sub.label, 10, sub.keywords);
   }
 
-  for (const group of create ? createGroups(current, access) : []) {
+  for (const group of create ? createGroups(current, access, layout) : []) {
     for (const action of group.actions) {
       entries.push(
         makeEntry({

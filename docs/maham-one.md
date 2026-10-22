@@ -86,6 +86,65 @@ owners and admins in Settings → Team):
 - CRM's first version only reads quotes and customers, which staff may already
   change in Books.
 
+## Sales, Books and Inventory as their own apps
+
+A company can split Maham Books in three (#3, part a). Settings → Team
+(الإعدادات ← الفريق) → **App layout (تخطيط التطبيقات)**, above the grid of
+what each role can open: **Maham Sales and Maham Inventory as their own apps
+(مهام سيلز ومهام إنفنتوري تطبيقان مستقلان)**. It is off at first. The owner
+or an admin turns it on, after a confirmation, for everyone in the company;
+every device follows once it syncs. Others see the switch but can't change
+it. A company kept on this device only has it too.
+
+| App             | Arabic        | Owns                                                                                                                      | Opens at     |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Maham Sales     | مهام سيلز     | Customers, quotes, proformas, sales orders, invoices, delivery notes, payments received, credit notes, recurring invoices | `/invoices`  |
+| Maham Books     | مهام بوكس     | The dashboard, purchases, payments made, cheques, banking, accounting, VAT, reports, templates                            | `/books`     |
+| Maham Inventory | مهام إنفنتوري | Items, stock, warehouses, stock counts and landed costs                                                                   | `/inventory` |
+
+People, CRM and Compliance stay as they are. The owner's answers to the
+questions of the plan:
+
+- **Invoices are Maham Sales'.** Maham Books (finance) still lists customers,
+  invoices, payments received and credit notes under **Receivables (الذمم
+  المدينة)**, and the items and stock it values. Opened from Books, those
+  pages keep Books' sidebar; opened from Sales, Sales'.
+- **Inventory is its own app; purchases stay in Books.** Inventory also lists
+  purchase orders, bills, vendors and delivery notes, the documents that move
+  stock, with its own sidebar around them.
+- **Finance keeps the name Maham Books**, with its id (`books`), its
+  dashboard at `/books` and its access.
+- **No HR-only or Sales-only roles** in this plan: they need per-app rules on
+  the server. Who opens Sales and Inventory is who opens Books, as far as
+  Books.
+
+What changes and what doesn't:
+
+- **Only the shell changes**: the sidebars, the switcher (six apps in rows of
+  three), the phone tabs, the New menus (each action once, the open app's
+  first), the home (six apps, with overdue invoices under Sales, bills and
+  cheques under Books and the number of items under Inventory) and search
+  (a page says which app it is in).
+- **No address, record or rule changes.** Every page keeps its URL; the
+  manifests only decide which app's sidebar is around it
+  (`src/suite/apps.ts`, `appsFor(company)` and `useApps()`). `Company.appLayout`
+  is `'split'` or missing; missing (or anything else) is the four apps,
+  exactly as before. No migration: the company record already syncs.
+  Older versions of the app ignore the field and show the four apps.
+- **The owner's limits keep their four apps** (Settings → Team →
+  Permissions). The limit on Maham Books is also Maham Sales' and Maham
+  Inventory's (`limitAppOf` in `src/cloud/roles.ts`): the permissions dialog
+  names it "Maham Sales · Maham Books · Maham Inventory", and the cloud
+  applies it to the records as before (`record_app` is unchanged).
+- **Company links keep the apps they were saved with** (Settings → Links).
+  A link for Maham Books shows in Sales, Books and Inventory; Deema, Taly and
+  Tahseel, saved for Books and CRM, show in all four. The box for Books in
+  Settings → Links says so. Nothing stored is rewritten.
+- **The last app used** on Settings and the home is remembered in the
+  browser. When it isn't in the layout any more (Sales, after the switch
+  went off), the sidebar is Books'.
+- Sales is violet and Inventory teal; every theme, light and dark, has both.
+
 ## Employees across companies
 
 People → All companies (`/people/all`) lists the employees of several
@@ -506,16 +565,17 @@ is asked of the server.
 ```
 src/
   suite/                    Maham One itself
-    types.ts                what a manifest holds
-    apps.ts                 the apps, which app a page belongs to, access per role, New menus
-    current-app.ts          the app open now (the last one on the suite's own pages)
+    types.ts                what a manifest holds, the app ids and layouts
+    apps.ts                 the apps of each layout, which app a page belongs to, access per role, New menus
+    current-app.ts          the company's apps (useApps), the app open now (the last one on the suite's own pages)
     app-gate.tsx            lock card and view-only mode around an app's pages
     switcher.tsx            the app switcher, app marks, the phone's app tiles
     home/                   the suite's home and what needs attention
     access-grid.tsx         the role-by-app grid in Settings → Team
     boundaries.test.ts      who may import whom
   apps/
-    books/                  manifest, routes, pages/, features/ (editors, dialogs, reports…)
+    books/                  manifest (and its finance variant), routes, pages/, features/ (editors, dialogs, reports…)
+    sales/ inventory/       manifests only: the split layout's apps over Books' pages
     people/                 manifest, routes, pages/ (overview, directory, employees, payroll), lib/
     crm/                    manifest, routes, pages/ (pipeline, prospects), lib/pipeline.ts
     compliance/             manifest, routes, pages/
@@ -539,7 +599,9 @@ Rules, checked by `src/suite/boundaries.test.ts`:
 1. `src/apps/<app>/manifest.ts`: name in English and Arabic, icon, colour, home,
    the first path segments it owns, sidebar, footer, New groups, the tools the
    home shows, three phone tabs, access per role. Add the id to `AppId` in `src/suite/types.ts` and the
-   manifest to `APPS` in `src/suite/apps.ts`.
+   manifest to `APPS` in `src/suite/apps.ts` (and to `SPLIT_APPS`, the split
+   layout). A new colour needs its palette in `STATUS_PALETTES`
+   (`src/lib/themes.ts`) so every theme has it.
 2. `src/apps/<app>/routes.tsx`, wrapping its pages in `<AppGate app="<app>">`,
    and add them to `src/app/routes.tsx`.
 3. Arabic for its texts in `src/i18n/ar/`. `npm test` checks every link of the

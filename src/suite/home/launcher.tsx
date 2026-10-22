@@ -4,12 +4,12 @@ import { Plus, Search } from 'lucide-react';
 import { useCompany } from '@/app/company';
 import { Input } from '@/components/ui/form';
 import { useRoleView } from '@/features/cloud/role-gates';
-import { linkSections, sidebarLinks } from '@/lib/links';
+import { linkPlace, linkSections, sidebarLinks } from '@/lib/links';
 import { cn } from '@/lib/cn';
 import { useLanguage } from '@/i18n/provider';
 import { t, tp } from '@/i18n';
-import { APPS, appById, appTitle, visibleApps, type AccessMap } from '../apps';
-import { useCurrentApp } from '../current-app';
+import { appById, appTitle, visibleApps, type AccessMap } from '../apps';
+import { useApps, useCurrentApp } from '../current-app';
 import { APP_TONES, AppMark, PreviewBadge } from '../switcher';
 import type { AppId } from '../types';
 import {
@@ -46,19 +46,17 @@ export function Launcher({
   const company = useCompany();
   const { language } = useLanguage();
   const current = useCurrentApp();
+  const layout = useApps();
   const { readOnly } = useRoleView().readOnly;
   const [query, setQuery] = useState('');
 
   const tiles = useMemo(() => {
-    const apps = appTiles(access, language);
-    const create = createTiles(current.id, access, readOnly);
-    const groups = toolGroups(access, language);
+    const apps = appTiles(access, language, layout);
+    const create = createTiles(current.id, access, readOnly, layout);
+    const groups = toolGroups(access, language, layout);
     // The links chosen for an app the person may open.
     const sections = linkSections(
-      sidebarLinks(company.links, {
-        open: visibleApps(access).map((app) => app.id),
-        apps: APPS.map((app) => app.id),
-      }),
+      sidebarLinks(company.links, linkPlace(visibleApps(access, layout).map((app) => app.id))),
     );
     const links = linkTiles(sections.links);
     const integrations = linkTiles(sections.integrations);
@@ -71,7 +69,7 @@ export function Launcher({
       all: [...apps, ...create, ...groups.flatMap((g) => g.tiles), ...links, ...integrations],
     };
     // Labels are translated when built: the language is a dependency.
-  }, [access, current.id, readOnly, company.links, language]);
+  }, [access, current.id, readOnly, company.links, language, layout]);
 
   const found = useMemo(() => filterTiles(tiles.all, query), [tiles, query]);
   const searching = query.trim() !== '';
@@ -141,7 +139,7 @@ export function Launcher({
             <SectionTitle id={ids.apps}>{t('Your apps')}</SectionTitle>
             <ul className="grid grid-cols-4 gap-x-1 gap-y-4 sm:grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:gap-x-2">
               {tiles.apps.map((tile) => {
-                const app = tile.app ? appById(tile.app) : undefined;
+                const app = tile.app ? appById(tile.app, layout) : undefined;
                 return (
                   <RoundTile
                     key={tile.key}

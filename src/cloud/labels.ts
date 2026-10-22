@@ -106,6 +106,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['vouchers', msg('Receipt and payment vouchers')],
   ['chequePrinting', msg('Cheque printing')],
   ['dashboard', msg('Books dashboard')],
+  ['appLayout', msg('App layout')],
   ['approvalRules', msg('Approvals')],
 ];
 

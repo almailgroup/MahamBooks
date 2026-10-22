@@ -20,7 +20,10 @@ export const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as c
 export type Step = (typeof STEPS)[number];
 export type Ramp = Record<Step, string>;
 
-/** Palettes besides `slate` and `primary` that the app uses for status and charts. */
+/**
+ * Palettes besides `slate` and `primary` that the app uses for status,
+ * charts and the apps' colours (teal: Maham Inventory).
+ */
 export const STATUS_PALETTES = [
   'red',
   'amber',
@@ -29,6 +32,7 @@ export const STATUS_PALETTES = [
   'violet',
   'indigo',
   'sky',
+  'teal',
 ] as const;
 
 type PaletteName =

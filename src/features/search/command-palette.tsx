@@ -30,8 +30,8 @@ import { fileFinderOn } from '@/db/files';
 import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
 import { openStoredAttachment } from '@/features/purchases/attachments';
 import { CREATE_ACTIONS } from '@/features/shell/create';
-import { APPS } from '@/suite/apps';
-import { useAppAccess, useCurrentApp } from '@/suite/current-app';
+import { useAppAccess, useApps, useCurrentApp } from '@/suite/current-app';
+import type { SuiteApp } from '@/suite/types';
 import { useLanguage } from '@/i18n/provider';
 import { useSwitchLanguage } from '@/hooks/use-switch-language';
 import { msg, t, tp } from '@/i18n';
@@ -75,22 +75,35 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   file: Paperclip,
 };
 
-/** Each page's and action's own icon. */
-const ICONS = new Map<string, LucideIcon>([
-  // Later apps first, so a page two apps list keeps the icon of the app that owns it.
-  ...[...APPS]
-    .reverse()
-    .flatMap((app): [string, LucideIcon][] => [
-      [`app:${app.id}`, app.icon],
-      ...app.nav.flatMap((entry): [string, LucideIcon][] =>
-        entry.kind === 'link'
-          ? [[`page:${entry.to}`, entry.icon]]
-          : entry.children.map((c): [string, LucideIcon] => [`page:${c.to}`, entry.icon]),
-      ),
-      ...app.footer.map((l): [string, LucideIcon] => [`page:${l.to}`, l.icon]),
-    ]),
-  ...Object.values(CREATE_ACTIONS).map((a): [string, LucideIcon] => [`action:${a.id}`, a.icon]),
-]);
+/** Each page's and action's own icon, in a layout of apps. */
+function buildIcons(apps: readonly SuiteApp[]): Map<string, LucideIcon> {
+  return new Map<string, LucideIcon>([
+    // Later apps first, so a page two apps list keeps the icon of the app that owns it.
+    ...[...apps]
+      .reverse()
+      .flatMap((app): [string, LucideIcon][] => [
+        [`app:${app.id}`, app.icon],
+        ...app.nav.flatMap((entry): [string, LucideIcon][] =>
+          entry.kind === 'link'
+            ? [[`page:${entry.to}`, entry.icon]]
+            : entry.children.map((c): [string, LucideIcon] => [`page:${c.to}`, entry.icon]),
+        ),
+        ...app.footer.map((l): [string, LucideIcon] => [`page:${l.to}`, l.icon]),
+      ]),
+    ...Object.values(CREATE_ACTIONS).map((a): [string, LucideIcon] => [`action:${a.id}`, a.icon]),
+  ]);
+}
+
+const ICONS = new WeakMap<readonly SuiteApp[], Map<string, LucideIcon>>();
+
+function iconsFor(apps: readonly SuiteApp[]): Map<string, LucideIcon> {
+  let icons = ICONS.get(apps);
+  if (!icons) {
+    icons = buildIcons(apps);
+    ICONS.set(apps, icons);
+  }
+  return icons;
+}
 
 /** Shown before anything is typed. */
 const QUICK_ACTIONS = [
@@ -178,6 +191,8 @@ function PaletteBody({
   const dark = theme.scheme === 'dark';
   const access = useAppAccess();
   const app = useCurrentApp();
+  const apps = useApps();
+  const icons = iconsFor(apps);
   // Nothing to create for those who only look (the same rule as the New menus).
   const { readOnly } = useRoleView().readOnly;
   // Until the role is known, nothing of payroll and people is offered.
@@ -195,6 +210,7 @@ function PaletteBody({
     const switchTo = language === 'ar' ? 'English' : 'العربية';
     return [
       ...staticEntries(taxesOn, {
+        apps,
         access,
         current: app.id,
         create: !readOnly,
@@ -271,6 +287,7 @@ function PaletteBody({
     dark,
     access,
     app.id,
+    apps,
     readOnly,
     syncText,
     syncing,
@@ -466,7 +483,7 @@ function PaletteBody({
                 index += 1;
                 const i = index;
                 const Icon =
-                  ICONS.get(entry.key) ??
+                  icons.get(entry.key) ??
                   (entry.key === LANGUAGE_KEY
                     ? Languages
                     : entry.key === THEME_KEY

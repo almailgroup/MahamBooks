@@ -60,6 +60,8 @@ import { FormError } from '@/features/cloud/auth-shell';
 import { unsentWarning } from '@/features/cloud/unsent';
 import { useKeepInCloud } from '@/features/cloud/keep-in-cloud';
 import { AccessGrid } from '@/suite/access-grid';
+import { useApps } from '@/suite/current-app';
+import { AppLayoutSection } from './app-layout';
 import { MemberPermissionsDialog } from './member-permissions';
 import { SettingsSection } from './shared';
 
@@ -72,6 +74,7 @@ export default function TeamSettings() {
   const link = useCloudLink(company.id);
   const navigate = useNavigate();
   const keepInCloud = useKeepInCloud();
+  const apps = useApps();
   const [busy, setBusy] = useState(false);
 
   if (link === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
@@ -123,6 +126,13 @@ export default function TeamSettings() {
             )
           }
         />
+        {/* Kept on this device: whoever opens it; in the cloud: the owner or an admin. */}
+        {link?.status === 'removed' ? null : (
+          <AppLayoutSection
+            inline
+            canChange={!link || link.role === 'owner' || link.role === 'admin'}
+          />
+        )}
         <div className="border-t border-slate-100 pt-5">
           <h3 className="mb-1 text-sm font-semibold text-slate-900">
             {t('What each role can open')}
@@ -130,7 +140,7 @@ export default function TeamSettings() {
           <p className="mb-3 text-sm text-slate-500">
             {t('Which apps each role opens, and what it can do there.')}
           </p>
-          <AccessGrid />
+          <AccessGrid apps={apps} />
         </div>
       </SettingsSection>
     );
@@ -162,6 +172,7 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
   const manage = canManageTeam(role);
   const owner = isSuperAdmin(role);
   const name = localName(company);
+  const apps = useApps();
 
   const [version, setVersion] = useState(0);
   const [now] = useState(() => Date.now());
@@ -376,11 +387,14 @@ function Team({ companyId, role }: { companyId: string; role: MemberRole }) {
         </SettingsSection>
       ) : null}
 
+      {/* The owner and admins split Maham Books, or put it back. */}
+      <AppLayoutSection canChange={manage} />
+
       <SettingsSection
         title={t('What each role can open')}
         description={t('Which apps each role opens, and what it can do there.')}
       >
-        <AccessGrid mine={role} />
+        <AccessGrid mine={role} apps={apps} />
       </SettingsSection>
 
       {manage ? (

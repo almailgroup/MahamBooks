@@ -15,10 +15,10 @@ import {
   type AlertData,
   type AlertTopic,
 } from '@/alerts/collect';
-import { canOpen, type AccessMap } from '@/suite/apps';
+import { APPS, canOpen, type AccessMap } from '@/suite/apps';
 import { lookup } from '@/lib/known';
 import { today as localToday } from '@/lib/dates';
-import type { AppId } from '@/suite/types';
+import type { AppId, SuiteApp } from '@/suite/types';
 
 /**
  * What needs attention across the apps, for the suite's home: the same items
@@ -35,6 +35,16 @@ export const TOPIC_APPS: Record<AlertTopic, AppId> = {
   invoices: 'books',
 };
 
+/** In the split layout: overdue invoices are Maham Sales'. */
+export const SPLIT_TOPIC_APPS: Record<AlertTopic, AppId> = {
+  ...TOPIC_APPS,
+  invoices: 'sales',
+};
+
+/** The topics' apps in the layout of `apps`. */
+const topicApps = (apps: readonly SuiteApp[]) =>
+  apps.some((app) => app.id === 'sales') ? SPLIT_TOPIC_APPS : TOPIC_APPS;
+
 /** Where the whole list of a topic is. */
 export const TOPIC_PAGES: Record<AlertTopic, string> = {
   documents: '/compliance/documents',
@@ -44,9 +54,9 @@ export const TOPIC_PAGES: Record<AlertTopic, string> = {
   invoices: '/invoices?status=overdue',
 };
 
-/** The app a topic belongs to; null for a topic this version doesn't know. */
-export function topicApp(topic: string): AppId | null {
-  return lookup<AlertTopic, AppId | null>(TOPIC_APPS, topic, null);
+/** The app a topic belongs to, in the layout of `apps`; null for a topic this version doesn't know. */
+export function topicApp(topic: string, apps: readonly SuiteApp[] = APPS): AppId | null {
+  return lookup<AlertTopic, AppId | null>(topicApps(apps), topic, null);
 }
 
 /** Where a topic's whole list is; the home for a topic this version doesn't know. */
@@ -54,9 +64,9 @@ export function topicPage(topic: string): string {
   return lookup(TOPIC_PAGES, topic, '/');
 }
 
-export function homeTopics(access: AccessMap): AlertTopic[] {
+export function homeTopics(access: AccessMap, apps: readonly SuiteApp[] = APPS): AlertTopic[] {
   return ALERT_TOPICS.filter((topic) => {
-    const app = topicApp(topic);
+    const app = topicApp(topic, apps);
     return app !== null && canOpen(access[app]);
   });
 }

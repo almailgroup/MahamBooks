@@ -133,3 +133,82 @@ test('search finds the apps and their pages', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/#\/crm$/);
 });
+
+test('Settings → Team splits Maham Books into Sales, Books and Inventory, at the same addresses', async ({
+  page,
+}) => {
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  await page.goto('#/settings/team');
+  const layout = page.getByRole('region', { name: 'App layout' });
+  const toggle = layout.getByRole('switch', {
+    name: /Maham Sales and Maham Inventory as their own apps/,
+  });
+  // Off until someone turns it on.
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await toggle.click();
+  const confirm = page.getByRole('dialog', { name: 'Give Sales and Inventory their own apps?' });
+  await confirm.getByRole('button', { name: 'Switch on' }).click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  // The grid shows the six apps.
+  const grid = page.getByRole('table', { name: 'What each role can open' });
+  for (const name of ['Maham Sales', 'Maham Books', 'Maham Inventory']) {
+    await expect(grid.getByRole('columnheader', { name, exact: true })).toBeVisible();
+  }
+
+  // The switcher has the six apps.
+  await page.getByRole('button', { name: 'Switch app' }).click();
+  for (const name of ['Maham Sales', 'Maham Books', 'Maham Inventory', 'Maham People']) {
+    await expect(page.getByRole('menuitem', { name: new RegExp(name) })).toBeVisible();
+  }
+  await page.getByRole('menuitem', { name: /Maham Sales/ }).click();
+  // Sales opens at the invoices, as they always were.
+  await expect(page).toHaveURL(/#\/invoices$/);
+  await expect(nav.getByRole('link', { name: 'Invoices', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(nav.getByRole('link', { name: 'Quotes', exact: true })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Purchases' })).toHaveCount(0);
+
+  // Items and stock in Inventory; purchases, cheques and Receivables in Books.
+  await page.goto('#/inventory');
+  await expect(page.getByRole('heading', { name: 'Inventory', level: 1 })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Stock count' })).toBeVisible();
+  await page.goto('#/books');
+  await expect(page.getByRole('heading', { name: 'Dashboard', level: 1 })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Purchases' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Receivables' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Sales' })).toHaveCount(0);
+  // An invoice opened from Books keeps Books' sidebar.
+  await nav.getByRole('button', { name: 'Receivables' }).click();
+  await nav.getByRole('link', { name: 'Invoices', exact: true }).click();
+  await expect(page).toHaveURL(/#\/invoices$/);
+  await expect(nav.getByRole('button', { name: 'Receivables' })).toBeVisible();
+
+  // The home has the six apps, with what needs attention in each.
+  await page.goto('#/');
+  const apps = page.getByRole('main').getByRole('region', { name: 'Your apps' });
+  for (const name of ['Maham Sales', 'Maham Books', 'Maham Inventory', 'Maham CRM']) {
+    await expect(apps.getByRole('link', { name, exact: true })).toBeVisible();
+  }
+  await expect(
+    apps.getByRole('link', { name: 'Maham Sales', exact: true }),
+  ).toHaveAccessibleDescription(/overdue invoice|Nothing overdue/);
+
+  // Search finds the new apps.
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Search' });
+  await palette.getByRole('combobox', { name: 'Search' }).fill('maham inventory');
+  await expect(palette.getByRole('option').first()).toContainText('Maham Inventory');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/#\/inventory$/);
+
+  // Back to the four apps: the last app was Inventory, so Books.
+  await page.goto('#/settings/team');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(nav.getByRole('button', { name: 'Sales' })).toBeVisible();
+  await page.getByRole('button', { name: 'Switch app' }).click();
+  await expect(page.getByRole('menuitem', { name: /Maham Sales/ })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: /Maham Books/ })).toBeVisible();
+});
