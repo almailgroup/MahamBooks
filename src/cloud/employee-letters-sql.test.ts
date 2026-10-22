@@ -262,9 +262,11 @@ describe('with letters on', () => {
     ).toBe('ok');
     // The same copy sent again (an upsert of what is stored) passes.
     expect(await outcome(push(t.accountant, c, [await changed(t, 'let-1', {})]))).toBe('ok');
+    // A changed copy is kept as it was issued (the app refuses it before it is sent).
     expect(
       await outcome(push(t.accountant, c, [await changed(t, 'let-1', { body: 'Other' })])),
-    ).toBe('refused');
+    ).toBe('ok');
+    expect(await stored(c, 'employeeLetters', 'let-1')).toMatchObject({ body: 'Done' });
     expect(
       await outcome(
         push(t.accountant, c, [await changed(t, 'let-1', { status: 'void', voidReason: 'x' })]),
@@ -300,6 +302,148 @@ describe('with letters on', () => {
         push(t.accountant, c, [{ tbl: 'employeeLetters', id: 'let-2', deleted: true }]),
       ),
     ).toBe('ok');
+  });
+
+  it('keeps an issued letter as issued and a void one void when an older copy comes again', async () => {
+    const t = await team();
+    const c = t.company;
+    await lettersOn(t);
+    await push(t.owner, c, [letter(c, 'let-1', ISSUED), letter(c, 'let-2')]);
+    const issuedCopy = await stored(c, 'employeeLetters', 'let-1');
+    const draftCopy = await stored(c, 'employeeLetters', 'let-2');
+    // Voided by an admin, with why.
+    expect(
+      await outcome(
+        push(t.admin, c, [
+          await changed(t, 'let-1', {
+            status: 'void',
+            voidReason: 'Wrong',
+            voidedOn: '2026-10-21',
+            updatedAt: '2026-10-21T08:00:00.000Z',
+          }),
+        ]),
+      ),
+    ).toBe('ok');
+    // The owner's device, which hasn't heard of the void, prints its copy:
+    // the letter stays void, with why and when, and the print is noted.
+    for (const user of [t.owner, t.deputy, t.accountant]) {
+      const printedAt = `2026-10-22T0${user === t.owner ? 8 : user === t.deputy ? 7 : 6}:00:00.000Z`;
+      expect(
+        await outcome(
+          push(user, c, [
+            {
+              tbl: 'employeeLetters',
+              id: 'let-1',
+              data: { ...issuedCopy, printedAt, updatedAt: printedAt },
+            },
+          ]),
+        ),
+      ).toBe('ok');
+    }
+    expect(await stored(c, 'employeeLetters', 'let-1')).toEqual({
+      ...issuedCopy,
+      status: 'void',
+      voidReason: 'Wrong',
+      voidedOn: '2026-10-21',
+      // The latest print, and when it was last saved.
+      printedAt: '2026-10-22T08:00:00.000Z',
+      updatedAt: '2026-10-22T06:00:00.000Z',
+    });
+    // A void letter voided again from an older copy keeps why it was voided first.
+    await push(t.owner, c, [
+      {
+        tbl: 'employeeLetters',
+        id: 'let-1',
+        data: { ...issuedCopy, status: 'void', voidReason: 'Other', voidedOn: '2026-10-23' },
+      },
+    ]);
+    expect(await stored(c, 'employeeLetters', 'let-1')).toMatchObject({
+      status: 'void',
+      voidReason: 'Wrong',
+      voidedOn: '2026-10-21',
+    });
+
+    // Issued on one device; another, which still has the draft, issues it
+    // again with the next number, its own date and signatory: the first stays.
+    const first = { ...draftCopy, ...ISSUED, number: 'HR-2026-0003', subject: 'First' };
+    await push(t.admin, c, [{ tbl: 'employeeLetters', id: 'let-2', data: first }]);
+    const second = {
+      ...draftCopy,
+      ...ISSUED,
+      number: 'HR-2026-0004',
+      issuedOn: '2026-10-22',
+      subject: 'Second',
+      signatoryName: 'Someone else',
+    };
+    expect(
+      await outcome(push(t.owner, c, [{ tbl: 'employeeLetters', id: 'let-2', data: second }])),
+    ).toBe('ok');
+    expect(await stored(c, 'employeeLetters', 'let-2')).toEqual(first);
+    // Voided from that second copy, it is the first that is voided.
+    expect(
+      await outcome(
+        push(t.deputy, c, [
+          {
+            tbl: 'employeeLetters',
+            id: 'let-2',
+            data: { ...second, status: 'void', voidReason: 'Twice', voidedOn: '2026-10-22' },
+          },
+        ]),
+      ),
+    ).toBe('ok');
+    expect(await stored(c, 'employeeLetters', 'let-2')).toEqual({
+      ...first,
+      status: 'void',
+      voidReason: 'Twice',
+      voidedOn: '2026-10-22',
+    });
+  });
+
+  it('keeps the People settings with the letters on: only the owner or an admin deletes them', async () => {
+    const t = await team();
+    const c = t.company;
+    // Off, an accountant's delete goes through as before.
+    await push(t.accountant, c, [settings(c)]);
+    expect(
+      await outcome(push(t.accountant, c, [{ tbl: 'peopleSettings', id: c, deleted: true }])),
+    ).toBe('ok');
+    await lettersOn(t);
+    await push(t.owner, c, [letter(c, 'let-1', ISSUED)]);
+    for (const user of [t.accountant, t.deputy]) {
+      expect(await outcome(push(user, c, [{ tbl: 'peopleSettings', id: c, deleted: true }]))).toBe(
+        'refused',
+      );
+      // Nor straight through the Data API.
+      await h.as(user, (q) =>
+        q('delete from public.records where company_id = $1 and tbl = $2 and id = $3', [
+          c,
+          'peopleSettings',
+          c,
+        ]),
+      );
+    }
+    expect((await stored(c, 'peopleSettings', c))?.letters).toBe(true);
+    // So the letter rules still hold for the accountant.
+    expect(await outcome(push(t.accountant, c, [letter(c, 'let-2', ISSUED)]))).toBe('refused');
+    expect(
+      await outcome(
+        push(t.accountant, c, [{ tbl: 'employeeLetters', id: 'let-1', deleted: true }]),
+      ),
+    ).toBe('refused');
+    // Staff and viewers never see them, so they delete nothing.
+    for (const user of [t.staff, t.viewer]) {
+      await push(user, c, [{ tbl: 'peopleSettings', id: c, deleted: true }]).catch(() => null);
+    }
+    expect((await stored(c, 'peopleSettings', c))?.letters).toBe(true);
+    // The owner or an admin may (it turns the letters off, as switching them off does).
+    expect(await outcome(push(t.admin, c, [{ tbl: 'peopleSettings', id: c, deleted: true }]))).toBe(
+      'ok',
+    );
+    expect(await stored(c, 'peopleSettings', c)).toBeUndefined();
+    await lettersOn(t);
+    expect(await outcome(push(t.owner, c, [{ tbl: 'peopleSettings', id: c, deleted: true }]))).toBe(
+      'ok',
+    );
   });
 
   it('keeps letters private: staff and viewers read none, nor write any', async () => {
@@ -471,6 +615,16 @@ describe('the app’s stand-ins for the cloud', () => {
           ['change', async () => [await asStored(`n-${n}`, { body: 'Other' })]],
           ['back', async () => [await asStored(`n-${n}`, { status: 'draft' })]],
           ['void', async () => [await asStored(`n-${n}`, { status: 'void' })]],
+          [
+            'older copy',
+            async () => [
+              await asStored(`n-${n}`, {
+                status: 'issued',
+                number: 'HR-2026-0999',
+                printedAt: STAMP,
+              }),
+            ],
+          ],
           ['delete', async () => [{ tbl: 'employeeLetters', id: `n-${n}`, deleted: true }]],
         ];
         for (const [step, changes] of steps) {
@@ -479,11 +633,23 @@ describe('the app’s stand-ins for the cloud', () => {
             const id = step === 'issue' ? `d-${n}` : `n-${n}`;
             if (!(await stored(c, 'employeeLetters', id))) continue;
           }
-          const result = await both(user, await changes());
+          const sent = await changes();
+          const result = await both(user, sent);
           const [inFake, inSql] = result.split(' ');
           expect(`${on} ${key} ${step} ${inFake}`).toBe(`${on} ${key} ${step} ${inSql}`);
           seen.add(`${on ? 'on' : 'off'} ${inSql}`);
+          // And both store the same.
+          const id = sent[0].id;
+          expect(fake.record(c, 'employeeLetters', id) ?? null).toEqual(
+            (await stored(c, 'employeeLetters', id)) ?? null,
+          );
         }
+      }
+      // The People settings: deleted by the owner or an admin only, with the letters on.
+      for (const user of [t.accountant, t.deputy]) {
+        const result = await both(user, [{ tbl: 'peopleSettings', id: c, deleted: true }]);
+        expect(`${on} ${result}`).toBe(on ? 'true refused refused' : 'false ok ok');
+        if (!on) await both(t.owner, [settings(c)]);
       }
       // The switch: an accountant's copy keeps it in both.
       await both(t.accountant, [settings(c, { letters: !on })]);

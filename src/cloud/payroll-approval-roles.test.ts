@@ -88,6 +88,45 @@ describe('salary approval on the device', () => {
     ).toBeNull();
   });
 
+  it('lets no member the owner gave no access to People decide, but whoever asked take it back', () => {
+    const shut = { userId: 'shut', owner: false, peopleShut: true };
+    for (const status of ['approved', 'rejected', 'cancelled', 'applied']) {
+      expect(payrollDecisionRefusal(asked, { ...asked, status }, shut, run)).toBe('people');
+    }
+    // Their own, taken back while it waits.
+    expect(
+      payrollDecisionRefusal(
+        { ...asked, requestedBy: 'shut' },
+        { ...asked, requestedBy: 'shut', status: 'cancelled' },
+        shut,
+        run,
+      ),
+    ).toBeNull();
+    // No decision (an older copy sent again), or one made before: not looked at.
+    expect(payrollDecisionRefusal(asked, { ...asked }, shut, run)).toBeNull();
+    const rejected = { ...asked, status: 'rejected' };
+    expect(payrollDecisionRefusal(rejected, { ...rejected, status: 'approved' }, shut, run)).toBe(
+      null,
+    );
+    // The owner is never shut out; nor anyone with People.
+    expect(
+      payrollDecisionRefusal(
+        asked,
+        { ...asked, status: 'approved' },
+        { ...shut, owner: true },
+        run,
+      ),
+    ).toBeNull();
+    expect(
+      payrollDecisionRefusal(
+        asked,
+        { ...asked, status: 'approved' },
+        { ...shut, peopleShut: false },
+        run,
+      ),
+    ).toBeNull();
+  });
+
   it('keeps a deputy’s request sent up approved waiting, and lets whoever posts mark it done', () => {
     const who = { userId: 'deputy', approver: true, owner: false, now: NOW };
     const sentApproved = guardApprovalWrite(undefined, { ...asked, status: 'approved' }, who, {

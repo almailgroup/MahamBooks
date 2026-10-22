@@ -14,6 +14,7 @@ import { msg, t } from '@/i18n';
 import { newId } from '@/lib/ids';
 import { addDaysISO, today } from '@/lib/dates';
 import {
+  appLimit,
   approvalRulesOf,
   documentChangeNeedsApproval,
   INVOICE_CONTENT_FIELDS,
@@ -21,6 +22,7 @@ import {
   isApprover,
   isLetterApproval,
   isPayrollApproval,
+  isPrivateRecord,
   deleteKeptBy,
   rulesCoverDocument,
   rulesCoverPayroll,
@@ -129,6 +131,23 @@ export function correctsByNewNumber(
   company: Pick<Company, 'approvalRules' | 'defaults'> | null | undefined,
 ): boolean {
   return approvalsOn(company) || company?.defaults?.numberOnIssue === true;
+}
+
+/**
+ * Whether the person is shown a request (the Approvals page, the counts of
+ * the home page): one about People data (a pay run's, a letter's) is left
+ * out for a member the owner gave no access to Maham People (#6, D16), as
+ * the cloud leaves them out of its emails and of deciding pay runs.
+ */
+export function requestShownTo(
+  request: Pick<ApprovalRequest, 'subjectTbl'>,
+  link: CloudLink | null | undefined,
+): boolean {
+  if (!link) return true;
+  return !(
+    isPrivateRecord('approvals', request) &&
+    appLimit(link.role, link.permissions, 'people') === 'none'
+  );
 }
 
 /** Whether the person decides requests: everyone in a company kept on this device. */

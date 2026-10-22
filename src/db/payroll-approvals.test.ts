@@ -7,6 +7,7 @@ import {
   createPayRun,
   getPayrollSettings,
   payPayRun,
+  refreshPayRun,
   reopenPayRun,
   updatePayLine,
   updatePayRun,
@@ -350,6 +351,54 @@ describe('salary approval switched on', () => {
     await signedInAs(company, 'accountant');
     await db.syncState.update(company.id, { permissions: { apps: { people: 'view' } } });
     await expect(requestPayrollApproval(run.id)).rejects.toThrow(/can’t send pay runs/);
+  });
+
+  it('an approver the owner gave no access to People decides no pay run, on the device as in the cloud', async () => {
+    const { company, run } = await seed();
+    await signedInAs(company, 'accountant');
+    const request = await requestPayrollApproval(run.id);
+    await signedInAs(company, 'admin', { approver: true, user: 'user-shut' });
+    await db.syncState.update(company.id, { permissions: { apps: { people: 'none' } } });
+    for (const decision of ['approved', 'rejected'] as const) {
+      await expect(decideApproval(request.id, decision)).rejects.toThrow(
+        /no access to Maham People/,
+      );
+    }
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'pending' });
+  });
+
+  it('sends only a pay run that can be posted as it is once approved', async () => {
+    const { company, run } = await seed();
+    await signedInAs(company, 'accountant');
+    // Net pay below zero.
+    await updatePayLine(run.id, run.lines[0].id, {
+      adjustments: [{ id: '', type: 'deduction', amount: 5000, note: 'Made-up' }],
+    });
+    await expect(requestPayrollApproval(run.id)).rejects.toThrow(/below zero/);
+    await updatePayLine(run.id, run.lines[0].id, { adjustments: [] });
+    // Its pay date in the locked period.
+    const current = (await db.companies.get(company.id))!;
+    await saveCompany({
+      ...current,
+      accounting: { ...current.accounting!, lockDate: '2026-12-31' },
+    });
+    await expect(requestPayrollApproval(run.id)).rejects.toThrow(/books are locked/);
+    expect(await payrollRequests(run.id)).toEqual([]);
+    await saveCompany({ ...current, accounting: { ...current.accounting!, lockDate: null } });
+    await expect(requestPayrollApproval(run.id)).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('keeps an approval when the pay run is updated from records and nothing changed', async () => {
+    const { company, run } = await seed();
+    await signedInAs(company, 'accountant');
+    const request = await requestPayrollApproval(run.id);
+    await signedInAs(company, 'owner');
+    await decideApproval(request.id, 'approved');
+    await signedInAs(company, 'accountant');
+    const before = await fresh(run);
+    const refreshed = await refreshPayRun(run.id);
+    expect(refreshed.updatedAt).toBe(before.updatedAt);
+    await expect(approvePayRun(run.id)).resolves.toMatchObject({ status: 'approved' });
   });
 
   it('cancels requests that waited longer than the rules allow', async () => {

@@ -271,7 +271,10 @@ export function LeaveTab({ employee }: { employee: Employee }) {
           <CardBody className="py-2">
             <dl className="divide-y divide-slate-100">
               {reasonRows.map((r) => {
-                const taken = reasonDaysInYear(records, r.id, year);
+                const taken = reasonDaysInYear(records, r.id, year, undefined, {
+                  isDayOff: dayOff,
+                  policy,
+                });
                 const own = r.pay === 'balance' ? reasonBalance(records, r.id, on) : null;
                 const canAdd = own && settings.leaveReasonsOn && !r.archived && isCurrent(employee);
                 return (

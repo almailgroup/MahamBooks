@@ -19,9 +19,15 @@ import {
 import { useCloud } from '@/cloud/store';
 import { useCloudLink } from '@/cloud/hooks';
 import { linkHasFeature } from '@/cloud/features';
-import { getsChangeFeed, getsEmailAlerts } from '@/cloud/roles';
+import { appLimit, getsChangeFeed, getsEmailAlerts } from '@/cloud/roles';
 import { ChangesForm } from './change-alerts';
-import { ALERT_TOPICS, TOPIC_DESCRIPTIONS, TOPIC_LABELS, type AlertTopic } from '@/alerts/topics';
+import {
+  ALERT_TOPICS,
+  BOOKS_TOPICS,
+  TOPIC_DESCRIPTIONS,
+  TOPIC_LABELS,
+  type AlertTopic,
+} from '@/alerts/topics';
 import { DOCUMENT_KIND_LABELS } from '@/alerts/email';
 import { DOCUMENT_ALERT_KINDS, type DocumentAlertKind } from '@/lib/compliance';
 import { SaveBar, SettingsSection } from './shared';
@@ -119,7 +125,18 @@ export default function AlertSettings() {
   return (
     <ReadOnlyContext.Provider value={NOT_READ_ONLY}>
       <div className="space-y-8">
-        {morning ? <AlertsForm api={api} companyId={company.id} email={user.email} /> : null}
+        {morning ? (
+          <AlertsForm
+            api={api}
+            companyId={company.id}
+            email={user.email}
+            // The emails leave Maham Books out for whoever the owner gave no access to it.
+            books={
+              !linkHasFeature(link, 'document_alerts') ||
+              appLimit(link.role, link.permissions, 'books') !== 'none'
+            }
+          />
+        ) : null}
         {changes ? <ChangesForm api={api} companyId={company.id} email={user.email} /> : null}
       </div>
     </ReadOnlyContext.Provider>
@@ -147,11 +164,15 @@ function AlertsForm({
   api,
   companyId,
   email,
+  books = true,
 }: {
   api: CloudApi;
   companyId: string;
   email: string;
+  /** The person may open Maham Books: its invoices, bills and cheques are offered. */
+  books?: boolean;
 }) {
+  const topicsShown = ALERT_TOPICS.filter((topic) => books || !BOOKS_TOPICS.includes(topic));
   const company = useCompany();
   const fmt = useFormat();
   // undefined while loading; null when the cloud doesn't have email alerts yet.
@@ -257,7 +278,7 @@ function AlertsForm({
   };
 
   const save = async () => {
-    if (draft.enabled && !draft.topics.length) {
+    if (draft.enabled && !draft.topics.some((topic) => topicsShown.includes(topic))) {
       toast.error(t('Choose at least one kind of alert.'));
       return;
     }
@@ -350,7 +371,7 @@ function AlertsForm({
           <legend className="mb-3 text-sm font-medium text-slate-800">
             {t('What to include')}
           </legend>
-          {ALERT_TOPICS.map((topic) => (
+          {topicsShown.map((topic) => (
             <div key={topic} className="space-y-3">
               <Checkbox
                 checked={draft.topics.includes(topic)}
@@ -376,6 +397,13 @@ function AlertsForm({
               ) : null}
             </div>
           ))}
+          {books ? null : (
+            <p className="text-sm text-slate-500">
+              {t(
+                'Invoices, bills and cheques are left out: the owner has given you no access to Maham Books.',
+              )}
+            </p>
+          )}
         </fieldset>
         {!saved.functionReady ? (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -399,7 +427,7 @@ function AlertsForm({
         {draft.enabled ? (
           <p className="text-sm text-slate-500">
             {tp(
-              draft.topics.length,
+              draft.topics.filter((topic) => topicsShown.includes(topic)).length,
               'The email covers {count} kind of alert. Nothing is sent on days without anything new, except Sundays.',
               'The email covers {count} kinds of alert. Nothing is sent on days without anything new, except Sundays.',
             )}

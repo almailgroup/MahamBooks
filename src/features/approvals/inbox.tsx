@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ClipboardCheck } from 'lucide-react';
 import { db } from '@/db/db';
-import { expirePending } from '@/db/approvals';
+import { expirePending, requestShownTo } from '@/db/approvals';
 import type { ApprovalRequest, Client, InvoiceDocument } from '@/db/types';
 import { useCompany } from '@/app/company';
 import { msg, t } from '@/i18n';
@@ -43,9 +43,14 @@ export function ApprovalsInbox() {
     if (view.approver && caughtUp) void expirePending(company.id).catch(() => undefined);
   }, [company.id, view.approver, caughtUp]);
 
-  const requests = useLiveQuery(
+  const all = useLiveQuery(
     () => db.approvals.where('companyId').equals(company.id).toArray(),
     [company.id],
+  );
+  // Requests about People data stay out of sight of a member the owner gave no access to it.
+  const requests = useMemo(
+    () => all?.filter((r) => requestShownTo(r, view.link)),
+    [all, view.link],
   );
   const ids = useMemo(() => [...new Set((requests ?? []).map((r) => r.subjectId))], [requests]);
   const docs = useLiveQuery(

@@ -410,7 +410,14 @@ approved as before.
   People sidebar, and on the home page). The owner may approve a pay run
   they sent themselves, and may approve (post) any pay run at once.
 - Any change to the pay run after it was sent (a line, the pay date, Update
-  from records) asks for a new approval. The pay run says so.
+  from records that changes something) asks for a new approval. The pay run
+  says so. Only a pay run that could be approved (posted) as it is can be
+  sent: one with net pay below zero, a loan recovered beyond what is left, a
+  final settlement for the month, leave by reason not worked out or a pay
+  date in the locked period is put right first.
+- A member the owner gave no access to People (Settings → Team) doesn't see
+  pay run or letter requests in Approvals, gets no email of them, and the
+  cloud doesn't let them decide a pay run.
 - The owner and the members allowed to approve get an email: the totals by
   department and position, the change since last month, and a link that
   opens the pay run in the signed-in app. Groups of one person are merged
@@ -462,7 +469,8 @@ After the seventh script, **Settings → Email alerts** lets accountants turn
 the morning email on too, and each person chooses the kinds of paper under
 **Papers and licences**: the company's, vehicles', employees' or customers'.
 Someone the owner gave no access to People gets no employees' papers; no
-access to Compliance, no other papers and no deadlines. Nothing needs to be
+access to Compliance, no other papers and no deadlines; no access to Maham
+Books, no invoices, bills or cheques. Nothing needs to be
 set up in Supabase beyond the script: the morning schedule of the email
 alerts does the rest. WhatsApp and SMS are not part of this.
 
@@ -487,7 +495,10 @@ letters** (استخدام خطابات الموظفين) on that page.
   refuses an issue by anyone else.
 - A letter gets its number when it is issued: HR-2026-0001, from 1 again each
   year. Numbers are never used twice: an issued letter is voided, never
-  deleted, and keeps its number.
+  deleted, and keeps its number. Once issued it stays as it was issued, and
+  a void letter stays void, whatever an older copy on another device says.
+  A warning letter or a no objection certificate is issued only once it
+  says what happened, or what the company has no objection to.
 - A template can make a draft by itself when an employee joins, leaves or has
   their salary changed. Drafts are never issued or printed without a person.
 - Letters are printed, never emailed. The stamp and signature of Settings →

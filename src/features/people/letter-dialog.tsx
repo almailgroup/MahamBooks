@@ -11,6 +11,7 @@ import {
   issueLetter,
   letterContext,
   letterTexts,
+  missingPurpose,
   pendingLetterRequest,
   privateFieldsShown,
   requestLetterIssue,
@@ -199,15 +200,15 @@ function useAct() {
 
 /**
  * A request to issue a letter, with what the person may do about it: an
- * approver approves (the letter is issued on their device) or rejects it;
- * whoever asked takes it back.
+ * approver approves (the letter is issued on their device, so only one who
+ * may issue letters there) or rejects it; whoever asked takes it back.
  */
 export function LetterRequestActions({
   request,
   view,
 }: {
   request: ApprovalRequest;
-  view: Pick<LettersView, 'approver' | 'link'>;
+  view: Pick<LettersView, 'approver' | 'canIssue' | 'link'>;
 }) {
   const { manager } = useCloud();
   const { busy, act } = useAct();
@@ -217,13 +218,20 @@ export function LetterRequestActions({
     return null;
   }
   return (
-    <div className="flex flex-wrap gap-2">
-      {view.approver && request.status === 'pending' ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {view.approver && !view.canIssue ? (
+        <p className="w-full text-xs text-slate-500">
+          {t(
+            'Your access to Maham People doesn’t let you issue letters, so you can’t approve this request. The owner or another approver can.',
+          )}
+        </p>
+      ) : null}
+      {view.approver && view.canIssue && request.status === 'pending' ? (
         <Button size="sm" disabled={busy !== null} onClick={() => setDeciding('approved')}>
           <Check /> {t('Approve and issue')}
         </Button>
       ) : null}
-      {view.approver && request.status === 'approved' ? (
+      {view.approver && view.canIssue && request.status === 'approved' ? (
         <Button
           size="sm"
           variant="outline"
@@ -323,7 +331,11 @@ function RequestNote({ request, names }: { request: ApprovalRequest; names: Map<
             ? t('Approved, but not issued yet on the approver’s device.')
             : request.status === 'rejected'
               ? t('Not approved. Change it if needed and ask again.')
-              : t('The request was taken back.')}
+              : request.status === 'applied'
+                ? t('Approved, and the letter is issued')
+                : request.expired
+                  ? t('The request expired before it was decided.')
+                  : t('The request was taken back.')}
       </p>
       <p className="text-xs text-slate-500">
         {t('Asked by {name} · {date}', {
@@ -535,6 +547,7 @@ function LetterDialogBody({
     return fromTemplate(first, employeeId ?? '', first.language);
   });
   const [changed, setChanged] = useState(false);
+  const [purposeChecked, setPurposeChecked] = useState(false);
   const [asking, setAsking] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const names = useMemberNames(company.id, view.link, Boolean(request));
@@ -556,7 +569,16 @@ function LetterDialogBody({
   const texts = useLetterTexts(record, employee, template, view.link);
   const language = letterLanguage(record?.language);
   const purpose = PURPOSE[record?.kind ?? 'custom'] ?? DEFAULT_PURPOSE;
+  const purposeMissing = isDraft && draft ? missingPurpose(draft) : null;
   const pending = request ?? null;
+
+  /** Whether the draft says what it must before it is issued or sent; shows why not. */
+  const readyToIssue = () => {
+    setPurposeChecked(true);
+    if (!purposeMissing) return true;
+    toast.error(purposeMissing);
+    return false;
+  };
 
   const set = (patch: Partial<LetterDraftInput>) => {
     setDraft((d) => (d ? { ...d, ...patch } : d));
@@ -600,6 +622,7 @@ function LetterDialogBody({
       .catch(() => undefined);
 
   const issue = async () => {
+    if (!readyToIssue()) return;
     const ok = await confirm({
       title: t('Issue this letter?'),
       description: t(
@@ -778,6 +801,7 @@ function LetterDialogBody({
                 label={t(purpose.label)}
                 hint={t(purpose.hint)}
                 optional={record.kind !== 'warning' && record.kind !== 'noc'}
+                error={purposeChecked && purposeMissing ? purposeMissing : undefined}
                 className="sm:col-span-2"
               >
                 {(field) => (
@@ -917,7 +941,7 @@ function LetterDialogBody({
                 </Button>
               ) : view.asks ? (
                 <Button
-                  onClick={() => setAsking(true)}
+                  onClick={() => readyToIssue() && setAsking(true)}
                   loading={busy === 'ask'}
                   disabled={busy !== null}
                 >
@@ -959,7 +983,7 @@ function LetterDialogBody({
               'It keeps its number, which is never given again, and prints as void. Make a new letter in its place if one is needed.',
             )}
             label={t('Why is it void?')}
-            required={false}
+            missing={t('Say why the letter is void.')}
             confirmLabel={t('Void letter')}
             danger
             onConfirm={(reason) =>

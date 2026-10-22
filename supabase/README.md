@@ -536,7 +536,10 @@ alone as every approval rule); until then nothing below looks at a record.
   (`almail:invalid`, 42501) unless the pay run stored now has the `updatedAt`
   the request was made for (`after.runUpdatedAt`); a member allowed to
   approve who sent it is refused (`almail:permission`, 42501), the owner may
-  approve their own; a request sent up already approved or applied by anyone
+  approve their own; a member the owner gave no access to People
+  (`almailbooks.people_shut`: `permissions.apps.people = 'none'`) decides
+  none (`almail:permission`, 42501), though they may take back their own
+  waiting request; a request sent up already approved or applied by anyone
   but the owner is stored as a new waiting one; and whoever may post the pay
   run (`can_write_record(company, 'payRuns', '{}')`: owner, admin or
   accountant whose People isn't limited) may move an approved request to
@@ -610,8 +613,9 @@ new copy are the company's People settings, kept in its private
   leaves the reminders (`change_events.kind = 'document_expiry'`) out.
 - The function (`src/alerts/server.ts`) emails owners, admins and
   accountants; per person it keeps the kinds chosen, drops employees' papers
-  for whoever the owner gave no access to People and the other papers and
-  deadlines for no access to Compliance, and lists papers by kind. It reads
+  for whoever the owner gave no access to People, the other papers and
+  deadlines for no access to Compliance, and invoices, bills and cheques for
+  no access to Maham Books, and lists papers by kind. It reads
   the column as `to_jsonb(a) -> 'document_kinds'`: on a database without it
   (this file not run), every email is exactly as before.
   It reads renewals and the files marked as copies (`docKey`, `validUntil`,
@@ -636,27 +640,36 @@ The company's switch is `"letters": true` on its `peopleSettings` record;
 absent, as every company has it before, nothing here looks at a letter.
 
 - `almailbooks.letters_on(company)`, `almailbooks.issues_letters(company)`
-  (the owner, an admin, or an approver of `is_approver`) and
+  (the owner, an admin, or an approver of `is_approver`),
   `almailbooks.letter_content(jsonb)` (a letter without `printedAt` and
-  `updatedAt`, nulls stripped): helpers, run by nobody but the functions
-  below.
+  `updatedAt`, nulls stripped) and `almailbooks.issued_letter_kept` (what
+  is stored over an issued or void letter): helpers, run by nobody but the
+  functions below.
 - `records_guard` (replaced with every rule it had) also looks at
   `peopleSettings` and `employeeLetters`. `peopleSettings`: only the owner or
   an admin changes `letters`; anyone else's copy keeps it as stored (a copy
   that has never heard of it never turns it off), and nothing is refused.
   `employeeLetters`, with letters on: a letter issued or void never goes back
-  to a draft (42501, `almail:invalid`); only someone who issues letters
-  inserts one that isn't a draft, or changes what an issued or void letter
-  says or is (42501, `almail:permission`). Drafts are anyone's who may write
-  them, and marking a letter printed changes nothing it says. Accountants ask
-  through an approval request of kind `letter` (private, as its letter); the
-  approver's device issues it.
+  to a draft (42501, `almail:invalid`); once issued it stays as it was issued
+  (number, date, text, signatory, stamp) and a void one stays void, with why
+  and when: a copy sent again, an older one from another device too, only
+  adds when it was last printed (the later of the two), and an issued one
+  may be voided. Only someone who issues letters inserts one that isn't a
+  draft, or voids an issued one (42501, `almail:permission`). Drafts are
+  anyone's who may write them, and marking a letter printed changes nothing
+  it says. Accountants ask through an approval request of kind `letter`
+  (private, as its letter); the approver's device issues it.
 - `can_delete_record` (replaced with every rule it had) never deletes a
   letter that is issued or void while letters are on: it is voided instead,
-  so its number stays used. Drafts may go.
+  so its number stays used. Drafts may go. While the letters are on, the
+  `peopleSettings` record that holds the switch is deleted by the owner or
+  an admin only (anyone else's delete would turn the letters off).
+- Turning letters on gives a company made before letters its `letter`
+  numbering rule on the company record, so even its first letter's number
+  comes from `reserve_number`.
 - Numbers come from `reserve_number(company, 'letter', date, min)` with the
-  `letter` rule the first issue saves on the company record
-  (`HR-{year}-{counter}`, yearly). Letters are never emailed.
+  company's `letter` rule (`HR-{year}-{counter}`, yearly). Letters are never
+  emailed.
 - `server_features()` answers every earlier name and `employee_letters`.
 - Tests: `src/cloud/employee-letters-sql.test.ts` (off exactly as before the
   file, owner, admin, deputy, accountant, staff and viewer, upserts, deletes,

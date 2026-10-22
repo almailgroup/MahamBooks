@@ -35,11 +35,13 @@ import {
   isPayrollApproval,
   isPrivateRecord,
   issuesWithoutNumber,
+  keepIssuedLetter,
   keepLettersSwitch,
   keepPaymentLink,
   letterKept,
   letterWriteRefusal,
   lettersSwitchedOn,
+  peopleSettingsKept,
   limitBlocksWrite,
   MAX_APPROVERS,
   payrollDecisionRefusal,
@@ -1038,9 +1040,12 @@ export class FakeCloud {
     if (this.features.includes('employee_letters')) {
       if (tbl === 'peopleSettings') return keepLettersSwitch(role, old, data);
       if (tbl === 'employeeLetters' && this.lettersOn(company)) {
-        const refusal = letterWriteRefusal(old, data, this.issuesLetters(company, user, role));
-        if (refusal === 'issued') throw fail('invalid');
+        if (letterWriteRefusal(old, data, true) === 'issued') throw fail('invalid');
+        // An issued letter stays as it was issued, a void one void.
+        const kept = keepIssuedLetter(old, data);
+        const refusal = letterWriteRefusal(old, kept, this.issuesLetters(company, user, role));
         if (refusal === 'issuer') throw fail('permission');
+        return kept;
       }
     }
     if (tbl === 'companies' && this.features.includes('super_admin')) {
@@ -1094,10 +1099,14 @@ export class FakeCloud {
         const refusal = payrollDecisionRefusal(
           old,
           data,
-          { userId: user, owner: role === 'owner' },
+          {
+            userId: user,
+            owner: role === 'owner',
+            peopleShut: appLimit(role, this.permissionsOf(company, user), 'people') === 'none',
+          },
           typeof subject === 'string' ? this.record(company, 'payRuns', subject) : undefined,
         );
-        if (refusal === 'self') throw fail('permission');
+        if (refusal === 'self' || refusal === 'people') throw fail('permission');
         if (refusal === 'stale') throw fail('invalid');
       }
       return write.data;
@@ -1159,7 +1168,11 @@ export class FakeCloud {
         (this.features.includes('employee_letters') &&
           change.tbl === 'employeeLetters' &&
           this.lettersOn(company) &&
-          letterKept(visibleOld.data))
+          letterKept(visibleOld.data)) ||
+        // The letters switch, deleted by the owner or an admin only.
+        (this.features.includes('employee_letters') &&
+          change.tbl === 'peopleSettings' &&
+          peopleSettingsKept(role, visibleOld.data))
       ) {
         throw fail('permission');
       }

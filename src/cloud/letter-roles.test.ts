@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   issuesLetters,
+  keepIssuedLetter,
   keepLettersSwitch,
   letterContent,
   letterKept,
   letterWriteRefusal,
   lettersSwitchedOn,
+  peopleSettingsKept,
   switchesLetters,
 } from './roles';
 
@@ -72,5 +74,50 @@ describe('letters on the device', () => {
     expect(keepLettersSwitch('accountant', {}, { letters: true })).toEqual({});
     expect(keepLettersSwitch('accountant', undefined, { letters: true })).toEqual({});
     expect(keepLettersSwitch('admin', { letters: true }, {})).toEqual({});
+  });
+
+  it('keep an issued letter as issued and a void one void, as records_guard stores them', () => {
+    const voided = { ...issued, status: 'void', voidReason: 'Wrong', voidedOn: '2026-10-21' };
+    // A copy that hasn't heard of the void, printed: still void, the print noted.
+    expect(
+      keepIssuedLetter(voided, {
+        ...issued,
+        printedAt: '2026-10-22T08:00:00.000Z',
+        updatedAt: 'u',
+      }),
+    ).toEqual({ ...voided, printedAt: '2026-10-22T08:00:00.000Z', updatedAt: 'u' });
+    // The later of two prints is kept.
+    expect(
+      keepIssuedLetter(
+        { ...issued, printedAt: '2026-10-22T09:00:00.000Z' },
+        { ...issued, printedAt: '2026-10-22T08:00:00.000Z' },
+      ),
+    ).toEqual({ ...issued, printedAt: '2026-10-22T09:00:00.000Z' });
+    // Issued again elsewhere with another number: the first stays.
+    expect(keepIssuedLetter(issued, { ...issued, number: 'HR-2026-0002', body: 'Other' })).toEqual(
+      issued,
+    );
+    // Voided, with why and when; voided again, the first void stays.
+    expect(
+      keepIssuedLetter(issued, {
+        ...issued,
+        number: 'HR-2026-0002',
+        status: 'void',
+        voidReason: 'Wrong',
+        voidedOn: '2026-10-21',
+      }),
+    ).toEqual(voided);
+    expect(keepIssuedLetter(voided, { ...voided, voidReason: 'Other' })).toEqual(voided);
+    // Drafts and new letters pass as they are.
+    expect(keepIssuedLetter(draft, issued)).toEqual(issued);
+    expect(keepIssuedLetter(undefined, issued)).toEqual(issued);
+  });
+
+  it('keep the People settings with the letters on from anyone but the owner and admins', () => {
+    expect(peopleSettingsKept('accountant', { letters: true })).toBe(true);
+    expect(peopleSettingsKept('accountant', { reminderDays: [] })).toBe(false);
+    expect(peopleSettingsKept('admin', { letters: true })).toBe(false);
+    expect(peopleSettingsKept('owner', { letters: true })).toBe(false);
+    expect(peopleSettingsKept(null, { letters: true })).toBe(false);
   });
 });

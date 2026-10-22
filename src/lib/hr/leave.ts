@@ -160,23 +160,49 @@ export function unpaidShare(record: Pick<LeaveRecord, 'payPercent'>): number {
   return Math.min(100, Math.max(0, Math.round(percent)));
 }
 
-/** Days of a reason's leave in a calendar year (leave counts in the year it starts). */
+/** How the company counts leave days: to split leave that crosses 31 December by year. */
+export interface DayCounting {
+  isDayOff: DayOff;
+  policy?: LeavePolicy | null;
+}
+
+/**
+ * A leave's days in a calendar year: all its days (as recorded) when it is
+ * within the year. One that crosses 31 December is split by its counted
+ * dates when `counting` is given (as sick days are), otherwise it counts in
+ * the year it starts, as before.
+ */
+export function leaveDaysInYear(
+  record: Pick<LeaveRecord, 'type' | 'start' | 'end' | 'days'>,
+  year: number,
+  counting?: DayCounting,
+): number {
+  const prefix = `${year}-`;
+  const startsIn = record.start.startsWith(prefix);
+  const end = record.end || record.start;
+  if (startsIn && end.startsWith(prefix)) return record.days;
+  if (!counting) return startsIn ? record.days : 0;
+  return countedDates(record.type, record.start, end, counting.isDayOff, counting.policy).filter(
+    (d) => d.startsWith(prefix),
+  ).length;
+}
+
+/**
+ * Days of a reason's leave in a calendar year: leave that crosses 31
+ * December is split between the years when `counting` is given (see
+ * leaveDaysInYear), otherwise counted in the year it starts.
+ */
 export function reasonDaysInYear(
   records: readonly LeaveRecord[],
   reasonId: ID,
   year: number,
   exceptId?: ID,
+  counting?: DayCounting,
 ): number {
   return twoPlaces(
     records
-      .filter(
-        (r) =>
-          r.reasonId === reasonId &&
-          r.id !== exceptId &&
-          isTaken(r) &&
-          r.start.startsWith(`${year}-`),
-      )
-      .reduce((s, r) => s + r.days, 0),
+      .filter((r) => r.reasonId === reasonId && r.id !== exceptId && isTaken(r))
+      .reduce((s, r) => s + leaveDaysInYear(r, year, counting), 0),
   );
 }
 
@@ -456,6 +482,7 @@ export function leaveInPeriod(
   period: string,
   isDayOff: DayOff,
   employed: { from?: ISODate | null; to?: ISODate | null } = {},
+  policy?: LeavePolicy | null,
 ): PeriodLeave {
   const start = periodStart(period);
   const end = periodEnd(period);
@@ -481,7 +508,10 @@ export function leaveInPeriod(
     // Unpaid leave pays nothing, or the share a reason paid in part fixed.
     const share = r.type === 'unpaid' ? unpaidShare(r) : 100;
     if (r.reasonId) {
-      const days = counted.filter((d) => inMonth(d) && paidDay(d));
+      // A reason's days as it counts them: one taken from annual leave as the
+      // policy counts annual leave (as its record's days were counted).
+      const own = policy ? countedDates(r.type, r.start, r.end, isDayOff, policy) : counted;
+      const days = own.filter((d) => inMonth(d) && paidDay(d));
       const key = `${r.reasonId}:${r.type}:${share}`;
       const entry = byReason.get(key) ?? {
         reasonId: r.reasonId,
@@ -936,6 +966,7 @@ export function leaveWarnings(
   others: LeaveRecord[],
   balance: LeaveBalance | null,
   reason: LeaveReason | null = null,
+  counting?: DayCounting,
 ): LeaveWarning[] {
   if (record.kind !== 'leave') return [];
   const out: LeaveWarning[] = [];
@@ -952,8 +983,18 @@ export function leaveWarnings(
   }
   const max = reason?.maxDaysPerYear;
   if (reason && typeof max === 'number' && max > 0) {
-    const before = reasonDaysInYear(others, reason.id, Number(record.start.slice(0, 4)), record.id);
-    if (before + record.days > max) out.push({ code: 'over_year_max', limit: max, taken: before });
+    // Each calendar year the leave falls in (one crossing 31 December, split).
+    const first = Number(record.start.slice(0, 4));
+    const last = Math.max(first, Number((record.end || record.start).slice(0, 4)));
+    for (let year = first; year <= last; year++) {
+      const mine = leaveDaysInYear(record, year, counting);
+      if (mine <= 0 && year !== first) continue;
+      const before = reasonDaysInYear(others, reason.id, year, record.id, counting);
+      if (before + mine > max) {
+        out.push({ code: 'over_year_max', limit: max, taken: before });
+        break;
+      }
+    }
   }
   if (reason?.pay === 'balance') {
     // Every day added and taken, whatever its date.

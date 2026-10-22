@@ -268,6 +268,35 @@ describe('pay and balances', () => {
     expect(approved.provisions?.[0].leaveDays).toBe(35.5);
   });
 
+  it('lists leave taken from annual leave with the days taken off the balance', async () => {
+    const { c, e } = await seed();
+    await on(c);
+    await savePayrollSettings({
+      ...(await getPayrollSettings(c.id)),
+      leavePolicy: {
+        annualDays: [{ from: '2025-01-01', days: 30 }],
+        firstYearMonths: 9,
+        carryForwardMax: null,
+        counting: 'calendar',
+      },
+    });
+    const saved = await saveLeaveRecord(
+      createLeaveRecord(c.id, e.id, {
+        reasonId: 'emergency',
+        start: '2026-03-01',
+        end: '2026-03-10',
+      }),
+    );
+    expect(saved.days).toBe(10);
+    const run = await createPayRun(c.id, '2026-03');
+    expect(run.lines[0].leaveDetail).toEqual([
+      expect.objectContaining({ reasonId: 'emergency', days: 10, fromAnnual: true }),
+    ]);
+    // The pay is as it always was: leave taken from annual leave costs nothing.
+    expect(run.lines[0].absenceDeduction).toBe(0);
+    await expect(approvePayRun(run.id)).resolves.toMatchObject({ status: 'approved' });
+  });
+
   it('refuses leave on half pay in a month already approved', async () => {
     const { c, e } = await seed();
     await on(c);

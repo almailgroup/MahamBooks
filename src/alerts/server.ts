@@ -211,7 +211,8 @@ interface Subscription {
 /**
  * What one person gets (D16): the kinds of paper they chose, employees'
  * papers only when they may see People, the rest of the register and the
- * deadlines only when the owner left them Compliance. Before the people
+ * deadlines only when the owner left them Compliance, and cheques, bills
+ * and invoices only when the owner left them Maham Books. Before the people
  * alerts script has run (`scoped` false), everything, as before.
  */
 export function audienceOf(
@@ -226,6 +227,7 @@ export function audienceOf(
       : null,
     people: role !== null && canSeePeople(role) && appLimit(role, permissions, 'people') !== 'none',
     compliance: appLimit(role, permissions, 'compliance') !== 'none',
+    books: appLimit(role, permissions, 'books') !== 'none',
   };
 }
 

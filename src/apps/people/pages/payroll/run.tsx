@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   AlertTriangle,
@@ -29,7 +29,7 @@ import {
 } from '@/db/payroll';
 import { accountingSettings } from '@/db/chart-setup';
 import type { ManualJournal, PayLine } from '@/db/types';
-import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
+import { useCompany, useFormat } from '@/app/company';
 import {
   addPeriods,
   calculatePayLine,
@@ -85,34 +85,11 @@ function EntryLink({ journal, label }: { journal: ManualJournal | undefined; lab
   );
 }
 
-/**
- * A link to a pay run in a company (#/payroll/runs/…?company=…, as the
- * payroll approval emails have it) opens it in that company when this
- * device has it.
- */
-function useCompanyOfLink(current: string, runId: string) {
-  const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const openInCompany = useOpenInCompany();
-  const wanted = params.get('company');
-  useEffect(() => {
-    if (!wanted) return;
-    const here = `/payroll/runs/${runId}`;
-    if (wanted === current) {
-      navigate(here, { replace: true });
-      return;
-    }
-    void openInCompany(wanted, here).then((opened) => {
-      if (!opened) navigate(here, { replace: true });
-    });
-  }, [wanted, current, runId, navigate, openInCompany]);
-}
-
 export default function PayRunPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  // A link with ?company= (the approval emails) is opened by CompanyOfLink, above the gate.
   const company = useCompany();
-  useCompanyOfLink(company.id, id);
   const fmt = useFormat();
   const confirm = useConfirm();
   const { language } = useLanguage();

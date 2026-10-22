@@ -914,16 +914,25 @@ function asText(value: unknown): string | null {
  * approves one that changed since it was sent (`run` is the pay run as it is
  * stored; its updatedAt must be the one the request was made for). The
  * owner who posts the pay run carries out a waiting request as it is
- * (pending to applied).
+ * (pending to applied). A member the owner gave no access to People
+ * (`peopleShut`: appLimit 'none') decides none ('people'); they may still
+ * take back their own.
  */
 export function payrollDecisionRefusal(
   before: AnyRecord,
   after: AnyRecord,
-  who: { userId: string; owner: boolean },
+  who: { userId: string; owner: boolean; peopleShut?: boolean },
   run: AnyRecord,
-): 'self' | 'stale' | null {
+): 'self' | 'stale' | 'people' | null {
   const was = asRow(before) ? (asText(asRow(before)?.status) ?? 'pending') : null;
   const status = asText(asRow(after)?.status) ?? was;
+  const decision =
+    was !== null && status !== null && status !== was && status !== 'pending' && !DECIDED.has(was);
+  const takenBack =
+    was === 'pending' &&
+    status === 'cancelled' &&
+    asText(asRow(before)?.requestedBy) === who.userId;
+  if (decision && who.peopleShut && !who.owner && !takenBack) return 'people';
   if (was !== 'pending' || (status !== 'approved' && status !== 'applied')) return null;
   if (asText(asRow(before)?.requestedBy) === who.userId && !who.owner) return 'self';
   if (status === 'applied' && who.owner) return null;
@@ -1122,6 +1131,57 @@ export function letterWriteRefusal(
  */
 export function letterKept(letter: AnyRecord): boolean {
   return (asText(asRow(letter)?.status) ?? 'draft') !== 'draft';
+}
+
+/**
+ * What the cloud stores when a letter that is issued or void is written
+ * again, as almailbooks.issued_letter_kept: it stays as it was issued (its
+ * number, date, text, signatory and stamp) and a void one stays void; only
+ * when it was last printed (the later of the two) and saved change, and an
+ * issued letter may be voided, with why and when. A copy from a device that
+ * hasn't heard of the void, or that issued its own draft again with another
+ * number, changes nothing else. Any other letter passes as it is.
+ */
+export function keepIssuedLetter(
+  before: AnyRecord,
+  after: Record<string, unknown>,
+): Record<string, unknown> {
+  const old = asRow(before);
+  const was = old ? (asText(old.status) ?? 'draft') : 'draft';
+  if (!old || (was !== 'issued' && was !== 'void')) return after;
+  const voiding = was === 'issued' && (asText(after.status) ?? 'draft') === 'void';
+  const data: Record<string, unknown> = { ...old };
+  delete data.updatedAt;
+  delete data.printedAt;
+  if (voiding) {
+    delete data.status;
+    delete data.voidReason;
+    delete data.voidedOn;
+  }
+  if (after.updatedAt != null) data.updatedAt = after.updatedAt;
+  const printed = [asText(old.printedAt), asText(after.printedAt)]
+    .filter((at): at is string => at !== null)
+    .sort()
+    .pop();
+  if (printed !== undefined) data.printedAt = printed;
+  if (voiding) {
+    data.status = 'void';
+    if (after.voidReason != null) data.voidReason = after.voidReason;
+    if (after.voidedOn != null) data.voidedOn = after.voidedOn;
+  }
+  return data;
+}
+
+/**
+ * Whether the People settings are kept from being deleted, as
+ * can_delete_record: while they have the letters on, by anyone but the
+ * owner or an admin (it would turn the letters off).
+ */
+export function peopleSettingsKept(
+  role: MemberRole | null | undefined,
+  settings: AnyRecord,
+): boolean {
+  return lettersSwitchedOn(settings) && !switchesLetters(role);
 }
 
 /**

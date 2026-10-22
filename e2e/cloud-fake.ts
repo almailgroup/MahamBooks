@@ -719,7 +719,13 @@ export class FakeSupabase {
     const companyRow = this.records.get(`${company}/companies/${company}`);
     // Employee letters (#19, 20261130000000_people_alerts.sql).
     if (change.tbl === 'peopleSettings') {
-      if (!data || role === 'owner' || role === 'admin') return data;
+      if (role === 'owner' || role === 'admin') return data;
+      // With the letters on, deleting the settings would turn them off.
+      if (!data) {
+        return old?.letters === true
+          ? refuse('almail:permission You cannot delete this record.')
+          : null;
+      }
       // Anyone else's copy keeps the letters switch as it is stored.
       const kept: Record<string, unknown> = { ...data };
       if (old && 'letters' in old && old.letters !== undefined) kept.letters = old.letters;
@@ -746,16 +752,44 @@ export class FakeSupabase {
         delete copy.updatedAt;
         return canonical(copy);
       };
+      // An issued letter stays as it was issued, a void one void
+      // (almailbooks.issued_letter_kept): only when it was printed is added,
+      // and an issued one may be voided.
+      let next = data;
+      if (old && (was === 'issued' || was === 'void')) {
+        const voiding = was === 'issued' && status === 'void';
+        const keptLetter: Record<string, unknown> = { ...old };
+        delete keptLetter.updatedAt;
+        delete keptLetter.printedAt;
+        if (voiding) {
+          delete keptLetter.status;
+          delete keptLetter.voidReason;
+          delete keptLetter.voidedOn;
+        }
+        if (data.updatedAt != null) keptLetter.updatedAt = data.updatedAt;
+        const printed = [old.printedAt, data.printedAt]
+          .filter((at): at is string => typeof at === 'string')
+          .sort()
+          .pop();
+        if (printed) keptLetter.printedAt = printed;
+        if (voiding) {
+          keptLetter.status = 'void';
+          if (data.voidReason != null) keptLetter.voidReason = data.voidReason;
+          if (data.voidedOn != null) keptLetter.voidedOn = data.voidedOn;
+        }
+        next = keptLetter;
+      }
+      const nextStatus = String(next.status ?? 'draft');
       if (
         !issuer &&
-        (status !== 'draft' || (was !== null && was !== 'draft')) &&
-        (!old || content(old) !== content(data))
+        (nextStatus !== 'draft' || (was !== null && was !== 'draft')) &&
+        (!old || content(old) !== content(next))
       ) {
         return refuse(
           'almail:permission Only the owner, an admin or an approver issues letters. Ask for approval instead.',
         );
       }
-      return data;
+      return next;
     }
     const rules = (companyRow?.data?.approvalRules ?? null) as {
       documentTypes?: string[];
@@ -913,6 +947,17 @@ export class FakeSupabase {
       !this.limited(company, user, 'payRuns', null);
     if (!approver && !takenBack && !posted) {
       return refuse('almail:permission Only an approver decides approval requests.');
+    }
+    // A member the owner gave no access to People decides no pay run.
+    if (
+      payroll &&
+      role !== 'owner' &&
+      this.access.get(`${company} ${user}`)?.permissions.apps?.people === 'none' &&
+      !takenBack
+    ) {
+      return refuse(
+        "almail:permission The owner has given you no access to Maham People, so you don't decide pay runs.",
+      );
     }
     if (payroll && was === 'pending' && (status === 'approved' || status === 'applied')) {
       if (old.requestedBy === user && role !== 'owner') {

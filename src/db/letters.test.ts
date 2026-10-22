@@ -268,13 +268,58 @@ describe('issuing', () => {
       bodyAr: `${template.bodyAr}\nالرقم المدني: {employee.civilId}`,
       privateFields: true,
     });
-    const letter = await saveLetterDraft(
-      draftFromTemplate((await getTemplate(company.id, template.id))!, employee.id),
-    );
+    const letter = await saveLetterDraft({
+      ...draftFromTemplate((await getTemplate(company.id, template.id))!, employee.id),
+      purpose: 'their travel abroad',
+    });
     const masked = letterTexts(letter, letterContext(employee, company, null, false));
     expect(masked.body).toContain('•••• 0001');
     const issued = await issueLetter(letter.id, '2026-10-05');
     expect(issued.body).toContain('280010100001');
+  });
+
+  it('asks what a warning letter or a certificate of no objection is about before it is issued', async () => {
+    const { company, employee } = await seed();
+    for (const kind of ['warning', 'noc'] as const) {
+      const letter = await draft(company, employee, kind);
+      await expect(issueLetter(letter.id, '2026-10-05')).rejects.toThrow(/It is printed/);
+      expect((await stored(letter)).status).toBe('draft');
+      const said = await saveLetterDraft({
+        ...draftFromTemplate((await getTemplate(company.id, letter.templateId!))!, employee.id),
+        id: letter.id,
+        purpose: kind === 'warning' ? 'Late on 2026-10-01' : 'their travel abroad',
+      });
+      await expect(issueLetter(said.id, '2026-10-05')).resolves.toMatchObject({
+        status: 'issued',
+      });
+    }
+    // Nor sent for approval without it.
+    await signedInAs(company, 'accountant');
+    const asked = await draft(company, employee, 'noc');
+    await expect(requestLetterIssue(asked.id)).rejects.toThrow(/no objection to/);
+    // A text that doesn't print it needs none; nor do other kinds.
+    await signedInAs(company, 'owner');
+    const plain = await saveLetterDraft({
+      ...draftFromTemplate(
+        (await getTemplate(company.id, defaultTemplateId(company.id, 'warning')))!,
+        employee.id,
+      ),
+      body: 'A warning, with the facts written here.',
+    });
+    await expect(issueLetter(plain.id, '2026-10-05')).resolves.toMatchObject({ status: 'issued' });
+  });
+
+  it('gives a company made before letters its letter rule when they are turned on', async () => {
+    const company = await setupCompany({ name: 'Older Co.', currency: 'KWD' });
+    const numbering: Partial<Company['numbering']> = { ...company.numbering };
+    delete numbering.letter;
+    await db.companies.put({ ...company, numbering: numbering as Company['numbering'] });
+    await setLettersOn(company.id, true);
+    expect((await db.companies.get(company.id))?.numbering.letter).toMatchObject({
+      pattern: 'HR-{year}-{counter}',
+      next: 1,
+      reset: 'yearly',
+    });
   });
 
   it('marks issued letters printed, and keeps their text', async () => {
@@ -355,7 +400,26 @@ describe('in a company kept in the cloud', () => {
       ]),
     );
     expect(log.every((a) => a.entity === 'employee')).toBe(true);
-    expect(JSON.stringify(log)).not.toMatch(/625/);
+    // No pay in what is logged (ids, being random, are left out of the check).
+    expect(JSON.stringify(log.map((a) => [a.message, a.messageVars, a.messageVarsAr]))).not.toMatch(
+      /625/,
+    );
+  });
+
+  it('lets only an approver who may issue letters approve a request to issue one', async () => {
+    const { company, employee } = await seed();
+    await signedInAs(company, 'accountant');
+    const letter = await draft(company, employee);
+    const request = await requestLetterIssue(letter.id);
+    // An approver the owner made Maham People view only for.
+    await signedInAs(company, 'accountant', { approver: true, user: 'deputy' });
+    await db.syncState.update(company.id, { permissions: { apps: { people: 'view' } } });
+    await expect(decideApproval(request.id, 'approved')).rejects.toThrow(
+      /doesn’t let you issue letters/,
+    );
+    expect(await db.approvals.get(request.id)).toMatchObject({ status: 'pending' });
+    // They may still turn it down.
+    await expect(decideApproval(request.id, 'rejected', 'Not now')).resolves.toBe(false);
   });
 
   it('refuses to approve a letter changed after it was asked for', async () => {
@@ -406,6 +470,25 @@ describe('in a company kept in the cloud', () => {
     );
     await signedInAs(company, 'admin');
     await expect(setLettersOn(company.id, true)).resolves.toMatchObject({ letters: true });
+  });
+
+  it('keeps the People settings from anyone else’s delete while letters are on', async () => {
+    const { company } = await seed();
+    for (const [role, approver] of [
+      ['accountant', false],
+      ['accountant', true],
+    ] as const) {
+      await signedInAs(company, role, { approver });
+      await expect(db.peopleSettings.delete(company.id)).rejects.toThrow(/owner or an admin/);
+    }
+    expect((await getPeopleSettings(company.id)).letters).toBe(true);
+    await signedInAs(company, 'admin');
+    await expect(db.peopleSettings.delete(company.id)).resolves.toBeUndefined();
+    // Off, anyone who may write them deletes them, as before.
+    await signedInAs(company, 'owner');
+    await savePeopleSettings({ ...(await getPeopleSettings(company.id)), reminderDays: [30] });
+    await signedInAs(company, 'accountant');
+    await expect(db.peopleSettings.delete(company.id)).resolves.toBeUndefined();
   });
 
   it('waits for the server to have employee letters', async () => {

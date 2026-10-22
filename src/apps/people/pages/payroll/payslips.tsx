@@ -49,6 +49,7 @@ const L = {
   leave: msg('Leave this month'),
   leaveDays: msg('Days'),
   leavePay: msg('Pay'),
+  leaveAsApproved: msg('Leave as recorded when the pay run was approved.'),
   signature: msg('Employee signature'),
   none: msg('None'),
 };
@@ -243,6 +244,11 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
               </tr>
             ))}
           </tbody>
+          {run.status !== 'draft' ? (
+            <caption className="caption-bottom pt-1 text-start text-slate-500">
+              <Both text={L.leaveAsApproved} />
+            </caption>
+          ) : null}
         </table>
       ) : null}
 

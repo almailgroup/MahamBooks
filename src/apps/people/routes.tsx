@@ -3,6 +3,7 @@ import type { RouteObject } from 'react-router';
 import { Bare } from '@/app/route-shell';
 import { AppGate } from '@/suite/app-gate';
 import { AnyCompanyPeopleGate } from '@/features/cloud/role-gates';
+import { CompanyOfLink } from '@/app/company-link';
 
 /**
  * Maham People's pages: employees, payroll, leave and loans. Only roles that
@@ -115,7 +116,17 @@ export const peopleRoutes: RouteObject[] = [
   page('employees/:id/edit', <EmployeeForm />),
   page('employees/:id/settlement', <Settlement />),
   page('payroll', <Payroll />),
-  page('payroll/runs/:id', <PayRun />),
+  // Opened from an approval email in its own company, before People's gate looks.
+  {
+    path: 'payroll/runs/:id',
+    element: (
+      <CompanyOfLink>
+        <People>
+          <PayRun />
+        </People>
+      </CompanyOfLink>
+    ),
+  },
   page('payroll/leave', <PayrollLeave />),
   page('payroll/leave-reasons', <LeaveReasons />),
   page('payroll/loans', <PayrollLoans />),

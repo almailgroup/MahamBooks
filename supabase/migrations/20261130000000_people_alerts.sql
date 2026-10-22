@@ -30,7 +30,8 @@
 --     "almail:invalid" when the run changed since it was sent), never by a
 --     member allowed to approve who sent it themselves (the owner may), and
 --     whoever may post the pay run marks its approved request done once it
---     is posted. Every rule records_guard had stays as it was. Refusals have
+--     is posted, and never by a member the owner gave no access to People.
+--     Every rule records_guard had stays as it was. Refusals have
 --     the SQL state 42501, which older versions of the app keep aside.
 --     The app posts a pay run only once it is approved; the server doesn't
 --     refuse the posting itself, since its journal entries are separate
@@ -66,13 +67,17 @@
 --   * Employee letters (#19): with the company's letters on (People →
 --     Letters → Use employee letters, "letters": true on its People
 --     settings record; off, nothing here looks at a letter), records_guard
---     lets only the owner, an admin or an approver issue a letter, or change
---     or void one that is issued (an accountant drafts it and asks through
---     an approval request of kind "letter"; marking it printed is anyone's),
---     never takes a letter that is issued or void back to a draft, and
---     can_delete_record never deletes one, so its number stays used. Only
+--     lets only the owner, an admin or an approver issue a letter, or void
+--     one that is issued (an accountant drafts it and asks through an
+--     approval request of kind "letter"; marking it printed is anyone's),
+--     never takes a letter that is issued or void back to a draft, keeps
+--     an issued letter as it was issued and a void one void (a copy sent
+--     again, an older one from another device too, only adds when it was
+--     printed), and can_delete_record never deletes one, so its number
+--     stays used. Only
 --     the owner or an admin turns letters on or off: anyone else's copy of
---     the People settings keeps the switch as it is stored. Every other rule
+--     the People settings keeps the switch as it is stored, and while the
+--     letters are on nobody else deletes those settings. Every other rule
 --     of records_guard and can_delete_record stays as it was. Letters are
 --     never emailed.
 --   * public.server_features() also answers 'payroll_approvals',
@@ -176,6 +181,66 @@ as $$
   select jsonb_strip_nulls(coalesce(p, '{}'::jsonb) - 'printedAt' - 'updatedAt')
 $$;
 
+-- What is stored when a letter that is issued or void is written again
+-- (#19, D12): it stays as it was issued (its number, date, text, signatory
+-- and stamp), and a void letter stays void, with why and when. Only when it
+-- was last printed (the later of the two) and saved change, and an issued
+-- letter may be voided. So a copy from a device that hasn't heard of the
+-- void yet, or that still had the letter as a draft and issued it again
+-- with another number, changes nothing of it. Anything else passes as it
+-- is. Kept the same as keepIssuedLetter in src/cloud/roles.ts.
+create or replace function almailbooks.issued_letter_kept(p_old jsonb, p_new jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when v.was not in ('issued', 'void') then p_new
+    else (
+      p_old - 'updatedAt' - 'printedAt'
+        - case when v.voiding then array['status', 'voidReason', 'voidedOn'] else array[]::text[] end
+    ) || jsonb_strip_nulls(jsonb_build_object(
+      'updatedAt', p_new -> 'updatedAt',
+      'printedAt', to_jsonb(greatest(p_old ->> 'printedAt', p_new ->> 'printedAt'))
+    )) || case
+      when v.voiding then jsonb_strip_nulls(jsonb_build_object(
+        'status', 'void',
+        'voidReason', p_new -> 'voidReason',
+        'voidedOn', p_new -> 'voidedOn'
+      ))
+      else '{}'::jsonb
+    end
+  end
+  from (
+    select
+      coalesce(p_old ->> 'status', 'draft') as was,
+      coalesce(p_old ->> 'status', 'draft') = 'issued'
+        and coalesce(p_new ->> 'status', 'draft') = 'void' as voiding
+  ) v
+$$;
+
+-- The owner gave the caller no access to Maham People (#6): such a member
+-- sees no payroll in the app and gets no email about it, so they don't
+-- decide a pay run's request either (#10, D16).
+create or replace function almailbooks.people_shut(p_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.company_members m
+    where m.company_id = p_company
+      and m.user_id = auth.uid()
+      and m.role <> 'owner'
+      and jsonb_typeof(m.permissions -> 'apps') = 'object'
+      and coalesce(m.permissions -> 'apps' ->> 'people', '') = 'none'
+  )
+$$;
+
 -- What the server checks before a record is stored, after
 -- records_before_write (triggers of the same kind run in the order of their
 -- names). Only the company record, documents, approval requests, cheque
@@ -196,13 +261,17 @@ $$;
 -- sent it unless they are the owner, and one sent up already approved by
 -- anyone but the owner waits like a new one. Whoever may post the pay run
 -- marks its approved request done (applied) once it is posted; the owner,
--- who may post a pay run at once, does so with a waiting one as it is.
+-- who may post a pay run at once, does so with a waiting one as it is. A
+-- member the owner gave no access to People doesn't decide it (they may
+-- only take back their own).
 --
 -- And employee letters (#19): only the owner or an admin changes the
 -- letters switch of the People settings (anyone else's copy keeps it); with
 -- the letters on, only the owner, an admin or an approver issues a letter or
--- changes or voids an issued one, and a letter issued or void never goes back
--- to a draft. With them off, letters pass as before.
+-- voids an issued one, a letter issued or void never goes back to a draft,
+-- and once issued it stays as it was issued (a void one void): a copy sent
+-- again, an older one too, only adds when it was printed. With them off,
+-- letters pass as before.
 create or replace function almailbooks.records_guard()
 returns trigger
 language plpgsql
@@ -266,8 +335,8 @@ begin
 
   -- Employee letters (#19), with the company's letters on: a letter issued
   -- or void stays so, and only the owner, an admin or an approver issues
-  -- one, or changes or voids one that is issued. Drafts are anyone's who
-  -- may write them, and marking a letter printed changes nothing of it.
+  -- one, or voids one that is issued. Drafts are anyone's who may write
+  -- them, and marking a letter printed changes nothing of it.
   if new.tbl = 'employeeLetters' then
     if not almailbooks.letters_on(new.company_id) then
       return new;
@@ -277,6 +346,13 @@ begin
     if v_was in ('issued', 'void') and v_status = 'draft' then
       raise exception 'almail:invalid This letter is already issued, so it stays issued.'
         using errcode = '42501';
+    end if;
+    -- An issued or void letter stays as it was issued (a void one void):
+    -- a copy sent again, older or not, only adds when it was printed, and
+    -- an issued one may be voided.
+    if v_was in ('issued', 'void') then
+      new.data := almailbooks.issued_letter_kept(old.data, new.data);
+      v_status := coalesce(new.data ->> 'status', 'draft');
     end if;
     if (v_status <> 'draft' or coalesce(v_was, 'draft') <> 'draft')
       and (
@@ -465,6 +541,15 @@ begin
     ) then
     -- Whoever asked may only take the request back while it waits.
     raise exception 'almail:permission Only an approver decides approval requests.'
+      using errcode = '42501';
+  end if;
+  -- A pay run's request is decided by approvers who see payroll: not by a
+  -- member the owner gave no access to People (they get no email of it
+  -- either). Whoever asked may still take it back.
+  if v_payroll
+    and almailbooks.people_shut(new.company_id)
+    and not (v_was = 'pending' and v_status = 'cancelled' and old.data ->> 'requestedBy' = v_me) then
+    raise exception 'almail:permission The owner has given you no access to Maham People, so you don''t decide pay runs.'
       using errcode = '42501';
   end if;
   -- A pay run is approved by someone other than whoever sent it (the owner
@@ -859,7 +944,9 @@ $$;
 -- As in 20261116000000_super_admin_approvals.sql, with every rule it has,
 -- and with the company's letters on, a letter issued or void is never
 -- deleted (it is voided instead, so its number stays used); drafts may go.
--- The company's own record is never deleted through sync: delete_company
+-- The People settings that hold the letters switch, while it is on, are
+-- deleted by the owner or an admin only (anyone else's delete would turn
+-- the letters off). The company's own record is never deleted through sync: delete_company
 -- does that. Approval requests stay (they are the record of who asked and
 -- who decided). With the company's rules on, issued documents of the types
 -- the rules cover are deleted by approvers only, and with "Void instead of
@@ -882,6 +969,13 @@ begin
   if p_tbl = 'employeeLetters' then
     return coalesce(p_data ->> 'status', 'draft') = 'draft'
       or not almailbooks.letters_on(p_company);
+  end if;
+  -- With the letters on, the People settings that hold the switch are
+  -- deleted by the owner or an admin only: anyone else's delete would turn
+  -- the letters off.
+  if p_tbl = 'peopleSettings' then
+    return coalesce(p_data ->> 'letters', '') <> 'true'
+      or coalesce(almailbooks.member_role(p_company)::text, '') in ('owner', 'admin');
   end if;
   if p_tbl not in ('documents', 'payments', 'securityCheques') then
     return true;
@@ -931,7 +1025,9 @@ revoke all on function
   almailbooks.run_email_alerts(),
   almailbooks.letters_on(text),
   almailbooks.issues_letters(text),
-  almailbooks.letter_content(jsonb)
+  almailbooks.letter_content(jsonb),
+  almailbooks.issued_letter_kept(jsonb, jsonb),
+  almailbooks.people_shut(text)
 from public, anon, authenticated;
 revoke all on function almailbooks.records_guard() from public, anon;
 -- The policies of public.records call it as the signed-in person, as before.

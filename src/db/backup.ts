@@ -9,6 +9,7 @@ import { APP_NAME, FILE_PREFIX, suiteName } from '@/lib/brand';
 import { t } from '@/i18n';
 import { contentHash, dataUrlToBlob } from '@/cloud/files';
 import { markRemote } from '@/cloud/outbox';
+import { mergeNumbering } from '@/cloud/numbering';
 
 export const BACKUP_FORMAT = 1;
 export const LAST_BACKUP_KEY = 'lastBackupAt';
@@ -394,6 +395,11 @@ export async function importBackup(
       const result: RestoreResult = { added: 0, kept: 0, filled: 0 };
       if (mode === 'replace') {
         await assertNothingUnsent(undefined, force);
+        // The counters of the companies here: numbers given since the backup
+        // was made are never given again (D12).
+        const counters = new Map(
+          (await db.companies.toArray()).map((c) => [c.id, c.numbering] as const),
+        );
         // Companies kept in the cloud stay there: this device stops syncing them
         // before its copy is replaced, so nothing is deleted in the cloud.
         for (const table of SYNC_TABLES()) await table.clear();
@@ -404,6 +410,7 @@ export async function importBackup(
           if (rows.length) await (db[table] as unknown as WritableTable).bulkPut(rows);
           result.added += rows.length;
         }
+        await keepCounters(counters);
       } else {
         // A company still coming down from the cloud doesn't have all its
         // records here yet: the backup's older copies would be taken for this
@@ -452,6 +459,23 @@ export async function importBackup(
   );
   if (filesHere.size) result.filled = await fillContent(backup, filesHere);
   return result;
+}
+
+/**
+ * After a backup replaced what was here: each company that was here keeps
+ * the higher of its counters and the backup's (the backup's patterns), so a
+ * number given after the backup was made, and perhaps printed, isn't given
+ * again. A backup restored on another device can't know them.
+ */
+async function keepCounters(counters: Map<ID, Company['numbering'] | undefined>): Promise<void> {
+  for (const company of await db.companies.toArray()) {
+    const here = counters.get(company.id);
+    if (!here || !company.numbering) continue;
+    const numbering = mergeNumbering(here, company.numbering);
+    if (numbering && JSON.stringify(numbering) !== JSON.stringify(company.numbering)) {
+      await db.companies.put({ ...company, numbering });
+    }
+  }
 }
 
 /**

@@ -367,6 +367,37 @@ describe('with salary approval on', () => {
     expect((await emails(c, 'req-1')).map((e) => e.user_id)).toEqual([t.owner]);
   });
 
+  it('an approver the owner gave no access to People decides no pay run, but may take back their own', async () => {
+    const t = await team();
+    const c = t.company;
+    await allowToApprove(t, t.deputy, h, { apps: { people: 'none' } });
+    await allowToApprove(t, t.admin, h, { apps: { people: 'view' } });
+    await rulesOn(t);
+    await push(t.accountant, c, [payRun(c, 'run-1'), request(c, 'req-1', 'run-1')]);
+    for (const status of ['approved', 'rejected', 'applied', 'cancelled']) {
+      expect(`${status} ${await refusal(decide(t, t.deputy, 'req-1', { status }))}`).toBe(
+        `${status} refused`,
+      );
+    }
+    // Their older copy sent again (no decision) passes, and changes nothing.
+    expect(await refusal(decide(t, t.deputy, 'req-1', {}))).toBe('ok');
+    expect(await stored(c, 'approvals', 'req-1')).toMatchObject({ status: 'pending' });
+    // An approver who sees People, view only, does.
+    expect(await refusal(decide(t, t.admin, 'req-1', { status: 'approved' }))).toBe('ok');
+    // Their own request, sent before the owner shut People for them, they take back.
+    await allowToApprove(t, t.deputy, h, {});
+    await push(t.deputy, c, [request(c, 'req-2', 'run-1')]);
+    await allowToApprove(t, t.deputy, h, { apps: { people: 'none' } });
+    expect(await refusal(decide(t, t.deputy, 'req-2', { status: 'cancelled' }))).toBe('ok');
+    // The owner is never shut out.
+    await push(t.accountant, c, [request(c, 'req-3', 'run-1')]);
+    expect(await refusal(decide(t, t.owner, 'req-3', { status: 'approved' }))).toBe('ok');
+    // With the switch off, a pay run's request is decided as before.
+    await rulesOn(t, { documentTypes: ['invoice'] });
+    await push(t.accountant, c, [request(c, 'req-4', 'run-1')]);
+    expect(await refusal(decide(t, t.deputy, 'req-4', { status: 'approved' }))).toBe('ok');
+  });
+
   it('approves a pay run only as it was sent', async () => {
     const t = await team();
     const c = t.company;
@@ -584,8 +615,20 @@ describe('the app’s stand-ins for the cloud', () => {
       staff: [t.staff, 'staff'],
       viewer: [t.viewer, 'viewer'],
     };
+    // An approver the owner gave no access to People.
+    const shutEmail = `shut-${c}@example.com`;
+    const shut = await h.user(shutEmail);
+    const [invite] = await h.rpc<{ token: string }>(t.owner, 'create_invite', {
+      p_company: c,
+      p_email: shutEmail,
+      p_role: 'admin',
+    });
+    await h.rpc(shut, 'accept_invite', { p_token: invite.token });
+    await allowToApprove(t, shut, h, { apps: { people: 'none' } });
+    users.shut = [shut, 'admin'];
     for (const [user, role] of Object.values(users)) fake.addMember(c, user, role);
     fake.setAccess(c, t.deputy, {}, true);
+    fake.setAccess(c, shut, { apps: { people: 'none' } }, true);
     const both = async (user: string, changes: Change[]) => {
       const inSql = await refusal(push(user, c, changes));
       const inFake = await fake

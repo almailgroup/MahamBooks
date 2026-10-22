@@ -855,6 +855,23 @@ describe('expiry alerts (#18)', () => {
     expect(sent[0].body.text).not.toContain('Commercial licence');
     expect(sent[0].body.text).not.toContain('PIFSS');
     expect(sent[0].body.text).toContain('INV-LATE');
+    // And no Maham Books: no invoices, bills or cheques, with their customers and amounts.
+    const e = await company();
+    await turnOn(e.admin, e.id);
+    await h.rpc(e.owner, 'set_member_permissions', {
+      p_company: e.id,
+      p_user: e.admin,
+      p_permissions: JSON.stringify({ apps: { books: 'none' } }),
+      p_can_approve: false,
+    });
+    await turnOn(e.owner, e.id);
+    sent = [];
+    await run();
+    const toAdmin = sent.find((x) => x.body.to[0] === e.adminEmail)!;
+    const toOwner = sent.find((x) => x.body.to[0] === e.ownerEmail)!;
+    expect(toOwner.body.text).toContain('INV-LATE');
+    expect(toAdmin.body.text).not.toContain('INV-LATE');
+    expect(toAdmin.body.text).toContain('Commercial licence');
   });
 
   it('never emails anyone who is no longer an owner, admin or accountant', async () => {

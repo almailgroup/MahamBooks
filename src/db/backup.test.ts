@@ -243,6 +243,41 @@ describe('backup', () => {
     });
   });
 
+  it('never gives a number again when an older backup replaces what is here', async () => {
+    const a = await setupCompany({ name: 'A' });
+    const at = (next: number, period = '2026') => ({ next, period });
+    const company = (await db.companies.get(a.id))!;
+    await db.companies.put({
+      ...company,
+      numbering: {
+        ...company.numbering,
+        letter: { ...company.numbering.letter!, ...at(4) },
+        invoice: { ...company.numbering.invoice, next: 7 },
+      },
+    });
+    const backup = await exportBackup(a.id);
+    // Letters HR-2026-0004 and 0005 and invoice 7 are given after the backup.
+    const later = (await db.companies.get(a.id))!;
+    await db.companies.put({
+      ...later,
+      numbering: {
+        ...later.numbering,
+        letter: { ...later.numbering.letter!, ...at(6) },
+        invoice: { ...later.numbering.invoice, next: 8 },
+      },
+    });
+    await importBackup(backup, 'replace');
+    const restored = (await db.companies.get(a.id))!;
+    expect(restored.numbering.letter).toMatchObject(at(6));
+    expect(restored.numbering.invoice.next).toBe(8);
+    expect(restored.name).toBe('A');
+    // A company only in the backup comes back as it was.
+    await db.delete();
+    await db.open();
+    await importBackup(backup, 'replace');
+    expect((await db.companies.get(a.id))!.numbering.letter).toMatchObject(at(4));
+  });
+
   it('merges without deleting existing data', async () => {
     const a = await setupCompany({ name: 'A' });
     const backup = await exportBackup(a.id);

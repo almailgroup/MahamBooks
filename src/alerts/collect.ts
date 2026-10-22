@@ -37,7 +37,7 @@ import { withPeopleDefaults } from '@/lib/hr/people-settings';
 import { kuwaitProfile } from '@/lib/kuwait-rules';
 import { addDaysISO, daysBetween } from '@/lib/dates';
 import { isOpenCheque } from '@/lib/cheques';
-import { ALERT_TOPICS, type AlertTopic } from './topics';
+import { ALERT_TOPICS, BOOKS_TOPICS, type AlertTopic } from './topics';
 
 /**
  * What the morning email reports: papers and licences that expire soon or
@@ -306,13 +306,16 @@ export interface AlertAudience {
   people?: boolean;
   /** They may open Compliance: the other papers and the deadlines. */
   compliance?: boolean;
+  /** They may open Maham Books: cheques, bills and invoices. */
+  books?: boolean;
 }
 
 /**
  * The alerts one person gets: papers of the kinds they chose only, an
- * employee's papers only when they may see People, and the company's,
- * vehicles' and customers' papers and the deadlines only when they may open
- * Compliance (the owner's limits). Everything else as it is.
+ * employee's papers only when they may see People, the company's, vehicles'
+ * and customers' papers and the deadlines only when they may open
+ * Compliance, and cheques, bills and invoices only when they may open
+ * Maham Books (the owner's limits).
  */
 export function alertsFor(alerts: readonly Alert[], audience: AlertAudience): Alert[] {
   const chosen = Array.isArray(audience.documentKinds)
@@ -320,7 +323,9 @@ export function alertsFor(alerts: readonly Alert[], audience: AlertAudience): Al
     : null;
   const people = audience.people !== false;
   const compliance = audience.compliance !== false;
+  const books = audience.books !== false;
   return alerts.filter((alert) => {
+    if (BOOKS_TOPICS.includes(alert.topic)) return books;
     if (alert.topic === 'deadlines') return compliance;
     if (alert.topic !== 'documents') return true;
     const kind: DocumentAlertKind = documentAlertKind(alert.entry);

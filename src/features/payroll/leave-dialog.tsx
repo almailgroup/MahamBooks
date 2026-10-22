@@ -137,6 +137,7 @@ export function LeaveDialog({
           own,
           balance,
           chosen,
+          { isDayOff: dayOff, policy },
         )
       : [];
   const noteNeeded = mode === 'leave' && Boolean(chosen?.noteRequired);
@@ -152,7 +153,12 @@ export function LeaveDialog({
     if (chosen.maxDaysPerYear) {
       parts.push(
         t('{taken} of {days} days a year taken', {
-          taken: fmt.quantity(reasonDaysInYear(own, chosen.id, Number(start.slice(0, 4)))),
+          taken: fmt.quantity(
+            reasonDaysInYear(own, chosen.id, Number(start.slice(0, 4)), undefined, {
+              isDayOff: dayOff,
+              policy,
+            }),
+          ),
           days: fmt.quantity(chosen.maxDaysPerYear),
         }),
       );

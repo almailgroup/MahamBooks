@@ -5,6 +5,9 @@ import { msg } from '@/i18n';
 export const ALERT_TOPICS = ['documents', 'deadlines', 'cheques', 'bills', 'invoices'] as const;
 export type AlertTopic = (typeof ALERT_TOPICS)[number];
 
+/** The topics of Maham Books: left out for a member the owner gave no access to it (D16). */
+export const BOOKS_TOPICS: readonly AlertTopic[] = ['cheques', 'bills', 'invoices'];
+
 export function isAlertTopic(value: unknown): value is AlertTopic {
   return (ALERT_TOPICS as readonly unknown[]).includes(value);
 }

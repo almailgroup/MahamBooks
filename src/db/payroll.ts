@@ -12,6 +12,7 @@ import {
 import { nowStamp } from './defaults';
 import { getPeopleSettings } from './people';
 import { markPayrollApplied, payrollGate, payrollRequests } from './payroll-approvals';
+import { sameData } from '@/cloud/roles';
 import type {
   Account,
   ApprovalRequest,
@@ -1221,6 +1222,7 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     run.period,
     ctx.dayOff,
     { from: employee.hireDate, to: leavingDate },
+    ctx.settings.leavePolicy,
   );
   const line: PayLine = {
     id: previous?.id ?? newId(),
@@ -1390,6 +1392,8 @@ export async function refreshPayRun(id: ID): Promise<PayRun> {
     const rules = payRulesFor(ctx.settings, run.period);
     const next: PayRun = { ...run, rules, updatedAt: changedStamp(run) };
     next.lines = linesFor(next, ctx, run.lines);
+    // Nothing changed: the run stays as it is, so an approval of it (#10) still holds.
+    if (sameData(next.rules, run.rules) && sameData(next.lines, run.lines)) return run;
     await db.payRuns.put(next);
     return next;
   });
@@ -1565,6 +1569,7 @@ function assertLeaveDetail(lines: PayLine[], run: PayRun, ctx: Context): void {
       run.period,
       ctx.dayOff,
       { from: line.hireDate, to: line.leavingDate },
+      ctx.settings.leavePolicy,
     );
     if (leave.byReason) {
       throw new PayrollError(
@@ -1575,6 +1580,78 @@ function assertLeaveDetail(lines: PayLine[], run: PayRun, ctx: Context): void {
       );
     }
   }
+}
+
+/**
+ * What stops a draft run from being posted, apart from the Super Admin's
+ * approval (#10): no employees, net pay below zero, someone paid for the
+ * month in a final settlement, a loan recovered beyond what is left, leave
+ * by reason not worked out, or a pay date in the locked period. Returns the
+ * lines worked out as they are posted.
+ */
+function postingChecks(run: PayRun, ctx: Context): PayLine[] {
+  const { company, precision: p } = ctx;
+  if (run.lines.length === 0) throw new PayrollError(t('This pay run has no employees.'));
+  const lines = run.lines.map((l) => calculatePayLine(l, run.rules, p));
+  const negative = lines.filter((l) =>
+    payLineWarnings(l, run.rules, p).some((w) => w.code === 'negative_net'),
+  );
+  if (negative.length) {
+    throw new PayrollError(
+      t('Net pay can’t be below zero. Lower the deductions of {names}.', {
+        names: negative.map((l) => l.name).join(', '),
+      }),
+    );
+  }
+  for (const line of lines) {
+    if (
+      ctx.settlements.some(
+        (s) =>
+          s.employeeId === line.employeeId &&
+          liveSettlement(s) &&
+          s.lastSalary?.period === run.period,
+      )
+    ) {
+      throw new PayrollError(
+        t('{name} was paid for this month in a final settlement. Update the pay run.', {
+          name: line.name,
+        }),
+      );
+    }
+    for (const recovery of line.loans) {
+      const loan = ctx.loans.find((l) => l.id === recovery.loanId);
+      // A cancelled loan (an owed share whose pay run was reopened) has nothing left.
+      const left =
+        loan?.status === 'active' ? loanBalance(loan, ctx.runs, ctx.settlements, p, run.id) : 0;
+      if (toMinor(recovery.amount, p) > toMinor(left, p)) {
+        throw new PayrollError(
+          t(
+            'The loan recovery of {name} is more than what is left on the loan. Update the pay run.',
+            {
+              name: line.name,
+            },
+          ),
+        );
+      }
+    }
+  }
+  assertLeaveDetail(lines, run, ctx);
+  assertOpen(company, run.date);
+  return lines;
+}
+
+/**
+ * Throws what would stop a draft run from being posted now (postingChecks):
+ * a run is sent for the Super Admin's approval only when, once approved, it
+ * can be posted as it is (#10).
+ */
+export async function assertPayRunPostable(id: ID): Promise<void> {
+  await db.transaction('rw', TABLES(), async () => {
+    const run = await db.payRuns.get(id);
+    // Missing, posted or empty: the caller says so in its own words.
+    if (!run || run.status !== 'draft' || run.lines.length === 0) return;
+    postingChecks(run, await loadContext(run.companyId));
+  });
 }
 
 /**
@@ -1590,52 +1667,7 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
     assertDraft(run);
     const ctx = await loadContext(run.companyId);
     const { company, precision: p } = ctx;
-    if (run.lines.length === 0) throw new PayrollError(t('This pay run has no employees.'));
-    const lines = run.lines.map((l) => calculatePayLine(l, run.rules, p));
-    const negative = lines.filter((l) =>
-      payLineWarnings(l, run.rules, p).some((w) => w.code === 'negative_net'),
-    );
-    if (negative.length) {
-      throw new PayrollError(
-        t('Net pay can’t be below zero. Lower the deductions of {names}.', {
-          names: negative.map((l) => l.name).join(', '),
-        }),
-      );
-    }
-    for (const line of lines) {
-      if (
-        ctx.settlements.some(
-          (s) =>
-            s.employeeId === line.employeeId &&
-            liveSettlement(s) &&
-            s.lastSalary?.period === run.period,
-        )
-      ) {
-        throw new PayrollError(
-          t('{name} was paid for this month in a final settlement. Update the pay run.', {
-            name: line.name,
-          }),
-        );
-      }
-      for (const recovery of line.loans) {
-        const loan = ctx.loans.find((l) => l.id === recovery.loanId);
-        // A cancelled loan (an owed share whose pay run was reopened) has nothing left.
-        const left =
-          loan?.status === 'active' ? loanBalance(loan, ctx.runs, ctx.settlements, p, run.id) : 0;
-        if (toMinor(recovery.amount, p) > toMinor(left, p)) {
-          throw new PayrollError(
-            t(
-              'The loan recovery of {name} is more than what is left on the loan. Update the pay run.',
-              {
-                name: line.name,
-              },
-            ),
-          );
-        }
-      }
-    }
-    assertLeaveDetail(lines, run, ctx);
-    assertOpen(company, run.date);
+    const lines = postingChecks(run, ctx);
     // With salary approval on, only as the Super Admin approved it (#10).
     approval.done = payrollGate(
       company,

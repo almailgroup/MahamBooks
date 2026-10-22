@@ -220,6 +220,12 @@ describe('collectAlerts', () => {
     expect(limited.filter((a) => a.topic === 'invoices')).toEqual(
       all.filter((a) => a.topic === 'invoices'),
     );
+    // No access to Maham Books: no cheques, bills or invoices; the rest as it is.
+    const noBooks = alertsFor(all, { books: false });
+    expect(noBooks.some((a) => ['cheques', 'bills', 'invoices'].includes(a.topic))).toBe(false);
+    expect(noBooks).toEqual(all.filter((a) => !['cheques', 'bills', 'invoices'].includes(a.topic)));
+    expect(all.some((a) => a.topic === 'invoices')).toBe(true);
+    expect(alertsFor(all, { books: true })).toEqual(all);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   accrualOptions,
   annualLeaveBalance,
   dayOffChecker,
+  DEFAULT_LEAVE_POLICY,
   leaveInPeriod,
   leaveLabel,
   leaveReasonBase,
@@ -199,6 +200,31 @@ describe('pay', () => {
     ]);
   });
 
+  it('counts leave taken from annual leave as the policy counts annual leave', () => {
+    const records = [
+      record({ type: 'annual', reasonId: 'emergency', start: '2026-03-01', end: '2026-03-10' }),
+      record({ type: 'bereavement', reasonId: 'marriage', start: '2026-03-15', end: '2026-03-21' }),
+    ];
+    const calendar = { ...DEFAULT_LEAVE_POLICY, counting: 'calendar' as const };
+    // Calendar days for the annual one (as its record's 10 days); the other in working days.
+    expect(leaveInPeriod(records, '2026-03', noHolidays, {}, calendar).byReason).toEqual([
+      { reasonId: 'emergency', type: 'annual', days: 10, percent: 100 },
+      { reasonId: 'marriage', type: 'bereavement', days: 5, percent: 100 },
+    ]);
+    // Without a policy, or with the law's, working days as before.
+    for (const policy of [undefined, DEFAULT_LEAVE_POLICY]) {
+      expect(leaveInPeriod(records, '2026-03', noHolidays, {}, policy).byReason?.[0].days).toBe(8);
+    }
+    // The pay of the month is the same either way.
+    const plain = leaveInPeriod(records, '2026-03', noHolidays);
+    const counted = leaveInPeriod(records, '2026-03', noHolidays, {}, calendar);
+    expect([counted.unpaidDays, counted.reducedPay, counted.byType]).toEqual([
+      plain.unpaidDays,
+      plain.reducedPay,
+      plain.byType,
+    ]);
+  });
+
   it('keeps sick leave tiers per calendar year, whatever else is recorded', () => {
     const sick = record({ type: 'sick', start: '2026-02-01', end: '2026-03-15' });
     const others = [
@@ -276,6 +302,31 @@ describe('balances', () => {
     expect(reasonDaysInYear(records, 'marriage', 2026, records[2].id)).toBe(2);
     expect(reasonDaysInYear(records, 'marriage', 2025)).toBe(3);
   });
+
+  it('splits leave that crosses 31 December between the years, as it is counted', () => {
+    const counting = { isDayOff: noHolidays };
+    // Wed 30 Dec 2026 to Tue 5 Jan 2027: 2 working days in 2026, 3 in 2027 (Fridays and Saturdays off).
+    const across = record({
+      type: 'bereavement',
+      reasonId: 'marriage',
+      start: '2026-12-30',
+      end: '2027-01-05',
+      days: 4,
+    });
+    const within = record({
+      type: 'bereavement',
+      reasonId: 'marriage',
+      start: '2026-03-01',
+      end: '2026-03-02',
+      days: 2,
+    });
+    expect(reasonDaysInYear([across, within], 'marriage', 2026, undefined, counting)).toBe(4);
+    expect(reasonDaysInYear([across, within], 'marriage', 2027, undefined, counting)).toBe(3);
+    // Leave within a year keeps the days it was recorded with.
+    expect(reasonDaysInYear([{ ...within, days: 7 }], 'marriage', 2026, undefined, counting)).toBe(
+      7,
+    );
+  });
 });
 
 describe('warnings', () => {
@@ -301,6 +352,38 @@ describe('warnings', () => {
       { code: 'over_year_max', limit: 5, taken: 2 },
     ]);
     expect(leaveWarnings(leave({ type: 'bereavement' }), taken, null, MARRIAGE)).toEqual([]);
+  });
+
+  it('check a reason’s days a year in each year a leave falls in', () => {
+    const counting = { isDayOff: noHolidays };
+    const across = record({
+      type: 'bereavement',
+      reasonId: 'marriage',
+      start: '2026-12-30',
+      end: '2027-01-05',
+      days: 4,
+    });
+    // Sun 10 to Wed 13 January 2027: 4 more days in 2027 is 7, over the 5.
+    const later = leave({ type: 'bereavement', start: '2027-01-10', end: '2027-01-13', days: 4 });
+    expect(leaveWarnings(later, [across], null, MARRIAGE, counting)).toEqual([
+      { code: 'over_year_max', limit: 5, taken: 3 },
+    ]);
+    // Counted in the year it starts, the 2027 days were missed.
+    expect(leaveWarnings(later, [across], null, MARRIAGE)).toEqual([]);
+    // A new leave crossing into a year where the reason's days are used up.
+    const january = record({
+      type: 'bereavement',
+      reasonId: 'marriage',
+      start: '2027-01-17',
+      end: '2027-01-21',
+      days: 5,
+    });
+    const newYear = leave({ type: 'bereavement', start: '2026-12-30', end: '2027-01-03', days: 3 });
+    expect(leaveWarnings(newYear, [january], null, MARRIAGE, counting)).toEqual([
+      { code: 'over_year_max', limit: 5, taken: 5 },
+    ]);
+    // Without the counting, as before: in the year it starts.
+    expect(leaveWarnings(newYear, [january], null, MARRIAGE)).toEqual([]);
   });
 
   it('check a reason’s own balance', () => {

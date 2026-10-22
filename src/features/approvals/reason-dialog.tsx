@@ -16,6 +16,7 @@ export function ReasonDialog({
   label = t('Reason'),
   confirmLabel,
   required = true,
+  missing,
   danger = false,
   onConfirm,
   children,
@@ -27,6 +28,8 @@ export function ReasonDialog({
   label?: string;
   confirmLabel: string;
   required?: boolean;
+  /** What is said when a required reason is left empty (for the approver, unless given). */
+  missing?: string;
   danger?: boolean;
   /** Done when it resolves; an error keeps the dialog open (the caller says why). */
   onConfirm: (reason: string) => Promise<void>;
@@ -38,7 +41,7 @@ export function ReasonDialog({
   const [error, setError] = useState('');
   const confirm = async () => {
     if (required && !reason.trim()) {
-      setError(t('Say why, for the approver.'));
+      setError(missing ?? t('Say why, for the approver.'));
       return;
     }
     setBusy(true);

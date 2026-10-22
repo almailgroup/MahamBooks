@@ -167,14 +167,19 @@ export function payrollRequestDetails(run: PayRun, currency: string): PayrollApp
 
 /**
  * Sends a draft pay run for the Super Admin's approval, as it stands, with
- * an optional note. A request still waiting for an earlier version of the
- * run is taken back first (by whoever sent it, or an approver). Returns the
- * request.
+ * an optional note: only one that could be posted as it is once approved
+ * (the checks of approvePayRun), so an approval is never given for a run
+ * that must change before it is posted. A request still waiting for an
+ * earlier version of the run is taken back first (by whoever sent it, or an
+ * approver). Returns the request.
  */
 export async function requestPayrollApproval(
   runId: ID,
   input: { note?: string; byName?: string } = {},
 ): Promise<ApprovalRequest> {
+  // Imported here: payroll.ts uses this module when it posts a run.
+  const { assertPayRunPostable } = await import('./payroll');
+  await assertPayRunPostable(runId);
   return db.transaction(
     'rw',
     [db.approvals, db.payRuns, db.companies, db.syncState, db.activities],

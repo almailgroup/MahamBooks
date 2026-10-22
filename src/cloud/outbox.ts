@@ -33,6 +33,7 @@ import {
   payrollDecisionRefusal,
   rulesCoverPayroll,
   sameData,
+  peopleSettingsKept,
   staffCompanyChangeOk,
   switchesLetters,
   type RecordLookup,
@@ -253,9 +254,13 @@ function refuseLetters(
 ): string | null {
   if (!linkHasFeature(link, 'employee_letters')) return null;
   if (table === 'peopleSettings') {
-    return change.after !== undefined &&
-      !switchesLetters(link.role) &&
-      !sameData(change.before?.letters, change.after.letters)
+    if (change.after === undefined) {
+      // Deleting the settings would turn the letters off.
+      return change.before && peopleSettingsKept(link.role, change.before)
+        ? t('Only the owner or an admin turns employee letters on or off.')
+        : null;
+    }
+    return !switchesLetters(link.role) && !sameData(change.before?.letters, change.after.letters)
       ? t('Only the owner or an admin turns employee letters on or off.')
       : null;
   }
@@ -356,9 +361,16 @@ function refuseByRules(
     const refusal = payrollDecisionRefusal(
       change.before,
       change.after,
-      { userId: link.userId, owner: link.role === 'owner' },
+      {
+        userId: link.userId,
+        owner: link.role === 'owner',
+        peopleShut: appLimit(link.role, link.permissions, 'people') === 'none',
+      },
       typeof subject === 'string' ? runs?.get(subject) : undefined,
     );
+    if (refusal === 'people') {
+      return t('The owner has given you no access to Maham People, so you don’t decide pay runs.');
+    }
     if (refusal === 'self') {
       return t('Only the owner approves a pay run they sent for approval themselves.');
     }

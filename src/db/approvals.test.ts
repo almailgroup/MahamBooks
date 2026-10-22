@@ -30,10 +30,12 @@ import {
   pendingRequestFor,
   pendingRequests,
   requestApproval,
+  requestShownTo,
   waitsForApproval,
 } from './approvals';
 import { CloudPermissionError, markRemote } from '@/cloud/outbox';
 import type { MemberRole } from '@/cloud/roles';
+import type { AppAccess } from '@/suite/types';
 import type { ApprovalRules, Client, Company, InvoiceDocument } from './types';
 
 /**
@@ -669,5 +671,37 @@ describe('numbers are never reused (D12)', () => {
     await markSent(copy.id);
     expect((await db.documents.get(copy.id))?.totals.balance).toBe(300);
     expect((await db.documents.get(invoice.id))?.totals.paid).toBe(0);
+  });
+});
+
+describe('who is shown a request', () => {
+  const link = (role: MemberRole, people?: AppAccess) => ({
+    companyId: 'co',
+    userId: `user-${role}`,
+    role,
+    status: 'ready' as const,
+    cursor: 0,
+    name: 'Co',
+    linkedAt: '2026-10-01T08:00:00.000Z',
+    lastSyncAt: null,
+    lastError: null,
+    lastErrorAt: null,
+    ...(people ? { permissions: { apps: { people } } } : {}),
+  });
+  const payroll = { subjectTbl: 'payRuns' };
+  const letter = { subjectTbl: 'employeeLetters' };
+  const invoice = { subjectTbl: 'documents' };
+
+  it('leaves requests about People data out for a member given no access to People', () => {
+    for (const role of ['admin', 'accountant'] as const) {
+      expect(requestShownTo(payroll, link(role, 'none'))).toBe(false);
+      expect(requestShownTo(letter, link(role, 'none'))).toBe(false);
+      expect(requestShownTo(invoice, link(role, 'none'))).toBe(true);
+      expect(requestShownTo(payroll, link(role, 'view'))).toBe(true);
+      expect(requestShownTo(payroll, link(role))).toBe(true);
+    }
+    // The owner, and a company kept on this device, see everything.
+    expect(requestShownTo(payroll, link('owner', 'none'))).toBe(true);
+    expect(requestShownTo(payroll, null)).toBe(true);
   });
 });

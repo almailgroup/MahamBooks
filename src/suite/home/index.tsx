@@ -36,7 +36,7 @@ import { Card, CardHeader, Spinner } from '@/components/ui/misc';
 import { MoneyText } from '@/components/ui/money-text';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { useApprovalView, useCaughtUp, usePendingRequests } from '@/features/approvals/hooks';
-import { expirePending } from '@/db/approvals';
+import { expirePending, requestShownTo } from '@/db/approvals';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
 import { useAppAccess } from '../current-app';
@@ -271,7 +271,11 @@ function ApprovalsCard() {
     }
   }, [approver, caughtUp, view.rules?.expireDays, company.id]);
   if (!requests || !view.link) return null;
-  const count = approvalsWaiting(requests, { approver, userId: view.link.userId });
+  const link = view.link;
+  const count = approvalsWaiting(
+    requests.filter((r) => requestShownTo(r, link)),
+    { approver, userId: link.userId },
+  );
   if (count === 0) return null;
   return (
     <Card>

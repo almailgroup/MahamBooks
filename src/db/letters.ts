@@ -27,6 +27,7 @@ import {
   DEFAULT_LETTER_KINDS,
   LETTER_KINDS,
   LETTER_TRIGGERS,
+  fieldsIn,
   fillLetter,
   letterLanguage,
   letterPay,
@@ -124,34 +125,48 @@ async function linkOf(companyId: ID): Promise<CloudLink | null> {
 
 /**
  * Turns the company's letters on or off (the owner or an admin). Templates
- * and letters already made stay as they are.
+ * and letters already made stay as they are. Turned on, the company gets
+ * its letter numbering rule when it has none yet (companies made before
+ * letters), so in the cloud even the first letter's number comes from the
+ * company's counter there (D12).
  */
 export async function setLettersOn(companyId: ID, on: boolean): Promise<PeopleSettings> {
-  return db.transaction('rw', [db.peopleSettings, db.activities, db.syncState], async () => {
-    const link = await linkOf(companyId);
-    if (link && !switchesLetters(link.role)) {
-      throw new LetterError(t('Only the owner or an admin turns employee letters on or off.'));
-    }
-    if (!lettersAvailable(link)) {
-      throw new LetterError(
-        t(
-          'The cloud needs the latest database script first. Ask the owner of the company to run it.',
-        ),
-      );
-    }
-    const before = await getPeopleSettings(companyId);
-    if ((before.letters === true) === on) return before;
-    const settings = {
-      ...normalizePeopleSettings({ ...before, letters: on }),
-      updatedAt: nowStamp(),
-    };
-    await db.peopleSettings.put(settings);
-    // Private, like the rest of payroll and people.
-    await logActivity(companyId, 'payroll', settings.id, 'settings', {
-      text: on ? msg('Employee letters turned on') : msg('Employee letters turned off'),
-    });
-    return settings;
-  });
+  return db.transaction(
+    'rw',
+    [db.peopleSettings, db.activities, db.syncState, db.companies],
+    async () => {
+      const link = await linkOf(companyId);
+      if (link && !switchesLetters(link.role)) {
+        throw new LetterError(t('Only the owner or an admin turns employee letters on or off.'));
+      }
+      if (!lettersAvailable(link)) {
+        throw new LetterError(
+          t(
+            'The cloud needs the latest database script first. Ask the owner of the company to run it.',
+          ),
+        );
+      }
+      const company = await db.companies.get(companyId);
+      if (on && company && !company.numbering.letter) {
+        await db.companies.put({
+          ...company,
+          numbering: { ...company.numbering, letter: defaultNumbering().letter },
+        });
+      }
+      const before = await getPeopleSettings(companyId);
+      if ((before.letters === true) === on) return before;
+      const settings = {
+        ...normalizePeopleSettings({ ...before, letters: on }),
+        updatedAt: nowStamp(),
+      };
+      await db.peopleSettings.put(settings);
+      // Private, like the rest of payroll and people.
+      await logActivity(companyId, 'payroll', settings.id, 'settings', {
+        text: on ? msg('Employee letters turned on') : msg('Employee letters turned off'),
+      });
+      return settings;
+    },
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -429,6 +444,28 @@ export function draftFromTemplate(
   };
 }
 
+/** What a warning letter or a no objection certificate must say, when its text prints it. */
+const PURPOSE_NEEDED: Partial<Record<LetterKind, string>> = {
+  warning: msg('Write what happened. It is printed in the warning letter.'),
+  noc: msg('Write what the company has no objection to. It is printed in the certificate.'),
+};
+
+/**
+ * Why a letter can't be issued or sent for approval yet, or null: a warning
+ * letter or a no objection certificate whose text prints its purpose
+ * ({letter.purpose}) must say it, as once issued only a void puts it right.
+ */
+export function missingPurpose(
+  letter: Pick<LetterDraftInput, 'kind' | 'purpose' | 'subject' | 'body' | 'subjectEn' | 'bodyEn'>,
+): string | null {
+  const message = PURPOSE_NEEDED[letter.kind];
+  if (!message || letter.purpose.trim()) return null;
+  const text = [letter.subject, letter.body, letter.subjectEn ?? '', letter.bodyEn ?? ''].join(
+    '\n',
+  );
+  return fieldsIn(text).includes('letter.purpose') ? t(message) : null;
+}
+
 /** The request waiting to issue a letter, if any. */
 export async function pendingLetterRequest(letterId: ID): Promise<ApprovalRequest | undefined> {
   return db.approvals
@@ -644,6 +681,8 @@ export async function issueLetter(id: ID, on: ISODate = today()): Promise<Employ
         );
       }
       if (!employee) throw new LetterError(t('The employee of this letter no longer exists.'));
+      const purpose = missingPurpose(letter);
+      if (purpose) throw new LetterError(purpose);
       const template = letter.templateId
         ? await getTemplate(letter.companyId, letter.templateId)
         : undefined;
@@ -804,6 +843,8 @@ export async function requestLetterIssue(
         throw new ApprovalError(t('Employee letters are off for this company.'));
       }
       if (!canDraftLetters(link)) throw new ApprovalError(t('Your role can’t make letters.'));
+      const purpose = missingPurpose(letter);
+      if (purpose) throw new ApprovalError(purpose);
       if (await pendingLetterRequest(letter.id)) {
         throw new ApprovalError(t('This letter is already waiting for approval.'));
       }
@@ -846,6 +887,16 @@ export async function requestLetterIssue(
  * on this device, still a draft, as it was sent.
  */
 export async function assertLetterRequest(request: ApprovalRequest): Promise<void> {
+  // Approving issues the letter on this device: an approver the owner made
+  // Maham People view only for (or gave no access to) can't, so the
+  // approval isn't given at all.
+  if (!canIssueLetters(await linkOf(request.companyId))) {
+    throw new ApprovalError(
+      t(
+        'Your access to Maham People doesn’t let you issue letters, so you can’t approve this request. The owner or another approver can.',
+      ),
+    );
+  }
   const letter = await db.employeeLetters.get(request.subjectId);
   if (!letter) {
     throw new ApprovalError(t('This letter isn’t on this device yet. Let it sync, then decide.'));
