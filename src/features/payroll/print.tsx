@@ -7,11 +7,12 @@ import { t } from '@/i18n';
 import common from '@/i18n/ar/common';
 import people from '@/i18n/ar/people';
 import payroll from '@/i18n/ar/payroll';
+import leaveReasons from '@/i18n/ar/req-15';
 import { formatMoney } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/misc';
 
-const ARABIC: Dictionary = { ...common, ...people, ...payroll };
+const ARABIC: Dictionary = { ...common, ...people, ...payroll, ...leaveReasons };
 
 export const PRINT_EN = 'en-KW';
 export const PRINT_AR = 'ar-KW-u-nu-latn';

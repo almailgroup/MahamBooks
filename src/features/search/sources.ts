@@ -94,6 +94,12 @@ const SUB_PAGES: {
   { label: msg('Import data'), to: '/settings/import', keywords: 'csv excel' },
   { label: msg('Backup & data'), to: '/settings/data', keywords: 'export restore' },
   { label: msg('Payroll settings'), to: '/payroll/settings', app: 'people' },
+  {
+    label: msg('Leave reasons'),
+    to: '/payroll/leave-reasons',
+    keywords: 'emergency compensatory',
+    app: 'people',
+  },
   { label: msg('Your account'), to: '/settings/account', keywords: 'profile password sign out' },
   { label: msg('Team'), to: '/settings/team', keywords: 'members invite users roles' },
   {

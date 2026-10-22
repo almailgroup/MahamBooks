@@ -241,3 +241,129 @@ test('the Leave page and employees’ balances follow the company’s leave poli
     card.getByText('Annual leave has been recorded, so the way it is counted stays as it is.'),
   ).toBeVisible();
 });
+
+test('the company’s leave reasons: emergency leave from annual leave and leave on half pay', async ({
+  page,
+}) => {
+  const month = lastMonth();
+  await createCompany(page, 'Made-up Facilities');
+  await addEmployee(page, {
+    name: 'Made-up Cleaner',
+    nameAr: 'عامل نظافة افتراضي',
+    country: 'India',
+    salary: '300',
+    iban: 'KW81CBKU0000000000001234560101',
+  });
+  const employeePage = page.url();
+
+  // Off until switched on: leave is recorded with the six types only.
+  await page.goto('#/payroll/leave');
+  await page.getByRole('button', { name: 'Record leave' }).click();
+  let dialog = page.getByRole('dialog', { name: 'Record leave' });
+  await expect(dialog.getByRole('option', { name: 'Emergency leave' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByRole('link', { name: 'Leave reasons' }).first().click();
+  await expect(page).toHaveURL(/#\/payroll\/leave-reasons$/);
+  await expect(page.getByText('No leave reasons yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Add the recommended reasons' }).click();
+  await expect(page.getByText('Recommended leave reasons added')).toBeVisible();
+  await expect(page.getByText('Emergency leave', { exact: true })).toBeVisible();
+  await expect(page.getByText('Compensatory days', { exact: true })).toBeVisible();
+  await expect(page.getByText('Older versions show it as annual leave.')).toBeVisible();
+
+  // A reason on half pay, with a note.
+  await page.getByRole('button', { name: 'Add a reason' }).click();
+  const reason = page.getByRole('dialog', { name: 'Add a leave reason' });
+  await reason.getByLabel('Name (English)').fill('Study leave');
+  await reason.getByLabel('Name (Arabic)').fill('إجازة دراسية');
+  await reason.getByLabel('How it is paid').selectOption({ label: 'Half pay' });
+  await expect(
+    reason.getByText(/^Each calendar day of it costs half a day’s pay\. Older versions show it/),
+  ).toBeVisible();
+  await reason.getByLabel('Most days a year').fill('10');
+  await reason.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Leave reason saved')).toBeVisible();
+  await expect(page.getByText('Half pay · At most 10 days a year')).toBeVisible();
+
+  // The pause of long unpaid leave is off, and asks for the auditor first.
+  await expect(
+    page.getByText(/^Ask your auditor to confirm that a month of service with more than 15 days/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('switch', {
+      name: /^A month of service with more than 15 days of unpaid leave/,
+    }),
+  ).toHaveAttribute('aria-checked', 'false');
+  await page.getByRole('switch', { name: /^Offer these reasons when leave is recorded/ }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Leave reasons saved')).toBeVisible();
+
+  // Emergency leave, then ten days of study leave, last month.
+  await page.goto('#/payroll/leave');
+  await page.getByRole('button', { name: 'Record leave' }).click();
+  dialog = page.getByRole('dialog', { name: 'Record leave' });
+  await dialog.getByLabel('Type of leave').selectOption({ label: 'Emergency leave' });
+  // A working day (Sunday to Thursday).
+  const day = [20, 21, 22, 23, 24]
+    .map((d) => `${month.period}-${d}`)
+    .find((d) => new Date(`${d}T00:00:00Z`).getUTCDay() < 5)!;
+  await dialog.getByLabel('First day').fill(day);
+  await dialog.getByLabel('Last day').fill(day);
+  await expect(dialog.getByText(/· Taken from annual leave$/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Leave recorded for Made-up Cleaner')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Record leave' }).click();
+  dialog = page.getByRole('dialog', { name: 'Record leave' });
+  await dialog.getByLabel('Type of leave').selectOption({ label: 'Study leave' });
+  await dialog.getByLabel('First day').fill(`${month.period}-01`);
+  await dialog.getByLabel('Last day').fill(`${month.period}-10`);
+  await expect(dialog.getByText('10 calendar days', { exact: false })).toBeVisible();
+  await expect(dialog.getByText(/Half pay · 0 of 10 days a year taken$/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Leave recorded for Made-up Cleaner')).toBeVisible();
+
+  await page.goto(`${employeePage}?tab=leave`);
+  const reasons = page
+    .locator('div.rounded-xl')
+    .filter({ has: page.getByRole('heading', { name: /^The company’s leave reasons in/ }) });
+  await expect(reasons).toContainText('Study leave');
+  await expect(reasons).toContainText('10 of 10 days');
+
+  // The pay line shows each reason, and pays the study leave at half.
+  await page.goto('#/payroll');
+  await page.getByRole('button', { name: 'New pay run' }).first().click();
+  const create = page.getByRole('dialog', { name: 'New pay run' });
+  await create.getByLabel('Month').selectOption(month.period);
+  await create.getByRole('button', { name: 'Prepare pay run' }).click();
+  await expect(page).toHaveURL(/#\/payroll\/runs\/[0-9a-f-]{36}$/);
+  await page.getByRole('row').filter({ hasText: 'Made-up Cleaner' }).click();
+  const line = page.getByRole('dialog', { name: 'Made-up Cleaner' });
+  await expect(line.getByText('Study leave: 10 days at 50% pay.')).toBeVisible();
+  await expect(line.getByText('Emergency leave: 1 day, taken from annual leave.')).toBeVisible();
+  await expect(line.getByText('From leave records: 10 calendar days at 50% pay.')).toBeVisible();
+  await line.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByText(`Payroll for ${month.label} approved`)).toBeVisible();
+  await page.getByRole('link', { name: 'Payslips' }).click();
+  await expect(page.getByText('Leave this month').first()).toBeVisible();
+  await expect(page.getByText('الإجازات هذا الشهر').first()).toBeVisible();
+  await expect(page.getByText('إجازة دراسية').first()).toBeVisible();
+  await expect(page.getByText('بنصف أجر').first()).toBeVisible();
+  await page.getByRole('link', { name: 'Back to the pay run' }).click();
+
+  // In Arabic.
+  await page.goto('#/payroll/leave-reasons');
+  await page.getByRole('button', { name: 'العربية' }).click();
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await expect(page.getByRole('heading', { name: 'أسباب الإجازة' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'إجازة طارئة' })).toContainText(
+    'تُخصم من الإجازة السنوية',
+  );
+  await expect(page.getByText('بنصف أجر · 10 يوم في السنة كحد أقصى')).toBeVisible();
+  await page.goto(`${employeePage}?tab=leave`);
+  await expect(page.getByText('إجازة دراسية').first()).toBeVisible();
+});

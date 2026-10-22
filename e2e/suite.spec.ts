@@ -97,7 +97,10 @@ test('the app switcher moves between apps, each with its own sidebar', async ({ 
 
   // Old addresses still open their page, in the app they belong to.
   await page.goto('#/payroll/leave');
-  await expect(nav.getByRole('link', { name: 'Leave' })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.getByRole('link', { name: 'Leave', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await page.goto('#/invoices');
   await expect(nav.getByRole('button', { name: 'Sales' })).toBeVisible();
   await page.goto('#/books');

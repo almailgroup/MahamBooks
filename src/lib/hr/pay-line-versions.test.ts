@@ -79,4 +79,20 @@ describe('a stored pay line', () => {
     // An older version: 8 working days at the daily rate (300 ÷ 26), as it always deducted.
     expect(olderVersion(stored).absenceDeduction).toBe(92.308);
   });
+
+  it('with leave on half pay (a company’s reason) means half pay to versions that know calendar days', () => {
+    // Ten days at half pay, two of them a weekend: 8 working days at half pay.
+    const stored = {
+      ...line,
+      reducedPay: [{ percent: 50, days: 8 }],
+      calendarLeave: { unpaidDays: 0, reducedPay: [{ percent: 50, days: 10 }] },
+      leaveDetail: [{ reasonId: 'study', name: 'Study leave', nameAr: '', days: 10, percent: 50 }],
+    } as PayLine;
+    // This version: half of 10 of the month's 30 days.
+    expect(calculatePayLine(stored, rules, 3).absenceDeduction).toBe(50);
+    // The detail is only shown, never paid from, and stays on the line.
+    expect(calculatePayLine(stored, rules, 3).leaveDetail).toEqual(stored.leaveDetail);
+    // An older version: 8 working days at half the daily rate.
+    expect(olderVersion(stored).absenceDeduction).toBe(46.154);
+  });
 });

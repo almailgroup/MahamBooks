@@ -18,6 +18,7 @@ const EmployeeForm = lazy(() => import('./pages/people/form'));
 const Payroll = lazy(() => import('./pages/payroll/index'));
 const PayRun = lazy(() => import('./pages/payroll/run'));
 const PayrollLeave = lazy(() => import('./pages/payroll/leave'));
+const LeaveReasons = lazy(() => import('./pages/payroll/leave-reasons'));
 const PayrollLoans = lazy(() => import('./pages/payroll/loans'));
 const PayrollSettings = lazy(() => import('./pages/payroll/settings'));
 const Payslips = lazy(() => import('./pages/payroll/payslips'));
@@ -78,6 +79,7 @@ export const peopleRoutes: RouteObject[] = [
   page('payroll', <Payroll />),
   page('payroll/runs/:id', <PayRun />),
   page('payroll/leave', <PayrollLeave />),
+  page('payroll/leave-reasons', <LeaveReasons />),
   page('payroll/loans', <PayrollLoans />),
   page('payroll/settings', <PayrollSettings />),
 ];

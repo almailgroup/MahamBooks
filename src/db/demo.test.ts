@@ -271,6 +271,24 @@ describe('the demo company', () => {
     }
   });
 
+  it('keeps every leave balance and provision with the pause of long unpaid leave on', async () => {
+    const employees = await db.employees.where('companyId').equals(company.id).toArray();
+    const leave = await db.leaveRecords.where('companyId').equals(company.id).toArray();
+    const runs = (await db.payRuns.where('companyId').equals(company.id).toArray()).filter(
+      (r) => r.status !== 'draft' && r.provisions,
+    );
+    const hired = employees.map((e) => e.hireDate!).sort()[0];
+    // No demo employee takes a long unpaid leave, so nothing changes.
+    for (const run of runs) {
+      for (const p of run.provisions!) {
+        const e = employees.find((x) => x.id === p.employeeId)!;
+        const balance = employeeLeaveBalance(e, leave, run.date, undefined, { pauseFrom: hired });
+        expect(Math.max(0, balance.balance), `${e.name}, ${run.period}`).toBe(p.leaveDays);
+      }
+    }
+    expect(runs.flatMap((r) => r.lines).some((l) => l.leaveDetail)).toBe(false);
+  });
+
   it('holds post-dated cheques, cleared ones and a returned one with its replacement', async () => {
     const payments = await db.payments.where('companyId').equals(company.id).toArray();
     const received = chequePayments(payments, 'in');

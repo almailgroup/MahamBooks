@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { CalendarPlus, ListChecks, Plane } from 'lucide-react';
+import { CalendarPlus, ListChecks, Plane, Tags } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import { companyDayOff } from '@/db/payroll';
 import {
+  accrualOptions,
   annualDaysOn,
   employeeLeaveBalance,
   employeesNeedingLeaveOpening,
-  leaveTypeInfo,
+  leaveLabel,
   sickDaysByTier,
 } from '@/lib/hr/leave';
 import { round } from '@/lib/money';
@@ -18,7 +19,7 @@ import { useLeaveRecords, usePayrollSettings } from '@/features/payroll/hooks';
 import { LeaveDialog } from '@/features/payroll/leave-dialog';
 import { LeaveOpeningsDialog } from '@/features/payroll/leave-openings-dialog';
 import { PayrollHeader } from '@/features/payroll/shared';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Badge, Card, EmptyState, Spinner } from '@/components/ui/misc';
 import { localName } from '@/i18n/names';
 import { t, tp } from '@/i18n';
@@ -58,7 +59,7 @@ export default function PayrollLeavePage() {
     );
     return {
       employee: e,
-      balance: employeeLeaveBalance(e, own, on, policy).balance,
+      balance: employeeLeaveBalance(e, own, on, policy, accrualOptions(settings)).balance,
       taken: taken.reduce((s, r) => s + r.days, 0),
       sick: sickDaysByTier(own, year, dayOff).reduce((s, x) => s + x.days, 0),
       away,
@@ -72,6 +73,9 @@ export default function PayrollLeavePage() {
   };
   const record = (
     <div className="flex flex-wrap gap-2">
+      <ButtonLink variant="outline" to="/payroll/leave-reasons">
+        <Tags /> {t('Leave reasons')}
+      </ButtonLink>
       <Button variant="outline" onClick={() => setOpening(true)} disabled={current.length === 0}>
         <ListChecks /> {t('Set opening leave balances')}
       </Button>
@@ -137,7 +141,7 @@ export default function PayrollLeavePage() {
                         {away ? (
                           <Badge tone="blue">
                             {t('{leave} until {date}', {
-                              leave: t(leaveTypeInfo(away.type).label),
+                              leave: leaveLabel(away, settings.leaveReasons),
                               date: fmt.date(away.end),
                             })}
                           </Badge>

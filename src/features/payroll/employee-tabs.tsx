@@ -13,10 +13,16 @@ import {
   loanRecoveredMinor,
 } from '@/db/payroll';
 import {
+  accrualOptions,
   annualDaysOn,
   DEFAULT_LEAVE_POLICY,
   employeeLeaveBalance,
-  leaveTypeInfo,
+  leaveLabel,
+  leaveReasonPay,
+  reasonBalance,
+  reasonDaysInYear,
+  reasonOf,
+  reasonsFor,
   sickDaysByTier,
   SICK_TIERS,
 } from '@/lib/hr/leave';
@@ -51,7 +57,9 @@ export function LeaveTab({ employee }: { employee: Employee }) {
   const records = useLeaveRecords(employee.id);
   const employees = useEmployees();
   const settings = usePayrollSettings();
-  const [dialog, setDialog] = useState<'leave' | 'balance' | 'opening' | null>(null);
+  const [dialog, setDialog] = useState<
+    'leave' | 'balance' | 'opening' | { reasonId: string } | null
+  >(null);
   const [confirming, setConfirming] = useState(false);
   const dayOff = useMemo(() => companyDayOff(company), [company]);
   if (!records || !employees || !settings) return <Spinner className="py-12" />;
@@ -60,7 +68,17 @@ export function LeaveTab({ employee }: { employee: Employee }) {
 
   const on = today();
   const year = Number(on.slice(0, 4));
-  const balance = employeeLeaveBalance(employee, records, on, policy);
+  const balance = employeeLeaveBalance(employee, records, on, policy, accrualOptions(settings));
+  // The company's reasons this employee has leave of, or could have (D11).
+  const reasons = settings.leaveReasons ?? [];
+  const usedReasons = new Set(records.map((r) => r.reasonId).filter(Boolean));
+  const reasonRows = reasons.filter(
+    (r) =>
+      usedReasons.has(r.id) ||
+      (settings.leaveReasonsOn &&
+        reasonsFor([r], employee).length > 0 &&
+        (r.pay === 'balance' || Boolean(r.maxDaysPerYear))),
+  );
   const days = annualDaysOn(on, policy, employee.annualLeaveDays, employee.annualLeaveDaysFrom);
   // Their own days, once in force.
   const ownDays =
@@ -161,6 +179,15 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                 />
               ) : null}
             </dl>
+            {balance.pausedMonths ? (
+              <p className="text-xs text-slate-500">
+                {tp(
+                  balance.pausedMonths,
+                  '{count} month of service with more than 15 days of unpaid leave earned no leave.',
+                  '{count} months of service with more than 15 days of unpaid leave earned no leave.',
+                )}
+              </p>
+            ) : null}
             {brought ? (
               <div className="rounded-lg border border-slate-200 p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -235,6 +262,61 @@ export function LeaveTab({ employee }: { employee: Employee }) {
         </Card>
       </div>
 
+      {reasonRows.length > 0 ? (
+        <Card>
+          <CardHeader
+            title={t('The company’s leave reasons in {year}', { year })}
+            description={t('Days taken this year, and the days added for reasons that have them.')}
+          />
+          <CardBody className="py-2">
+            <dl className="divide-y divide-slate-100">
+              {reasonRows.map((r) => {
+                const taken = reasonDaysInYear(records, r.id, year);
+                const own = r.pay === 'balance' ? reasonBalance(records, r.id, on) : null;
+                const canAdd = own && settings.leaveReasonsOn && !r.archived && isCurrent(employee);
+                return (
+                  <div
+                    key={r.id}
+                    className="flex flex-col gap-1 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <dt className="text-slate-700">
+                      <span className="font-medium text-slate-900">{localName(r)}</span>
+                      <span className="block text-xs text-slate-500">
+                        {t(leaveReasonPay(r).label)}
+                      </span>
+                    </dt>
+                    <dd className="tabular flex flex-wrap items-center gap-3 text-slate-700">
+                      <span>
+                        {r.maxDaysPerYear
+                          ? t('{used} of {days} days', {
+                              used: fmt.quantity(taken),
+                              days: fmt.quantity(r.maxDaysPerYear),
+                            })
+                          : tp(taken, '{count} day taken', '{count} days taken')}
+                      </span>
+                      {own ? (
+                        <span className="font-medium text-slate-900">
+                          {t('Balance {days} days', { days: fmt.quantity(own.balance) })}
+                        </span>
+                      ) : null}
+                      {canAdd ? (
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => setDialog({ reasonId: r.id })}
+                        >
+                          <Plus /> {t('Add days')}
+                        </Button>
+                      ) : null}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </CardBody>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader title={t('Leave records')} />
         {list.length === 0 ? (
@@ -253,8 +335,10 @@ export function LeaveTab({ employee }: { employee: Employee }) {
                     {r.kind === 'opening'
                       ? t('Opening balance')
                       : r.kind === 'adjustment'
-                        ? t('Balance adjustment')
-                        : t(leaveTypeInfo(r.type).label)}
+                        ? reasonOf(r, reasons)
+                          ? t('Days added: {reason}', { reason: leaveLabel(r, reasons) })
+                          : t('Balance adjustment')
+                        : leaveLabel(r, reasons)}
                     {r.status === 'cancelled' ? (
                       <Badge tone="slate" className="ms-2">
                         {t('Cancelled')}
@@ -293,6 +377,15 @@ export function LeaveTab({ employee }: { employee: Employee }) {
       </Card>
       {dialog === 'opening' ? (
         <LeaveOpeningDialog employee={employee} onClose={() => setDialog(null)} />
+      ) : typeof dialog === 'object' && dialog ? (
+        <LeaveDialog
+          employees={employees}
+          employeeId={employee.id}
+          records={records}
+          mode="balance"
+          reasonId={dialog.reasonId}
+          onClose={() => setDialog(null)}
+        />
       ) : dialog ? (
         <LeaveDialog
           employees={employees}

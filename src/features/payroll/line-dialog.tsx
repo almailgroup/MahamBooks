@@ -19,7 +19,7 @@ import { Field, Input, NumberInput, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
 import { t } from '@/i18n';
-import { AmountRow, WarningList } from './shared';
+import { AmountRow, useLeaveDetailText, WarningList } from './shared';
 
 /** One employee's pay in a run: what was entered and how it adds up. */
 export function PayLineDialog({
@@ -55,6 +55,11 @@ export function PayLineDialog({
   const warnings = payLineWarnings(result, run.rules, precision);
   const daily = dailyRate(rateWage(line, run.rules), run.rules.dailyDivisor).toNumber();
   const leave = lineLeave(line);
+  const leaveDetailText = useLeaveDetailText();
+  // Days at reduced pay may be a company's reason paid in part, not only sick leave.
+  const partPaidReasons = Boolean(
+    leave.calendar && line.leaveDetail?.some((d) => d.percent > 0 && d.percent < 100),
+  );
 
   const save = async () => {
     setBusy(true);
@@ -174,16 +179,31 @@ export function PayLineDialog({
                     ) : null}
                     {leave.reducedPay.map((r) => (
                       <li key={r.percent}>
-                        {leave.calendar
-                          ? t(
-                              'From leave records: {days} calendar days of sick leave at {percent} pay.',
-                              { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
-                            )
-                          : t(
-                              'From leave records: {days} working days of sick leave at {percent} pay.',
-                              { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
-                            )}
+                        {partPaidReasons
+                          ? t('From leave records: {days} calendar days at {percent} pay.', {
+                              days: fmt.quantity(r.days),
+                              percent: fmt.percent(r.percent),
+                            })
+                          : leave.calendar
+                            ? t(
+                                'From leave records: {days} calendar days of sick leave at {percent} pay.',
+                                { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
+                              )
+                            : t(
+                                'From leave records: {days} working days of sick leave at {percent} pay.',
+                                { days: fmt.quantity(r.days), percent: fmt.percent(r.percent) },
+                              )}
                       </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {line.leaveDetail?.length ? (
+                  <ul
+                    className="mt-2 space-y-1 text-xs text-slate-600"
+                    aria-label={t('Leave by reason')}
+                  >
+                    {line.leaveDetail.map((d) => (
+                      <li key={`${d.reasonId}:${d.percent}`}>{leaveDetailText(d)}</li>
                     ))}
                   </ul>
                 ) : null}

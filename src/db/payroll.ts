@@ -23,11 +23,13 @@ import type {
   ID,
   ISODate,
   LeavePolicy,
+  LeaveReason,
   LeaveRecord,
   LoanRecovery,
   ManualJournal,
   PayAdjustment,
   PayLine,
+  PayLineLeave,
   PayRules,
   PayRun,
   PayrollAccountKey,
@@ -44,11 +46,13 @@ import { formatDate } from '@/lib/format';
 import { currencyPrecision, dec, fromMinor, round, toMinor } from '@/lib/money';
 import { freeAccountCode, type SystemAccountSpec } from '@/lib/payment-methods';
 import {
+  CATEGORY_LABELS,
   GCC_COUNTRIES,
   insuredWithPifss,
   isStateless,
   LEAVING_REASON_LABELS,
 } from '@/lib/hr/employees';
+import { isKnown } from '@/lib/known';
 import {
   addPeriods,
   balanced,
@@ -79,14 +83,20 @@ import {
   type SettlementAmounts,
 } from '@/lib/hr/payroll';
 import {
+  accrualOptions,
   ANNUAL_LEAVE_DAYS,
   annualLeaveRecorded,
   countLeaveDays,
   employeeLeaveBalance,
   dayOffChecker,
   FIRST_YEAR_MONTHS,
+  LEAVE_REASON_PAY,
   leaveInPeriod,
+  leaveReasonBase,
+  leaveTypeInfo,
   MAX_LEAVE_SPAN,
+  reasonOf,
+  reasonsFor,
   type DayOff,
   type LeaveBalance,
 } from '@/lib/hr/leave';
@@ -323,6 +333,43 @@ function assertLeavePolicy(policy: LeavePolicy) {
   }
 }
 
+/**
+ * A company's leave reasons as saved: one per id, names trimmed, the base
+ * worked out from how each is paid (D11), and only the limits that apply.
+ * A reason paid in a way a newer version knows keeps what it has.
+ */
+function normalizeLeaveReasons(input: LeaveReason[]): LeaveReason[] {
+  const byId = new Map<ID, LeaveReason>();
+  for (const r of input) {
+    if (!r || typeof r.id !== 'string' || !r.id) continue;
+    const known = isKnown(LEAVE_REASON_PAY, r.pay);
+    const max = r.maxDaysPerYear;
+    const categories = (r.categories ?? []).filter(
+      (c, i, all) => isKnown(CATEGORY_LABELS, c) && all.indexOf(c) === i,
+    );
+    const {
+      maxDaysPerYear: _max,
+      categories: _categories,
+      archived: _archived,
+      noteRequired: _note,
+      ...rest
+    } = r;
+    byId.set(r.id, {
+      ...rest,
+      name: (r.name ?? '').trim(),
+      nameAr: (r.nameAr ?? '').trim(),
+      base: known ? leaveReasonBase(r.pay) : r.base,
+      ...(typeof max === 'number' && Number.isFinite(max) && max > 0
+        ? { maxDaysPerYear: leaveDaysOf(max) }
+        : {}),
+      ...(categories.length > 0 ? { categories } : {}),
+      ...(r.noteRequired ? { noteRequired: true } : {}),
+      ...(r.archived ? { archived: true } : {}),
+    });
+  }
+  return [...byId.values()];
+}
+
 export function normalizePayrollSettings(input: PayrollSettings): PayrollSettings {
   const byDate = new Map<string, ContributionRates>();
   for (const r of input.pifss) {
@@ -363,7 +410,59 @@ export function normalizePayrollSettings(input: PayrollSettings): PayrollSetting
     pamFileNumber: input.pamFileNumber.trim(),
     salaryFile: { ...input.salaryFile, columns: columns.length ? columns : ['iban', 'amount'] },
     ...(input.leavePolicy ? { leavePolicy: normalizeLeavePolicy(input.leavePolicy) } : {}),
+    ...(input.leaveReasons ? { leaveReasons: normalizeLeaveReasons(input.leaveReasons) } : {}),
+    ...(input.leaveAccrualPause !== undefined
+      ? {
+          leaveAccrualPause: isISODate(input.leaveAccrualPause?.from ?? '')
+            ? { from: input.leaveAccrualPause!.from }
+            : null,
+        }
+      : {}),
   };
+}
+
+/**
+ * Refuses leave reasons that can't be saved: a reason without a name, one
+ * leave is recorded with taken off the list (it can be archived) or paid
+ * another way (archive it and add a new one: each record keeps the pay it was
+ * saved with), and a change to a reason a newer version set up.
+ */
+function assertLeaveReasons(
+  reasons: LeaveReason[],
+  saved: LeaveReason[],
+  records: LeaveRecord[],
+): void {
+  for (const r of reasons) {
+    if (!r.name) throw new PayrollError(t('Enter the name of each leave reason.'));
+    const before = saved.find((x) => x.id === r.id);
+    if (!isKnown(LEAVE_REASON_PAY, r.pay) && (!before || before.pay !== r.pay)) {
+      throw new PayrollError(
+        t('{name} was set up on a newer version of the app. Update the app to change it.', {
+          name: localName(r),
+        }),
+      );
+    }
+  }
+  const used = new Set(records.map((r) => r.reasonId).filter(Boolean));
+  for (const before of saved) {
+    if (!used.has(before.id)) continue;
+    const now = reasons.find((r) => r.id === before.id);
+    if (!now) {
+      throw new PayrollError(
+        t('Leave is recorded with {name}, so it can’t be removed. Archive it instead.', {
+          name: localName(before),
+        }),
+      );
+    }
+    if (now.pay !== before.pay) {
+      throw new PayrollError(
+        t(
+          'Leave is recorded with {name}, so how it is paid can’t change. Archive it and add a new reason.',
+          { name: localName(before) },
+        ),
+      );
+    }
+  }
 }
 
 /**
@@ -371,26 +470,49 @@ export function normalizePayrollSettings(input: PayrollSettings): PayrollSetting
  * days a year; the way annual leave is counted can't change once annual leave
  * has been recorded, since each record keeps the days it was saved with.
  */
-export async function savePayrollSettings(input: PayrollSettings): Promise<PayrollSettings> {
+export async function savePayrollSettings(
+  input: PayrollSettings,
+  activity: string = msg('Payroll settings updated'),
+): Promise<PayrollSettings> {
   const settings = { ...normalizePayrollSettings(input), updatedAt: nowStamp() };
   if (settings.leavePolicy) assertLeavePolicy(settings.leavePolicy);
   await db.transaction('rw', [db.payrollSettings, db.leaveRecords, db.activities], async () => {
     const saved = await db.payrollSettings.get(settings.companyId);
+    const records = () => db.leaveRecords.where('companyId').equals(settings.companyId).toArray();
     const counting = (s?: PayrollSettings) => s?.leavePolicy?.counting ?? 'working';
     if (counting(settings) !== counting(saved)) {
-      const records = await db.leaveRecords.where('companyId').equals(settings.companyId).toArray();
-      if (annualLeaveRecorded(records)) {
+      if (annualLeaveRecorded(await records())) {
         throw new PayrollError(
           t('Annual leave has been recorded, so the way it is counted can’t change.'),
         );
       }
     }
+    if (JSON.stringify(settings.leaveReasons ?? []) !== JSON.stringify(saved?.leaveReasons ?? [])) {
+      assertLeaveReasons(settings.leaveReasons ?? [], saved?.leaveReasons ?? [], await records());
+    }
     await db.payrollSettings.put(settings);
-    await logActivity(settings.companyId, 'payroll', settings.id, 'settings', {
-      text: msg('Payroll settings updated'),
-    });
+    await logActivity(settings.companyId, 'payroll', settings.id, 'settings', { text: activity });
   });
   return settings;
+}
+
+/** What the Leave reasons page changes in the payroll settings. */
+export type LeaveReasonSettings = Partial<
+  Pick<PayrollSettings, 'leaveReasons' | 'leaveReasonsOn' | 'leaveAccrualPause'>
+>;
+
+/**
+ * Saves the company's leave reasons and their switches on top of the payroll
+ * settings as they are now, so the rest of the settings stays as saved.
+ */
+export async function saveLeaveReasonSettings(
+  companyId: ID,
+  changes: LeaveReasonSettings,
+): Promise<PayrollSettings> {
+  return db.transaction('rw', [db.payrollSettings, db.leaveRecords, db.activities], async () => {
+    const current = await getPayrollSettings(companyId);
+    return savePayrollSettings({ ...current, ...changes }, msg('Leave reasons updated'));
+  });
 }
 
 /** The rules a run for the month is worked out with. */
@@ -402,6 +524,23 @@ export function payRulesFor(settings: PayrollSettings, period: string): PayRules
     gcc: settings.gcc.map((s) => ({ ...s })),
     minimumWage: settings.minimumWage,
   };
+}
+
+/**
+ * Changes the company's list of leave reasons as it is now (`change` gets
+ * the saved list), so two changes made one after the other both stay.
+ */
+export async function updateLeaveReasons(
+  companyId: ID,
+  change: (reasons: LeaveReason[]) => LeaveReason[],
+): Promise<PayrollSettings> {
+  return db.transaction('rw', [db.payrollSettings, db.leaveRecords, db.activities], async () => {
+    const current = await getPayrollSettings(companyId);
+    return savePayrollSettings(
+      { ...current, leaveReasons: change(current.leaveReasons ?? []) },
+      msg('Leave reasons updated'),
+    );
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -812,6 +951,20 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
       }
       if (!isISODate(input.start)) throw new PayrollError(t('Enter the first day.'));
       const existing = await db.leaveRecords.get(input.id);
+      const settings = await getPayrollSettings(company.id);
+      // Only a reason sets a share of pay; leave of a reason keeps its base type.
+      const { payPercent: _share, reasonId: _reason, ...plain } = input;
+      const reason = input.reasonId ? assertReason(input, existing, settings, employee) : null;
+      const reasonFields = (kind: LeaveRecord['kind']): Partial<LeaveRecord> =>
+        reason
+          ? {
+              type: leaveReasonBase(reason.pay),
+              reasonId: reason.id,
+              ...(kind === 'leave' && reason.pay === 'half'
+                ? { payPercent: LEAVE_REASON_PAY.half.percent }
+                : {}),
+            }
+          : {};
       let record: LeaveRecord;
       if (input.kind === 'leave') {
         if (!isISODate(input.end) || input.end < input.start) {
@@ -820,24 +973,36 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
         if (daysBetween(input.start, input.end) + 1 > MAX_LEAVE_SPAN) {
           throw new PayrollError(t('Leave can’t be longer than a year.'));
         }
-        const { leavePolicy } = await getPayrollSettings(company.id);
+        const type = reason ? leaveReasonBase(reason.pay) : input.type;
         const days = countLeaveDays(
-          input.type,
+          type,
           input.start,
           input.end,
           companyDayOff(company),
-          leavePolicy,
+          settings.leavePolicy,
         );
         if (days === 0) {
           throw new PayrollError(t('These dates are all weekends or public holidays.'));
         }
-        record = { ...input, days };
+        if (reason?.noteRequired && !input.notes.trim()) {
+          throw new PayrollError(
+            t('Enter a note: {reason} needs one.', { reason: localName(reason) }),
+          );
+        }
+        record = { ...plain, ...reasonFields('leave'), days };
       } else {
         const days = Math.round(input.days * 100) / 100;
         if (!Number.isFinite(days) || (input.kind === 'opening' ? days < 0 : days === 0)) {
           throw new PayrollError(t('Enter the number of days.'));
         }
-        record = { ...input, type: 'annual', end: input.start, days };
+        if (reason && (reason.pay !== 'balance' || input.kind !== 'adjustment')) {
+          throw new PayrollError(
+            t('Only a reason paid from days added by hand has a balance to change.'),
+          );
+        }
+        record = reason
+          ? { ...plain, ...reasonFields(input.kind), end: input.start, days }
+          : { ...plain, type: 'annual', end: input.start, days };
       }
       record = { ...record, notes: record.notes.trim(), updatedAt: nowStamp() };
       if (!existing) record.createdAt = record.updatedAt;
@@ -859,6 +1024,40 @@ export async function saveLeaveRecord(input: LeaveRecord): Promise<LeaveRecord> 
       return record;
     },
   );
+}
+
+/**
+ * The reason leave is recorded with. New leave (or leave moved to another
+ * reason) needs the reasons switched on and a reason that isn't archived and
+ * is for the employee's category; a reason paid in a way this version doesn't
+ * know can't be recorded.
+ */
+function assertReason(
+  input: LeaveRecord,
+  existing: LeaveRecord | undefined,
+  settings: PayrollSettings,
+  employee: Employee,
+): LeaveReason {
+  const reason = reasonOf(input, settings.leaveReasons);
+  if (!reason) throw new PayrollError(t('This leave reason could not be found.'));
+  if (!isKnown(LEAVE_REASON_PAY, reason.pay)) {
+    throw new PayrollError(
+      t('{name} was set up on a newer version of the app. Update the app to record it.', {
+        name: localName(reason),
+      }),
+    );
+  }
+  if (existing?.reasonId === input.reasonId) return reason;
+  if (!settings.leaveReasonsOn) {
+    throw new PayrollError(t('The company’s leave reasons are switched off.'));
+  }
+  if (reason.archived) throw new PayrollError(t('This leave reason is archived.'));
+  if (reasonsFor([reason], employee).length === 0) {
+    throw new PayrollError(
+      t('{reason} isn’t for employees of this category.', { reason: localName(reason) }),
+    );
+  }
+  return reason;
 }
 
 /** Cancels leave; refused when that would change pay in an approved or paid pay run. */
@@ -990,6 +1189,29 @@ function loanRecoveries(
   return out;
 }
 
+/**
+ * The month's leave of the company's reasons, for the payslip: each reason's
+ * days and share of pay, named as the company names it (a reason it no
+ * longer has, by its type).
+ */
+function leaveDetailOf(
+  byReason: { reasonId: ID; type: LeaveRecord['type']; days: number; percent: number }[] = [],
+  reasons: LeaveReason[] | undefined,
+): PayLineLeave[] | undefined {
+  if (byReason.length === 0) return undefined;
+  return byReason.map((x) => {
+    const reason = reasonOf(x, reasons);
+    return {
+      reasonId: x.reasonId,
+      name: reason?.name ?? leaveTypeInfo(x.type).label,
+      nameAr: reason?.nameAr ?? '',
+      days: x.days,
+      percent: x.percent,
+      ...(x.type === 'annual' ? { fromAnnual: true } : {}),
+    };
+  });
+}
+
 function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: PayLine): PayLine {
   const leavingDate = employee.status === 'left' ? employee.leavingDate : null;
   const leave = leaveInPeriod(
@@ -1036,6 +1258,9 @@ function buildLine(employee: Employee, run: PayRun, ctx: Context, previous?: Pay
     unpaidLeaveDays: leave.working.unpaidDays,
     reducedPay: leave.working.reducedPay,
     calendarLeave: { unpaidDays: leave.unpaidDays, reducedPay: leave.reducedPay },
+    ...(leave.byReason
+      ? { leaveDetail: leaveDetailOf(leave.byReason, ctx.settings.leaveReasons) }
+      : {}),
     adjustments: previous?.adjustments ?? [],
     loans: loanRecoveries(employee.id, run.period, ctx, run.id, previous?.loans),
     basic: 0,
@@ -1271,7 +1496,13 @@ function provisionLines(ctx: Context, date: ISODate, rules: PayRules): Provision
           ? 0
           : eosProvisionFor(e, date, ctx.people.eosDailyDivisor, p);
       // From the opening balance by then; before the first one, worked back from it.
-      const balance = employeeLeaveBalance(e, ctx.leave, date, ctx.settings.leavePolicy).balance;
+      const balance = employeeLeaveBalance(
+        e,
+        ctx.leave,
+        date,
+        ctx.settings.leavePolicy,
+        accrualOptions(ctx.settings),
+      ).balance;
       const leaveDays = Math.max(0, balance);
       const wage = e.allowances.reduce(
         (s, a) => s + toMinor(a.amount, p),
@@ -1300,6 +1531,36 @@ async function ledgerBalances(
     }
   }
   return out;
+}
+
+/**
+ * Refuses a line without the month's leave by reason when the employee has
+ * leave of the company's reasons that month: it was worked out before that
+ * leave was recorded, or by an older version of the app, which pays leave on
+ * half pay as unpaid. Updating the run from the records works it out again.
+ */
+function assertLeaveDetail(lines: PayLine[], run: PayRun, ctx: Context): void {
+  const withReasons = new Set(
+    ctx.leave.filter((r) => r.reasonId && r.kind === 'leave').map((r) => r.employeeId),
+  );
+  if (withReasons.size === 0) return;
+  for (const line of lines) {
+    if (line.leaveDetail || !withReasons.has(line.employeeId)) continue;
+    const leave = leaveInPeriod(
+      ctx.leave.filter((r) => r.employeeId === line.employeeId),
+      run.period,
+      ctx.dayOff,
+      { from: line.hireDate, to: line.leavingDate },
+    );
+    if (leave.byReason) {
+      throw new PayrollError(
+        t(
+          'The pay of {name} doesn’t show their leave by reason: it was worked out before that leave was recorded, or on an older version of the app. Click Update from records, then approve.',
+          { name: line.name },
+        ),
+      );
+    }
+  }
 }
 
 /**
@@ -1357,6 +1618,7 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
         }
       }
     }
+    assertLeaveDetail(lines, run, ctx);
     assertOpen(company, run.date);
 
     const totals = payRunTotals(lines, p);
@@ -1654,7 +1916,13 @@ export function settlementSetup(
   return {
     rules: payRulesFor(data.settings, period),
     eosDivisor: data.people.eosDailyDivisor,
-    leave: employeeLeaveBalance(employee, data.leave, leavingDate, data.settings.leavePolicy),
+    leave: employeeLeaveBalance(
+      employee,
+      data.leave,
+      leavingDate,
+      data.settings.leavePolicy,
+      accrualOptions(data.settings),
+    ),
     loans: data.loans
       .filter((l) => l.employeeId === employee.id && l.status === 'active')
       .map((loan) => ({ loan, balance: loanBalance(loan, data.runs, data.settlements, precision) }))

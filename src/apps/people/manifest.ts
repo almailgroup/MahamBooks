@@ -9,6 +9,7 @@ import {
   PiggyBank,
   Settings,
   SlidersHorizontal,
+  Tags,
   UsersRound,
   WalletCards,
 } from 'lucide-react';
@@ -62,6 +63,13 @@ export const PEOPLE: SuiteApp = {
       label: msg('Leave'),
       icon: CalendarDays,
       keywords: 'vacation annual sick',
+    },
+    {
+      kind: 'link',
+      to: '/payroll/leave-reasons',
+      label: msg('Leave reasons'),
+      icon: Tags,
+      keywords: 'emergency compensatory unpaid half pay',
     },
     {
       kind: 'link',

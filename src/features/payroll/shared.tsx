@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { AlertTriangle } from 'lucide-react';
-import type { Account, ID, PayRunStatus } from '@/db/types';
+import type { Account, ID, PayLineLeave, PayRunStatus } from '@/db/types';
 import type { PayWarning } from '@/lib/hr/payroll';
 import { countryName } from '@/lib/geo';
 import { today } from '@/lib/dates';
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Select } from '@/components/ui/form';
 import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/overlay';
 import { localName } from '@/i18n/names';
-import { msg, t } from '@/i18n';
+import { msg, t, tp } from '@/i18n';
 import { DateField } from '@/components/ui/date-field';
 
 /** Title and the Pay runs / Leave / Loans / Settings tabs of the payroll pages. */
@@ -143,6 +143,56 @@ export function WarningList({ warnings }: { warnings: PayWarning[] }) {
       ))}
     </ul>
   );
+}
+
+/** How the days of a reason's leave on a pay line are paid, as a label. */
+export function leaveDetailPay(detail: Pick<PayLineLeave, 'percent' | 'fromAnnual'>): string {
+  if (detail.fromAnnual) return msg('Taken from annual leave');
+  if (detail.percent >= 100) return msg('Full pay');
+  if (detail.percent <= 0) return msg('Without pay');
+  return detail.percent === 50 ? msg('Half pay') : msg('Part pay');
+}
+
+/** One reason's leave on a pay line, in a sentence. */
+export function useLeaveDetailText(): (detail: PayLineLeave) => string {
+  const fmt = useFormat();
+  return (d) => {
+    const reason = localName(d);
+    if (d.fromAnnual) {
+      return tp(
+        d.days,
+        '{reason}: {count} day, taken from annual leave.',
+        '{reason}: {count} days, taken from annual leave.',
+        { reason },
+      );
+    }
+    if (d.percent >= 100) {
+      return tp(
+        d.days,
+        '{reason}: {count} day on full pay.',
+        '{reason}: {count} days on full pay.',
+        {
+          reason,
+        },
+      );
+    }
+    if (d.percent <= 0) {
+      return tp(
+        d.days,
+        '{reason}: {count} day without pay.',
+        '{reason}: {count} days without pay.',
+        {
+          reason,
+        },
+      );
+    }
+    return tp(
+      d.days,
+      '{reason}: {count} day at {percent} pay.',
+      '{reason}: {count} days at {percent} pay.',
+      { reason, percent: fmt.percent(d.percent) },
+    );
+  };
 }
 
 /** Bank and cash accounts money can be paid from, by code. */

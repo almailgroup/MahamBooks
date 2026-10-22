@@ -151,6 +151,8 @@ const SUITE_PATHS = [
   '/payments-made/:id/cheque',
   '/cheques/layouts',
   '/cheques/test-print',
+  // The company's leave reasons (#15).
+  '/payroll/leave-reasons',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */

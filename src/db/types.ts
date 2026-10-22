@@ -2275,7 +2275,57 @@ export interface PayrollSettings {
    * the law's, as before (see DEFAULT_LEAVE_POLICY).
    */
   leavePolicy?: LeavePolicy;
+  /**
+   * The company's own leave reasons (Payroll → Leave reasons), archived ones
+   * included (D11). Missing: none, as before.
+   */
+  leaveReasons?: LeaveReason[];
+  /**
+   * The company's leave reasons are offered when leave is recorded. Missing
+   * or false: leave is recorded with the six types only, as before. Leave
+   * already recorded with a reason keeps its pay either way.
+   */
+  leaveReasonsOn?: boolean;
+  /**
+   * From its date on, a month of service with more than 15 days of unpaid
+   * leave earns no annual leave. Missing or null: every month of service
+   * earns annual leave, as before.
+   */
+  leaveAccrualPause?: { from: ISODate } | null;
   updatedAt: Timestamp;
+}
+
+/**
+ * How leave of one of the company's own reasons is paid, and what it does to
+ * balances: on full pay, on half pay, without pay, taken from the annual
+ * leave balance (on full pay), or on full pay from a balance of its own that
+ * is added to by hand (compensatory days).
+ */
+export type LeaveReasonPay = 'full' | 'half' | 'unpaid' | 'annual' | 'balance';
+
+/**
+ * A leave reason of the company's own (D11), such as emergency leave or
+ * compensatory days. Leave recorded with it keeps the reason's `base` in
+ * LeaveRecord.type, so older versions read it as that type.
+ */
+export interface LeaveReason {
+  id: ID;
+  name: string;
+  nameAr: string;
+  /** No longer offered for new leave; leave already recorded with it keeps it. */
+  archived?: boolean;
+  /** The type older versions read: worked out from `pay` (see leaveReasonBase). */
+  base: LeaveType;
+  pay: LeaveReasonPay;
+  /** Most days a calendar year, as the reason counts them; null or missing: no limit. */
+  maxDaysPerYear?: number | null;
+  /**
+   * Offered only for employees of these categories (such as domestic workers,
+   * under Law 68/2015); missing or empty: for everyone.
+   */
+  categories?: EmployeeCategory[];
+  /** A note must be given when leave is recorded with it. */
+  noteRequired?: boolean;
 }
 
 /** Days of annual leave a year, earned from a date on. */
@@ -2402,6 +2452,12 @@ export interface PayLine {
    * `calendarLeave`: their unpaidLeaveDays and reducedPay are calendar days.
    */
   leaveBasis?: 'calendar';
+  /**
+   * The month's leave of the company's own reasons, for the payslip (display
+   * only; the pay is worked out from the days above). Set on lines whose
+   * month has such leave; lines prepared by older versions don't have it.
+   */
+  leaveDetail?: PayLineLeave[];
   adjustments: PayAdjustment[];
   loans: LoanRecovery[];
   basic: number;
@@ -2424,6 +2480,19 @@ export interface PayLine {
   loanDeduction: number;
   otherDeductions: number;
   net: number;
+}
+
+/** Leave of one of the company's reasons in a pay line's month. */
+export interface PayLineLeave {
+  reasonId: ID;
+  name: string;
+  nameAr: string;
+  /** Days of it in the month, as the reason counts them. */
+  days: number;
+  /** Share of pay of those days, in percent. */
+  percent: number;
+  /** Taken from the annual leave balance. */
+  fromAnnual?: boolean;
 }
 
 /** One employee's month-end provisions, as a pay run posted them. */
@@ -2484,6 +2553,18 @@ export interface LeaveRecord {
   days: number;
   status: 'approved' | 'cancelled';
   notes: string;
+  /**
+   * The company's leave reason it was recorded with (PayrollSettings.leaveReasons);
+   * `type` holds the reason's base. Missing: leave of its type, as before. A
+   * balance change with a reason adds days to that reason's own balance.
+   */
+  reasonId?: ID;
+  /**
+   * Share of pay, in percent, of unpaid leave paid in part (50 for a reason on
+   * half pay), fixed when it is recorded. Missing: unpaid leave pays nothing,
+   * as before. Older versions read it as unpaid leave.
+   */
+  payPercent?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

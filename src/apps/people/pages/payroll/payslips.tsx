@@ -20,6 +20,7 @@ import {
   PrintRow,
   PrintToolbar,
 } from '@/features/payroll/print';
+import { leaveDetailPay } from '@/features/payroll/shared';
 import { Spinner } from '@/components/ui/misc';
 import { msg, t } from '@/i18n';
 
@@ -45,6 +46,9 @@ const L = {
   total: msg('Total deductions'),
   net: msg('Net pay'),
   employer: msg('PIFSS – employer share'),
+  leave: msg('Leave this month'),
+  leaveDays: msg('Days'),
+  leavePay: msg('Pay'),
   signature: msg('Employee signature'),
   none: msg('None'),
 };
@@ -199,6 +203,48 @@ function Payslip({ company, run, line }: { company: Company; run: PayRun; line: 
           </tbody>
         </table>
       </div>
+
+      {line.leaveDetail?.length ? (
+        <table className="mt-4 w-full border-collapse">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className="border border-slate-300 px-2 py-1 text-start">
+                <Both text={L.leave} />
+              </th>
+              <th className="border border-slate-300 px-2 py-1 text-end">
+                <Both text={L.leaveDays} />
+              </th>
+              <th className="border border-slate-300 px-2 py-1 text-start">
+                <Both text={L.leavePay} />
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {line.leaveDetail.map((d) => (
+              <tr key={`${d.reasonId}:${d.percent}`}>
+                <td className="border border-slate-300 px-2 py-1">
+                  <span className="block">{d.name}</span>
+                  {d.nameAr ? (
+                    <span className="block text-slate-500" dir="rtl" lang="ar">
+                      {d.nameAr}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="tabular border border-slate-300 px-2 py-1 text-end" dir="ltr">
+                  {d.days}
+                </td>
+                <td className="border border-slate-300 px-2 py-1">
+                  {d.percent > 0 && d.percent < 100 && d.percent !== 50 ? (
+                    <span dir="ltr">{`${d.percent}%`}</span>
+                  ) : (
+                    <Both text={leaveDetailPay(d)} />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
 
       <div className="mt-4 rounded border-2 border-slate-800 px-3 py-2">
         <div className="flex items-baseline justify-between gap-3">

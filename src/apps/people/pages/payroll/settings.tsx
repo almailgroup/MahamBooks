@@ -370,7 +370,15 @@ export default function PayrollSettingsPage() {
   const save = async () => {
     setBusy(true);
     try {
-      await savePayrollSettings(value);
+      // The leave reasons and their switches are changed on their own page:
+      // keep them as they are saved now, not as they were when editing began.
+      const { leaveReasons, leaveReasonsOn, leaveAccrualPause } = saved;
+      await savePayrollSettings({
+        ...value,
+        ...(leaveReasons !== undefined ? { leaveReasons } : {}),
+        ...(leaveReasonsOn !== undefined ? { leaveReasonsOn } : {}),
+        ...(leaveAccrualPause !== undefined ? { leaveAccrualPause } : {}),
+      });
       setDraft(null);
       toast.success(t('Payroll settings saved'));
     } catch (e) {

@@ -14,13 +14,13 @@ import {
 } from 'lucide-react';
 import { useCompany, useFormat } from '@/app/company';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
-import { useLeaveRecords } from '@/features/payroll/hooks';
+import { useLeaveRecords, usePayrollSettings } from '@/features/payroll/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
 import { expiryStatus } from '@/lib/compliance';
-import { leaveTypeInfo } from '@/lib/hr/leave';
+import { leaveLabel } from '@/lib/hr/leave';
 import { today } from '@/lib/dates';
 import { localName } from '@/i18n/names';
 import { useLanguage } from '@/i18n/provider';
@@ -55,6 +55,7 @@ export default function PeopleOverview() {
   const leave = useLeaveRecords();
   const register = useRegister();
   const settings = usePeopleSettings();
+  const payroll = usePayrollSettings();
   const list = settings?.departments;
   const photos = useEmployeePhotos(employees);
   const now = today();
@@ -162,7 +163,7 @@ export default function PeopleOverview() {
                         photo={e.photoId ? photos.get(e.photoId) : undefined}
                       />
                     }
-                    detail={`${t(leaveTypeInfo(r.type).label)} · ${t('Until {date}', {
+                    detail={`${leaveLabel(r, payroll?.leaveReasons)} · ${t('Until {date}', {
                       date: fmt.date(r.end),
                     })}`}
                   />

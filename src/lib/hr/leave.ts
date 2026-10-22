@@ -1,10 +1,13 @@
 import { addDays, addMonths, differenceInMonths } from 'date-fns';
 import type {
   Employee,
+  EmployeeCategory,
   ID,
   ISODate,
   LeaveOpening,
   LeavePolicy,
+  LeaveReason,
+  LeaveReasonPay,
   LeaveRecord,
   LeaveType,
   ReducedPayDays,
@@ -12,7 +15,8 @@ import type {
 import { addDaysISO, daysBetween, parseISODate, toISODate } from '@/lib/dates';
 import { KUWAIT_WEEKEND } from '@/lib/kuwait';
 import { lookup } from '@/lib/known';
-import { msg } from '@/i18n';
+import { msg, t } from '@/i18n';
+import { localName } from '@/i18n/names';
 import { periodEnd, periodStart } from './payroll';
 
 /**
@@ -64,6 +68,144 @@ export const LEAVE_TYPE_ORDER: LeaveType[] = [
   'bereavement',
   'unpaid',
 ];
+
+/* -------------------------------------------------------------------------- */
+/* The company's own leave reasons (D11)                                      */
+/* -------------------------------------------------------------------------- */
+
+export interface LeaveReasonPayInfo {
+  label: string;
+  /** The type older versions read for leave of it. */
+  base: LeaveType;
+  /** Share of pay of its days, in percent. */
+  percent: number;
+}
+
+/**
+ * How a reason is paid, and the type its leave keeps for older versions:
+ * annual leave for leave taken from the annual balance; unpaid leave for
+ * leave without pay or paid in part (older versions pay it as unpaid); and
+ * bereavement leave, which older versions pay in full, for the rest.
+ */
+export const LEAVE_REASON_PAY: Record<LeaveReasonPay, LeaveReasonPayInfo> = {
+  full: { label: msg('Full pay'), base: 'bereavement', percent: 100 },
+  half: { label: msg('Half pay'), base: 'unpaid', percent: 50 },
+  unpaid: { label: msg('Without pay'), base: 'unpaid', percent: 0 },
+  annual: { label: msg('Taken from annual leave'), base: 'annual', percent: 100 },
+  balance: { label: msg('Full pay, from days added by hand'), base: 'bereavement', percent: 100 },
+};
+
+export const LEAVE_REASON_PAY_ORDER: LeaveReasonPay[] = [
+  'full',
+  'half',
+  'unpaid',
+  'annual',
+  'balance',
+];
+
+/** What the app knows of how a reason is paid, also for a way a newer version saved. */
+export function leaveReasonPay(reason: Pick<LeaveReason, 'pay' | 'base'>): LeaveReasonPayInfo {
+  return lookup(LEAVE_REASON_PAY, reason.pay, {
+    label: msg('Other leave'),
+    base: reason.base,
+    percent: reason.base === 'unpaid' ? 0 : 100,
+  });
+}
+
+/** The type leave of a reason keeps, from how it is paid. */
+export function leaveReasonBase(pay: LeaveReasonPay): LeaveType {
+  return LEAVE_REASON_PAY[pay].base;
+}
+
+/** The reason a record was recorded with, when the company still has it. */
+export function reasonOf(
+  record: Pick<LeaveRecord, 'reasonId'>,
+  reasons: readonly LeaveReason[] | null | undefined,
+): LeaveReason | null {
+  if (!record.reasonId) return null;
+  return reasons?.find((r) => r.id === record.reasonId) ?? null;
+}
+
+/** The reasons offered for an employee's new leave: not archived, and for their category. */
+export function reasonsFor(
+  reasons: readonly LeaveReason[] | null | undefined,
+  employee: { category: EmployeeCategory } | null | undefined,
+): LeaveReason[] {
+  return (reasons ?? []).filter(
+    (r) =>
+      !r.archived &&
+      (!r.categories?.length || (employee ? r.categories.includes(employee.category) : true)),
+  );
+}
+
+/**
+ * The name of a record's leave in the interface language: its reason's name,
+ * or its type's. A reason the company no longer has shows as its type.
+ */
+export function leaveLabel(
+  record: Pick<LeaveRecord, 'type' | 'reasonId'>,
+  reasons: readonly LeaveReason[] | null | undefined,
+): string {
+  const reason = reasonOf(record, reasons);
+  return reason ? localName(reason) : t(leaveTypeInfo(record.type).label);
+}
+
+/**
+ * Share of pay of a day of unpaid leave: what a reason paid in part fixed
+ * when it was recorded (LeaveRecord.payPercent), otherwise nothing.
+ */
+export function unpaidShare(record: Pick<LeaveRecord, 'payPercent'>): number {
+  const percent = record.payPercent;
+  if (typeof percent !== 'number' || !Number.isFinite(percent)) return 0;
+  return Math.min(100, Math.max(0, Math.round(percent)));
+}
+
+/** Days of a reason's leave in a calendar year (leave counts in the year it starts). */
+export function reasonDaysInYear(
+  records: readonly LeaveRecord[],
+  reasonId: ID,
+  year: number,
+  exceptId?: ID,
+): number {
+  return twoPlaces(
+    records
+      .filter(
+        (r) =>
+          r.reasonId === reasonId &&
+          r.id !== exceptId &&
+          isTaken(r) &&
+          r.start.startsWith(`${year}-`),
+      )
+      .reduce((s, r) => s + r.days, 0),
+  );
+}
+
+export interface ReasonBalance {
+  /** Days added by hand (less any removed). */
+  added: number;
+  taken: number;
+  balance: number;
+}
+
+/**
+ * A reason's own balance on a date, for reasons paid from days added by hand
+ * (compensatory days): the days added less the leave taken with it.
+ */
+export function reasonBalance(
+  records: readonly LeaveRecord[],
+  reasonId: ID,
+  on: ISODate,
+  exceptId?: ID,
+): ReasonBalance {
+  const own = records.filter(
+    (r) => r.reasonId === reasonId && r.id !== exceptId && r.status === 'approved' && r.start <= on,
+  );
+  const sum = (kind: LeaveRecord['kind']) =>
+    twoPlaces(own.filter((r) => r.kind === kind).reduce((s, r) => s + r.days, 0));
+  const added = sum('adjustment');
+  const taken = sum('leave');
+  return { added, taken, balance: twoPlaces(added - taken) };
+}
 
 export const ANNUAL_LEAVE_DAYS = 30;
 /** Months of service before annual leave can be taken in the first year. */
@@ -268,6 +410,11 @@ export interface PeriodLeave {
   working: { unpaidDays: number; reducedPay: ReducedPayDays[] };
   /** Leave days in the month by type, counted as each type counts them. */
   byType: Partial<Record<LeaveType, number>>;
+  /**
+   * Leave of the company's reasons in the month, within the employment:
+   * days by reason and share of pay. Missing when there is none.
+   */
+  byReason?: { reasonId: ID; type: LeaveType; days: number; percent: number }[];
 }
 
 /** Days without pay, and days at each reduced share of pay, from each day's share of pay. */
@@ -321,13 +468,40 @@ export function leaveInPeriod(
   const pay = new Map<ISODate, number>();
   const lower = (d: ISODate, percent: number) => pay.set(d, Math.min(pay.get(d) ?? 100, percent));
   const sick = sickDayRates(records, Number(period.slice(0, 4)), isDayOff);
+  /** Days of each reason's leave, with the first day of it, to list them in order. */
+  const byReason = new Map<
+    string,
+    { reasonId: ID; type: LeaveType; days: number; percent: number; first: ISODate }
+  >();
   for (const r of records) {
     if (!isTaken(r) || r.end < start || r.start > end) continue;
     const counted = countedDates(r.type, r.start, r.end, isDayOff);
     const inThisMonth = counted.filter(inMonth).length;
     if (inThisMonth > 0) byType[r.type] = (byType[r.type] ?? 0) + inThisMonth;
-    if (r.type === 'unpaid') {
-      for (const d of calendarDates(r.start, r.end)) if (inMonth(d) && paidDay(d)) lower(d, 0);
+    // Unpaid leave pays nothing, or the share a reason paid in part fixed.
+    const share = r.type === 'unpaid' ? unpaidShare(r) : 100;
+    if (r.reasonId) {
+      const days = counted.filter((d) => inMonth(d) && paidDay(d));
+      const key = `${r.reasonId}:${r.type}:${share}`;
+      const entry = byReason.get(key) ?? {
+        reasonId: r.reasonId,
+        type: r.type,
+        days: 0,
+        percent: share,
+        first: days[0],
+      };
+      if (days.length > 0) {
+        byReason.set(key, {
+          ...entry,
+          days: entry.days + days.length,
+          first: days[0] < entry.first ? days[0] : entry.first,
+        });
+      }
+    }
+    if (r.type === 'unpaid' && share < 100) {
+      for (const d of calendarDates(r.start, r.end)) {
+        if (inMonth(d) && paidDay(d)) lower(d, share);
+      }
     }
     if (r.type !== 'sick') continue;
     const working = new Set(counted);
@@ -340,7 +514,18 @@ export function leaveInPeriod(
     }
   }
   const working = [...pay].filter(([d]) => !isDayOff(d)).map(([, percent]) => percent);
-  return { ...payDays([...pay.values()]), working: payDays(working), byType };
+  return {
+    ...payDays([...pay.values()]),
+    working: payDays(working),
+    byType,
+    ...(byReason.size > 0
+      ? {
+          byReason: [...byReason.values()]
+            .sort((a, b) => a.first.localeCompare(b.first) || a.reasonId.localeCompare(b.reasonId))
+            .map(({ first: _first, ...x }) => x),
+        }
+      : {}),
+  };
 }
 
 export interface LeaveBalance {
@@ -358,6 +543,11 @@ export interface LeaveBalance {
    * carry-forward cap; missing when none were.
    */
   forfeited?: number;
+  /**
+   * Months of service that earned nothing for more than 15 days of unpaid
+   * leave in them (once switched on); missing when none did.
+   */
+  pausedMonths?: number;
   balance: number;
   /** First day annual leave can be taken (nine months after hiring, or the policy's months). */
   eligibleFrom: ISODate | null;
@@ -374,17 +564,98 @@ export function completedMonths(from: ISODate, on: ISODate): number {
 const addMonthsISO = (date: ISODate, months: number) =>
   toISODate(addMonths(parseISODate(date), months));
 
+/** Unpaid days in a month of service above which it earns no annual leave, once switched on. */
+export const ACCRUAL_PAUSE_DAYS = 15;
+
+/** How annual leave accrues besides the policy (PayrollSettings). */
+export interface AccrualOptions {
+  /**
+   * From this date on, a month of service with more than 15 days of unpaid
+   * leave earns no annual leave (PayrollSettings.leaveAccrualPause). Missing:
+   * every month earns, as before.
+   */
+  pauseFrom?: ISODate | null;
+}
+
+/** The accrual options a company's payroll settings give. */
+export function accrualOptions(
+  settings: { leaveAccrualPause?: { from: ISODate } | null } | null | undefined,
+): AccrualOptions {
+  const from = settings?.leaveAccrualPause?.from;
+  return from ? { pauseFrom: from } : {};
+}
+
+/** Whether a month of service, from `first` to the day before `next`, earns no annual leave. */
+type PausedMonth = (first: ISODate, next: ISODate) => boolean;
+
+/**
+ * The months of service that earn nothing: from the date the pause applies
+ * from, those with more than 15 calendar days of unpaid leave (leave paid in
+ * part doesn't count). Null when none can be.
+ */
+function pausedMonthsOf(
+  records: readonly LeaveRecord[],
+  options: AccrualOptions | undefined,
+): PausedMonth | null {
+  const from = options?.pauseFrom;
+  if (!from) return null;
+  const unpaid = new Set<ISODate>();
+  for (const r of records) {
+    if (r.type !== 'unpaid' || !isTaken(r) || unpaidShare(r) > 0) continue;
+    for (const d of calendarDates(r.start, r.end)) unpaid.add(d);
+  }
+  if (unpaid.size <= ACCRUAL_PAUSE_DAYS) return null;
+  const days = [...unpaid];
+  return (first, next) =>
+    first >= from && days.filter((d) => d >= first && d < next).length > ACCRUAL_PAUSE_DAYS;
+}
+
+/** What one month of service, from `first` to the day before `next`, earns. */
+function monthEarned(first: ISODate, next: ISODate, rates: AccrualRate[]): number {
+  const changes = rates.filter((r): r is AccrualRate & { from: ISODate } => r.from !== null);
+  const length = daysBetween(first, next);
+  let earned = 0;
+  let start = first;
+  for (const change of changes.filter((r) => r.from > first && r.from < next)) {
+    earned += (rateOn(rates, start) * daysBetween(start, change.from)) / length / 12;
+    start = change.from;
+  }
+  return earned + (rateOn(rates, start) * daysBetween(start, next)) / length / 12;
+}
+
+/** The months of service from `from` to the end of `on` that earn nothing. */
+function pausedMonthsBetween(from: ISODate, on: ISODate, paused: PausedMonth | null): ISODate[] {
+  if (!paused) return [];
+  const out: ISODate[] = [];
+  const months = completedMonths(from, on);
+  for (let i = 0; i < months; i++) {
+    const first = addMonthsISO(from, i);
+    if (paused(first, addMonthsISO(from, i + 1))) out.push(first);
+  }
+  return out;
+}
+
 /**
  * Annual leave earned from `from` to the end of `on`: a twelfth of the days a
  * year for each complete month of service. A month in which the days a year
- * change earns a share of each, by its days.
+ * change earns a share of each, by its days. Months `paused` says earn
+ * nothing (long unpaid leave, once switched on).
  */
-function earnedDays(from: ISODate, on: ISODate, rates: AccrualRate[]): number {
+function earnedDays(
+  from: ISODate,
+  on: ISODate,
+  rates: AccrualRate[],
+  paused: PausedMonth | null = null,
+): number {
+  const lost = pausedMonthsBetween(from, on, paused).reduce(
+    (total, first) => total + monthEarned(first, addMonthsISO(first, 1), rates),
+    0,
+  );
   const months = completedMonths(from, on);
   const changes = rates.filter((r): r is AccrualRate & { from: ISODate } => r.from !== null);
   const last = addDaysISO(addMonthsISO(from, months), -1);
   if (!changes.some((r) => r.from > from && r.from <= last)) {
-    return (months * rateOn(rates, from)) / 12;
+    return (months * rateOn(rates, from)) / 12 - lost;
   }
   let earned = 0;
   for (let i = 0; i < months; i++) {
@@ -398,7 +669,7 @@ function earnedDays(from: ISODate, on: ISODate, rates: AccrualRate[]): number {
     }
     earned += (rateOn(rates, start) * daysBetween(start, next)) / length / 12;
   }
-  return earned;
+  return earned - lost;
 }
 
 /** An opening balance: the annual leave an employee had left on a date. */
@@ -450,6 +721,7 @@ function forfeitedDays(
   records: LeaveRecord[],
   rates: AccrualRate[],
   policy: LeavePolicy,
+  paused: PausedMonth | null = null,
 ): number {
   const cap = policy.carryForwardMax;
   const start = leavePolicyStart(policy);
@@ -461,7 +733,7 @@ function forfeitedDays(
   const heldOn = (date: ISODate, lostBefore: number) =>
     twoPlaces(
       opening +
-        earnedDays(from, date, rates) +
+        earnedDays(from, date, rates, paused) +
         sum('adjustment', date) -
         sum('leave', date) -
         lostBefore,
@@ -497,7 +769,9 @@ function forfeitedDays(
  *
  * `policy` is the company's leave policy (the law's when missing) and
  * `entitlement` the employee's own days a year, in place of the policy's
- * from `entitlementFrom` on (throughout when it has no date).
+ * from `entitlementFrom` on (throughout when it has no date). `accrual` can
+ * pause the months of long unpaid leave (see AccrualOptions); annual leave
+ * of a company's reason (taken from the annual balance) is annual leave.
  */
 export function annualLeaveBalance(
   records: LeaveRecord[],
@@ -507,9 +781,11 @@ export function annualLeaveBalance(
   policy: LeavePolicy | null = null,
   entitlement: number | null = null,
   entitlementFrom: ISODate | null = null,
+  accrual: AccrualOptions = {},
 ): LeaveBalance {
   const rules = policy ?? DEFAULT_LEAVE_POLICY;
   const rates = accrualRates(rules, entitlement, entitlementFrom);
+  const paused = pausedMonthsOf(records, accrual);
   const annual = records.filter((r) => r.type === 'annual' && r.status === 'approved');
   const eligibleFrom = hireDate
     ? toISODate(addMonths(parseISODate(hireDate), rules.firstYearMonths))
@@ -521,7 +797,7 @@ export function annualLeaveBalance(
     if (hireDate && hireDate > on) return { from: hireDate, ...none };
     const next = openings.filter((o) => o.date > on).sort(earliestFirst)[0];
     if (next) {
-      const earned = earnedDays(addDaysISO(on, 1), addDaysISO(next.date, -1), rates);
+      const earned = earnedDays(addDaysISO(on, 1), addDaysISO(next.date, -1), rates, paused);
       // Leave taken between the day and the opening was still to come on the
       // day (it is added back); adjustments made then were not there yet.
       const between = annual.filter(
@@ -548,13 +824,14 @@ export function annualLeaveBalance(
       : opening.date;
   if (!from || from > on) return { from, ...none };
   const after = annual.filter((r) => r.start >= from && r.start <= on && r.kind !== 'opening');
-  const accrued = twoPlaces(earnedDays(from, on, rates));
+  const accrued = twoPlaces(earnedDays(from, on, rates, paused));
+  const pausedMonths = pausedMonthsBetween(from, on, paused).length;
   const adjusted = twoPlaces(
     after.filter((r) => r.kind === 'adjustment').reduce((s, r) => s + r.days, 0),
   );
   const taken = twoPlaces(after.filter((r) => r.kind === 'leave').reduce((s, r) => s + r.days, 0));
   const openingDays = opening?.days ?? 0;
-  const forfeited = forfeitedDays(from, on, openingDays, after, rates, rules);
+  const forfeited = forfeitedDays(from, on, openingDays, after, rates, rules, paused);
   return {
     from,
     opening: openingDays,
@@ -562,6 +839,7 @@ export function annualLeaveBalance(
     adjusted,
     taken,
     ...(forfeited > 0 ? { forfeited } : {}),
+    ...(pausedMonths > 0 ? { pausedMonths } : {}),
     balance: twoPlaces(openingDays + accrued + adjusted - taken - forfeited),
     eligibleFrom,
   };
@@ -569,8 +847,9 @@ export function annualLeaveBalance(
 
 /**
  * An employee's annual leave balance on a date, from their leave records,
- * the leave they brought forward, their own entitlement and the company's
- * leave policy (the law's when missing).
+ * the leave they brought forward, their own entitlement, the company's
+ * leave policy (the law's when missing) and how leave accrues
+ * (accrualOptions of the payroll settings).
  */
 export function employeeLeaveBalance(
   employee: Pick<
@@ -580,6 +859,7 @@ export function employeeLeaveBalance(
   records: LeaveRecord[],
   on: ISODate,
   policy?: LeavePolicy | null,
+  accrual: AccrualOptions = {},
 ): LeaveBalance {
   return annualLeaveBalance(
     records.filter((r) => r.employeeId === employee.id),
@@ -589,6 +869,7 @@ export function employeeLeaveBalance(
     policy ?? null,
     employee.annualLeaveDays ?? null,
     employee.annualLeaveDaysFrom ?? null,
+    accrual,
   );
 }
 
@@ -639,13 +920,22 @@ export type LeaveWarning =
   | { code: 'not_eligible'; date: ISODate }
   | { code: 'over_limit'; limit: number }
   | { code: 'hajj_taken' }
-  | { code: 'overlap' };
+  | { code: 'overlap' }
+  /** More than a reason's days a year, with what was taken that year before. */
+  | { code: 'over_year_max'; limit: number; taken: number }
+  /** More than a reason's own balance (compensatory days). */
+  | { code: 'over_reason_balance'; balance: number };
 
-/** Checks leave about to be recorded against the balance, the limits and other leave. */
+/**
+ * Checks leave about to be recorded against the balance, the limits and
+ * other leave. Leave of a company's reason (`reason`) is checked against the
+ * reason's days a year and its own balance instead of its type's limit.
+ */
 export function leaveWarnings(
   record: Pick<LeaveRecord, 'id' | 'type' | 'kind' | 'start' | 'end' | 'days'>,
   others: LeaveRecord[],
   balance: LeaveBalance | null,
+  reason: LeaveReason | null = null,
 ): LeaveWarning[] {
   if (record.kind !== 'leave') return [];
   const out: LeaveWarning[] = [];
@@ -656,9 +946,19 @@ export function leaveWarnings(
       out.push({ code: 'not_eligible', date: balance.eligibleFrom });
     }
   }
-  const limit = leaveTypeInfo(record.type).days;
+  const limit = reason ? null : leaveTypeInfo(record.type).days;
   if (limit !== null && record.type !== 'annual' && record.type !== 'sick' && record.days > limit) {
     out.push({ code: 'over_limit', limit });
+  }
+  const max = reason?.maxDaysPerYear;
+  if (reason && typeof max === 'number' && max > 0) {
+    const before = reasonDaysInYear(others, reason.id, Number(record.start.slice(0, 4)), record.id);
+    if (before + record.days > max) out.push({ code: 'over_year_max', limit: max, taken: before });
+  }
+  if (reason?.pay === 'balance') {
+    // Every day added and taken, whatever its date.
+    const own = reasonBalance(others, reason.id, '9999-12-31', record.id).balance;
+    if (record.days > own) out.push({ code: 'over_reason_balance', balance: own });
   }
   if (record.type === 'hajj' && taken.some((r) => r.type === 'hajj'))
     out.push({ code: 'hajj_taken' });

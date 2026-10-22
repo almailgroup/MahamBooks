@@ -206,6 +206,55 @@ is asked of the server.
   working days, so in a company kept in the cloud the card asks for every
   device that records leave or approves pay runs to be updated first.
 
+## Leave reasons of the company's own
+
+- **Off until switched on.** Payroll → _Leave reasons_ (أسباب الإجازة; also
+  in the People sidebar after _Leave_, and a button on the Leave page) keeps
+  the company's own reasons in `payrollSettings.leaveReasons` (D11: names in
+  English and Arabic, `base`, `pay` and limits; no new table). Until _Offer
+  these reasons when leave is recorded_ (`leaveReasonsOn`) is on and saved,
+  the leave dialog offers the six types only and nothing is paid or counted
+  differently.
+- **How each is paid** (`pay`), and the type its leave keeps in
+  `LeaveRecord.type` (`base`) so older versions read it: on full pay
+  (`bereavement`); on half pay (`unpaid`, with `LeaveRecord.payPercent` 50
+  fixed when recorded: each calendar day costs half a day's pay, and
+  `reducedPay` carries it for older readers); without pay (`unpaid`);
+  taken from annual leave (`annual`: full pay, and the annual balance counts
+  it as annual leave); or on full pay from a balance of its own, added by
+  hand (`bereavement`; the days added are `adjustment` records with the
+  reason, shown on the employee's leave tab with _Add days_). A reason can
+  have the most days a year (a warning, counted in the year leave starts),
+  be only for some categories (domestic workers under Law 68/2015), and
+  need a note. _Add the recommended reasons_ adds emergency leave taken from
+  annual leave and compensatory days added by hand; other reasons start on
+  full pay.
+- **Rules lock once used.** Once leave is recorded with a reason, how it is
+  paid can't change and it can't be removed (archive it and add another);
+  its names, days a year and categories still can. Each record keeps the
+  pay it was saved with, so switching the reasons off never changes leave
+  already recorded. Sick leave tiers stay per calendar year, as before.
+- **Pay lines and payslips.** A line whose month has leave of a reason
+  carries `PayLine.leaveDetail` (display only: days and share of pay by
+  reason); the line dialog and the bilingual payslip list it. Approving
+  refuses a line without it when the month has such leave (worked out
+  before that leave, or by an older version, which pays half-pay leave as
+  unpaid): _Update from records_ first.
+- **Long unpaid leave** (its own switch, off): from the date chosen, a month
+  of service (counted from the hire date or the opening balance, as accrual
+  is) with more than 15 calendar days of unpaid leave earns no annual leave
+  (`leaveAccrualPause`, `accrualOptions` in `src/lib/hr/leave.ts`). Leave on
+  half pay doesn't count. It lowers balances, the leave provision and final
+  settlements, so the page asks for the auditor's confirmation first; the
+  employee's leave tab says how many months earned nothing.
+- **Older versions** show a full-pay reason as bereavement leave (and warn
+  above 3 days), a half-pay or unpaid one as unpaid leave (a half-pay one is
+  paid as unpaid if an older tab updates a draft), leave from annual leave
+  as annual leave, and days added by hand as a balance adjustment that
+  changes nothing. In a cloud company the page asks for every device to be
+  updated first. No database script: the reasons and switches are in the
+  private payroll settings row.
+
 ## Contracts, customers and vehicles
 
 - **Off until switched on.** Compliance → Settings has _Contracts, customers
