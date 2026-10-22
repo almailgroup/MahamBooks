@@ -728,6 +728,7 @@ describe('a member’s limits on the records', () => {
       ['employees', {}],
       ['payRuns', {}],
       ['letterTemplates', {}],
+      ['staffingCostings', {}],
       ['complianceDocuments', { employeeId: 'emp-1' }],
       ['complianceDocuments', { employeeId: null }],
       ['complianceDocuments', {}],

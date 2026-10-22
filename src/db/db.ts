@@ -38,6 +38,7 @@ import type {
   ApprovalRequest,
   LetterTemplate,
   EmployeeLetter,
+  StaffingCosting,
 } from './types';
 import { DATABASE_NAME } from '@/lib/brand';
 import { seedMissingCharts } from './chart-setup';
@@ -86,6 +87,7 @@ export class InvoiceDatabase extends Dexie {
   approvals!: Table<ApprovalRequest, string>;
   letterTemplates!: Table<LetterTemplate, string>;
   employeeLetters!: Table<EmployeeLetter, string>;
+  staffingCostings!: Table<StaffingCosting, string>;
   meta!: Table<KeyValue, string>;
   // Cloud sync bookkeeping (see src/cloud): never exported or restored.
   outbox!: Table<OutboxEntry, number>;
@@ -192,6 +194,11 @@ export class InvoiceDatabase extends Dexie {
       products: 'id, companyId, name, [companyId+sku]',
       attachments: 'id, companyId, ownerId, [ownerId+name], [companyId+contentMissing], docKey',
     });
+    // Manpower costings of Maham People (#3), empty until the costing is
+    // switched on.
+    this.version(17).stores({
+      staffingCostings: 'id, companyId, clientId, quoteId, status',
+    });
     // Every change to a company kept in the cloud is queued for the server.
     this.use(outboxMiddleware(DATA_TABLES));
   }
@@ -235,6 +242,7 @@ export const DATA_TABLES = [
   'approvals',
   'letterTemplates',
   'employeeLetters',
+  'staffingCostings',
 ] as const;
 
 export type DataTable = (typeof DATA_TABLES)[number];

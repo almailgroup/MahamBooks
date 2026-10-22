@@ -941,6 +941,7 @@ describe('the app’s copy of the rules (src/cloud/change-feed.ts)', () => {
       ['payRuns', null, rec(c, 'r', { period: '2026-10', status: 'draft' }), true],
       ['payRuns', rec(c, 'r', { status: 'approved' }), rec(c, 'r', { status: 'paid' }), true],
       ['employees', null, rec(c, 'e', { name: 'Made-up' }), true],
+      ['staffingCostings', null, rec(c, 'sc', { name: 'Made-up site', status: 'draft' }), true],
       ['clients', null, rec(c, 'cl', { name: 'Made-up', isVendor: true }), false],
       ['products', null, rec(c, 'p', { name: 'Made-up', sku: 'SKU-1' }), false],
       ['expenses', null, rec(c, 'x', { number: 'EXP-1', amount: 3, currency: 'KWD' }), false],

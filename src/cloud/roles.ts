@@ -50,6 +50,8 @@ export const PEOPLE_TABLES = [
   'finalSettlements',
   'letterTemplates',
   'employeeLetters',
+  // Manpower costings (#3): salaries, costs and margins.
+  'staffingCostings',
 ] as const;
 
 /** Tables staff may change (the company record only in its document numbers). */
@@ -130,6 +132,8 @@ export function isPrivateRecord(table: string, record: Row, lookup?: RecordLooku
       return typeof record.subjectTbl === 'string' && people.has(record.subjectTbl);
     case 'activities': {
       if (record.entity === 'employee' || record.entity === 'payroll') return true;
+      // About a manpower costing (#3), even once it is deleted.
+      if (record.entity === 'costing') return true;
       // Logged about an employee's documents, or a confidential one: private
       // even once they are deleted.
       if (employeeOwned(record) || record.confidential === true) return true;

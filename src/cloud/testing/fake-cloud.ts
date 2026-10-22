@@ -1201,6 +1201,11 @@ export class FakeCloud {
     if (old && !visibleOld) throw fail('permission');
     if (old && !this.canWrite(company, user, change.tbl, old.data)) throw fail('permission');
     if (!this.canWrite(company, user, change.tbl, data)) throw fail('permission');
+    // A kind of record the server doesn't take before
+    // 20261207000000_staffing_costings.sql (records_tbl_check).
+    if (change.tbl === 'staffingCostings' && !this.features.includes('staffing_costings')) {
+      throw fail('invalid');
+    }
     if (change.tbl === 'companies' && role === 'staff') {
       if (!old || !staffCompanyChangeOk(old.data, data)) throw fail('permission');
     }

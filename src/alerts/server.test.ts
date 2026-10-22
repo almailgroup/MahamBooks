@@ -971,7 +971,10 @@ describe('expiry alerts (#18)', () => {
   it("keeps an older server's email as it was: every kind, owners and admins", async () => {
     // A database without 20261130000000_people_alerts.sql.
     const { MIGRATIONS } = await import('@/cloud/sql-harness');
-    const older = await startDatabase(1, MIGRATIONS.length - 1);
+    const older = await startDatabase(
+      1,
+      MIGRATIONS.findIndex((file) => file.endsWith('_people_alerts.sql')),
+    );
     const olderSql: Sql = async (query, params = []) =>
       (await older.db.query(query, params)).rows as never[];
     const owner = await older.user('older-owner@example.com');

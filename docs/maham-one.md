@@ -464,6 +464,62 @@ is asked of the server.
   settlement's ⋯ menu, a Letters card on the People overview and letter
   requests on the Approvals page. Staff and viewers never see any of it.
 
+## Manpower costing
+
+"HR with Quotation" (#3, part b) is a manpower costing (تسعير العمالة) in
+Maham People that prices posts of guards, cleaners and other staff from what
+they cost, and makes a quote with sell prices only. The owner's answer:
+priced from staff cost, with 10% overhead and a 15% margin, from a rate card
+pre-filled with the current averages per job title.
+
+- **Off until switched on.** People → _Manpower costing_ (`/people/costing`):
+  the owner, an admin or an accountant turns on _Use manpower costing_
+  (`PeopleSettings.costing`: `{ on, overheadPercent, marginPercent, rates? }`,
+  missing is off with 10% and 15%). In a company kept in the cloud the page
+  offers it only once the server has `20261207000000_staffing_costings.sql`
+  (`staffing_costings` in `server_features`); until then it says the cloud
+  needs the latest database script.
+- **The rate card** (جدول الأجور): the pay of each job title, per person a
+  month (basic, allowances, other costs) and its category (expatriate,
+  Kuwaiti, GCC). Until one is saved it is the average of the current
+  salaries per job title and category, worked out on the device of someone
+  who sees payroll (`averageRates` in `src/lib/hr/costing.ts`; leavers,
+  domestic workers and staff not paid monthly left out). An average of one
+  person is their salary, and the page says so.
+- **A costing** (`staffingCostings`, Dexie 17, private like payroll): a name,
+  a customer, posts (job title, category, headcount, hours a day, days a
+  month, pay), overhead, margin, status (draft, quote made, won, lost) and
+  internal notes. Each post is worked out per person a month
+  (`pricePost`): the wage; overtime past 8 hours a day at 1.25 and rest days
+  past the payroll's working days at 1.5; the employer's PIFSS share for
+  Kuwaiti and GCC posts only (the payroll's rates and cap); the indemnity a
+  month of service earns (15 days' wage a year, `src/lib/hr/eosi.ts`, none
+  for insured staff when the payroll leaves them out of the provision); a
+  month's share of the annual leave's pay; other costs. Overhead is added on
+  that cost, and the sell price is cost ÷ (1 − margin): the margin is a
+  share of the sell price, so 15% is a markup of 17.65%. KWD to 3 decimals,
+  each amount rounded once. A post that needs more than 2 hours of overtime
+  a day is flagged (art. 66 of Labour Law 6/2010; the owner confirms with
+  counsel), and so are rest days worked, pay below the minimum wage and
+  missing PIFSS or GCC rates.
+- **Make quote** makes a draft quote for the customer through the
+  documents' own save (numbered like any quote): one line a post with the
+  job title (and its Arabic), hours and days, the headcount and the sell
+  price per person a month. Nothing else: no salary, PIFSS, indemnity, cost,
+  overhead or margin in its lines, notes, terms or activity. The quote keeps
+  the costing's id (`InvoiceDocument.costingId`) and the costing the quote's
+  (`quoteId`); an older build that drops `costingId` leaves the costing's
+  link. The quote shows a link to its costing only to those who see
+  costings. An invoice made from the quote has no `costingId`.
+- **The cost sheet** (كشف التكلفة, `src/pdf/costing.tsx`): A4 landscape, in
+  the interface language, with each post's cost, overhead, sell price and
+  the margin. Downloaded from the costing only; never attached to the quote
+  or emailed.
+- **Where.** People → Manpower costing (nav), _New manpower costing_ in the
+  New menu, and the link on the quote. Staff and viewers never see any of it:
+  the People gate keeps the pages from them, the cloud never sends them
+  costings or their activity, and refuses theirs.
+
 ## Contracts, customers and vehicles
 
 - **Off until switched on.** Compliance → Settings has _Contracts, customers

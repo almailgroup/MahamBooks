@@ -434,6 +434,36 @@ describe('the demo company', () => {
     ]);
   });
 
+  it('has manpower costing on, with a costing and its quote at sell prices only', async () => {
+    const settings = await db.peopleSettings.get(company.id);
+    expect(settings?.costing).toMatchObject({ on: true, overheadPercent: 10, marginPercent: 15 });
+    expect(settings?.costing?.rates?.map((r) => r.jobTitle)).toEqual([
+      'Security Guard',
+      'Cleaner',
+      'CCTV Operator',
+    ]);
+    const [costing] = await db.staffingCostings.where('companyId').equals(company.id).toArray();
+    expect(costing).toMatchObject({ status: 'quoted' });
+    expect(costing.posts.map((p) => [p.jobTitle, p.headcount, p.hoursPerDay])).toEqual([
+      ['Security Guard', 6, 12],
+      ['Cleaner', 3, 8],
+      ['CCTV Operator', 2, 8],
+    ]);
+    // The Kuwaiti post pays the employer's PIFSS share; the expatriate ones don't.
+    expect(costing.posts.map((p) => p.employerPifss > 0)).toEqual([false, false, true]);
+    const quote = (await db.documents.get(costing.quoteId!))!;
+    expect(quote).toMatchObject({
+      type: 'quote',
+      costingId: costing.id,
+      clientId: costing.clientId,
+    });
+    expect(quote.items.map((i) => [i.name, i.quantity, i.unitPrice])).toEqual(
+      costing.posts.map((p) => [p.jobTitle, p.headcount, p.sellPrice]),
+    );
+    const { costingId: _id, ...rest } = quote;
+    expect(JSON.stringify(rest)).not.toMatch(/cost|salar|pifss|overtime|counsel|margin/i);
+  });
+
   it('dates what it records on the day it happened', async () => {
     const docs = await db.documents.where('companyId').equals(company.id).toArray();
     const sent = docs.filter((d) => d.type === 'invoice' && d.sentAt);

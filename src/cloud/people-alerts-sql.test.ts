@@ -219,8 +219,10 @@ describe('the file', () => {
   }, 60_000);
 
   it('names payroll_approvals with everything the earlier files name', async () => {
-    const user = await h.user(`features-${Math.random().toString(36).slice(2)}@example.com`);
-    const [row] = await h.rpc<{ server_features: string[] }>(user, 'server_features');
+    // Later files add their own names after these.
+    const upto = await startDatabase(1, MIGRATIONS.indexOf(FILE) + 1);
+    const user = await upto.user(`features-${Math.random().toString(36).slice(2)}@example.com`);
+    const [row] = await upto.rpc<{ server_features: string[] }>(user, 'server_features');
     expect(row.server_features).toEqual([
       'tables_v16',
       'super_admin',

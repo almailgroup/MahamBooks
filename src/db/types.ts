@@ -1126,6 +1126,12 @@ export interface InvoiceDocument {
   replacesNumber?: string;
   /** The document issued to replace this void one. */
   replacedById?: ID | null;
+  /**
+   * Quotes made from a manpower costing of Maham People (#3): its id only.
+   * Nothing of the costing (its salaries, costs or margin) is copied to the
+   * quote; the costing keeps the quote's id too (StaffingCosting.quoteId).
+   */
+  costingId?: ID | null;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -1471,7 +1477,9 @@ export type ActivityEntity =
   | 'payroll'
   | 'stock'
   | 'approval'
-  | 'member';
+  | 'member'
+  /** A manpower costing (#3): private, like payroll. */
+  | 'costing';
 
 export interface Activity {
   id: ID;
@@ -1916,6 +1924,107 @@ export interface PeopleSettings {
    * before.
    */
   letters?: boolean;
+  /**
+   * Manpower costing (#3): People → Manpower costing, which prices posts
+   * of guards, cleaners and other staff from the company's rate card and
+   * makes a quote with sell prices only. Turned on and off by the owner, an
+   * admin or an accountant; in a company kept in the cloud only once its
+   * server has 20261207000000_staffing_costings.sql (staffing_costings).
+   * Missing: off, as before.
+   */
+  costing?: CostingSettings;
+  updatedAt: Timestamp;
+}
+
+/** The company's manpower costing (#3): off, 10% overhead and 15% margin until changed. */
+export interface CostingSettings {
+  on: boolean;
+  /** Overhead added to the cost of each post, in percent of that cost. */
+  overheadPercent: number;
+  /** Margin of a new costing, in percent of its sell price (not a markup on cost). */
+  marginPercent: number;
+  /**
+   * The rate card: pay of each job title that posts are priced from. Missing:
+   * the averages of the current salaries, worked out on the device.
+   */
+  rates?: CostingRate[];
+}
+
+/** Kinds of staff a costing prices: Kuwaiti and GCC posts pay the employer's PIFSS share. */
+export type CostingCategory = 'kuwaiti' | 'gcc' | 'expat';
+
+/** A job title's pay on the rate card, per person a month (company currency). */
+export interface CostingRate {
+  id: ID;
+  jobTitle: string;
+  jobTitleAr?: string;
+  category: CostingCategory;
+  /** GCC posts: the ISO code of the nationality, for its scheme's rates. */
+  nationality?: string;
+  basic: number;
+  allowances: number;
+  /** Uniform, residency, medical cover, transport and the like, per person a month. */
+  otherCosts?: number;
+  /** How many current employees the averages were worked out from (none when typed in). */
+  count?: number;
+}
+
+export type CostingStatus = 'draft' | 'quoted' | 'won' | 'lost';
+
+/**
+ * A post of a manpower costing: a job title, how many people, their hours
+ * and days, and their pay. Amounts are per person a month in the company
+ * currency (KWD to 3 decimals); the worked-out ones are kept as they were
+ * last saved (see lib/hr/costing.ts).
+ */
+export interface CostingPost {
+  id: ID;
+  jobTitle: string;
+  jobTitleAr?: string;
+  /** Missing: expatriate (no PIFSS). */
+  category?: CostingCategory;
+  /** GCC posts: the ISO code of the nationality, for its scheme's rates. */
+  nationality?: string;
+  headcount: number;
+  hoursPerDay: number;
+  daysPerMonth: number;
+  basic: number;
+  allowances: number;
+  /** Worked out: overtime past 8 hours a day at 1.25 and rest days worked at 1.5. */
+  overtimeMonthly?: number;
+  /** Worked out: the employer's PIFSS share (Kuwaiti and GCC posts only). */
+  employerPifss: number;
+  /** Worked out: the end-of-service indemnity earned in a month (art. 51). */
+  eosiMonthly: number;
+  /** Worked out: a month's share of the annual leave's pay. */
+  leaveMonthly: number;
+  otherCosts: number;
+  /** Worked out: what a person costs a month, before overhead. */
+  monthlyCost: number;
+  /** Worked out: the price to the client per person a month. */
+  sellPrice: number;
+}
+
+/**
+ * A manpower costing (تسعير العمالة, #3): posts priced from staff cost, with
+ * overhead and a margin, that make a quote with sell prices only. Private:
+ * only owners, admins and accountants see it, like payroll.
+ */
+export interface StaffingCosting {
+  id: ID;
+  companyId: ID;
+  name: string;
+  clientId: ID | null;
+  /** The quote made from it (that quote has its id as costingId). */
+  quoteId: ID | null;
+  status: CostingStatus;
+  posts: CostingPost[];
+  overheadPercent: number;
+  /** In percent of the sell price. */
+  marginPercent: number;
+  /** Internal notes, never on the quote. */
+  notes: string;
+  createdAt: Timestamp;
   updatedAt: Timestamp;
 }
 

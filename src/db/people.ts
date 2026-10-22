@@ -29,6 +29,7 @@ import { defaultPeopleSettings, withPeopleDefaults } from '@/lib/hr/people-setti
 import { ANNUAL_LEAVE_DAYS, isOpeningRecord } from '@/lib/hr/leave';
 import { isStateless } from '@/lib/hr/employees';
 import { departmentKey, findDepartment, normalizeDepartments } from '@/lib/hr/departments';
+import { normalizeCostingSettings } from '@/lib/hr/costing';
 import { msg, t } from '@/i18n';
 
 /* -------------------------------------------------------------------------- */
@@ -638,6 +639,11 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
   delete out.expiryUpdates;
   // Employee letters (#19): kept only while on, so missing is off, as before.
   delete out.letters;
+  // Manpower costing (#3): kept once set, in its own shape.
+  delete out.costing;
+  if (input.costing && typeof input.costing === 'object' && !Array.isArray(input.costing)) {
+    out.costing = normalizeCostingSettings(input.costing);
+  }
   if (input.reminderDaysByType !== undefined) {
     const byType = normalizeReminderDaysByType(input.reminderDaysByType);
     if (Object.keys(byType).length) out.reminderDaysByType = byType;
@@ -666,6 +672,9 @@ export async function savePeopleSettings(input: PeopleSettings): Promise<PeopleS
     const next: PeopleSettings = { ...input };
     delete next.letters;
     if (stored?.letters !== undefined) next.letters = stored.letters;
+    // The manpower costing (#3) is changed on its own page.
+    delete next.costing;
+    if (stored?.costing !== undefined) next.costing = stored.costing;
     if (stored) {
       delete next.groupSearch;
       delete next.departments;

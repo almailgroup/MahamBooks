@@ -13,8 +13,13 @@ next: the records of the app's database version 16 and their privacy (see
 `migrations/20261116000000_super_admin_approvals.sql` comes next: the Super
 Admin's controls, approvals and cheque confirmation (see "The Super Admin",
 "Approvals" and "Cheque confirmation" below).
-`migrations/20261123000000_change_feed.sql` comes last: the changes of the
-team for the owner and approvers (see "The change feed" below). Each file is
+`migrations/20261123000000_change_feed.sql` comes next: the changes of the
+team for the owner and approvers (see "The change feed" below).
+`migrations/20261130000000_people_alerts.sql` comes next: salary approval,
+expiry alerts and employee letters (see "Salary approval", "Expiry alerts"
+and "Employee letters" below).
+`migrations/20261207000000_staffing_costings.sql` comes last: manpower
+costings of Maham People (see "Manpower costings" below). Each file is
 run once, in this order; a release that needs more from the server adds a
 file, and only that one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
@@ -677,6 +682,48 @@ absent, as every company has it before, nothing here looks at a letter.
   twice after the Phase 3 files, and the app's fakes against the server),
   `src/cloud/letter-roles.test.ts`, `src/cloud/letters-sync.test.ts`,
   `src/db/letters.test.ts` and `src/lib/hr/letters.test.ts`.
+
+## Manpower costings
+
+`20261207000000_staffing_costings.sql` (#3 part b of
+docs/requirements-plan.md, Phase 5) adds one kind of record, `staffingCostings`
+(the app's database version 17): a manpower costing that prices posts of
+guards, cleaners and other staff from staff cost, with overhead and a margin.
+The quote it makes is an ordinary `documents` record with sell prices only and
+the costing's id as `costingId`; nothing else of the costing is on it. It
+stops with "Run 20261130000000_people_alerts.sql first, then this file." and
+changes nothing when that file hasn't run.
+
+- `records_tbl_check` takes the full list of version 16 plus
+  `staffingCostings`. Before the file the cloud refuses a costing (the app
+  holds costings and their activity back until `server_features()` names
+  `staffing_costings`). Once there are costings, the first file and
+  `20261102000000_tables_v16.sql` stop with an error about `records_tbl_check`
+  and change nothing.
+- `record_is_private` (as in `20261102000000_tables_v16.sql`, with every rule
+  it had) makes costings private, and activity of entity `costing` (even
+  once the costing is gone). `can_read_v16_record` (as in that file) counts
+  approval requests about costings as private too. `staff_can_write` is
+  unchanged: it never named them, so staff and viewers never store them.
+- A restrictive select policy, "Manpower costings: kept from staff and
+  viewers", on `public.records` (costings and their activity) and on
+  `public.deleted_records` (their deletion markers) keeps them from staff and
+  viewers whatever `record_is_private` says, if an earlier file puts back one
+  that doesn't know them. Every other record passes without a call.
+- `record_app` (as in `20261116000000_super_admin_approvals.sql`) puts
+  costings in Maham People, so a member the owner gave view only or no
+  access to People doesn't store them. The four apps of the limits are
+  unchanged.
+- `change_kind` (as in `20261123000000_change_feed.sql`) counts a costing
+  changed as a change to payroll and people data (private: it says only
+  what happened).
+- `server_features()` answers every earlier name and `staffing_costings`.
+- Tests: `src/cloud/staffing-costings-sql.test.ts` (the guard, the file run
+  twice after every earlier one, owner, admin, accountant, staff and viewer,
+  deletion markers, People limits, an earlier `record_is_private` put back,
+  every push an older version makes answered as before the file, and the
+  app's fakes against the server), `src/cloud/costings-sync.test.ts`,
+  `src/db/costings.test.ts` and `src/lib/hr/costing.test.ts`.
 
 ## Email alerts
 

@@ -4,6 +4,7 @@ import { DemoBooks } from './books';
 import { Calendar, Timeline } from './calendar';
 import { SeedClock } from './clock';
 import { closeLastYear, closingDate, importNbkStatement } from './closing';
+import { costingStory } from './costing';
 import { lettersStory } from './letters';
 import { moneyStory } from './money';
 import { peopleStory } from './people';
@@ -20,7 +21,8 @@ import { setUpCompany } from './setup';
  * Ministry's 5% retention released against a clearance certificate, imports
  * with customs and freight, payroll with PIFSS and end of service, expiring
  * residencies, fixed assets, last year's close with the statutory reserve,
- * an NBK statement to reconcile and employee letters. Everything is in KWD with no VAT, and is
+ * an NBK statement to reconcile, employee letters and a manpower costing with its quote.
+ * Everything is in KWD with no VAT, and is
  * created through the modules' own functions, so the books balance.
  *
  * Runs as one transaction, so the app only switches over once everything is
@@ -57,6 +59,7 @@ async function seed(clock: SeedClock): Promise<Company> {
   clock.set(calendar.today);
   await registerStory(books);
   await lettersStory(books);
+  await costingStory(books);
   // Marked so it never goes to the cloud.
   await db.companies.update(books.company.id, { demo: true });
   return books.refresh();

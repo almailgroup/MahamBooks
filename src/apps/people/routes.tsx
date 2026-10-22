@@ -30,6 +30,8 @@ const Letters = lazy(() => import('./pages/letters/index'));
 const LetterTemplates = lazy(() => import('./pages/letters/templates'));
 const LetterTemplate = lazy(() => import('./pages/letters/template-editor'));
 const LetterPrint = lazy(() => import('./pages/letters/print'));
+const CostingList = lazy(() => import('./pages/costing/list'));
+const CostingEditor = lazy(() => import('./pages/costing/editor'));
 
 function People({ children }: { children: ReactNode }) {
   return <AppGate app="people">{children}</AppGate>;
@@ -135,4 +137,7 @@ export const peopleRoutes: RouteObject[] = [
   page('people/letters', <Letters />),
   page('people/letters/templates', <LetterTemplates />),
   page('people/letters/templates/:id', <LetterTemplate />),
+  // Manpower costing (#3): private, like payroll.
+  page('people/costing', <CostingList />),
+  page('people/costing/:id', <CostingEditor />),
 ];

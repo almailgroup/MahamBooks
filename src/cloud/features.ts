@@ -52,7 +52,12 @@ export type ServerFeature =
    * void a letter, never takes an issued one back to a draft nor deletes it,
    * and keeps the letters switch for the owner and admins.
    */
-  | 'employee_letters';
+  | 'employee_letters'
+  /**
+   * 20261207000000_staffing_costings.sql: manpower costings of Maham People
+   * (#3), private like payroll, and their activity.
+   */
+  | 'staffing_costings';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

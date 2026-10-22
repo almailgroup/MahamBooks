@@ -69,6 +69,8 @@ export function changeLink(event: ChangeEvent): string | null {
       return '/people/letters';
     case 'letterTemplates':
       return '/people/letters/templates';
+    case 'staffingCostings':
+      return one ? `/people/costing/${id}` : '/people/costing';
     case 'complianceDocuments':
     case 'renewals':
     case 'complianceMarks':

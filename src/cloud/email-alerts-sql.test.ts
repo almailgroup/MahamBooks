@@ -2,7 +2,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS, startDatabase, type Harness } from './sql-harness';
 
-const MIGRATION_COUNT = MIGRATIONS.length;
+/** Where 20261130000000_people_alerts.sql is: the files before it are production until it runs. */
+const PEOPLE_ALERTS = MIGRATIONS.findIndex((file) => file.endsWith('_people_alerts.sql'));
 
 /**
  * The email alerts script (20261007000000_email_alerts.sql): who may turn
@@ -331,7 +332,7 @@ describe('expiry alerts (#18)', () => {
   beforeAll(async () => {
     // Every script twice, this one after the Phase 3 ones; and a database
     // without it, as production is until the owner runs it.
-    [x, before] = await Promise.all([startDatabase(2), startDatabase(1, MIGRATION_COUNT - 1)]);
+    [x, before] = await Promise.all([startDatabase(2), startDatabase(1, PEOPLE_ALERTS)]);
     for (const d of [x, before]) {
       await d.db.exec(`
         create schema net;
@@ -478,7 +479,7 @@ describe('expiry alerts (#18)', () => {
     await choose(x, t.owner, t.company, ['company']);
     const { readFileSync } = await import('node:fs');
     const { MIGRATIONS } = await import('./sql-harness');
-    await x.db.exec(readFileSync(MIGRATIONS[MIGRATIONS.length - 1], 'utf8'));
+    await x.db.exec(readFileSync(MIGRATIONS[PEOPLE_ALERTS], 'utf8'));
     expect(await scope(x, t.owner, t.company)).toEqual(['company']);
     const [{ features }] = await x.admin<{ features: string[] }>(
       'select public.server_features() as features',

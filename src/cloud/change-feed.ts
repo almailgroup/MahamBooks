@@ -61,6 +61,8 @@ const PEOPLE = new Set([
   'finalSettlements',
   'letterTemplates',
   'employeeLetters',
+  // Since 20261207000000_staffing_costings.sql.
+  'staffingCostings',
 ]);
 const COMPLIANCE = new Set(['complianceDocuments', 'renewals', 'complianceMarks', 'vehicles']);
 const ITEMS = new Set(['products', 'warehouses', 'stockMovements', 'stockEntries', 'landedCosts']);

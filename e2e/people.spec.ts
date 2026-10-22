@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { chooseOption, createCompany, expect, test } from './fixtures';
+import { chooseOption, createCompany, downloadFrom, expect, pdfText, test } from './fixtures';
 import { FakeSupabase } from './cloud-fake';
 
 /** yyyy-MM-dd `days` from today (the browser runs in UTC, see playwright.config.ts). */
@@ -605,4 +605,202 @@ test('an Iqama lead time of 90 days marks an Iqama expiring in 80 days, and a re
     'aria-checked',
     'true',
   );
+});
+
+/** Rows of a table of this device's database, read in the page. */
+async function storedRows(page: Page, table: string): Promise<Record<string, unknown>[]> {
+  return page.evaluate(async (name) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('AlmailBooks');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const rows = await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      const request = database.transaction(name).objectStore(name).getAll();
+      request.onsuccess = () => resolve(request.result as Record<string, unknown>[]);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return rows;
+  }, table);
+}
+
+/**
+ * A guard on the payroll at an invented salary, a customer, and the
+ * manpower costing (#3) switched on, with the rate card saved from the
+ * salaries and a costing of six guards on 12-hour shifts.
+ */
+async function guardsCosting(page: Page) {
+  await page.goto('#/employees/new');
+  await page.getByLabel('Name (English)').fill('Made-up Guard');
+  await page.getByLabel('Name (Arabic)').fill('حارس تجريبي');
+  await chooseOption(page, page.getByLabel('Nationality'), {
+    placeholder: 'Search countries…',
+    query: 'India',
+  });
+  await page.getByLabel('Job title (English)').fill('Security Guard');
+  await page.getByLabel('Basic salary').fill('137.25');
+  await page.getByRole('button', { name: 'Save employee' }).first().click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Made-up Guard');
+  await page.goto('#/clients/new');
+  await page.getByLabel('Client name').fill('Made-up Towers Co.');
+  await page.getByRole('button', { name: 'Save client' }).first().click();
+  await expect(page).toHaveURL(/#\/clients\/[0-9a-f-]{36}$/);
+
+  // Off until switched on.
+  await page.goto('#/people/costing');
+  const toggle = page.getByRole('switch', { name: 'Use manpower costing' });
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(page.getByText('Manpower costing turned on')).toBeVisible();
+
+  // The rate card starts from the current salaries, worked out here.
+  await expect(page.getByRole('textbox', { name: 'Job title' }).first()).toHaveValue(
+    'Security Guard',
+  );
+  await expect(page.getByRole('textbox', { name: 'Basic salary' }).first()).toHaveValue('137.25');
+  await page.getByRole('button', { name: 'Save rate card' }).click();
+  await expect(page.getByText('Rate card saved')).toBeVisible();
+
+  await page.getByRole('link', { name: 'New costing' }).first().click();
+  await expect(page).toHaveURL(/#\/people\/costing\/new$/);
+  await page.getByLabel('Name', { exact: true }).fill('Tower A, night shift');
+  await chooseOption(page, page.getByLabel('Customer'), {
+    placeholder: 'Search…',
+    query: 'Made-up Towers',
+    option: 'Made-up Towers Co.',
+  });
+  await page
+    .getByRole('combobox', { name: 'Add from the rate card' })
+    .selectOption({ label: 'Security Guard · Expatriate' });
+  const post = page.getByTestId('costing-post');
+  await post.getByLabel('Headcount').fill('6');
+  await post.getByLabel('Hours a day').fill('12');
+  // 4 hours of overtime a day: priced, and flagged (art. 66).
+  await expect(post.getByText(/Article 66 of Labour Law 6\/2010/)).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Costing saved')).toBeVisible();
+  await expect(page).toHaveURL(/#\/people\/costing\/[0-9a-f-]{36}$/);
+}
+
+test('a manpower costing prices guards from salaries and makes a quote with sell prices only', async ({
+  page,
+}) => {
+  test.slow();
+  await createCompany(page, 'Made-up Guarding');
+  await guardsCosting(page);
+
+  // The internal cost sheet has the salaries and the margin.
+  const { content } = await downloadFrom(page, () =>
+    page.getByRole('button', { name: 'Cost sheet' }).click(),
+  );
+  const sheet = await pdfText(content);
+  expect(sheet).toContain('Costsheet');
+  expect(sheet).toContain('Internal');
+  expect(sheet).toContain('137.250');
+
+  // The quote: the post at its sell price, and nothing of what it costs.
+  const sell = await page.getByTestId('costing-post').getByText(/^KD/).nth(6).innerText();
+  await page.getByRole('button', { name: 'Make quote' }).click();
+  await expect(page).toHaveURL(/#\/quotes\/[0-9a-f-]{36}$/);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { level: 1 })).toHaveText(/^Quote QUO-/);
+  await expect(
+    main.getByText(
+      `KD ${(6 * Number(sell.replace(/[^\d.]/g, ''))).toLocaleString('en', { minimumFractionDigits: 3 })}`,
+    ),
+  ).toBeVisible();
+  await expect(main.getByRole('link', { name: 'Tower A, night shift' })).toBeVisible();
+  const shown = await main.innerText();
+  for (const secret of ['137.250', 'PIFSS', 'Overhead', 'Margin', 'Indemnity', 'salary']) {
+    expect(shown, secret).not.toContain(secret);
+  }
+  const quote = await downloadFrom(page, () =>
+    page.getByRole('button', { name: 'Download PDF' }).first().click(),
+  );
+  const printed = await pdfText(quote.content);
+  expect(printed).toContain('SecurityGuard');
+  expect(printed).toContain(sell.replace(/\s/g, '').replace('KD', ''));
+  for (const secret of ['137.250', 'PIFSS', 'Overhead', 'Margin', 'Indemnity', 'Costsheet']) {
+    expect(printed, secret).not.toContain(secret);
+  }
+  // Stored with the costing's id only, and the costing with the quote's.
+  const [stored] = (await storedRows(page, 'documents')).filter((d) => d.type === 'quote');
+  const [costing] = await storedRows(page, 'staffingCostings');
+  expect(stored.costingId).toBe(costing.id);
+  expect(costing.quoteId).toBe(stored.id);
+  expect(costing.status).toBe('quoted');
+  const { costingId: _, ...rest } = stored;
+  expect(JSON.stringify(rest)).not.toMatch(/137\.25|salar|pifss|margin|overhead/i);
+});
+
+test('staff never see manpower costings, only the quote made from one', async ({ page }) => {
+  test.slow();
+  const cloud = new FakeSupabase();
+  await cloud.install(page);
+  const owner = { email: 'owner@example.com', password: 'safe-password-1', name: 'Test Owner' };
+  cloud.addUser(owner.email, owner.password, owner.name);
+  cloud.addUser('staff@example.com', 'safe-password-3', 'Test Staff');
+
+  // The owner prices a costing and makes its quote, then keeps the company in the cloud.
+  await createCompany(page, 'Made-up Guarding');
+  await guardsCosting(page);
+  await page.getByRole('button', { name: 'Make quote' }).click();
+  await expect(page).toHaveURL(/#\/quotes\/[0-9a-f-]{36}$/);
+  const quoteId = page.url().split('/').pop()!;
+  await page.goto('#/signin');
+  await page.getByLabel('Email', { exact: true }).fill(owner.email);
+  await page.getByLabel('Password', { exact: true }).fill(owner.password);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Keep in the cloud' }).click();
+  const account = page.getByRole('button', { name: `Account: ${owner.name}` });
+  await expect(account).toContainText('Synced', { timeout: 30_000 });
+  const [company] = [...cloud.companies.keys()];
+  expect(cloud.rows(company, 'staffingCostings')).toHaveLength(1);
+
+  await page.goto('#/settings/team');
+  const invite = page
+    .getByRole('region')
+    .or(page.locator('form'))
+    .filter({ has: page.getByRole('button', { name: 'Create invitation link' }) });
+  await invite.getByLabel('Email', { exact: true }).fill('staff@example.com');
+  await invite.getByLabel('Role').selectOption('staff');
+  await page.getByRole('button', { name: 'Create invitation link' }).click();
+  const link = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
+  await account.click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  const signOut = page.getByRole('dialog', { name: 'Sign out?' });
+  await signOut.getByText('Remove them from this device').click();
+  await signOut.getByRole('button', { name: 'Sign out' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Work from any device, with your team' }),
+  ).toBeVisible();
+
+  // Staff join and download the company.
+  await page.goto(link);
+  await page.getByRole('link', { name: 'Sign in' }).click();
+  await page.getByLabel('Password', { exact: true }).fill('safe-password-3');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Accept and download' }).click();
+  await expect(page.getByRole('button', { name: 'Account: Test Staff' })).toContainText('Synced', {
+    timeout: 30_000,
+  });
+
+  // Nothing of the costing reaches their device, and its page is locked.
+  expect(await storedRows(page, 'staffingCostings')).toEqual([]);
+  const activity = await storedRows(page, 'activities');
+  expect(activity.filter((a) => a.entity === 'costing')).toEqual([]);
+  expect(JSON.stringify(activity)).not.toContain('Tower A');
+  await page.goto('#/people/costing');
+  await expect(page.getByRole('heading', { name: 'Payroll and people are private' })).toBeVisible();
+  await expect(page.getByText('Tower A, night shift')).toHaveCount(0);
+
+  // The quote is theirs to see, at sell prices only, with no way to the costing.
+  await page.goto(`#/quotes/${quoteId}`);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { level: 1 })).toHaveText(/^Quote QUO-/);
+  await expect(main.getByText('Total')).toBeVisible();
+  await expect(main.getByText('Manpower costing')).toHaveCount(0);
+  await expect(main.getByText('Tower A, night shift')).toHaveCount(0);
+  expect(await main.innerText()).not.toContain('137.250');
 });

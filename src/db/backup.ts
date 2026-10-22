@@ -87,6 +87,7 @@ const backupSchema = z.object({
     approvals: z.array(ownedRow).default([]),
     letterTemplates: z.array(ownedRow).default([]),
     employeeLetters: z.array(ownedRow).default([]),
+    staffingCostings: z.array(ownedRow).default([]),
   }),
   missingFiles: z.array(z.looseObject({ id: z.string().min(1) })).optional(),
 });

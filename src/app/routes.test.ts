@@ -159,6 +159,9 @@ const SUITE_PATHS = [
   '/people/letters/templates/:id',
   '/people/letters/:id/print',
   '/people/letters/print',
+  // Manpower costing (#3).
+  '/people/costing',
+  '/people/costing/:id',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */
@@ -197,6 +200,9 @@ const SAMPLE_URLS = [
   '/people/letters/templates/default%3Aco%3Asalary_certificate',
   '/people/letters/l1/print',
   '/people/letters/print?ids=l1,l2',
+  '/people/costing',
+  '/people/costing/new',
+  '/people/costing/c1',
   '/crm',
   '/crm/prospects',
   '/invite/abc',

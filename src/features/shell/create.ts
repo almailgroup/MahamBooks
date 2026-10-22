@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Armchair,
+  Calculator,
   ClipboardList,
   FileClock,
   FileMinus,
@@ -180,6 +181,15 @@ export const CREATE_ACTIONS = {
     to: '/people/letters?new=1',
     icon: MailPlus,
     keywords: 'salary certificate experience employment warning noc',
+  },
+  // Manpower costing (#3): the costing page says when it is off.
+  costing: {
+    id: 'costing',
+    label: msg('Manpower costing'),
+    command: msg('New manpower costing'),
+    to: '/people/costing?new=1',
+    icon: Calculator,
+    keywords: 'quotation pricing guards cleaners rate card manpower',
   },
   journal: {
     id: 'journal',

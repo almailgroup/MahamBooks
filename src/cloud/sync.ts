@@ -528,7 +528,15 @@ async function heldForServer(
   companyId: string,
 ): Promise<(name: string, record: Record<string, unknown>) => boolean> {
   const link = await db.syncState.get(companyId);
-  if (!link || linkHasFeature(link, 'tables_v16')) return () => false;
+  if (!link) return () => false;
+  // Manpower costings (#3) and their activity, until the server has
+  // 20261207000000_staffing_costings.sql: before it, the cloud refuses the
+  // costings and doesn't know their activity is private.
+  const costings = !linkHasFeature(link, 'staffing_costings');
+  const heldCosting = (name: string, record: Record<string, unknown>) =>
+    costings &&
+    (V17_TABLES.includes(name) || (name === 'activities' && record.entity === 'costing'));
+  if (linkHasFeature(link, 'tables_v16')) return heldCosting;
   const confidential = new Set(
     (
       await db.complianceDocuments
@@ -539,18 +547,48 @@ async function heldForServer(
     ).map(String),
   );
   return (name, record) =>
+    heldCosting(name, record) ||
     V16_TABLES.includes(name) ||
     (name === 'complianceDocuments' && record.confidential === true) ||
     (name === 'renewals' && confidential.has(renewedDocumentId(record) ?? ''));
 }
 
-/** Puts parked for want of the migration go back in the queue once the server has it. */
-async function releaseHeld(companyId: string): Promise<void> {
-  await db.outbox
+/**
+ * Puts parked for want of the migration go back in the queue once the server
+ * has it. Manpower costings and their activity wait on for
+ * 20261207000000_staffing_costings.sql.
+ */
+async function releaseHeld(companyId: string, features: readonly string[]): Promise<void> {
+  const costings = features.includes('staffing_costings');
+  const waiting = await db.outbox
     .where('[companyId+parked]')
     .equals([companyId, 1])
     .filter((entry) => entry.error === 'server_outdated')
+    .toArray();
+  const activityIds = costings
+    ? []
+    : waiting.filter((entry) => entry.table === 'activities').map((entry) => entry.id);
+  const costingActivities = new Set(
+    (await db.activities.bulkGet(activityIds))
+      .filter((activity) => activity?.entity === 'costing')
+      .map((activity) => activity!.id),
+  );
+  const released = waiting
+    .filter(
+      (entry) =>
+        costings ||
+        !(
+          V17_TABLES.includes(entry.table) ||
+          (entry.table === 'activities' && costingActivities.has(entry.id))
+        ),
+    )
+    .map((entry) => entry.seq!);
+  if (released.length === 0) return;
+  await db.outbox
+    .where('seq')
+    .anyOf(released)
     .modify((entry) => {
+      if (entry.error !== 'server_outdated' || entry.parked !== 1) return;
       entry.parked = 0;
       delete entry.error;
       delete entry.detail;
@@ -1043,6 +1081,8 @@ const ENTITY: Partial<Record<DataTable, ActivityEntity>> = {
   yearEnds: 'year_end',
   payRuns: 'payroll',
   stockEntries: 'stock',
+  // Private, like payroll (#3).
+  staffingCostings: 'costing',
 };
 
 /**
@@ -1555,9 +1595,18 @@ const V16_TABLES: readonly string[] = [
   'employeeLetters',
 ];
 
+/**
+ * Tables of database version 17 (manpower costings, #3). A link noted
+ * before it has the tables it pulled with, without them.
+ */
+const V17_TABLES: readonly string[] = ['staffingCostings'];
+
 /** The tables a link's device has pulled the company with (see CloudLink.tables). */
 export function pulledTables(link: Pick<CloudLink, 'tables'>): string[] {
-  return link.tables ?? DATA_TABLES.filter((name) => !V16_TABLES.includes(name));
+  return (
+    link.tables ??
+    DATA_TABLES.filter((name) => !V16_TABLES.includes(name) && !V17_TABLES.includes(name))
+  );
 }
 
 /**
@@ -1645,7 +1694,7 @@ async function refreshFeatures(companyId: string, ctx: SyncContext): Promise<voi
     return;
   }
   await db.syncState.update(companyId, { features, featuresAt: new Date().toISOString() });
-  if (features.includes('tables_v16')) await releaseHeld(companyId);
+  if (features.includes('tables_v16')) await releaseHeld(companyId, features);
 }
 
 /**

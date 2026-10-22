@@ -1,4 +1,5 @@
 import {
+  Calculator,
   CalendarDays,
   ClipboardCheck,
   Coins,
@@ -21,7 +22,8 @@ import type { SuiteApp } from '@/suite/types';
 
 /**
  * Maham People: HR. Employees and their papers, payroll and PIFSS, leave,
- * staff loans and end-of-service settlements, letters, and a directory. Payroll and
+ * staff loans and end-of-service settlements, letters, manpower costing and
+ * a directory. Payroll and
  * people data are private: only owners, admins and accountants open the app,
  * and the server never sends that data to anyone else.
  */
@@ -89,6 +91,13 @@ export const PEOPLE: SuiteApp = {
     },
     {
       kind: 'link',
+      to: '/people/costing',
+      label: msg('Manpower costing'),
+      icon: Calculator,
+      keywords: 'quotation quote pricing guards cleaners rate card manpower cost sheet',
+    },
+    {
+      kind: 'link',
       to: '/payroll/settings',
       label: msg('Payroll settings'),
       icon: SlidersHorizontal,
@@ -103,7 +112,7 @@ export const PEOPLE: SuiteApp = {
     },
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],
-  create: [{ label: msg('People'), actions: [A.employee, A.letter] }],
+  create: [{ label: msg('People'), actions: [A.employee, A.letter, A.costing] }],
   tools: [
     { to: '/people/directory', label: msg('Directory'), icon: Contact, keywords: 'phone email' },
     { to: '/employees', label: msg('Employees'), icon: IdCard, keywords: 'staff' },

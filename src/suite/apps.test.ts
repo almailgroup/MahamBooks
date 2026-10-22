@@ -364,10 +364,12 @@ describe('the classic layout', () => {
       '  nav /payroll/leave-reasons Leave reasons · Tags',
       '  nav /payroll/loans Staff loans · HandCoins',
       '  nav /people/letters Letters · Mails',
+      // Manpower costing (#3, part b).
+      '  nav /people/costing Manpower costing · Calculator',
       '  nav /payroll/settings Payroll settings · SlidersHorizontal',
       '  nav /approvals Approvals · ClipboardCheck [payrollApprovalsOnly]',
       '  footer /settings Settings',
-      '  create People (-) employee letter',
+      '  create People (-) employee letter costing',
       '  tools /people/directory /employees /payroll /payroll/leave /payroll/loans',
       '  tabs / Home, /employees Employees, /payroll Payroll',
       '  access device=manage owner=manage admin=manage accountant=manage staff=none viewer=none',
@@ -674,6 +676,6 @@ describe('the split layout', () => {
       accessMap('accountant', true, { apps: { books: 'view' } }, SPLIT_APPS),
       SPLIT_APPS,
     ).flatMap((g) => g.actions.map((a) => a.id));
-    expect(limited).toEqual(['employee', 'letter']);
+    expect(limited).toEqual(['employee', 'letter', 'costing']);
   });
 });

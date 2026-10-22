@@ -1,0 +1,192 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { db, DATA_TABLES } from '@/db/db';
+import { createClient } from '@/db/defaults';
+import { saveClient, setupCompany } from '@/db/records';
+import { createQuoteFromCosting, getCostingSettings, newCosting, saveCosting } from '@/db/costings';
+import type { Company } from '@/db/types';
+import { newPost } from '@/lib/hr/costing';
+import { FakeCloud } from './testing/fake-cloud';
+import {
+  FEATURES_RECHECK_MS,
+  pulledTables,
+  startDownload,
+  startUpload,
+  syncCompany,
+  type SyncContext,
+} from './sync';
+
+/**
+ * Manpower costings (#3) and the sync: a server without
+ * 20261207000000_staffing_costings.sql never gets a costing or its activity
+ * (they wait on the device until it has it); a device whose earlier version
+ * pulled without the table catches up on it; and staff never receive
+ * costings or their activity, while the quote made from one reaches them
+ * with sell prices only. Invented names and amounts only.
+ */
+
+const OWNER = 'user-owner';
+const STAFF = 'user-staff';
+const PHASE_4 = [
+  'tables_v16',
+  'super_admin',
+  'approvals',
+  'cheque_approvals',
+  'change_feed',
+  'payroll_approvals',
+  'document_alerts',
+  'employee_letters',
+];
+
+let server: FakeCloud;
+let ctx: SyncContext;
+
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
+  server = new FakeCloud();
+  server.features = [...PHASE_4, 'staffing_costings'];
+  ctx = { api: server.client(OWNER), userId: OWNER };
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+async function newDevice(userId: string): Promise<SyncContext> {
+  await db.delete();
+  await db.open();
+  return { api: server.client(userId), userId };
+}
+
+/** A costing of guards for a made-up customer, with its quote. */
+async function costingWithQuote(company: Company) {
+  const client = await saveClient(createClient(company.id, { name: 'Made-up Towers Co.' }));
+  const costing = await saveCosting({
+    ...newCosting(company.id, await getCostingSettings(company.id), client.id),
+    name: 'Tower A, night shift',
+    posts: [
+      {
+        ...newPost(),
+        jobTitle: 'Security Guard',
+        headcount: 4,
+        hoursPerDay: 12,
+        basic: 137.25,
+        allowances: 41.5,
+      },
+    ],
+  });
+  const quote = await createQuoteFromCosting(costing.id);
+  return { costing, quote };
+}
+
+const parked = (companyId: string) =>
+  db.outbox.where('[companyId+parked]').equals([companyId, 1]).toArray();
+
+describe('a server without the costings file', () => {
+  it('gets neither costings nor their activity until it has it; then they go', async () => {
+    // Made in a company kept on this device, then uploaded to an older server.
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    const { costing, quote } = await costingWithQuote(company);
+    server.features = [...PHASE_4];
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+
+    expect(server.record(company.id, 'staffingCostings', costing.id)).toBeUndefined();
+    expect(
+      server.rows(company.id, 'activities').filter((r) => r.data.entity === 'costing'),
+    ).toEqual([]);
+    // The quote is an ordinary document and goes.
+    expect(server.record(company.id, 'documents', quote.id)).toMatchObject({
+      costingId: costing.id,
+    });
+    const waiting = await parked(company.id);
+    expect(waiting.length).toBeGreaterThan(0);
+    expect(waiting.every((e) => e.error === 'server_outdated')).toBe(true);
+    expect(waiting.map((e) => e.table)).toContain('staffingCostings');
+
+    // Asked again later, it still hasn't the file: they keep waiting.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + FEATURES_RECHECK_MS + 1000);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'staffingCostings', costing.id)).toBeUndefined();
+    expect((await parked(company.id)).length).toBe(waiting.length);
+
+    // The owner runs the file.
+    server.features = [...PHASE_4, 'staffing_costings'];
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2 * FEATURES_RECHECK_MS + 2000);
+    await syncCompany(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'staffingCostings', costing.id)).toMatchObject({
+      quoteId: quote.id,
+    });
+    const activity = server
+      .rows(company.id, 'activities')
+      .filter((r) => r.data.entity === 'costing');
+    expect(activity.length).toBeGreaterThan(0);
+    // Marked private for older servers' rules too.
+    expect(activity.every((r) => r.data._private === true)).toBe(true);
+    expect(await parked(company.id)).toEqual([]);
+  });
+});
+
+describe('a device whose earlier version pulled without the costings table', () => {
+  it('gets the costings once, and keeps its cursor', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    // Saved on a newer device meanwhile.
+    await server.client(OWNER).pushRecords(company.id, [
+      {
+        tbl: 'staffingCostings',
+        id: 'cost-1',
+        data: {
+          ...newCosting(company.id, { overheadPercent: 10, marginPercent: 15 }),
+          id: 'cost-1',
+          name: 'Tower A, night shift',
+        },
+      },
+    ]);
+    // What the version before this one left: its cursor past it, its tables without it.
+    const before = DATA_TABLES.filter((name) => name !== 'staffingCostings');
+    await db.syncState.update(company.id, { cursor: server.rev, tables: [...before] });
+    expect(pulledTables((await db.syncState.get(company.id))!)).not.toContain('staffingCostings');
+    const cursor = server.rev;
+
+    await syncCompany(company.id, ctx);
+    expect(await db.staffingCostings.get('cost-1')).toMatchObject({
+      name: 'Tower A, night shift',
+    });
+    const link = (await db.syncState.get(company.id))!;
+    expect(link.cursor).toBe(cursor);
+    expect(link.tables).toEqual([...DATA_TABLES]);
+    // Nothing goes back to the cloud.
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('counts a link noted before version 16 as without it too', () => {
+    expect(pulledTables({ tables: undefined })).not.toContain('staffingCostings');
+    expect(pulledTables({ tables: undefined })).not.toContain('employeeLetters');
+  });
+});
+
+describe('staff', () => {
+  it('never receive costings or their activity; the quote reaches them with sell prices only', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    const { costing, quote } = await costingWithQuote(company);
+    await syncCompany(company.id, ctx);
+    expect(server.record(company.id, 'staffingCostings', costing.id)).toBeDefined();
+
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    expect(await db.companies.get(company.id)).toBeDefined();
+    expect(await db.staffingCostings.count()).toBe(0);
+    expect(await db.activities.filter((a) => a.entity === 'costing').count()).toBe(0);
+    const received = await db.documents.get(quote.id);
+    expect(received).toMatchObject({ type: 'quote', costingId: costing.id });
+    const text = JSON.stringify([received, await db.activities.toArray()]);
+    for (const secret of ['137.25', '41.5', 'Tower A, night shift']) {
+      expect(text).not.toContain(secret);
+    }
+  });
+});

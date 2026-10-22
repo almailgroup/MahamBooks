@@ -114,7 +114,8 @@ describe('version 15 → 16', () => {
     await version15Device();
     opened = new InvoiceDatabase(NAME);
     await opened.open();
-    expect(opened.verno).toBe(16);
+    // Later versions (17: manpower costings) open over it in the same step.
+    expect(opened.verno).toBeGreaterThanOrEqual(16);
     expect(await opened.companies.get('co-1')).toMatchObject({ name: 'Test Trading' });
     expect(await opened.products.count()).toBe(2);
     expect(await opened.complianceDocuments.get('doc-1')).toMatchObject({ ownerName: 'TEST-1' });
@@ -234,11 +235,11 @@ describe('backups and the new tables', () => {
   it('refuses a backup with records of a table a later version added, rather than lose them', async () => {
     const company = await setupCompany({ name: 'Later' });
     const backup = JSON.parse(JSON.stringify(await exportBackup(company.id)));
-    // A later version keeps the format and adds its tables.
-    backup.data.staffingCostings = [{ id: 'cost-1', companyId: company.id }];
+    // A later version keeps the format and adds its tables (18: gateway payments).
+    backup.data.gatewayPayments = [{ id: 'pay-1', companyId: company.id }];
     expect(() => parseBackup(JSON.stringify(backup))).toThrow(/newer version/);
     // Without records of it, nothing is lost.
-    backup.data.staffingCostings = [];
-    expect(parseBackup(JSON.stringify(backup)).data).not.toHaveProperty('staffingCostings');
+    backup.data.gatewayPayments = [];
+    expect(parseBackup(JSON.stringify(backup)).data).not.toHaveProperty('gatewayPayments');
   });
 });

@@ -86,6 +86,7 @@ import { DocumentApprovals } from '@/features/approvals/document-approvals';
 import { WaitingChequesNote } from '@/features/approvals/cheque-approvals';
 import { useApprovalView, useMyName, usePendingRequest } from '@/features/approvals/hooks';
 import { ReasonDialog } from '@/features/approvals/reason-dialog';
+import { useQuoteCosting } from '@/features/people/costing-hooks';
 
 /** What the reason dialog is open for. */
 type Asking = 'void' | 'void-reissue' | 'request-void' | 'request-unvoid';
@@ -183,6 +184,8 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
     async () => (doc?.replacedById ? ((await db.documents.get(doc.replacedById)) ?? null) : null),
     [doc?.replacedById],
   );
+  // A quote made from a manpower costing (#3): only for those who see costings.
+  const costing = useQuoteCosting(doc?.costingId);
 
   const ready = doc && client !== undefined;
   const pdf = useLivePdf(
@@ -759,6 +762,19 @@ export default function DocumentViewPage({ type }: { type: DocumentType }) {
                       className="text-primary-700 font-medium hover:underline"
                     >
                       <bdi>{replacement.number || t('Draft')}</bdi>
+                    </Link>
+                  }
+                />
+              ) : null}
+              {costing ? (
+                <SummaryRow
+                  label={t('Manpower costing')}
+                  value={
+                    <Link
+                      to={`/people/costing/${costing.id}`}
+                      className="text-primary-700 font-medium hover:underline"
+                    >
+                      <bdi>{costing.name}</bdi>
                     </Link>
                   }
                 />

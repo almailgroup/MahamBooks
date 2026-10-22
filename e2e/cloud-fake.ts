@@ -85,6 +85,7 @@ function recordApp(tbl: string, data: Record<string, unknown> | null): string | 
     'finalSettlements',
     'letterTemplates',
     'employeeLetters',
+    'staffingCostings',
   ];
   const shared = ['companies', 'activities', 'attachments', 'approvals'];
   if (people.includes(tbl)) return 'people';
@@ -95,6 +96,46 @@ function recordApp(tbl: string, data: Record<string, unknown> | null): string | 
     return 'compliance';
   }
   return shared.includes(tbl) ? null : 'books';
+}
+
+/**
+ * Payroll and people data, which staff and viewers never get: as
+ * almailbooks.record_is_private, for the records these tests make (a file
+ * or activity about them is marked _private by the app).
+ */
+function privateRow(tbl: string, data: Record<string, unknown> | null): boolean {
+  const people = [
+    'employees',
+    'payRuns',
+    'payrollSettings',
+    'peopleSettings',
+    'leaveRecords',
+    'staffLoans',
+    'finalSettlements',
+    'letterTemplates',
+    'employeeLetters',
+    'staffingCostings',
+  ];
+  if (people.includes(tbl)) return true;
+  if (!data) return false;
+  if (data._private === true) return true;
+  const employee = typeof data.employeeId === 'string' && data.employeeId !== '';
+  switch (tbl) {
+    case 'complianceDocuments':
+      return employee || data.confidential === true;
+    case 'journals':
+      return data.kind === 'payroll';
+    case 'approvals':
+      return people.includes(String(data.subjectTbl));
+    case 'activities':
+      return (
+        ['employee', 'payroll', 'costing'].includes(String(data.entity)) ||
+        employee ||
+        data.confidential === true
+      );
+    default:
+      return false;
+  }
 }
 
 /** The records a file is kept with, as almailbooks.attachment_app looks them up. */
@@ -315,6 +356,7 @@ function changeKind(tbl: string, data: Data | null): string {
     'finalSettlements',
     'letterTemplates',
     'employeeLetters',
+    'staffingCostings',
   ];
   if (tbl === 'documents') return 'document';
   if (tbl === 'payments') return data?.method === 'cheque' ? 'cheque' : 'payment';
@@ -1014,6 +1056,7 @@ export class FakeSupabase {
       'finalSettlements',
       'letterTemplates',
       'employeeLetters',
+      'staffingCostings',
     ];
     const isPrivate =
       people.includes(tbl) ||
@@ -1165,8 +1208,11 @@ export class FakeSupabase {
       case 'pull_records': {
         const since = Number(b.p_since ?? 0);
         const limit = Number(b.p_limit ?? 500);
+        // Staff and viewers never get payroll and people data (record_is_private).
+        const seesPeople = mine === 'owner' || mine === 'admin' || mine === 'accountant';
         return [...this.records.values()]
           .filter((r) => r.company === company && r.rev > since)
+          .filter((r) => seesPeople || !privateRow(r.tbl, r.data))
           .sort((x, y) => x.rev - y.rev)
           .slice(0, limit)
           .map((r) => ({ tbl: r.tbl, id: r.id, data: r.data, rev: r.rev, deleted: r.deleted }));
@@ -1193,6 +1239,7 @@ export class FakeSupabase {
           'payroll_approvals',
           'document_alerts',
           'employee_letters',
+          'staffing_costings',
         ];
       // The change feed (20261123000000_change_feed.sql).
       case 'notification_status': {

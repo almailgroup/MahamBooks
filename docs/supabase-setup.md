@@ -77,6 +77,17 @@ has to be added to the app or to Vercel.
     someone uses them, everything is as before. If the fifth or
     sixth script, or the email alerts script (step 7), is ever run again, run
     this one again after them.
+12. Then the eighth script,
+    [`supabase/migrations/20261207000000_staffing_costings.sql`](../supabase/migrations/20261207000000_staffing_costings.sql)
+    (a new query, paste, **Run**), after the seventh. It lets the cloud keep
+    manpower costings of Maham People (see "Manpower costing" below), private
+    like payroll. It stops with "Run 20261130000000_people_alerts.sql first,
+    then this file." if the seventh script hasn't run, and then changes
+    nothing. Running it changes nothing by itself either: the costing stays
+    off until someone turns it on. If the fourth, fifth, sixth or seventh
+    script is ever run again, run this one again after them. Once there are
+    costings, the first and fourth scripts stop with an error about
+    `records_tbl_check` and change nothing.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -504,6 +515,35 @@ letters** (استخدام خطابات الموظفين) on that page.
 - Letters are printed, never emailed. The stamp and signature of Settings →
   Company print only on issued letters; drafts print with a watermark.
 - Staff and viewers never see letters, templates or the requests about them.
+
+## Manpower costing
+
+**Maham People → Manpower costing** (مهام بيبول ← تسعير العمالة): posts of
+guards, cleaners and other staff priced from what they cost (wage, overtime
+at 1.25 past 8 hours a day, the employer's PIFSS share for Kuwaiti and GCC
+posts, the end-of-service indemnity and leave earned in a month, and other
+costs), with 10% overhead and a 15% margin of the sell price at first. It is
+off at first. In a company kept in the cloud the page offers it only after
+the eighth script (step 1.12); until then it says the cloud needs the latest
+database script. The owner, an admin or an accountant turns on **Use
+manpower costing** (استخدام تسعير العمالة) on that page.
+
+- The **rate card** (جدول الأجور) starts from the current salaries: the
+  average pay of each job title, worked out on the device of someone who
+  sees payroll. Save it, or change it first.
+- **Make quote** (إعداد عرض سعر) makes a draft quote for the costing's
+  customer, numbered like any quote, with one line a post: the job title,
+  hours, days, headcount and the sell price per person a month. Nothing else
+  of the costing goes on the quote: no salary, PIFSS, indemnity, cost or
+  margin. The quote and the costing point to each other.
+- **Cost sheet** (كشف التكلفة) downloads the internal sheet of a costing. It
+  is never attached to the quote or emailed.
+- A post that needs more than 2 hours of overtime a day is flagged: article
+  66 of Labour Law 6/2010 allows that only with an exemption. Confirm with
+  counsel before quoting it.
+- Staff and viewers never see costings, their rate card or their activity;
+  the cloud refuses them as it refuses payroll. A member the owner gave view
+  only or no access to Maham People doesn't change them.
 
 ## Problems
 
