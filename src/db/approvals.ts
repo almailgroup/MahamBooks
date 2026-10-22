@@ -19,6 +19,7 @@ import {
   INVOICE_CONTENT_FIELDS,
   invoiceContent,
   isApprover,
+  isLetterApproval,
   isPayrollApproval,
   deleteKeptBy,
   rulesCoverDocument,
@@ -224,6 +225,15 @@ const PAYROLL_LOG: Record<keyof typeof LOG, string> = {
   expired: msg('Approval request for pay run {period} expired'),
 };
 
+/** The same for letters (#19): an approver agrees to issue a letter (موافقة). */
+const LETTER_LOG: Record<keyof typeof LOG, string> = {
+  asked: msg('Letter sent for approval'),
+  cancelled: msg('Approval request for a letter cancelled'),
+  approved: msg('Approval given to issue a letter'),
+  rejected: msg('Approval refused to issue a letter'),
+  expired: msg('Approval request for a letter expired'),
+};
+
 /** The contact a cheque request is about, as far as this device knows it. */
 async function chequeContact(request: ApprovalRequest): Promise<ID | null> {
   const after = (request.after ?? {}) as Record<string, unknown>;
@@ -243,6 +253,20 @@ export async function logRequest(request: ApprovalRequest, what: keyof typeof LO
       text: PAYROLL_LOG[what],
       vars: { period: request.subjectNumber },
     });
+    return;
+  }
+  if (isLetterApproval(request)) {
+    // About the employee: private, as the letter is.
+    const employeeId = (request.after as { employeeId?: unknown } | null | undefined)?.employeeId;
+    const about = typeof employeeId === 'string' && employeeId ? employeeId : null;
+    await logActivity(
+      request.companyId,
+      'employee',
+      about ?? request.subjectId,
+      `approval:${what}`,
+      { text: LETTER_LOG[what] },
+      { employeeId: about },
+    );
     return;
   }
   if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
@@ -441,6 +465,11 @@ export async function decideApproval(
   if (decision === 'approved' && isPayrollApproval(request)) {
     await assertPayrollDecision(request, link);
   }
+  if (decision === 'approved' && isLetterApproval(request)) {
+    // Imported here: letters.ts uses this module for its requests.
+    const { assertLetterRequest } = await import('./letters');
+    await assertLetterRequest(request);
+  }
   const now = nowStamp();
   await db.transaction('rw', REQUEST_TABLES(), async () => {
     await db.approvals.put({
@@ -566,6 +595,16 @@ export async function applyApproval(id: ID): Promise<void> {
   // A pay run's approval (#10) is carried out by whoever approves (posts) the
   // pay run, which marks the request done: nothing to do on this device.
   if (isPayrollApproval(request)) return;
+  if (isLetterApproval(request)) {
+    // Issued on this (the approver's) device, as it was sent (#19).
+    const { applyLetterRequest } = await import('./letters');
+    await applyLetterRequest(request);
+    const done = await db.approvals.get(id);
+    if (done?.status === 'approved') {
+      await db.approvals.put({ ...done, status: 'applied', updatedAt: nowStamp() });
+    }
+    return;
+  }
   if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
     // Imported here: the cheque functions use this module for their own checks.
     const { applyChequeRequest } = await import('./cheque-approvals');

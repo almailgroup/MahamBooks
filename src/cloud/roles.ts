@@ -1045,3 +1045,98 @@ export function guardApprovalWrite(
   if (was === 'approved' && status === 'applied') return { data: { ...data, ...kept } };
   return { data: { ...data, decidedBy: who.userId, decidedAt: who.now } };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Employee letters (#19, 20261130000000_people_alerts.sql)                   */
+/* -------------------------------------------------------------------------- */
+
+/** Whether the company's letters are on (PeopleSettings.letters), as almailbooks.letters_on. */
+export function lettersSwitchedOn(settings: AnyRecord): boolean {
+  return asRow(settings)?.letters === true;
+}
+
+/**
+ * Issues letters, and changes or voids issued ones: the owner, an admin or
+ * an approver (an accountant the owner allowed to approve), as
+ * almailbooks.issues_letters; everyone in a company kept on this device
+ * (`role` null). Accountants draft them and ask for approval.
+ */
+export function issuesLetters(
+  role: MemberRole | null | undefined,
+  canApprove: boolean | undefined,
+): boolean {
+  return role == null || role === 'owner' || role === 'admin' || isApprover(role, canApprove);
+}
+
+/** Turns the company's letters on or off: the owner or an admin (anyone on this device only). */
+export function switchesLetters(role: MemberRole | null | undefined): boolean {
+  return role == null || role === 'owner' || role === 'admin';
+}
+
+/** A request to issue a letter (kind letter, about an employee letter). */
+export function isLetterApproval(request: AnyRecord): boolean {
+  return asRow(request)?.kind === 'letter' && asRow(request)?.subjectTbl === 'employeeLetters';
+}
+
+/**
+ * What a letter says and is, as almailbooks.letter_content: all of it but
+ * when it was last printed and saved (marking it printed changes nothing
+ * of what it is).
+ */
+export function letterContent(letter: AnyRecord): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...(asRow(letter) ?? {}) };
+  delete copy.printedAt;
+  delete copy.updatedAt;
+  return stripNulls(copy) as Record<string, unknown>;
+}
+
+/**
+ * Why the cloud refuses to store `after` over `before` (undefined: new)
+ * with the company's letters on, as records_guard, or null: a letter issued
+ * or void never goes back to a draft ('issued'), and only someone who
+ * issues letters (issuesLetters) issues one, or changes or voids one that
+ * is issued ('issuer'). Drafts are anyone's who may write them; so is
+ * marking an issued letter printed.
+ */
+export function letterWriteRefusal(
+  before: AnyRecord,
+  after: AnyRecord,
+  issuer: boolean,
+): 'issued' | 'issuer' | null {
+  const old = asRow(before);
+  const next = asRow(after);
+  if (!next) return null;
+  const was = old ? (asText(old.status) ?? 'draft') : null;
+  const status = asText(next.status) ?? 'draft';
+  if ((was === 'issued' || was === 'void') && status === 'draft') return 'issued';
+  if (issuer) return null;
+  if (status === 'draft' && (was === null || was === 'draft')) return null;
+  if (old && sameData(letterContent(old), letterContent(next))) return null;
+  return 'issuer';
+}
+
+/**
+ * Whether a letter is kept from being deleted with the company's letters
+ * on, as can_delete_record: once issued (or void) it stays, so its number
+ * stays used. Drafts may go.
+ */
+export function letterKept(letter: AnyRecord): boolean {
+  return (asText(asRow(letter)?.status) ?? 'draft') !== 'draft';
+}
+
+/**
+ * What the cloud stores when anyone but the owner or an admin writes the
+ * People settings, as records_guard: the letters switch as it was stored
+ * (or left out, as it was). A copy that hasn't heard of the switch yet
+ * never turns it off.
+ */
+export function keepLettersSwitch(
+  role: MemberRole | null | undefined,
+  before: AnyRecord,
+  after: Record<string, unknown>,
+): Record<string, unknown> {
+  if (role === 'owner' || role === 'admin') return after;
+  const data = { ...after };
+  keptKey(data, asRow(before) ?? {}, 'letters');
+  return data;
+}

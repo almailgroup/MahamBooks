@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from './db';
 import { logActivity } from './activity';
 import { defaultNumbering, nowStamp } from './defaults';
@@ -109,7 +110,9 @@ export async function saveEmployee(
   input: Employee,
   options: { log?: boolean; expectedUpdatedAt?: string } = {},
 ): Promise<Employee> {
-  return db.transaction(
+  // The employee as it was, for the drafts their templates ask for (#19).
+  let before: Employee | undefined;
+  const saved = await db.transaction(
     'rw',
     [db.employees, db.companies, db.activities, db.finalSettlements],
     async () => {
@@ -119,6 +122,7 @@ export async function saveEmployee(
       if (!name) throw new EmployeeError(t('Enter the employee’s name.'));
       const places = currencyPrecision(company.currency);
       const existing = await db.employees.get(input.id);
+      before = existing;
       if (
         existing &&
         options.expectedUpdatedAt !== undefined &&
@@ -252,6 +256,14 @@ export async function saveEmployee(
       return employee;
     },
   );
+  // Letter drafts for joining, leaving or a salary change, once saved: never
+  // for an import (no log), never inside another transaction, and never
+  // stopping the save (see autoDrafts).
+  if (options.log !== false && !Dexie.currentTransaction) {
+    const { autoDrafts } = await import('./letters');
+    await autoDrafts(before, saved);
+  }
+  return saved;
 }
 
 /** An opening leave balance as entered: a date and days (0 or more, to 2 decimals). */
@@ -356,6 +368,20 @@ export interface EmployeeDeletion {
   files: number;
   /** Payroll history: the employee can't be deleted, only marked as left. */
   payroll: boolean;
+  /**
+   * Letters issued to them (#19), which keep their numbers: the employee
+   * can't be deleted either, only marked as left. Drafts go with them.
+   */
+  letters: number;
+}
+
+/** The employee's letters that are issued or void: they stay, so their numbers stay used. */
+async function keptLetters(id: ID): Promise<number> {
+  return db.employeeLetters
+    .where('employeeId')
+    .equals(id)
+    .filter((letter) => letter.status !== 'draft')
+    .count();
 }
 
 async function personnelFile(id: ID) {
@@ -369,15 +395,17 @@ async function personnelFile(id: ID) {
 }
 
 export async function employeeDeletion(employee: Employee): Promise<EmployeeDeletion> {
-  const [file, payroll] = await Promise.all([
+  const [file, payroll, letters] = await Promise.all([
     personnelFile(employee.id),
     employeeHasPayrollHistory(employee),
+    keptLetters(employee.id),
   ]);
   return {
     documents: file.documents.length,
     renewals: file.renewals.length,
     files: file.files.length,
     payroll,
+    letters,
   };
 }
 
@@ -405,6 +433,7 @@ export async function deleteEmployee(id: ID): Promise<void> {
       db.staffLoans,
       db.leaveRecords,
       db.finalSettlements,
+      db.employeeLetters,
     ],
     async () => {
       const employee = await db.employees.get(id);
@@ -413,6 +442,13 @@ export async function deleteEmployee(id: ID): Promise<void> {
         throw new EmployeeError(
           t(
             'This employee has payroll records, which are part of the accounts. Mark them as left instead.',
+          ),
+        );
+      }
+      if ((await keptLetters(id)) > 0) {
+        throw new EmployeeError(
+          t(
+            'This employee has letters issued to them, which keep their numbers. Mark them as left instead.',
           ),
         );
       }
@@ -465,6 +501,8 @@ export async function deleteEmployee(id: ID): Promise<void> {
         .delete();
       await db.renewals.bulkDelete(renewals.map((r) => r.id));
       await db.complianceDocuments.bulkDelete(documents.map((d) => d.id));
+      // Their draft letters (#19): none is issued.
+      await db.employeeLetters.where('employeeId').equals(id).delete();
       await db.employees.delete(id);
       await logActivity(employee.companyId, 'employee', id, 'deleted', {
         text: msg('Employee {number} deleted'),
@@ -598,6 +636,8 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
   delete out.newCopyGraceDays;
   delete out.newCopySince;
   delete out.expiryUpdates;
+  // Employee letters (#19): kept only while on, so missing is off, as before.
+  delete out.letters;
   if (input.reminderDaysByType !== undefined) {
     const byType = normalizeReminderDaysByType(input.reminderDaysByType);
     if (Object.keys(byType).length) out.reminderDaysByType = byType;
@@ -610,19 +650,22 @@ export function normalizePeopleSettings(input: PeopleSettings): PeopleSettings {
     if (isISODate(input.newCopySince)) out.newCopySince = input.newCopySince;
   }
   if (input.expiryUpdates === true) out.expiryUpdates = true;
+  if (input.letters === true) out.letters = true;
   return out;
 }
 
 /**
  * Saves the reminders, deadlines and end-of-service settings. The search
- * across companies and the departments keep what is saved: they are changed
- * by their own functions, so a form opened before a change doesn't put the
- * old value back.
+ * across companies, the departments and the letters switch keep what is
+ * saved: they are changed by their own functions, so a form opened before a
+ * change doesn't put the old value back.
  */
 export async function savePeopleSettings(input: PeopleSettings): Promise<PeopleSettings> {
   return db.transaction('rw', [db.peopleSettings, db.activities], async () => {
     const stored = await db.peopleSettings.get(input.companyId);
     const next: PeopleSettings = { ...input };
+    delete next.letters;
+    if (stored?.letters !== undefined) next.letters = stored.letters;
     if (stored) {
       delete next.groupSearch;
       delete next.departments;

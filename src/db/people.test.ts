@@ -146,6 +146,8 @@ describe('employees', () => {
       renewals: 1,
       files: 3,
       payroll: false,
+      // No letters issued to them (#19): nothing keeps them.
+      letters: 0,
     });
     await deleteEmployee(a.id);
 

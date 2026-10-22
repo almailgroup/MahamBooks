@@ -11,8 +11,9 @@ import { useApprovalView, useCaughtUp, useMemberNames } from './hooks';
 import { ApprovalRequestCard } from './request-card';
 import { ChequeRequestCard } from './cheque-request-card';
 import { isChequeRequest } from '@/db/cheque-rules';
-import { isPayrollApproval } from '@/cloud/roles';
+import { isLetterApproval, isPayrollApproval } from '@/cloud/roles';
 import { PayrollRequestCard } from '@/features/payroll/approval-panel';
+import { LetterRequestCard } from '@/features/people/letter-dialog';
 
 type Tab = 'waiting' | 'decided' | 'mine';
 
@@ -118,6 +119,8 @@ export function ApprovalsInbox() {
                   link={view.link}
                   showSubject
                 />
+              ) : isLetterApproval(request) ? (
+                <LetterRequestCard request={request} names={names} showSubject />
               ) : isChequeRequest(request) ? (
                 <ChequeRequestCard
                   request={request}

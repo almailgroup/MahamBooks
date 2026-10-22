@@ -153,6 +153,12 @@ const SUITE_PATHS = [
   '/cheques/test-print',
   // The company's leave reasons (#15).
   '/payroll/leave-reasons',
+  // Employee letters (#19).
+  '/people/letters',
+  '/people/letters/templates',
+  '/people/letters/templates/:id',
+  '/people/letters/:id/print',
+  '/people/letters/print',
 ];
 
 /** Real addresses, as bookmarks and emails have them. */
@@ -186,6 +192,11 @@ const SAMPLE_URLS = [
   '/people',
   '/people/directory',
   '/people/all',
+  '/people/letters',
+  '/people/letters/templates',
+  '/people/letters/templates/default%3Aco%3Asalary_certificate',
+  '/people/letters/l1/print',
+  '/people/letters/print?ids=l1,l2',
   '/crm',
   '/crm/prospects',
   '/invite/abc',

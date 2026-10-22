@@ -8,6 +8,7 @@ import {
   FileMinus,
   FileText,
   IdCard,
+  MailPlus,
   NotebookPen,
   Package,
   PackageCheck,
@@ -170,6 +171,15 @@ export const CREATE_ACTIONS = {
     command: msg('New employee'),
     to: '/employees/new',
     icon: IdCard,
+  },
+  // Employee letters (#19): the Letters page says when they are off.
+  letter: {
+    id: 'letter',
+    label: msg('Employee letter'),
+    command: msg('New employee letter'),
+    to: '/people/letters?new=1',
+    icon: MailPlus,
+    keywords: 'salary certificate experience employment warning noc',
   },
   journal: {
     id: 'journal',

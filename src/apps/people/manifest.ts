@@ -7,6 +7,7 @@ import {
   House,
   IdCard,
   LayoutDashboard,
+  Mails,
   PiggyBank,
   Settings,
   SlidersHorizontal,
@@ -20,7 +21,7 @@ import type { SuiteApp } from '@/suite/types';
 
 /**
  * Maham People: HR. Employees and their papers, payroll and PIFSS, leave,
- * staff loans and end-of-service settlements, and a directory. Payroll and
+ * staff loans and end-of-service settlements, letters, and a directory. Payroll and
  * people data are private: only owners, admins and accountants open the app,
  * and the server never sends that data to anyone else.
  */
@@ -81,6 +82,13 @@ export const PEOPLE: SuiteApp = {
     },
     {
       kind: 'link',
+      to: '/people/letters',
+      label: msg('Letters'),
+      icon: Mails,
+      keywords: 'salary certificate experience employment warning noc letter templates',
+    },
+    {
+      kind: 'link',
       to: '/payroll/settings',
       label: msg('Payroll settings'),
       icon: SlidersHorizontal,
@@ -95,7 +103,7 @@ export const PEOPLE: SuiteApp = {
     },
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],
-  create: [{ label: msg('People'), actions: [A.employee] }],
+  create: [{ label: msg('People'), actions: [A.employee, A.letter] }],
   tools: [
     { to: '/people/directory', label: msg('Directory'), icon: Contact, keywords: 'phone email' },
     { to: '/employees', label: msg('Employees'), icon: IdCard, keywords: 'staff' },

@@ -25,6 +25,10 @@ const Payslips = lazy(() => import('./pages/payroll/payslips'));
 const PayrollSummary = lazy(() => import('./pages/payroll/summary'));
 const Settlement = lazy(() => import('./pages/payroll/settlement'));
 const SettlementPrint = lazy(() => import('./pages/payroll/settlement-print'));
+const Letters = lazy(() => import('./pages/letters/index'));
+const LetterTemplates = lazy(() => import('./pages/letters/templates'));
+const LetterTemplate = lazy(() => import('./pages/letters/template-editor'));
+const LetterPrint = lazy(() => import('./pages/letters/print'));
 
 function People({ children }: { children: ReactNode }) {
   return <AppGate app="people">{children}</AppGate>;
@@ -35,7 +39,10 @@ const page = (path: string, element: ReactNode): RouteObject => ({
   element: <People>{element}</People>,
 });
 
-/** Payslips, the register by department and the settlement, printed without the navigation. */
+/**
+ * Payslips, the register by department, the settlement and employee
+ * letters (#19), printed without the navigation.
+ */
 export const peoplePrintRoutes: RouteObject[] = [
   {
     path: 'payroll/runs/:id/payslips',
@@ -67,6 +74,26 @@ export const peoplePrintRoutes: RouteObject[] = [
       </Bare>
     ),
   },
+  {
+    path: 'people/letters/:id/print',
+    element: (
+      <Bare>
+        <People>
+          <LetterPrint />
+        </People>
+      </Bare>
+    ),
+  },
+  {
+    path: 'people/letters/print',
+    element: (
+      <Bare>
+        <People>
+          <LetterPrint />
+        </People>
+      </Bare>
+    ),
+  },
 ];
 
 /** Pages inside the shell. */
@@ -93,4 +120,8 @@ export const peopleRoutes: RouteObject[] = [
   page('payroll/leave-reasons', <LeaveReasons />),
   page('payroll/loans', <PayrollLoans />),
   page('payroll/settings', <PayrollSettings />),
+  // Employee letters (#19).
+  page('people/letters', <Letters />),
+  page('people/letters/templates', <LetterTemplates />),
+  page('people/letters/templates/:id', <LetterTemplate />),
 ];

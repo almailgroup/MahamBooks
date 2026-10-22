@@ -41,6 +41,9 @@ import { EmployeePhotoEditor } from '@/features/people/employee-photo';
 import { MarkLeftDialog } from '@/features/people/mark-left-dialog';
 import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { EndOfServiceTab, LeaveTab, LoansTab } from '@/features/payroll/employee-tabs';
+import { LettersTab } from '@/features/people/letters-tab';
+import { LETTER_KINDS } from '@/lib/hr/letters';
+import type { LetterKind } from '@/db/types';
 import { cn } from '@/lib/cn';
 import { ButtonLink, Button } from '@/components/ui/button';
 import { Badge, Card, CardBody, CardHeader, Spinner } from '@/components/ui/misc';
@@ -55,12 +58,14 @@ import { useLanguage } from '@/i18n/provider';
 import { localName } from '@/i18n/names';
 import { msg, t, tp } from '@/i18n';
 
-type Tab = 'overview' | 'leave' | 'loans' | 'eos';
+type Tab = 'overview' | 'leave' | 'loans' | 'eos' | 'letters';
 const TABS: { value: Tab; label: string }[] = [
   { value: 'overview', label: msg('Overview') },
   { value: 'leave', label: msg('Leave') },
   { value: 'loans', label: msg('Loans') },
   { value: 'eos', label: msg('End of service') },
+  // Employee letters (#19).
+  { value: 'letters', label: msg('Letters') },
 ];
 
 function Row({
@@ -125,6 +130,17 @@ export default function EmployeeDetailPage() {
   );
   const renewals = useLiveQuery(() => db.renewals.where('employeeId').equals(id).toArray(), [id]);
   const files = useLiveQuery(() => db.attachments.where('ownerId').equals(id).toArray(), [id]);
+  // Their letters' numbers, for the signed copies in the personnel file (#19).
+  const letterNumbers = useLiveQuery(
+    async () =>
+      new Map(
+        (await db.employeeLetters.where('employeeId').equals(id).toArray()).map((l) => [
+          l.id,
+          l.number,
+        ]),
+      ),
+    [id],
+  );
   const vehicles = useVehicles();
   const employees = useEmployees();
   const settings = usePeopleSettings();
@@ -133,6 +149,9 @@ export default function EmployeeDetailPage() {
   // A file of the personnel file being marked as the copy of a paper (#18).
   const [tagging, setTagging] = useState<string | null>(null);
   const tab = TABS.find((x) => x.value === params.get('tab'))?.value ?? 'overview';
+  // A new letter of this kind, from the settlement (#19).
+  const startLetter = LETTER_KINDS.find((k) => k === params.get('letter')) as
+    LetterKind | undefined;
 
   if (employee === undefined || !records || !renewals || !files || !employees || !settings) {
     return <Spinner className="py-24" label={t('Loading…')} />;
@@ -160,16 +179,23 @@ export default function EmployeeDetailPage() {
     const name = localName(employee);
     try {
       const plan = await employeeDeletion(employee);
-      if (plan.payroll) {
+      if (plan.payroll || plan.letters > 0) {
         // Payroll is part of the accounts: the employee stays, marked as left.
         if (employee.status === 'left') {
           toast.info(
-            t(
-              '{name} has payroll records, which are part of the accounts, so they stay marked as left.',
-              {
-                name,
-              },
-            ),
+            plan.payroll
+              ? t(
+                  '{name} has payroll records, which are part of the accounts, so they stay marked as left.',
+                  {
+                    name,
+                  },
+                )
+              : t(
+                  '{name} has letters issued to them, which keep their numbers, so they stay marked as left.',
+                  {
+                    name,
+                  },
+                ),
           );
           return;
         }
@@ -323,6 +349,15 @@ export default function EmployeeDetailPage() {
       {tab === 'eos' ? (
         <EndOfServiceTab employee={employee} divisor={settings.eosDailyDivisor} />
       ) : null}
+      {tab === 'letters' ? (
+        <LettersTab
+          employee={employee}
+          start={startLetter}
+          onStarted={() =>
+            startLetter ? setParams({ tab: 'letters' }, { replace: true }) : undefined
+          }
+        />
+      ) : null}
       {tab !== 'overview' ? null : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
@@ -348,6 +383,12 @@ export default function EmployeeDetailPage() {
                   files={files.filter((file) => file.id !== employee.photoId)}
                   describe={(file) => {
                     const stored = files.find((f) => f.id === file.id);
+                    const letter = stored?.docKey?.startsWith('letter:')
+                      ? letterNumbers?.get(stored.docKey.slice('letter:'.length))
+                      : undefined;
+                    if (letter !== undefined) {
+                      return t('Signed copy of letter {number}', { number: letter || '—' });
+                    }
                     return stored ? copyTagLabel(stored, papers, fmt.date) : '';
                   }}
                   onTag={(file) => setTagging(file.id)}

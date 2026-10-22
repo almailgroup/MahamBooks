@@ -45,6 +45,8 @@ export function defaultNumbering(): Record<NumberedEntity, NumberingRule> {
     delivery_note: rule('DN-{year}-{counter}'),
     // Item codes: used only when Company.items.autoSku is on.
     product: rule('SKU-{counter}', 5),
+    // Employee letters (#19), numbered when issued: HR-2026-0001, from 1 again each year.
+    letter: { ...rule('HR-{year}-{counter}'), reset: 'yearly' },
   };
 }
 

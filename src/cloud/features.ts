@@ -45,7 +45,14 @@ export type ServerFeature =
    * person chooses the kinds of paper they are told about (Settings → Email
    * alerts); the expiry reminders can show in Updates (#18).
    */
-  | 'document_alerts';
+  | 'document_alerts'
+  /**
+   * The same file: employee letters (#19). With the company's letters on,
+   * the cloud lets only the owner, an admin or an approver issue, change or
+   * void a letter, never takes an issued one back to a draft nor deletes it,
+   * and keeps the letters switch for the owner and admins.
+   */
+  | 'employee_letters';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

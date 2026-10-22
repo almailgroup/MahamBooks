@@ -35,7 +35,11 @@ import {
   isPayrollApproval,
   isPrivateRecord,
   issuesWithoutNumber,
+  keepLettersSwitch,
   keepPaymentLink,
+  letterKept,
+  letterWriteRefusal,
+  lettersSwitchedOn,
   limitBlocksWrite,
   MAX_APPROVERS,
   payrollDecisionRefusal,
@@ -1030,6 +1034,15 @@ export class FakeCloud {
     old: Record<string, unknown> | undefined,
     data: Record<string, unknown>,
   ): Record<string, unknown> {
+    // Employee letters (#19), once the server has 20261130000000_people_alerts.sql.
+    if (this.features.includes('employee_letters')) {
+      if (tbl === 'peopleSettings') return keepLettersSwitch(role, old, data);
+      if (tbl === 'employeeLetters' && this.lettersOn(company)) {
+        const refusal = letterWriteRefusal(old, data, this.issuesLetters(company, user, role));
+        if (refusal === 'issued') throw fail('invalid');
+        if (refusal === 'issuer') throw fail('permission');
+      }
+    }
     if (tbl === 'companies' && this.features.includes('super_admin')) {
       // The books' settings, for a member the owner made Maham Books view only for.
       const books = appLimit(role, this.permissionsOf(company, user), 'books');
@@ -1099,6 +1112,16 @@ export class FakeCloud {
     return rules && old && !approver ? keepPaymentLink(rules, old, data) : data;
   }
 
+  /** Whether the company's letters are on (almailbooks.letters_on). */
+  private lettersOn(company: string): boolean {
+    return lettersSwitchedOn(this.record(company, 'peopleSettings', company));
+  }
+
+  /** The owner, an admin or an approver (almailbooks.issues_letters). */
+  private issuesLetters(company: string, user: string, role: MemberRole): boolean {
+    return role === 'owner' || role === 'admin' || this.approver(company, user);
+  }
+
   private applyChange(
     company: string,
     user: string,
@@ -1131,7 +1154,12 @@ export class FakeCloud {
             change.tbl,
             visibleOld.data,
             undefined,
-          ))
+          )) ||
+        // An issued letter stays, so its number stays used (#19).
+        (this.features.includes('employee_letters') &&
+          change.tbl === 'employeeLetters' &&
+          this.lettersOn(company) &&
+          letterKept(visibleOld.data))
       ) {
         throw fail('permission');
       }

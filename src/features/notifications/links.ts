@@ -65,6 +65,10 @@ export function changeLink(event: ChangeEvent): string | null {
       return '/payroll/leave';
     case 'staffLoans':
       return '/payroll/loans';
+    case 'employeeLetters':
+      return '/people/letters';
+    case 'letterTemplates':
+      return '/people/letters/templates';
     case 'complianceDocuments':
     case 'renewals':
     case 'complianceMarks':

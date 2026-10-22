@@ -1,6 +1,7 @@
 -- =============================================================================
--- Maham One cloud: People alerts (salary approval by the Super Admin, and
--- expiry alerts with lead times and re-upload reminders)
+-- Maham One cloud: People alerts (salary approval by the Super Admin,
+-- expiry alerts with lead times and re-upload reminders, and employee
+-- letters)
 -- =============================================================================
 --
 -- The owner runs this once in the Supabase SQL editor (paste the whole file
@@ -13,8 +14,8 @@
 -- after this file, run this file again after it.
 --
 -- Until it runs, the app keeps working as before: it asks the server what it
--- has (server_features) and keeps Settings → Approvals → Pay runs, and the
--- kinds of paper of Settings → Email alerts, hidden.
+-- has (server_features) and keeps Settings → Approvals → Pay runs, the
+-- kinds of paper of Settings → Email alerts, and employee letters, hidden.
 -- Once it has run, nothing changes either until the owner (the Super Admin)
 -- turns on "Pay runs need the Super Admin's approval" there: until then a
 -- pay run is approved (posted) as before, and nothing here looks at it.
@@ -62,8 +63,20 @@
 --     the approvers; the 5-minute emails of the changes leave them out. The
 --     hourly schedule of the email alerts asks the function for them too.
 --     Reminders about employees' papers are private, without names.
---   * public.server_features() also answers 'payroll_approvals' and
---     'document_alerts'.
+--   * Employee letters (#19): with the company's letters on (People →
+--     Letters → Use employee letters, "letters": true on its People
+--     settings record; off, nothing here looks at a letter), records_guard
+--     lets only the owner, an admin or an approver issue a letter, or change
+--     or void one that is issued (an accountant drafts it and asks through
+--     an approval request of kind "letter"; marking it printed is anyone's),
+--     never takes a letter that is issued or void back to a draft, and
+--     can_delete_record never deletes one, so its number stays used. Only
+--     the owner or an admin turns letters on or off: anyone else's copy of
+--     the People settings keeps the switch as it is stored. Every other rule
+--     of records_guard and can_delete_record stays as it was. Letters are
+--     never emailed.
+--   * public.server_features() also answers 'payroll_approvals',
+--     'document_alerts' and 'employee_letters'.
 -- =============================================================================
 
 do $$
@@ -119,11 +132,55 @@ as $$
   select coalesce(almailbooks.approval_rules(p_company) ->> 'payroll' = 'true', false)
 $$;
 
+-- Whether the company's employee letters are on (#19): its People settings
+-- record says "letters": true. Missing, as every company has it before, is off.
+create or replace function almailbooks.letters_on(p_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select r.data ->> 'letters' = 'true'
+      from public.records r
+      where r.company_id = p_company and r.tbl = 'peopleSettings' and r.id = p_company
+    ),
+    false
+  )
+$$;
+
+-- The caller issues letters, and changes or voids issued ones: the owner, an
+-- admin, or an accountant the owner allowed to approve. Kept the same as
+-- issuesLetters in src/cloud/roles.ts.
+create or replace function almailbooks.issues_letters(p_company text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(almailbooks.member_role(p_company)::text, '') in ('owner', 'admin')
+    or almailbooks.is_approver(p_company)
+$$;
+
+-- What a letter says and is: all of it but when it was last printed and
+-- saved. Kept the same as letterContent in src/cloud/roles.ts.
+create or replace function almailbooks.letter_content(p jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_strip_nulls(coalesce(p, '{}'::jsonb) - 'printedAt' - 'updatedAt')
+$$;
+
 -- What the server checks before a record is stored, after
 -- records_before_write (triggers of the same kind run in the order of their
 -- names). Only the company record, documents, approval requests, cheque
--- payments and security cheques given are looked at; every other record
--- passes at once. Approval requests are kept honest whether or not the
+-- payments, security cheques given, the People settings and employee
+-- letters are looked at; every other record passes at once. Approval requests are kept honest whether or not the
 -- company's rules are on (nothing wrote them before this file). With "Number
 -- invoices and credit notes when they are issued" on, neither is issued
 -- without its number (older versions of the app don't give one when they
@@ -140,6 +197,12 @@ $$;
 -- anyone but the owner waits like a new one. Whoever may post the pay run
 -- marks its approved request done (applied) once it is posted; the owner,
 -- who may post a pay run at once, does so with a waiting one as it is.
+--
+-- And employee letters (#19): only the owner or an admin changes the
+-- letters switch of the People settings (anyone else's copy keeps it); with
+-- the letters on, only the owner, an admin or an approver issues a letter or
+-- changes or voids an issued one, and a letter issued or void never goes back
+-- to a draft. With them off, letters pass as before.
 create or replace function almailbooks.records_guard()
 returns trigger
 language plpgsql
@@ -159,7 +222,10 @@ declare
   v_run text;
 begin
   -- The SQL editor and the server's own jobs are not members.
-  if new.tbl not in ('companies', 'documents', 'approvals', 'payments', 'securityCheques')
+  if new.tbl not in (
+      'companies', 'documents', 'approvals', 'payments', 'securityCheques',
+      'peopleSettings', 'employeeLetters'
+    )
     or auth.uid() is null then
     return new;
   end if;
@@ -181,6 +247,46 @@ begin
     from public.records r
     where r.company_id = new.company_id and r.tbl = new.tbl and r.id = new.id
   ) then
+    return new;
+  end if;
+
+  -- The letters switch (#19) is the owner's and the admins': anyone else's
+  -- copy keeps it as it is stored (a copy that hasn't heard of it yet never
+  -- turns it off).
+  if new.tbl = 'peopleSettings' then
+    if coalesce(almailbooks.member_role(new.company_id)::text, '') not in ('owner', 'admin') then
+      new.data := almailbooks.kept_key(
+        new.data,
+        case when tg_op = 'UPDATE' then old.data end,
+        'letters'
+      );
+    end if;
+    return new;
+  end if;
+
+  -- Employee letters (#19), with the company's letters on: a letter issued
+  -- or void stays so, and only the owner, an admin or an approver issues
+  -- one, or changes or voids one that is issued. Drafts are anyone's who
+  -- may write them, and marking a letter printed changes nothing of it.
+  if new.tbl = 'employeeLetters' then
+    if not almailbooks.letters_on(new.company_id) then
+      return new;
+    end if;
+    v_was := case when tg_op = 'UPDATE' then coalesce(old.data ->> 'status', 'draft') end;
+    v_status := coalesce(new.data ->> 'status', 'draft');
+    if v_was in ('issued', 'void') and v_status = 'draft' then
+      raise exception 'almail:invalid This letter is already issued, so it stays issued.'
+        using errcode = '42501';
+    end if;
+    if (v_status <> 'draft' or coalesce(v_was, 'draft') <> 'draft')
+      and (
+        tg_op = 'INSERT'
+        or almailbooks.letter_content(old.data) is distinct from almailbooks.letter_content(new.data)
+      )
+      and not almailbooks.issues_letters(new.company_id) then
+      raise exception 'almail:permission Only the owner, an admin or an approver issues letters. Ask for approval instead.'
+        using errcode = '42501';
+    end if;
     return new;
   end if;
 
@@ -748,8 +854,61 @@ begin
 end
 $$;
 
+-- Employee letters (#19) ----------------------------------------------------------
+
+-- As in 20261116000000_super_admin_approvals.sql, with every rule it has,
+-- and with the company's letters on, a letter issued or void is never
+-- deleted (it is voided instead, so its number stays used); drafts may go.
+-- The company's own record is never deleted through sync: delete_company
+-- does that. Approval requests stay (they are the record of who asked and
+-- who decided). With the company's rules on, issued documents of the types
+-- the rules cover are deleted by approvers only, and with "Void instead of
+-- delete" by nobody: they are voided, so their numbers stay used (drafts may
+-- still go); only an approver deletes a cheque the rules cover.
+create or replace function almailbooks.can_delete_record(p_company text, p_tbl text, p_data jsonb)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_rules jsonb;
+begin
+  if p_tbl in ('companies', 'approvals')
+    or not almailbooks.can_write_record(p_company, p_tbl, p_data) then
+    return false;
+  end if;
+  if p_tbl = 'employeeLetters' then
+    return coalesce(p_data ->> 'status', 'draft') = 'draft'
+      or not almailbooks.letters_on(p_company);
+  end if;
+  if p_tbl not in ('documents', 'payments', 'securityCheques') then
+    return true;
+  end if;
+  v_rules := almailbooks.approval_rules(p_company);
+  if v_rules is null then
+    return true;
+  end if;
+  if p_tbl in ('payments', 'securityCheques') then
+    return not (
+      almailbooks.cheque_change_needs_approver(v_rules, p_tbl, p_data, null)
+      and not almailbooks.is_approver(p_company)
+    );
+  end if;
+  return not (
+    almailbooks.rules_cover_document(v_rules, p_data ->> 'type')
+    and coalesce(p_data ->> 'status', '') <> 'draft'
+    and (
+      coalesce(v_rules ->> 'voidInsteadOfDelete', '') = 'true'
+      or not almailbooks.is_approver(p_company)
+    )
+  );
+end
+$$;
+
 -- What this server has beyond the first files: as the change feed file
--- says, and payroll_approvals and document_alerts this one.
+-- says, and payroll_approvals, document_alerts and employee_letters this one.
 create or replace function public.server_features()
 returns text[]
 language sql
@@ -758,7 +917,7 @@ set search_path = ''
 as $$
   select array[
     'tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed',
-    'payroll_approvals', 'document_alerts'
+    'payroll_approvals', 'document_alerts', 'employee_letters'
   ]::text[]
 $$;
 
@@ -769,9 +928,15 @@ revoke all on function
   almailbooks.payroll_approval_email(),
   almailbooks.run_change_notifications(),
   almailbooks.email_alerts_member_changed(),
-  almailbooks.run_email_alerts()
+  almailbooks.run_email_alerts(),
+  almailbooks.letters_on(text),
+  almailbooks.issues_letters(text),
+  almailbooks.letter_content(jsonb)
 from public, anon, authenticated;
 revoke all on function almailbooks.records_guard() from public, anon;
+-- The policies of public.records call it as the signed-in person, as before.
+revoke all on function almailbooks.can_delete_record(text, text, jsonb) from public, anon;
+grant execute on function almailbooks.can_delete_record(text, text, jsonb) to authenticated;
 revoke all on function
   public.server_features(),
   public.set_email_alerts(text, boolean, text[], text),

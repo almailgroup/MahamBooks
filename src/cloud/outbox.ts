@@ -23,13 +23,18 @@ import {
   guardApprovalWrite,
   isApprover,
   isPayrollApproval,
+  issuesLetters,
   issuesWithoutNumber,
+  letterKept,
+  letterWriteRefusal,
+  lettersSwitchedOn,
   limitBlocksWrite,
   paymentLinkNeedsApprover,
   payrollDecisionRefusal,
   rulesCoverPayroll,
   sameData,
   staffCompanyChangeOk,
+  switchesLetters,
   type RecordLookup,
 } from './roles';
 import { linkHasFeature } from './features';
@@ -211,6 +216,66 @@ async function payRunsFor(
   return found;
 }
 
+/**
+ * The People settings of these companies, as stored in this transaction:
+ * whether their letters are on decides who may write a letter (#19).
+ */
+async function peopleSettingsFor(
+  down: DBCore,
+  trans: DBCoreTransaction,
+  companyIds: (string | null)[],
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const ids = [...new Set(companyIds.filter((id): id is string => !!id))];
+  const found = new Map<string, Record<string, unknown> | null>();
+  if (ids.length === 0 || !down.schema.tables.some((t) => t.name === 'peopleSettings')) {
+    return found;
+  }
+  const rows = (await down.table('peopleSettings').getMany({ trans, keys: ids })) as (
+    Record<string, unknown> | undefined
+  )[];
+  ids.forEach((id, i) => found.set(id, rows[i] ?? null));
+  return found;
+}
+
+/**
+ * Employee letters (#19), as records_guard and can_delete_record of
+ * 20261130000000_people_alerts.sql once the company's server has them: only
+ * the owner or an admin turns the letters switch on or off (the cloud keeps
+ * it for anyone else's copy); with letters on, a letter issued or void never
+ * goes back to a draft nor is deleted, and only someone who issues letters
+ * issues one, or changes or voids one that is issued.
+ */
+function refuseLetters(
+  link: CloudLink,
+  table: string,
+  change: Change,
+  settings: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!linkHasFeature(link, 'employee_letters')) return null;
+  if (table === 'peopleSettings') {
+    return change.after !== undefined &&
+      !switchesLetters(link.role) &&
+      !sameData(change.before?.letters, change.after.letters)
+      ? t('Only the owner or an admin turns employee letters on or off.')
+      : null;
+  }
+  if (table !== 'employeeLetters' || !lettersSwitchedOn(settings)) return null;
+  if (!change.after) {
+    return change.before && letterKept(change.before)
+      ? t('Issued letters are kept, so their numbers stay used. Void it instead.')
+      : null;
+  }
+  const refusal = letterWriteRefusal(
+    change.before,
+    change.after,
+    issuesLetters(link.role, link.approver),
+  );
+  if (refusal === 'issued') return t('This letter is already issued, so it stays issued.');
+  return refusal === 'issuer'
+    ? t('Only the owner, an admin or an approver issues letters. Ask for approval instead.')
+    : null;
+}
+
 /** The company records of these companies, as stored in this transaction. */
 async function companiesFor(
   down: DBCore,
@@ -331,9 +396,12 @@ function refuse(
   company: Record<string, unknown> | null | undefined,
   lookup: RecordLookup | undefined,
   runs?: Map<string, Record<string, unknown>>,
+  settings?: Record<string, unknown> | null,
 ): string | null {
   return (
-    refuseByRole(link, table, change, lookup) ?? refuseByRules(link, table, change, company, runs)
+    refuseByRole(link, table, change, lookup) ??
+    refuseLetters(link, table, change, settings) ??
+    refuseByRules(link, table, change, company, runs)
   );
 }
 
@@ -417,7 +485,7 @@ async function capture(
   const companyIds = changes.map((c) => c.companyId);
   const linked = linksFor(down, trans, companyIds);
   // All at once: Dexie keeps its transaction across only so many waits.
-  const [links, companies, owners, runs] = await Promise.all([
+  const [links, companies, owners, runs, settings] = await Promise.all([
     linked,
     RULED.has(name) && down.schema.tables.some((t) => t.name === 'companies')
       ? companiesFor(
@@ -439,12 +507,22 @@ async function capture(
       : undefined,
     // The pay runs of requests for their approval (#10).
     name === 'approvals' ? payRunsFor(down, trans, changes) : undefined,
+    // Whether the companies' letters are on (#19).
+    name === 'employeeLetters' ? peopleSettingsFor(down, trans, companyIds) : undefined,
   ]);
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;
     if (!link) continue;
     const lookup = owners && hasLimits(link.role, link.permissions) ? owners : undefined;
-    const reason = refuse(link, name, change, companies?.get(link.companyId), lookup, runs);
+    const reason = refuse(
+      link,
+      name,
+      change,
+      companies?.get(link.companyId),
+      lookup,
+      runs,
+      settings?.get(link.companyId),
+    );
     if (reason) throw new CloudPermissionError(reason, link.companyId);
   }
 
@@ -490,6 +568,7 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
       if (!enabled) return {};
       const withCompanies = down.schema.tables.some((t) => t.name === 'companies');
       const withPayRuns = down.schema.tables.some((t) => t.name === 'payRuns');
+      const withPeopleSettings = down.schema.tables.some((t) => t.name === 'peopleSettings');
       // The records files are kept with, for the owner's limits (see ownersFor).
       const owners = ATTACHMENT_OWNER_TABLES.filter((name) =>
         down.schema.tables.some((t) => t.name === name),
@@ -505,6 +584,10 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
             if (stores.includes('attachments')) wanted.push(...owners);
             // Requests for a pay run's approval are judged with the pay run.
             if (stores.includes('approvals') && withPayRuns) wanted.push('payRuns');
+            // Letters are judged with the company's letters switch (#19).
+            if (stores.includes('employeeLetters') && withPeopleSettings) {
+              wanted.push('peopleSettings');
+            }
             const extra = wanted.filter((s) => !stores.includes(s));
             return down.transaction([...stores, ...extra], mode, options);
           }

@@ -626,6 +626,45 @@ new copy are the company's People settings, kept in its private
   `src/alerts/collect.test.ts`, `src/lib/expiry-reminders.test.ts` and
   `src/db/expiry-reminders.test.ts`.
 
+## Employee letters
+
+`20261130000000_people_alerts.sql` also carries #19 of
+docs/requirements-plan.md. Templates and letters are the private
+`letterTemplates` and `employeeLetters` records of `20261102000000_tables_v16.sql`
+(staff and viewers read and write neither; `staff_can_write` is unchanged).
+The company's switch is `"letters": true` on its `peopleSettings` record;
+absent, as every company has it before, nothing here looks at a letter.
+
+- `almailbooks.letters_on(company)`, `almailbooks.issues_letters(company)`
+  (the owner, an admin, or an approver of `is_approver`) and
+  `almailbooks.letter_content(jsonb)` (a letter without `printedAt` and
+  `updatedAt`, nulls stripped): helpers, run by nobody but the functions
+  below.
+- `records_guard` (replaced with every rule it had) also looks at
+  `peopleSettings` and `employeeLetters`. `peopleSettings`: only the owner or
+  an admin changes `letters`; anyone else's copy keeps it as stored (a copy
+  that has never heard of it never turns it off), and nothing is refused.
+  `employeeLetters`, with letters on: a letter issued or void never goes back
+  to a draft (42501, `almail:invalid`); only someone who issues letters
+  inserts one that isn't a draft, or changes what an issued or void letter
+  says or is (42501, `almail:permission`). Drafts are anyone's who may write
+  them, and marking a letter printed changes nothing it says. Accountants ask
+  through an approval request of kind `letter` (private, as its letter); the
+  approver's device issues it.
+- `can_delete_record` (replaced with every rule it had) never deletes a
+  letter that is issued or void while letters are on: it is voided instead,
+  so its number stays used. Drafts may go.
+- Numbers come from `reserve_number(company, 'letter', date, min)` with the
+  `letter` rule the first issue saves on the company record
+  (`HR-{year}-{counter}`, yearly). Letters are never emailed.
+- `server_features()` answers every earlier name and `employee_letters`.
+- Tests: `src/cloud/employee-letters-sql.test.ts` (off exactly as before the
+  file, owner, admin, deputy, accountant, staff and viewer, upserts, deletes,
+  an older copy of the settings, the request of kind `letter`, the file run
+  twice after the Phase 3 files, and the app's fakes against the server),
+  `src/cloud/letter-roles.test.ts`, `src/cloud/letters-sync.test.ts`,
+  `src/db/letters.test.ts` and `src/lib/hr/letters.test.ts`.
+
 ## Email alerts
 
 `20261007000000_email_alerts.sql` and the `email-alerts` Edge Function

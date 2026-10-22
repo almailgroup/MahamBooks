@@ -349,6 +349,62 @@ is asked of the server.
   no kinds, nobody's email cut).
 - **No WhatsApp or SMS** for now: phone push comes with the Maham App (D10).
 
+## Employee letters
+
+- **Off until switched on.** People → _Letters_ (الخطابات): the owner or an
+  admin turns on _Use employee letters_ (استخدام خطابات الموظفين,
+  `PeopleSettings.letters`). In a company kept in the cloud the page offers
+  it only once the server has `20261130000000_people_alerts.sql`
+  (`employee_letters` in `server_features`); until then it says the cloud
+  needs the latest database script. Off, nothing else changes: the Letters
+  tab of an employee and the templates say they are off.
+- **Templates** (قوالب الخطابات, `letterTemplates`, private): the five first
+  letters, salary, experience and employment certificates (شهادة راتب، شهادة
+  خبرة، شهادة عمل), a warning letter (خطاب إنذار) and a no objection
+  certificate (شهادة عدم ممانعة), are there with the app's wording
+  (`src/lib/hr/letter-templates.ts`) under the id
+  `default:<companyId>:<kind>`, and stored only once changed. Each is
+  printed in Arabic unless set to English or both. The editor has both
+  languages, field chips (`{employee.name}`, `{salary.total}`,
+  `{salary.totalWords}`, `{service.length}`, `{letter.number}`… in
+  `src/lib/hr/letters.ts`), a preview with an invented employee, _Restore
+  default_, who signs and whether the stamp and signature print. Template
+  text is the company's data, never translated. A lawyer should check the
+  warning letter and the no objection certificate before use.
+- **Private details.** `{employee.civilId}`, `{employee.passportNumber}`,
+  `{employee.iban}` and the account number are filled only when the
+  template allows them (_This letter may show…_, set by the owner, an admin
+  or an approver) and the person issuing it is one of those; otherwise they
+  print masked. The default wording asks for none.
+- **Drafts, issuing, approval.** A letter (`employeeLetters`, private) is a
+  draft until issued: its text keeps the fields and is filled with the
+  employee's record as it is when shown. Owners, admins and members with
+  _Can approve_ click _Issue letter_; accountants click _Send for approval_
+  (an approvals row of kind `letter`, D6), and the approver's _Approve and
+  issue_ issues it on their device as it was sent (a draft changed since
+  can't be approved). Issuing gives the next `HR-{year}-{counter}` number
+  (from 1 again each year; `reserve_number` in the cloud, D12) and freezes
+  the filled text, who signs and whether the stamp and signature print. An
+  issued letter is voided with a reason, never deleted, and keeps its
+  number; a draft deleted uses none. The cloud refuses an issue by anyone
+  else, and taking an issued letter back to a draft (records_guard). An
+  employee with issued letters can only be marked as left.
+- **Automatic drafts.** A template can make a draft when an employee joins,
+  leaves or has their total salary changed (`autoOn`), with an id the same on
+  every device. Never issued, printed or sent without a person; imports make
+  none, and a save makes at most five.
+- **Printing.** _Letters to print_ lists issued letters not printed yet;
+  _Print all_ or _Print selected_ prints them one an A4 page with the
+  letterhead, the number and the date (`people/letters/print?ids=`). The
+  stamp and signature print only on issued letters; drafts carry a مسودة ·
+  DRAFT watermark and void letters say so (D15). Letters are never emailed
+  (D14). The signed copy goes in the employee's personnel file
+  (`Attachment.docKey = letter:<id>`).
+- **Where.** People → Letters, the _Letters_ tab of each employee, _New
+  employee letter_ in the New menu, _Experience certificate_ in a final
+  settlement's ⋯ menu, a Letters card on the People overview and letter
+  requests on the Approvals page. Staff and viewers never see any of it.
+
 ## Contracts, customers and vehicles
 
 - **Off until switched on.** Compliance → Settings has _Contracts, customers

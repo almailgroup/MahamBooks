@@ -717,6 +717,46 @@ export class FakeSupabase {
     const old = row && !row.deleted ? row.data : null;
     const data = change.deleted ? null : (change.data ?? null);
     const companyRow = this.records.get(`${company}/companies/${company}`);
+    // Employee letters (#19, 20261130000000_people_alerts.sql).
+    if (change.tbl === 'peopleSettings') {
+      if (!data || role === 'owner' || role === 'admin') return data;
+      // Anyone else's copy keeps the letters switch as it is stored.
+      const kept: Record<string, unknown> = { ...data };
+      if (old && 'letters' in old && old.letters !== undefined) kept.letters = old.letters;
+      else delete kept.letters;
+      return kept;
+    }
+    if (change.tbl === 'employeeLetters') {
+      const settings = this.records.get(`${company}/peopleSettings/${company}`);
+      if (settings?.deleted || settings?.data?.letters !== true) return data;
+      const issuer = role === 'owner' || role === 'admin' || this.approver(company, user);
+      const was = old ? String(old.status ?? 'draft') : null;
+      if (!data) {
+        return was && was !== 'draft'
+          ? refuse('almail:permission You cannot delete this record.')
+          : null;
+      }
+      const status = String(data.status ?? 'draft');
+      if ((was === 'issued' || was === 'void') && status === 'draft') {
+        return refuse('almail:invalid This letter is already issued, so it stays issued.');
+      }
+      const content = (row: Record<string, unknown>) => {
+        const copy = { ...row };
+        delete copy.printedAt;
+        delete copy.updatedAt;
+        return canonical(copy);
+      };
+      if (
+        !issuer &&
+        (status !== 'draft' || (was !== null && was !== 'draft')) &&
+        (!old || content(old) !== content(data))
+      ) {
+        return refuse(
+          'almail:permission Only the owner, an admin or an approver issues letters. Ask for approval instead.',
+        );
+      }
+      return data;
+    }
     const rules = (companyRow?.data?.approvalRules ?? null) as {
       documentTypes?: string[];
       voidInsteadOfDelete?: boolean;
@@ -919,7 +959,17 @@ export class FakeSupabase {
     );
     if (!on || tbl === 'activities' || (old && data && canonical(old) === canonical(data))) return;
     const row = (data ?? old)!;
-    const people = ['employees', 'payRuns', 'payrollSettings', 'peopleSettings', 'leaveRecords'];
+    const people = [
+      'employees',
+      'payRuns',
+      'payrollSettings',
+      'peopleSettings',
+      'leaveRecords',
+      'staffLoans',
+      'finalSettlements',
+      'letterTemplates',
+      'employeeLetters',
+    ];
     const isPrivate =
       people.includes(tbl) ||
       row._private === true ||
@@ -1097,6 +1147,7 @@ export class FakeSupabase {
           'change_feed',
           'payroll_approvals',
           'document_alerts',
+          'employee_letters',
         ];
       // The change feed (20261123000000_change_feed.sql).
       case 'notification_status': {

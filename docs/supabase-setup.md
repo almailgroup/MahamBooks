@@ -73,7 +73,8 @@ has to be added to the app or to Vercel.
     lets accountants get the morning email alerts and everyone choose the
     kinds of paper they are told about (**Settings → Email alerts**), and
     lets the expiry reminders show under the bell (see "Expiry alerts"
-    below); until someone uses them, everything is as before. If the fifth or
+    below), and adds employee letters (see "Employee letters" below); until
+    someone uses them, everything is as before. If the fifth or
     sixth script, or the email alerts script (step 7), is ever run again, run
     this one again after them.
 
@@ -464,6 +465,34 @@ Someone the owner gave no access to People gets no employees' papers; no
 access to Compliance, no other papers and no deadlines. Nothing needs to be
 set up in Supabase beyond the script: the morning schedule of the email
 alerts does the rest. WhatsApp and SMS are not part of this.
+
+## Employee letters
+
+**People → Letters** (الموظفون ← الخطابات): salary, experience and employment
+certificates, warning letters and no objection certificates, filled from
+each employee's record and printed on A4 with the company's letterhead. They
+are off at first. In a company kept in the cloud the page offers them only
+after the seventh script (step 1.11); until then it says the cloud needs the
+latest database script. The owner or an admin turns on **Use employee
+letters** (استخدام خطابات الموظفين) on that page.
+
+- **Letter templates** (قوالب الخطابات): the five first letters are there
+  with the app's wording, in Arabic and English, printed in Arabic unless a
+  template says otherwise. Ask your lawyer to check the wording of the warning
+  letter and the no objection certificate before they are issued.
+- Accountants make drafts and click **Send for approval** (إرسال للاعتماد); the
+  owner, admins and the members allowed to approve issue them (**Issue
+  letter**, إصدار الخطاب) or approve the request (**Approve and issue**,
+  اعتماد وإصدار), which issues it on their device. With letters on, the cloud
+  refuses an issue by anyone else.
+- A letter gets its number when it is issued: HR-2026-0001, from 1 again each
+  year. Numbers are never used twice: an issued letter is voided, never
+  deleted, and keeps its number.
+- A template can make a draft by itself when an employee joins, leaves or has
+  their salary changed. Drafts are never issued or printed without a person.
+- Letters are printed, never emailed. The stamp and signature of Settings →
+  Company print only on issued letters; drafts print with a watermark.
+- Staff and viewers never see letters, templates or the requests about them.
 
 ## Problems
 

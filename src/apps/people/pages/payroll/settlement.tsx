@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { MoreHorizontal, Printer, Undo2, Wallet } from 'lucide-react';
+import { Mails, MoreHorizontal, Printer, Undo2, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '@/db/db';
 import {
@@ -30,6 +30,7 @@ import { insuredWithPifss, LEAVING_REASON_LABELS } from '@/lib/hr/employees';
 import { currencyPrecision } from '@/lib/money';
 import { today } from '@/lib/dates';
 import { usePeopleSettings } from '@/features/people/hooks';
+import { useLettersView } from '@/features/people/letter-hooks';
 import {
   useAccounts,
   useLeaveRecords,
@@ -125,6 +126,8 @@ function SettlementView({
 }) {
   const fmt = useFormat();
   const confirm = useConfirm();
+  const navigate = useNavigate();
+  const letters = useLettersView();
   const [paying, setPaying] = useState(false);
   const journals = useLiveQuery(
     async () =>
@@ -198,6 +201,16 @@ function SettlementView({
               </Button>
             </DropdownTrigger>
             <DropdownContent>
+              {letters.on && letters.canDraft ? (
+                <DropdownItem
+                  icon={<Mails />}
+                  onSelect={() =>
+                    navigate(`/employees/${employee.id}?tab=letters&letter=experience_certificate`)
+                  }
+                >
+                  {t('Experience certificate')}
+                </DropdownItem>
+              ) : null}
               <DropdownItem icon={<Undo2 />} danger onSelect={() => void undo()}>
                 {settlement.status === 'paid' ? t('Undo payment') : t('Reverse the settlement')}
               </DropdownItem>

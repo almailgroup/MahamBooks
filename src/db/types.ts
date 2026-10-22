@@ -81,7 +81,11 @@ export type DocumentStatus =
 /** How much of a sales order has been delivered (signed delivery notes). */
 export type DeliveryStatus = 'not_delivered' | 'partially_delivered' | 'delivered';
 
-/** `product`: item codes (SKUs), given only when Company.items.autoSku is on. */
+/**
+ * `product`: item codes (SKUs), given only when Company.items.autoSku is on.
+ * `letter`: employee letters (#19), numbered when they are issued; company
+ * records saved before have no rule for it (defaultNumbering's is used).
+ */
 export type NumberedEntity =
   | DocumentType
   | 'payment'
@@ -90,7 +94,8 @@ export type NumberedEntity =
   | 'journal'
   | 'expense'
   | 'employee'
-  | 'product';
+  | 'product'
+  | 'letter';
 
 export type CounterReset = 'never' | 'yearly' | 'monthly';
 
@@ -1893,6 +1898,14 @@ export interface PeopleSettings {
    * the approvers who get the changes of the team (#18). Missing: they don't.
    */
   expiryUpdates?: boolean;
+  /**
+   * Employee letters (#19): People → Letters, the Letters tab of each
+   * employee and the letter templates. Turned on and off by the owner or an
+   * admin; in a company kept in the cloud only once its server has
+   * 20261130000000_people_alerts.sql (employee_letters). Missing: off, as
+   * before.
+   */
+  letters?: boolean;
   updatedAt: Timestamp;
 }
 
@@ -2722,6 +2735,12 @@ export interface LetterTemplate {
   signatoryTitle: string;
   /** Events that make a draft of this letter by themselves. */
   autoOn?: LetterTrigger[];
+  /**
+   * The letter may show the Civil ID, passport number and bank account
+   * ({employee.civilId}…): filled in only for the owner, an admin or an
+   * approver, and only when the text asks for them. Missing: never shown.
+   */
+  privateFields?: boolean;
   archived: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -2749,6 +2768,21 @@ export interface EmployeeLetter {
   /** The event that made the draft; null for a letter made by hand. */
   trigger: LetterTrigger | null;
   voidReason?: string;
+  /**
+   * The English half of a letter in Arabic and English (`language` ar-en):
+   * `subject` and `body` are then the Arabic. Frozen at issue like them.
+   */
+  subjectEn?: string;
+  bodyEn?: string;
+  /** Who signs, and whether the stamp and signature print: the template's, kept at issue. */
+  signatoryName?: string;
+  signatoryTitle?: string;
+  showStamp?: boolean;
+  showSignature?: boolean;
+  /** The day it was voided. */
+  voidedOn?: ISODate;
+  /** When it was last printed (Letters to print lists those issued and never printed). */
+  printedAt?: Timestamp;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

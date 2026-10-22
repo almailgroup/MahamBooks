@@ -7,6 +7,7 @@ import {
   FileWarning,
   HandCoins,
   IdCard,
+  Mails,
   Plane,
   UserPlus,
   UsersRound,
@@ -17,6 +18,7 @@ import { useEmployees, usePeopleSettings } from '@/features/people/hooks';
 import { useLeaveRecords, usePayrollSettings } from '@/features/payroll/hooks';
 import { useRegister } from '@/features/renewals/hooks';
 import { EmployeeAvatar, useEmployeePhotos } from '@/features/people/employee-photo';
+import { useLetters, useLettersView } from '@/features/people/letter-hooks';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader, PageHeader, Spinner } from '@/components/ui/misc';
 import { expiryStatus } from '@/lib/compliance';
@@ -58,6 +60,12 @@ export default function PeopleOverview() {
   const payroll = usePayrollSettings();
   const list = settings?.departments;
   const photos = useEmployeePhotos(employees);
+  const letters = useLettersView();
+  const allLetters = useLetters();
+  // Issued letters not printed yet, once letters are on (#19).
+  const toPrint = letters.on
+    ? (allLetters ?? []).filter((l) => l.status === 'issued' && !l.printedAt).length
+    : 0;
   const now = today();
 
   const data = useMemo(() => {
@@ -235,10 +243,28 @@ export default function PeopleOverview() {
         </Card>
       </div>
 
-      <section aria-label={t('Payroll')} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <section
+        aria-label={t('Payroll')}
+        className={
+          letters.on
+            ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'
+            : 'grid grid-cols-1 gap-3 sm:grid-cols-3'
+        }
+      >
         <Shortcut to="/payroll" icon={Wallet} label={t('Pay runs')} />
         <Shortcut to="/payroll/leave" icon={CalendarDays} label={t('Leave')} />
         <Shortcut to="/payroll/loans" icon={HandCoins} label={t('Staff loans')} />
+        {letters.on ? (
+          <Shortcut
+            to="/people/letters"
+            icon={Mails}
+            label={
+              toPrint > 0
+                ? tp(toPrint, 'Letters: {count} to print', 'Letters: {count} to print')
+                : t('Letters')
+            }
+          />
+        ) : null}
       </section>
     </div>
   );

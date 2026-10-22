@@ -491,6 +491,7 @@ describe('expiry alerts (#18)', () => {
       'change_feed',
       'payroll_approvals',
       'document_alerts',
+      'employee_letters',
     ]);
   });
 

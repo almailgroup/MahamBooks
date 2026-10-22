@@ -408,6 +408,32 @@ describe('the demo company', () => {
     expect(m(last.balance!)).toBe(book + pending);
   });
 
+  it('has employee letters on: two issued in order, one printed, and a draft for the leaver', async () => {
+    const settings = await db.peopleSettings.get(company.id);
+    expect(settings?.letters).toBe(true);
+    const letters = await db.employeeLetters.where('companyId').equals(company.id).toArray();
+    const issued = letters
+      .filter((l) => l.status === 'issued')
+      .sort((a, b) => a.issuedOn!.localeCompare(b.issuedOn!));
+    expect(issued).toHaveLength(2);
+    expect(issued.map((l) => l.number)).toEqual([
+      expect.stringMatching(/^HR-\d{4}-0001$/),
+      expect.stringMatching(/^HR-\d{4}-000[12]$/),
+    ]);
+    expect(issued[0].number.slice(3, 7)).toBe(issued[0].issuedOn!.slice(0, 4));
+    expect(new Set(issued.map((l) => l.number)).size).toBe(2);
+    expect(issued.map((l) => Boolean(l.printedAt))).toEqual([true, false]);
+    // Frozen: filled with the employee's record, no field left.
+    expect(issued.every((l) => !/\{[a-z]+\.[a-zA-Z]+\}/.test(`${l.body}${l.bodyEn ?? ''}`))).toBe(
+      true,
+    );
+    expect(issued[1]).toMatchObject({ language: 'ar-en' });
+    const drafts = letters.filter((l) => l.status === 'draft');
+    expect(drafts).toEqual([
+      expect.objectContaining({ kind: 'experience_certificate', trigger: 'leaving', number: '' }),
+    ]);
+  });
+
   it('dates what it records on the day it happened', async () => {
     const docs = await db.documents.where('companyId').equals(company.id).toArray();
     const sent = docs.filter((d) => d.type === 'invoice' && d.sentAt);
