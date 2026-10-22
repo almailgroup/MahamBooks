@@ -1,0 +1,18 @@
+{
+  "name": "maham-ai-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The Cloudflare Worker that passes Maham One's AI requests to Google's Gemini API, keeping the Gemini key out of the app.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env dev",
+    "deploy": "wrangler deploy --env=",
+    "deploy:dev": "wrangler deploy --env dev",
+    "tail": "wrangler tail --env=",
+    "check": "wrangler deploy --dry-run --outdir dist-check --env=",
+    "test": "cd ../.. && npx vitest run workers/ai-proxy"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}
