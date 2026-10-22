@@ -24,13 +24,21 @@ export interface ChatTurn {
 export interface AssistantState {
   open: boolean;
   turns: ChatTurn[];
-  /** A question to send as soon as the panel is open (from the command palette). */
+  /**
+   * The question in the box, not sent yet: kept while the panel is closed
+   * (and while the app is drawn again in another language).
+   */
+  draft: string;
+  /**
+   * A question the person sent before the panel could ask it (the role not
+   * read yet, or an answer still being written): asked as soon as it can be.
+   */
   pending: string | null;
   /** Bumped to put the cursor in the question box. */
   focus: number;
 }
 
-let state: AssistantState = { open: false, turns: [], pending: null, focus: 0 };
+let state: AssistantState = { open: false, turns: [], draft: '', pending: null, focus: 0 };
 /** Whose conversation it is: the person and the company ("user:company"). */
 let owner: string | null = null;
 let running: AbortController | null = null;
@@ -55,14 +63,37 @@ export function assistantState(): AssistantState {
   return state;
 }
 
-/** Opens the panel; with a question, asks it (the palette's "Ask AI…"). */
+/** Whether the panel is open, for the page beside it (not drawn again with each word). */
+export function useAssistantOpen(): boolean {
+  return useSyncExternalStore(subscribe, () => state.open);
+}
+
+/**
+ * Opens the panel. With a question (the palette's "Ask AI…"), it is put in
+ * the box for the person to read and send: never sent from here, as what is
+ * typed in the search box may be a Civil ID or an IBAN to look up. A
+ * question already in the box stays, the new one on the next line.
+ */
 export function openAssistant(question?: string): void {
   const text = question?.trim();
-  set({ open: true, pending: text ? text : state.pending, focus: state.focus + 1 });
+  const kept = state.draft.trimEnd();
+  const draft = !text || kept === text ? state.draft : kept ? `${kept}\n${text}` : text;
+  set({ open: true, draft, focus: state.focus + 1 });
 }
 
 export function closeAssistant(): void {
   set({ open: false, pending: null });
+}
+
+/** The question being typed. */
+export function setDraft(draft: string): void {
+  if (draft !== state.draft) set({ draft });
+}
+
+/** Sends a question as soon as the panel can ask it (see `pending`). */
+export function queueQuestion(text: string): void {
+  const question = text.trim();
+  if (question) set({ open: true, pending: question });
 }
 
 export function toggleAssistant(): void {
@@ -86,7 +117,7 @@ export function stopAnswer(): void {
 export function newChat(): void {
   stopAnswer();
   running = null;
-  set({ turns: [], pending: null, focus: state.focus + 1 });
+  set({ turns: [], draft: '', pending: null, focus: state.focus + 1 });
 }
 
 /**
@@ -100,7 +131,7 @@ export function claimConversation(key: string): void {
   if (first && state.turns.length === 0) return;
   stopAnswer();
   running = null;
-  set({ turns: [], pending: null, open: false });
+  set({ turns: [], draft: '', pending: null, open: false });
 }
 
 export function isAnswering(current: AssistantState = state): boolean {
@@ -111,12 +142,19 @@ function updateTurn(id: string, patch: Partial<ChatTurn>) {
   set({ turns: state.turns.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)) });
 }
 
-/** The conversation before an answer, as sent: answers that failed are left out. */
-function historyBefore(id: string): ChatMessage[] {
-  const at = state.turns.findIndex((turn) => turn.id === id);
-  return state.turns
-    .slice(0, at === -1 ? state.turns.length : at)
-    .filter((turn) => turn.status !== 'error')
+/**
+ * The conversation before an answer, as sent. An answer that failed is
+ * left out with the question it was for, so the model isn't asked that one
+ * again with the next (the answer being asked again keeps its question).
+ */
+function historyBefore(turns: readonly ChatTurn[], id: string): ChatMessage[] {
+  const at = turns.findIndex((turn) => turn.id === id);
+  const before = turns.slice(0, at === -1 ? turns.length : at);
+  return before
+    .filter(
+      (turn, i) =>
+        turn.status !== 'error' && !(turn.role === 'user' && before[i + 1]?.status === 'error'),
+    )
     .map((turn) => ({ role: turn.role, text: turn.text }));
 }
 
@@ -126,7 +164,7 @@ async function answer(id: string, system: string) {
   const forOwner = owner;
   try {
     const result = await ask({
-      messages: historyBefore(id),
+      messages: historyBefore(state.turns, id),
       system,
       signal: controller.signal,
       onText: (_delta, text) => {
@@ -170,5 +208,5 @@ export function resetAssistantForTests(
   running = null;
   owner = null;
   ask = fake;
-  set({ open: false, turns: [], pending: null, focus: 0 });
+  set({ open: false, turns: [], draft: '', pending: null, focus: 0 });
 }

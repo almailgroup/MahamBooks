@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type FormEvent } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ArrowUp, Copy, RotateCcw, Sparkles, Square, SquarePen, WifiOff, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,9 +13,10 @@ import {
   closeAssistant,
   isAnswering,
   newChat,
-  openAssistant,
+  queueQuestion,
   retryAnswer,
   sendQuestion,
+  setDraft,
   stopAnswer,
   takePending,
   useAssistant,
@@ -25,11 +26,13 @@ import { useAiContext } from './use-ai-context';
 
 /**
  * The AI assistant's panel: a sheet at the end side of the screen on
- * desktop (the page stays usable beside it), the whole screen on phones.
- * The conversation is the tab's (store.ts); each question is sent with
- * where the person is, never a record (use-ai-context.ts).
+ * desktop (on wide screens the page moves over to stay usable beside it,
+ * see AppLayout), the whole screen on phones. The conversation and the
+ * question being typed are the tab's (store.ts); each question is sent
+ * with where the person is, never a record (use-ai-context.ts).
+ * `onClosed` puts the keyboard's focus back once the panel is gone.
  */
-export function AssistantPanel({ open }: { open: boolean }) {
+export function AssistantPanel({ open, onClosed }: { open: boolean; onClosed?: () => void }) {
   return (
     <DialogPrimitive.Root
       open={open}
@@ -42,6 +45,10 @@ export function AssistantPanel({ open }: { open: boolean }) {
           // The page beside it stays usable: clicking it doesn't close the panel.
           onInteractOutside={(event) => event.preventDefault()}
           onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            onClosed?.();
+          }}
           className="data-[state=open]:animate-fade-in bg-surface fixed inset-0 z-40 flex flex-col shadow-2xl outline-none sm:inset-y-2.5 sm:start-auto sm:end-2.5 sm:w-[26rem] sm:max-w-[calc(100vw-1.25rem)] sm:rounded-3xl sm:ring-1 sm:ring-slate-900/10 print:hidden"
         >
           {open ? <PanelBody /> : null}
@@ -56,21 +63,25 @@ function PanelBody() {
   const assistant = useAssistant();
   const online = useOnline();
   const answering = isAnswering(assistant);
-  const [draft, setDraft] = useState('');
+  const { draft } = assistant;
   const box = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const { turns } = assistant;
 
-  // A question asked from the command palette (or before the role was read), once it is.
+  // A question sent before the person's role was read, once it is (and no answer is being written).
   useEffect(() => {
-    if (assistant.pending === null || !ready) return;
+    if (assistant.pending === null || !ready || answering) return;
     const question = takePending();
     if (question) sendQuestion(question, system);
-  }, [assistant.pending, system, ready]);
+  }, [assistant.pending, system, ready, answering]);
 
+  // The cursor in the box, after what is in it (a question from the palette).
   useEffect(() => {
-    box.current?.focus();
+    const el = box.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
   }, [assistant.focus]);
 
   // Follows the answer as it is written, unless the person scrolled up to read.
@@ -92,7 +103,7 @@ function PanelBody() {
     stick.current = true;
     // Asked before the person's role is read (just opened): sent as soon as it is.
     if (ready) sendQuestion(text, system);
-    else openAssistant(text);
+    else queueQuestion(text);
     setDraft('');
     box.current?.focus();
   };
@@ -119,15 +130,7 @@ function PanelBody() {
             {place.page}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            newChat();
-            setDraft('');
-          }}
-          disabled={turns.length === 0}
-        >
+        <Button variant="ghost" size="sm" onClick={newChat} disabled={turns.length === 0}>
           <SquarePen aria-hidden />
           {t('New chat')}
         </Button>

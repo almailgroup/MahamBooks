@@ -155,6 +155,10 @@ test('the owner turns the assistant on; a question on an employee’s page is an
   const panel = page.getByRole('dialog', { name: 'AI assistant' });
   await expect(panel).toBeVisible();
   await expect(panel.getByText('Employees', { exact: true })).toBeVisible();
+  // On a wide screen the page makes room: the top bar's New stays in sight beside the panel.
+  const panelBox = (await panel.boundingBox())!;
+  const newBox = (await page.getByRole('button', { name: 'New', exact: true }).boundingBox())!;
+  expect(newBox.x + newBox.width).toBeLessThanOrEqual(panelBox.x);
   await expect(panel.getByText('AI can make mistakes. Check important answers.')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'How do I record annual leave?' })).toBeVisible();
   const question = panel.getByRole('textbox', { name: 'Your question' });
@@ -187,18 +191,37 @@ test('the owner turns the assistant on; a question on an employee’s page is an
     expect(sent.body, secret).not.toContain(secret);
   }
 
-  // New chat forgets it; the palette asks what was typed.
+  // New chat forgets it; closed, the focus goes back to Ask AI.
   await panel.getByRole('button', { name: 'New chat' }).click();
   await expect(panel.getByText('How do I record sick leave?')).toHaveCount(0);
   await panel.getByRole('button', { name: 'Close' }).click();
   await expect(panel).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Ask AI' })).toBeFocused();
+
+  // The search never asks the AI by itself: Enter on an IBAN it doesn't find does nothing.
   await page.keyboard.press('Control+k');
   const search = page.getByRole('combobox', { name: 'Search' });
+  await search.fill(EMPLOYEE.iban);
+  await expect(page.getByText(`Nothing found for “${EMPLOYEE.iban}”`)).toBeVisible();
+  await expect(page.getByRole('option', { name: /Ask AI…/ })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  );
+  await search.press('Enter');
+  await expect(search).toBeVisible();
+  await expect(panel).toBeHidden();
+  expect(calls).toHaveLength(1);
+  // Chosen on purpose, what was typed goes in the box, to be read and sent from there.
   await search.fill('where is sick leave');
   await page.getByRole('option', { name: /Ask AI…/ }).click();
+  await expect(question).toHaveValue('where is sick leave');
+  await expect(question).toBeFocused();
+  expect(calls).toHaveLength(1);
+  await question.press('Enter');
   await expect(panel.getByText('where is sick leave')).toBeVisible();
   await expect(panel.locator('strong', { hasText: 'sick leave' })).toBeVisible();
   expect(calls).toHaveLength(2);
+  expect(calls.map((call) => call.body).join()).not.toContain(EMPLOYEE.iban);
   expect(calls[1].body).toContain('where is sick leave');
   expect(calls[1].body).toContain('Role: owner');
   // Ctrl J closes it and opens it again.
@@ -206,18 +229,25 @@ test('the owner turns the assistant on; a question on an employee’s page is an
   await expect(panel).toBeHidden();
   await page.keyboard.press('Control+j');
   await expect(panel).toBeVisible();
-  await panel.getByRole('button', { name: 'Close' }).click();
 
-  // In Arabic: right to left, at the end side (the left), and answered in Arabic.
+  // A question typed but not sent stays, and the panel stays open, when the language changes.
+  await question.fill('unsent draft text');
   await page.getByRole('button', { name: 'العربية' }).click();
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  const sheet = page.getByRole('dialog', { name: 'المساعد الذكي' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('textbox', { name: 'سؤالك' })).toHaveValue('unsent draft text');
+  await sheet.getByRole('button', { name: 'إغلاق' }).click();
+  await expect(sheet).toBeHidden();
+  expect(calls).toHaveLength(2);
+
+  // In Arabic: right to left, at the end side (the left), and answered in Arabic.
   const askArabic = page.getByRole('button', { name: 'اسأل المساعد' });
   await expect(askArabic).toBeVisible();
   const viewport = page.viewportSize()!;
   const buttonBox = (await askArabic.boundingBox())!;
   expect(buttonBox.x + buttonBox.width).toBeLessThan(viewport.width / 2);
   await askArabic.click();
-  const sheet = page.getByRole('dialog', { name: 'المساعد الذكي' });
   await expect(sheet).toBeVisible();
   const sheetBox = (await sheet.boundingBox())!;
   expect(sheetBox.x).toBeLessThan(viewport.width / 2);

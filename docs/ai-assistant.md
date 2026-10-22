@@ -13,16 +13,24 @@ person types and which page they are on, never the company's records.
    service knows people by their sign-in.
 2. The owner or an admin opens **Settings → AI assistant** and turns on
    **Use the AI assistant**. It is off for every company until then (D1), and
-   everyone else sees the switch without being able to change it.
+   everyone else sees the switch without being able to change it. Once the
+   ninth database script has run
+   ([`20261214000000_ai_assistant.sql`](../supabase/migrations/20261214000000_ai_assistant.sql),
+   step 13 of [`docs/supabase-setup.md`](supabase-setup.md)), the cloud
+   keeps it so too: anyone else's change to the switch is ignored, even from
+   a modified app. Until then only the app keeps it for them.
 3. **Test the connection** on the same page checks that this device reaches
    the AI service (it asks the AI nothing).
 
 Each device picks the switch up once it syncs. Everyone signed in to the
 company then sees **Ask AI** at the bottom corner of every page (on the left
 in Arabic), above the phone's tab bar. **Ctrl J** (**⌘J** on a Mac) opens and
-closes it, and the search (Ctrl K) offers **Ask AI…** with whatever was typed.
-Print views and PDFs never show it. Turning the switch off removes the button
-for everyone.
+closes it. The search (Ctrl K) offers **Ask AI…** below its results: chosen
+(clicked, or reached with the arrow keys), it opens the panel with what was
+typed in the question box, for you to read and send. Pressing Enter in the
+search never asks the AI by itself, even when nothing is found: the search
+box is where Civil IDs and IBANs are looked up. Print views and PDFs never
+show it. Turning the switch off removes the button for everyone.
 
 ## Using it
 
@@ -30,7 +38,11 @@ for everyone.
   pick one of the suggested questions for the app you are in.
 - The answer appears while it is written. **Stop** ends it, keeping what was
   written; **Try again** asks again after an error or a stop; **Copy** copies
-  an answer.
+  an answer. A question that failed isn't sent again with the next one.
+- A question typed but not sent stays in the box when the panel is closed or
+  the app's language is switched, until New chat or a reload.
+- On a wide screen (1360 pixels or more) the page moves over to make room
+  for the panel, so the buttons an answer names stay in sight beside it.
 - **New chat** starts again. The conversation is kept only in that browser
   tab: it is gone on reload, never stored and never synced. Each question
   carries at most the last 20 messages of the conversation.
@@ -77,7 +89,7 @@ Path: /payroll/leave
 App language: English
 Role: owner
 
-Guide (apps they can open; + New creates documents; Ctrl K searches; the grid button switches apps; Home shows what needs attention):
+Guide (apps they can open; + New creates documents; Ctrl K searches; the grid button switches apps; the العربية / English button at the top switches the app's language (Settings › Language & wording only sets words printed on documents); Home shows what needs attention):
 - Maham People: HR: employees and their papers, payroll with PIFSS, leave, staff loans, letters; end-of-service settlement on an employee page. Sidebar: Overview, Directory, Employees, Payroll, Leave, Leave reasons, Staff loans, Letters, Manpower costing, Payroll settings.
 - Maham Books: accounting: sales and purchase documents (a quote becomes an invoice in one click), payments, post-dated cheques, banking, ledger, reports; statements of account on a customer page. Sidebar: Dashboard, Sales (Clients, Quotes, Proforma invoices, Sales orders, Invoices, Delivery notes, Payments received, Credit notes, Recurring invoices), Purchases (Vendors, Purchase orders, Bills, Expenses, Payments made, Vendor credits), Cheques, Inventory (Products & services, Stock and warehouses), Banking, Accounting (Chart of accounts, Manual journals, Fixed assets, Year-end close), Reports.
 - Maham CRM: follow-up of quotes in a pipeline, prospects. Sidebar: Pipeline, Prospects.

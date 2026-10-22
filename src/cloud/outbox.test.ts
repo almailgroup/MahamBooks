@@ -213,6 +213,36 @@ describe('roles on this device', () => {
     ).rejects.toBeInstanceOf(CloudPermissionError);
   });
 
+  it('leave the AI assistant’s switch to the owner and admins, whatever app limits they have', async () => {
+    const acme = await company();
+    const on = { ai: { on: true } };
+    for (const role of ['accountant', 'staff', 'viewer'] as const) {
+      await link(acme, role);
+      const current = (await db.companies.get(acme.id))!;
+      await expect(db.companies.put({ ...current, ...on })).rejects.toBeInstanceOf(
+        CloudPermissionError,
+      );
+    }
+    await link(acme, 'accountant');
+    await expect(
+      db.companies.put({ ...(await db.companies.get(acme.id))!, ...on }),
+    ).rejects.toThrow(/Only the owner or an admin turns the AI assistant on or off/);
+    expect((await db.companies.get(acme.id))?.ai).toBeUndefined();
+    // An admin the owner made both apps view only for still switches it; the owner too.
+    await link(acme, 'admin', { apps: { books: 'view', people: 'view' } });
+    await db.companies.put({ ...(await db.companies.get(acme.id))!, ...on });
+    expect(await queued()).toEqual([`put companies ${acme.id}`]);
+    await link(acme, 'owner');
+    const { ai: _ai, ...off } = (await db.companies.get(acme.id))!;
+    await db.companies.put(off);
+    // With it on, an accountant's other changes to the company go through as before.
+    await db.companies.put({ ...(await db.companies.get(acme.id))!, ...on });
+    await link(acme, 'accountant');
+    await db.companies.put({ ...(await db.companies.get(acme.id))!, phone: '+965 0000 0000' });
+    expect((await db.companies.get(acme.id))?.ai).toEqual({ on: true });
+    expect(await queued()).toEqual([`put companies ${acme.id}`]);
+  });
+
   it('refuse at once what the owner made view only for this person, and nothing else', async () => {
     const acme = await company();
     await link(acme, 'accountant', { apps: { books: 'view' } });

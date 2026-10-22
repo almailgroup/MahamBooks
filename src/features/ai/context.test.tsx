@@ -84,6 +84,9 @@ describe('the system instruction', () => {
       'Sales (Clients, Quotes',
       '- Settings (bottom of each sidebar): Company profile',
       'AI assistant',
+      // The app's language is the button at the top, not the documents' page.
+      "the العربية / English button at the top switches the app's language",
+      '(Settings › Language & wording only sets words printed on documents)',
     ]) {
       expect(text).toContain(words);
     }
@@ -289,6 +292,9 @@ describe('the request on a page of records', () => {
     for (const secret of SECRETS) expect(body).not.toContain(secret);
     expect(body).toContain('App language: Arabic');
     expect(body).toContain('مهام بيبول (Maham People)');
+    // The page of the printed words as the person sees it, the language button named.
+    expect(body).toContain('the العربية / English button at the top switches');
+    expect(body).toContain('(الإعدادات › اللغة والصياغة only sets words printed on documents)');
   });
 
   it('leaves out the apps the person can’t open', async () => {

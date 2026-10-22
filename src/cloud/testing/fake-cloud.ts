@@ -36,6 +36,7 @@ import {
   isPrivateRecord,
   issuesWithoutNumber,
   keepIssuedLetter,
+  keepAiSwitch,
   keepLettersSwitch,
   keepPaymentLink,
   letterKept,
@@ -610,12 +611,12 @@ export class FakeCloud {
         if (!this.canWrite(company, user, 'companies', old.data)) throw fail('permission');
         const { data, conflicts } = rebaseCompany(old.data, ops);
         if (role === 'staff' && !staffCompanyChangeOk(old.data, data)) throw fail('permission');
-        this.guard(company, user, role, 'companies', old.data, data);
-        if (sameData(data, old.data)) return { rev: old.rev, conflicts };
+        const kept = this.guard(company, user, role, 'companies', old.data, data);
+        if (sameData(kept, old.data)) return { rev: old.rev, conflicts };
         const rev = ++this.rev;
-        this.records.set(key, { ...old, data, rev });
+        this.records.set(key, { ...old, data: kept, rev });
         this.pushTx = ++this.pushSeq;
-        this.recordChange(company, user, 'companies', company, old.data, data);
+        this.recordChange(company, user, 'companies', company, old.data, kept);
         this.notify(company);
         return { rev, conflicts };
       },
@@ -1055,6 +1056,9 @@ export class FakeCloud {
         throw fail('permission');
       }
     }
+    // The AI assistant's switch (20261214000000_ai_assistant.sql, which names
+    // no feature of its own): kept as stored for anyone but the owner or an admin.
+    if (tbl === 'companies') data = keepAiSwitch(role, old, data);
     if (!this.features.includes('approvals')) return data;
     if (tbl === 'companies') {
       if (role !== 'owner' && approvalRulesChanged(old, data)) throw fail('permission');

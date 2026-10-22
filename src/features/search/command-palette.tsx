@@ -124,7 +124,11 @@ const LANGUAGE_KEY = 'action:language';
 const THEME_KEY = 'action:theme';
 const THEME_SWITCH_KEY = 'action:theme-switch';
 const SYNC_KEY = 'action:sync-now';
-/** Asks the AI assistant what was typed (with the assistant switched on). */
+/**
+ * Opens the AI assistant with what was typed in its box, to be read and
+ * sent there (with the assistant switched on). Never what Enter opens
+ * unless chosen: the search box is where Civil IDs and IBANs are looked up.
+ */
 const ASK_AI_KEY = 'action:ask-ai';
 
 interface Section {
@@ -193,7 +197,8 @@ function PaletteBody({
   const switchLanguage = useSwitchLanguage();
   const { preference, theme, setPreference } = useTheme();
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
+  // Null: the first result, if any (never Ask AI, which has to be chosen).
+  const [active, setActive] = useState<number | null>(null);
   const [saved] = useState<RecentItem[]>(() => loadRecent(company.id));
   const deferred = useDeferredValue(query);
   const listId = useId();
@@ -326,28 +331,9 @@ function PaletteBody({
     ];
   }, [found, hidePeople, everywhere, company.id]);
 
-  const sections = useMemo<Section[]>(() => {
+  // What was found (or the recent items and quick actions).
+  const results = useMemo<Section[]>(() => {
     const all = records ? [...fixed, ...records] : fixed;
-    // Last, whatever was found: Ask AI with what was typed.
-    const ai: Section[] = askAi
-      ? [
-          {
-            kind: 'action',
-            id: 'ai',
-            label: t('AI assistant'),
-            entries: [
-              makeEntry({
-                key: ASK_AI_KEY,
-                kind: 'action',
-                title: t('Ask AI…'),
-                subtitle: deferred.trim() || undefined,
-                to: '',
-                names: [],
-              }),
-            ],
-          },
-        ]
-      : [];
     if (!deferred.trim()) {
       const byKey = new Map(all.map((e) => [e.key, e]));
       const recentEntries = recent.map(
@@ -368,7 +354,6 @@ function PaletteBody({
       return [
         { kind: 'recent' as const, label: t(SECTION_LABELS.recent), entries: recentEntries },
         { kind: 'action' as const, label: t('Quick actions'), entries: quick },
-        ...ai,
       ].filter((s) => s.entries.length > 0);
     }
     // Sections in the order of their best result.
@@ -379,18 +364,46 @@ function PaletteBody({
       list.push(entry);
       map.set(entry.kind, list);
     }
-    return [
-      ...[...map.entries()].map(([kind, entries]) => ({
-        kind,
-        label: t(SECTION_LABELS[kind]),
-        entries,
-      })),
-      ...ai,
-    ];
-  }, [fixed, records, deferred, recent, askAi]);
+    return [...map.entries()].map(([kind, entries]) => ({
+      kind,
+      label: t(SECTION_LABELS[kind]),
+      entries,
+    }));
+  }, [fixed, records, deferred, recent]);
+
+  // Last, whatever was found (or below "Nothing found"): Ask AI with what was typed.
+  const sections = useMemo<Section[]>(
+    () =>
+      askAi
+        ? [
+            ...results,
+            {
+              kind: 'action',
+              id: 'ai',
+              label: t('AI assistant'),
+              entries: [
+                makeEntry({
+                  key: ASK_AI_KEY,
+                  kind: 'action',
+                  title: t('Ask AI…'),
+                  subtitle: deferred.trim() || undefined,
+                  to: '',
+                  names: [],
+                }),
+              ],
+            },
+          ]
+        : results,
+    [results, askAi, deferred],
+  );
 
   const flat = useMemo(() => sections.flatMap((s) => s.entries), [sections]);
-  const current = Math.min(active, Math.max(0, flat.length - 1));
+  const resultCount = useMemo(
+    () => results.reduce((sum, s) => sum + s.entries.length, 0),
+    [results],
+  );
+  // -1: nothing highlighted, so Enter opens nothing (Ask AI alone is never the default).
+  const current = active === null ? (resultCount > 0 ? 0 : -1) : Math.min(active, flat.length - 1);
   const optionId = (i: number) => `${listId}-option-${i}`;
 
   useEffect(() => {
@@ -403,7 +416,8 @@ function PaletteBody({
     if (!entry) return;
     onClose();
     if (entry.key === ASK_AI_KEY) {
-      // The panel opens with the question asked; never kept as a recent item.
+      // The panel opens with what was typed in its box, not sent: the person reads it and
+      // sends it there. Never kept as a recent item.
       openAssistant(query);
       return;
     }
@@ -459,10 +473,12 @@ function PaletteBody({
       e.preventDefault();
       if (flat.length) setActive((to + flat.length) % flat.length);
     };
-    if (e.key === 'ArrowDown') move(current + 1);
-    else if (e.key === 'ArrowUp') move(current - 1);
-    else if (e.key === 'PageDown') move(Math.min(flat.length - 1, current + 5));
-    else if (e.key === 'PageUp') move(Math.max(0, current - 5));
+    // With nothing highlighted, down goes to the first and up to the last.
+    const at = current === -1 ? null : current;
+    if (e.key === 'ArrowDown') move(at === null ? 0 : at + 1);
+    else if (e.key === 'ArrowUp') move(at === null ? flat.length - 1 : at - 1);
+    else if (e.key === 'PageDown') move(Math.min(flat.length - 1, (at ?? -1) + 5));
+    else if (e.key === 'PageUp') move(Math.max(0, (at ?? flat.length) - 5));
     else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault();
       choose(flat[current]);
@@ -482,12 +498,12 @@ function PaletteBody({
           aria-expanded
           aria-controls={listId}
           aria-autocomplete="list"
-          aria-activedescendant={flat.length ? optionId(current) : undefined}
+          aria-activedescendant={current >= 0 ? optionId(current) : undefined}
           aria-label={t('Search')}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
-            setActive(0);
+            setActive(null);
           }}
           onKeyDown={onKeyDown}
           placeholder={t('Search clients, documents, items or pages…')}
@@ -515,102 +531,101 @@ function PaletteBody({
         aria-label={t('Results')}
         className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
       >
-        {sections.length === 0 ? (
+        {results.length === 0 ? (
           <Empty searching={searching} query={deferred} loading={!records && searching} />
-        ) : (
-          sections.map((section) => (
-            <div
-              key={section.id ?? section.kind}
-              role="group"
-              aria-labelledby={`${listId}-${section.id ?? section.kind}`}
+        ) : null}
+        {sections.map((section) => (
+          <div
+            key={section.id ?? section.kind}
+            role="group"
+            aria-labelledby={`${listId}-${section.id ?? section.kind}`}
+          >
+            <p
+              id={`${listId}-${section.id ?? section.kind}`}
+              className="px-3 pt-3 pb-1.5 text-xs font-semibold text-slate-500"
             >
-              <p
-                id={`${listId}-${section.id ?? section.kind}`}
-                className="px-3 pt-3 pb-1.5 text-xs font-semibold text-slate-500"
-              >
-                {section.label}
-              </p>
-              {section.entries.map((entry) => {
-                index += 1;
-                const i = index;
-                const Icon =
-                  icons.get(entry.key) ??
-                  (entry.key === ASK_AI_KEY
-                    ? Sparkles
-                    : entry.key === LANGUAGE_KEY
-                      ? Languages
-                      : entry.key === THEME_KEY
-                        ? Palette
-                        : entry.key === THEME_SWITCH_KEY
-                          ? dark
-                            ? Sun
-                            : Moon
-                          : KIND_ICONS[entry.kind]);
-                return (
-                  <div
-                    key={entry.key}
-                    id={optionId(i)}
-                    role="option"
-                    aria-selected={i === current}
-                    onPointerMove={() => i !== current && setActive(i)}
-                    onClick={() => choose(entry)}
+              {section.label}
+            </p>
+            {section.entries.map((entry) => {
+              index += 1;
+              const i = index;
+              const Icon =
+                icons.get(entry.key) ??
+                (entry.key === ASK_AI_KEY
+                  ? Sparkles
+                  : entry.key === LANGUAGE_KEY
+                    ? Languages
+                    : entry.key === THEME_KEY
+                      ? Palette
+                      : entry.key === THEME_SWITCH_KEY
+                        ? dark
+                          ? Sun
+                          : Moon
+                        : KIND_ICONS[entry.kind]);
+              return (
+                <div
+                  key={entry.key}
+                  id={optionId(i)}
+                  role="option"
+                  aria-selected={i === current}
+                  onPointerMove={() => i !== current && setActive(i)}
+                  onClick={() => choose(entry)}
+                  className={cn(
+                    'flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-2',
+                    i === current ? 'bg-primary-50' : 'hover:bg-slate-50',
+                  )}
+                >
+                  <span
                     className={cn(
-                      'flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-2',
-                      i === current ? 'bg-primary-50' : 'hover:bg-slate-50',
+                      'flex size-8 shrink-0 items-center justify-center rounded-md [&_svg]:size-4',
+                      i === current
+                        ? 'text-primary-700 bg-surface shadow-xs ring-1 ring-slate-200'
+                        : 'bg-slate-100 text-slate-500',
                     )}
+                    aria-hidden
                   >
+                    <Icon />
+                  </span>
+                  <span className="min-w-0 flex-1">
                     <span
-                      className={cn(
-                        'flex size-8 shrink-0 items-center justify-center rounded-md [&_svg]:size-4',
-                        i === current
-                          ? 'text-primary-700 bg-surface shadow-xs ring-1 ring-slate-200'
-                          : 'bg-slate-100 text-slate-500',
-                      )}
-                      aria-hidden
+                      dir="auto"
+                      className="block truncate text-start text-sm font-medium text-slate-900"
                     >
-                      <Icon />
+                      {entry.title}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span
-                        dir="auto"
-                        className="block truncate text-start text-sm font-medium text-slate-900"
-                      >
-                        {entry.title}
-                      </span>
-                      {entry.subtitle ? (
-                        <span className="block truncate text-xs text-slate-500">
-                          {entry.subtitle}
-                        </span>
-                      ) : null}
-                    </span>
-                    {entry.amount ? (
-                      <span
-                        dir="ltr"
-                        className="tabular shrink-0 text-sm text-slate-600 [unicode-bidi:isolate]"
-                      >
-                        {entry.amount}
+                    {entry.subtitle ? (
+                      <span className="block truncate text-xs text-slate-500">
+                        {entry.subtitle}
                       </span>
                     ) : null}
-                    {i === current ? (
-                      <CornerDownLeft
-                        className="hidden size-4 shrink-0 text-slate-400 sm:block rtl:-scale-x-100"
-                        aria-hidden
-                      />
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ))
-        )}
+                  </span>
+                  {entry.amount ? (
+                    <span
+                      dir="ltr"
+                      className="tabular shrink-0 text-sm text-slate-600 [unicode-bidi:isolate]"
+                    >
+                      {entry.amount}
+                    </span>
+                  ) : null}
+                  {i === current ? (
+                    <CornerDownLeft
+                      className="hidden size-4 shrink-0 text-slate-400 sm:block rtl:-scale-x-100"
+                      aria-hidden
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       <div className="hidden items-center gap-4 border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500 sm:flex">
         <Hint keys={['↑', '↓']}>{t('to move')}</Hint>
         <Hint keys={['↵']}>{t('to open')}</Hint>
         <Hint keys={['Esc']}>{t('to close')}</Hint>
-        {searching && flat.length ? (
-          <span className="ms-auto">{tp(flat.length, '{count} result', '{count} results')}</span>
+        {searching && resultCount ? (
+          <span className="ms-auto">{tp(resultCount, '{count} result', '{count} results')}</span>
         ) : null}
       </div>
     </>

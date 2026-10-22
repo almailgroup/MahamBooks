@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, type Ref } from 'react';
 import { Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
@@ -33,18 +33,40 @@ export function assistantShortcutLabel(): string {
 export function AiAssistant() {
   const company = useCompany();
   const { user } = useCloud();
-  const available = useAiAvailability() === 'on';
+  const availability = useAiAvailability();
+  const available = availability === 'on';
   const { open } = useAssistant();
+  const button = useRef<HTMLButtonElement>(null);
+  // What had the keyboard's focus when the panel opened, to go back to.
+  const before = useRef<HTMLElement | null>(null);
 
   // A conversation is one person's in one company.
   useEffect(() => {
     if (user) claimConversation(`${user.id}:${company.id}`);
   }, [user, company.id]);
 
-  // Switched off, signed out or company changed: the panel goes.
+  // Switched off, signed out or company changed: the panel goes. Not while
+  // the company's link is read again (the app drawn again in another language).
   useEffect(() => {
-    if (!available && open) closeAssistant();
-  }, [available, open]);
+    if (!available && availability !== 'loading' && open) closeAssistant();
+  }, [available, availability, open]);
+
+  // Before the panel's box takes the focus (its effect runs after this one).
+  useLayoutEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    before.current = active instanceof HTMLElement && active !== document.body ? active : null;
+  }, [open]);
+
+  // Closed with the focus in it: back where the person was, or to Ask AI.
+  // Focus the person moved to the page meanwhile stays where it is.
+  const onClosed = () => {
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const to = before.current?.isConnected ? before.current : button.current;
+    before.current = null;
+    to?.focus();
+  };
 
   useEffect(() => {
     if (!available) return;
@@ -63,11 +85,13 @@ export function AiAssistant() {
     return () => window.removeEventListener('keydown', onKey);
   }, [available]);
 
-  if (!available) return null;
+  // While the app is drawn again (another language), an open panel stays open.
+  if (!available && !(availability === 'loading' && open)) return null;
   return (
     <>
-      {open ? null : <AskAiButton />}
-      <AssistantPanel open={open} />
+      {/* Hidden, not removed, while the panel is open: the focus comes back to it. */}
+      {available ? <AskAiButton ref={button} hidden={open} /> : null}
+      <AssistantPanel open={open} onClosed={onClosed} />
     </>
   );
 }
@@ -77,12 +101,13 @@ export function AiAssistant() {
  * editor's action bar) and above a save bar floating at the bottom of the
  * page. Out of the way while typing on a phone, and never printed.
  */
-function AskAiButton() {
+function AskAiButton({ hidden, ref }: { hidden: boolean; ref: Ref<HTMLButtonElement> }) {
   const typing = useTyping();
   const lifted = useHasBottomBar();
   const label = t('Ask AI');
   return (
     <button
+      ref={ref}
       type="button"
       onClick={() => openAssistant()}
       title={`${label} (${assistantShortcutLabel()})`}
@@ -92,6 +117,7 @@ function AskAiButton() {
           ? 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+10rem)] lg:bottom-24'
           : 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.75rem)] lg:bottom-6',
         typing && 'max-lg:hidden',
+        hidden && 'hidden',
       )}
     >
       <Sparkles className="text-primary-600 size-5" aria-hidden />

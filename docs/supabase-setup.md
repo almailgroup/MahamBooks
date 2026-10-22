@@ -88,6 +88,15 @@ has to be added to the app or to Vercel.
     script is ever run again, run this one again after them. Once there are
     costings, the first and fourth scripts stop with an error about
     `records_tbl_check` and change nothing.
+13. Then the ninth script,
+    [`supabase/migrations/20261214000000_ai_assistant.sql`](../supabase/migrations/20261214000000_ai_assistant.sql)
+    (a new query, paste, **Run**), after the eighth. It makes the database
+    itself keep the AI assistant's switch (**Settings → AI assistant**) for
+    the owner and the admins: anyone else's change to it is ignored. Until it
+    runs, only the app's screen keeps it for them. It stops with "Run
+    20261116000000_super_admin_approvals.sql and the files after it first" if
+    the fifth script hasn't run, and then changes nothing. Running it changes
+    nothing else, and no other script needs running again after it.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -102,8 +111,7 @@ after it, in order.
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
 daily job does it for every company. The email alerts script (step 7) turns it
 on; without email alerts, open **Database → Extensions**, search for
-**pg_cron**, enable it, then run the latest script once more (the eighth, step
-12). The fourth script schedules it too, but once there are manpower costings
+**pg_cron**, enable it, then run the eighth script (step 12) once more. The fourth script schedules it too, but once there are manpower costings
 it can't run again.
 
 To check: **Table Editor** now lists `profiles`, `companies`,

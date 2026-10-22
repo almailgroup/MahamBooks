@@ -1102,6 +1102,38 @@ export function switchesLetters(role: MemberRole | null | undefined): boolean {
   return role == null || role === 'owner' || role === 'admin';
 }
 
+/**
+ * Turns the company's AI assistant on or off (Settings → AI assistant):
+ * the owner or an admin, as records_guard_ai of
+ * 20261214000000_ai_assistant.sql (anyone in a company kept on this
+ * device only, where the assistant never shows).
+ */
+export function switchesAi(role: MemberRole | null | undefined): boolean {
+  return role == null || role === 'owner' || role === 'admin';
+}
+
+/** Whether a write of the company record changes its AI assistant switch (`ai`). */
+export function aiSwitchChanged(before: AnyRecord, after: AnyRecord): boolean {
+  return !sameData(asRow(before)?.ai ?? null, asRow(after)?.ai ?? null);
+}
+
+/**
+ * What the cloud stores when someone writes the company record, as
+ * records_guard_ai: for anyone but the owner or an admin, the AI
+ * assistant's switch as it was stored (or left out, as it was). A copy
+ * that hasn't heard of the switch never turns it off.
+ */
+export function keepAiSwitch(
+  role: MemberRole | null | undefined,
+  before: AnyRecord,
+  after: Record<string, unknown>,
+): Record<string, unknown> {
+  if (role === 'owner' || role === 'admin') return after;
+  const data = { ...after };
+  keptKey(data, asRow(before) ?? {}, 'ai');
+  return data;
+}
+
 /** A request to issue a letter (kind letter, about an employee letter). */
 export function isLetterApproval(request: AnyRecord): boolean {
   return asRow(request)?.kind === 'letter' && asRow(request)?.subjectTbl === 'employeeLetters';

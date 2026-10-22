@@ -851,6 +851,14 @@ export class FakeSupabase {
       if (data && (books === 'view' || books === 'none') && this.booksChanged(old, data)) {
         return refuse('almail:permission The owner has made Maham Books view only for you.');
       }
+      // The AI assistant's switch (20261214000000_ai_assistant.sql): anyone
+      // but the owner or an admin keeps it as it is stored.
+      if (data && role !== 'owner' && role !== 'admin') {
+        const kept: Record<string, unknown> = { ...data };
+        if (old && 'ai' in old && old.ai !== undefined) kept.ai = old.ai;
+        else delete kept.ai;
+        return kept;
+      }
       return data;
     }
     const approver =

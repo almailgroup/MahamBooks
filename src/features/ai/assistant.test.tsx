@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { db } from '@/db/db';
 import { saveCompany, setupCompany } from '@/db/records';
@@ -10,6 +11,8 @@ import type { CloudUser } from '@/cloud/auth';
 import { loadLanguage } from '@/i18n';
 import { LanguageProvider } from '@/i18n/provider';
 import { resetLastApp } from '@/suite/current-app';
+import { CommandPalette } from '@/features/search/command-palette';
+import { ConfirmProvider } from '@/components/ui/overlay';
 import type { StreamOptions } from './client';
 import { AiError } from './errors';
 import { AiAssistant } from './assistant';
@@ -107,6 +110,36 @@ function show(path = '/people') {
   return router;
 }
 
+/** The command palette, open, beside the assistant. */
+function Palette() {
+  const [open, setOpen] = useState(true);
+  return <CommandPalette open={open} onOpenChange={setOpen} onOpenItem={() => undefined} />;
+}
+
+function showWithPalette(path = '/people') {
+  const router = createMemoryRouter(
+    [
+      {
+        path: '*',
+        element: (
+          <LanguageProvider>
+            <ConfirmProvider>
+              <CompanyProvider fallback={<p>Loading</p>} onboarding={<p>Welcome</p>}>
+                <p>Page</p>
+                <Palette />
+                <AiAssistant />
+              </CompanyProvider>
+            </ConfirmProvider>
+          </LanguageProvider>
+        ),
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
 const askButton = () => screen.findByRole('button', { name: 'Ask AI' });
 const panel = () => screen.getByRole('dialog', { name: 'AI assistant' });
 const box = () => screen.getByRole('textbox', { name: 'Your question' });
@@ -167,6 +200,61 @@ describe('the Ask AI button', () => {
     expect(await screen.findByRole('dialog', { name: 'AI assistant' })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'j', metaKey: true });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('Ask AI in the command palette', () => {
+  /** A made-up IBAN: the kind of thing typed in the search box, never found there. */
+  const IBAN = 'KW00TEST0000000000000000000000';
+
+  beforeEach(() => {
+    // The palette keeps the highlighted result in view; jsdom has no layout.
+    Element.prototype.scrollIntoView ??= () => undefined;
+  });
+
+  it('is never what Enter opens on a search with no result, and sends nothing itself', async () => {
+    showWithPalette();
+    // Behind the palette (a modal), so hidden from the accessibility tree.
+    await screen.findByRole('button', { name: 'Ask AI', hidden: true });
+    const search = screen.getByRole('combobox', { name: 'Search' });
+    fireEvent.change(search, { target: { value: IBAN } });
+    expect(await screen.findByText(`Nothing found for “${IBAN}”`)).toBeInTheDocument();
+    const option = screen.getByRole('option', { name: new RegExp('Ask AI…') });
+    expect(option).toHaveAttribute('aria-selected', 'false');
+    expect(search).not.toHaveAttribute('aria-activedescendant');
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Nothing opened, nothing sent, nothing kept for the assistant.
+    expect(screen.getByRole('combobox', { name: 'Search' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI assistant' })).toBeNull();
+    expect(assistantState()).toMatchObject({ open: false, draft: '', pending: null });
+    expect(asked).toHaveLength(0);
+
+    // Chosen on purpose (arrow down, Enter): the panel opens with it in the box, unsent.
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(option).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(search, { key: 'Enter' });
+    const question = await screen.findByRole('textbox', { name: 'Your question' });
+    expect(question).toHaveValue(IBAN);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked).toHaveLength(0);
+    expect(assistantState().turns).toEqual([]);
+  });
+
+  it('comes after the results, and Enter opens the first result', async () => {
+    const router = showWithPalette();
+    await screen.findByRole('button', { name: 'Ask AI', hidden: true });
+    const search = screen.getByRole('combobox', { name: 'Search' });
+    fireEvent.change(search, { target: { value: 'Employees' } });
+    const options = await screen.findAllByRole('option');
+    await waitFor(() => expect(options[0]).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.getAllByRole('option').at(-1)).toHaveTextContent('Ask AI…');
+    expect(screen.queryByText(/Nothing found/)).toBeNull();
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Search' })).toBeNull());
+    expect(router.state.location.pathname).toBe('/employees');
+    expect(assistantState().open).toBe(false);
+    expect(asked).toHaveLength(0);
   });
 });
 
@@ -266,7 +354,7 @@ describe('the panel', () => {
     expect(within(panel()).queryByRole('alert')).toBeNull();
   });
 
-  it('starts again with New chat, and asks what the palette typed', async () => {
+  it('starts again with New chat, and puts what the palette typed in the box, unsent', async () => {
     show();
     fireEvent.click(await askButton());
     type('Hello');
@@ -279,15 +367,114 @@ describe('the panel', () => {
     expect(within(panel()).queryByText('Hi.')).toBeNull();
     expect(assistantState().turns).toEqual([]);
 
-    // From the palette, with the panel closed: it opens and asks.
+    // From the palette, with the panel closed: it opens with the question in the box.
     fireEvent.click(within(panel()).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     act(() => openAssistant('How do I add a vendor?'));
+    expect(await screen.findByRole('textbox', { name: 'Your question' })).toHaveValue(
+      'How do I add a vendor?',
+    );
+    await waitFor(() => expect(box()).toHaveFocus());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked).toHaveLength(1);
+    // Sent by the person, once their role is known, so the guide holds their apps.
+    fireEvent.keyDown(box(), { key: 'Enter' });
     await waitFor(() => expect(asked).toHaveLength(2));
     expect(asked[1].options.messages).toEqual([{ role: 'user', text: 'How do I add a vendor?' }]);
-    // Asked once the person's role is known, so the guide holds their apps.
     expect(asked[1].options.system).toContain('Role: owner');
     expect(asked[1].options.system).toContain('- Maham People');
+  });
+
+  it('keeps a question from the palette while an answer is written, under one being typed', async () => {
+    show();
+    fireEvent.click(await askButton());
+    type('First question');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(1));
+    type('Half typed');
+    act(() => openAssistant('Second question from the palette'));
+    expect(box()).toHaveValue('Half typed\nSecond question from the palette');
+    // Enter while the answer is written sends nothing and keeps the box.
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(asked).toHaveLength(1);
+    act(() => asked[0].write('One.'));
+    act(() => asked[0].finish());
+    await within(panel()).findByText('One.');
+    expect(asked).toHaveLength(1);
+    type('Second question from the palette');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(2));
+    expect(asked[1].options.messages.at(-1)).toEqual({
+      role: 'user',
+      text: 'Second question from the palette',
+    });
+  });
+
+  it('keeps the unsent question when closed, and stays open while the app is drawn again', async () => {
+    show('/people');
+    fireEvent.click(await askButton());
+    type('An unsent question');
+    fireEvent.keyDown(box(), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(await askButton());
+    expect(box()).toHaveValue('An unsent question');
+    // Another language draws the app again, its cloud link read anew.
+    cleanup();
+    await loadLanguage('ar');
+    show('/people');
+    expect(await screen.findByRole('dialog', { name: 'المساعد الذكي' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'سؤالك' })).toHaveValue('An unsent question');
+    await screen.findByRole('button', { name: 'اسأل المساعد', hidden: true });
+    expect(assistantState().open).toBe(true);
+    expect(asked).toHaveLength(0);
+  });
+
+  it('puts the focus back where it was when the panel closes', async () => {
+    show();
+    const button = await askButton();
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(box()).toHaveFocus());
+    fireEvent.keyDown(box(), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(button).toHaveFocus());
+
+    // Opened with Ctrl J from a field of the page: back to that field.
+    cleanup();
+    render(<input aria-label="A page field" />);
+    show();
+    await askButton();
+    const field = screen.getByRole('textbox', { name: 'A page field' });
+    field.focus();
+    fireEvent.keyDown(field, { key: 'j', ctrlKey: true });
+    await waitFor(() => expect(box()).toHaveFocus());
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(field).toHaveFocus());
+  });
+
+  it('leaves a failed question out of what the next question sends', async () => {
+    show();
+    fireEvent.click(await askButton());
+    type('First');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(1));
+    act(() => asked[0].write('Answer one.'));
+    act(() => asked[0].finish());
+    await within(panel()).findByText('Answer one.');
+    type('Too many');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(2));
+    act(() => asked[1].fail(new AiError('rate_limited', { status: 429, retryAfter: 5 })));
+    await within(panel()).findByRole('alert');
+    type('A new question');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(asked).toHaveLength(3));
+    expect(asked[2].options.messages).toEqual([
+      { role: 'user', text: 'First' },
+      { role: 'model', text: 'Answer one.' },
+      { role: 'user', text: 'A new question' },
+    ]);
   });
 
   it('says it needs the internet when offline', async () => {

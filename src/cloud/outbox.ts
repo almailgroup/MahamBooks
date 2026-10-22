@@ -9,6 +9,7 @@ import Dexie, {
 import { t } from '@/i18n';
 import { shortId } from '@/lib/ids';
 import {
+  aiSwitchChanged,
   approvalRulesChanged,
   approvalRulesOf,
   appLimit,
@@ -35,6 +36,7 @@ import {
   sameData,
   peopleSettingsKept,
   staffCompanyChangeOk,
+  switchesAi,
   switchesLetters,
   type RecordLookup,
 } from './roles';
@@ -302,7 +304,9 @@ async function companiesFor(
  * can_delete_record). `company` is the company's record as stored here; its
  * rules are null while never turned on. Approval requests are kept honest,
  * and invoices numbered when they are issued are never issued without a
- * number, whether or not the rules are on.
+ * number, whether or not the rules are on. The AI assistant's switch on the
+ * company record is the owner's and the admins' (records_guard_ai of
+ * 20261214000000_ai_assistant.sql keeps it for anyone else's copy).
  */
 function refuseByRules(
   link: CloudLink,
@@ -312,10 +316,12 @@ function refuseByRules(
   runs?: Map<string, Record<string, unknown>>,
 ): string | null {
   if (table === 'companies') {
-    return link.role !== 'owner' &&
-      change.after !== undefined &&
-      approvalRulesChanged(change.before, change.after)
-      ? t('Only the owner changes the approval rules.')
+    if (change.after === undefined) return null;
+    if (link.role !== 'owner' && approvalRulesChanged(change.before, change.after)) {
+      return t('Only the owner changes the approval rules.');
+    }
+    return !switchesAi(link.role) && aiSwitchChanged(change.before, change.after)
+      ? t('Only the owner or an admin turns the AI assistant on or off.')
       : null;
   }
   const rules = approvalRulesOf(company);

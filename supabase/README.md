@@ -18,8 +18,11 @@ team for the owner and approvers (see "The change feed" below).
 `migrations/20261130000000_people_alerts.sql` comes next: salary approval,
 expiry alerts and employee letters (see "Salary approval", "Expiry alerts"
 and "Employee letters" below).
-`migrations/20261207000000_staffing_costings.sql` comes last: manpower
-costings of Maham People (see "Manpower costings" below). Each file is
+`migrations/20261207000000_staffing_costings.sql` comes next: manpower
+costings of Maham People (see "Manpower costings" below).
+`migrations/20261214000000_ai_assistant.sql` comes last: the AI assistant's
+switch is the owner's and the admins' (see "The AI assistant's switch"
+below). Each file is
 run once, in this order; a release that needs more from the server adds a
 file, and only that one is run. The files after the first are safe to run again; the first is
 not, once there are records of version 16 (see below). The owner's
@@ -731,6 +734,38 @@ changes nothing when that file hasn't run.
   every push an older version makes answered as before the file, and the
   app's fakes against the server), `src/cloud/costings-sync.test.ts`,
   `src/db/costings.test.ts` and `src/lib/hr/costing.test.ts`.
+
+## The AI assistant's switch
+
+`20261214000000_ai_assistant.sql` keeps the company's AI assistant switch
+(`ai` on the company record, Settings → AI assistant; see
+[`docs/ai-assistant.md`](../docs/ai-assistant.md)) for the owner and the
+admins. It stops with "Run 20261116000000_super_admin_approvals.sql and the
+files after it first, then this file." and changes nothing when that file
+hasn't run. Until it runs, only the app keeps the switch for them (its
+Settings page, and the device's own check before it syncs).
+
+- A trigger of its own, `records_guard_ai` (before insert or update on
+  `public.records`, after `records_guard`), replaces no earlier function, so
+  no other file needs running again after it, and running an earlier file
+  again leaves it in place. For the company record only: anyone but the
+  owner or an admin keeps `ai` as it is stored (`kept_key`, as the letters
+  switch), by a push or `patch_company` alike, so an accountant neither turns
+  it on nor off, and a copy from an older version, which has never heard of
+  it, never turns it off. The rest of their change is stored as before.
+- An admin the owner made Maham Books or Maham People view only for still
+  changes it: it is not one of the books' settings
+  (`company_books_changed`). Staff and viewers are refused as before (staff
+  change only document numbers on the company record; viewers nothing).
+- `server_features()` is unchanged: the app asks for no feature, as the
+  switch is kept on the device for the same people either way.
+- The AI service (the Cloudflare Worker) doesn't read the switch: it answers
+  anyone signed in, and the app shows the assistant only with the switch on.
+- Tests: `src/cloud/ai-assistant-sql.test.ts` (the file run twice after
+  every earlier one, before them, the owner, admins limited or not, an
+  accountant by push and `patch_company`, an older version's copy, staff and
+  viewers, and the app's fake against the server) and
+  `src/cloud/outbox.test.ts` (the device's own check).
 
 ## Email alerts
 

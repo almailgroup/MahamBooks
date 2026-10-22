@@ -152,12 +152,15 @@ export function systemInstruction({
   place,
   guide,
   settings,
+  wording = 'Settings › Language & wording',
 }: {
   place: AiPlace;
   /** guideLines() of the apps the person can open. */
   guide: readonly string[];
   /** The sections of Settings, translated. */
   settings: readonly string[];
+  /** The page of the words printed on documents, as the person sees it (pageLabel). */
+  wording?: string;
 }): string {
   const appLanguage = place.language === 'ar' ? 'Arabic' : 'English';
   return [
@@ -174,7 +177,7 @@ export function systemInstruction({
     `App language: ${appLanguage}`,
     `Role: ${place.role ? ROLE_NAMES[place.role] : 'not known'}`,
     '',
-    'Guide (apps they can open; + New creates documents; Ctrl K searches; the grid button switches apps; Home shows what needs attention):',
+    `Guide (apps they can open; + New creates documents; Ctrl K searches; the grid button switches apps; the العربية / English button at the top switches the app's language (${wording} only sets words printed on documents); Home shows what needs attention):`,
     ...guide,
     `- Settings (bottom of each sidebar): ${settings.join(', ')}.`,
   ].join('\n');

@@ -121,6 +121,7 @@ export function useAiContext(): AiContext {
         language,
       ),
       settings: sections.map((section) => t(section.label)),
+      wording: pageLabel('/settings/labels', current, open, sections, translate),
     });
     const onSuitePage = pathname === '/' || pathname.startsWith('/settings');
     const starters = (onSuitePage ? STARTERS.suite : STARTERS[app.id]).map((key) => t(key));

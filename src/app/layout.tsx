@@ -15,6 +15,7 @@ import { isTypingTarget } from '@/features/shell/store';
 import { watchScrolling } from '@/features/shell/scrolling';
 import { CommandPalette } from '@/features/search/command-palette';
 import { AiAssistant } from '@/features/ai/assistant';
+import { useAssistantOpen } from '@/features/ai/store';
 import { ThemeMenu } from '@/features/theme/menu';
 import { ReadOnlyContext } from '@/components/ui/read-only';
 import { useRoleView, ViewOnlyBanner } from '@/features/cloud/role-gates';
@@ -93,6 +94,9 @@ export function AppLayout() {
   const [itemId, setItemId] = useState<string | null>(null);
   const [palette] = useState(() => openPalette(setPaletteOpen));
   const roles = useRoleView();
+  // On wide screens the page makes room for the AI assistant's panel, so
+  // the buttons its answers name stay in sight beside it.
+  const besideAssistant = useAssistantOpen();
   // Recurring invoices (Books) are made whichever app is open.
   useRecurringGeneration();
   useRememberApp();
@@ -157,7 +161,14 @@ export function AppLayout() {
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      <div className="lg:fixed lg:inset-y-2.5 lg:start-64 lg:end-2.5 print:static">
+      <div
+        className={cn(
+          'lg:fixed lg:inset-y-2.5 lg:start-64 lg:end-2.5 print:static',
+          // From 1360px wide, the panel's width (26rem) and the gaps on each
+          // side of it; narrower, the page would be too cramped and the panel covers it.
+          besideAssistant && 'min-[85rem]:end-[27.25rem]',
+        )}
+      >
         <div
           ref={panel}
           className="scroll-thin bg-page lg:bg-surface min-h-dvh lg:h-full lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:shadow-[0_1px_3px_rgb(15_23_42/0.05),0_12px_40px_-16px_rgb(15_23_42/0.18)] lg:ring-1 lg:ring-slate-900/[0.04] print:h-auto print:overflow-visible print:rounded-none print:bg-white print:shadow-none print:ring-0"
