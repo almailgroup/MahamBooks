@@ -13,6 +13,7 @@ import {
   approvalRulesOf,
   appLimit,
   ATTACHMENT_OWNER_TABLES,
+  canPostPayroll,
   canWriteRecord,
   companyBooksChanged,
   hasLimits,
@@ -21,13 +22,17 @@ import {
   documentChangeNeedsApproval,
   guardApprovalWrite,
   isApprover,
+  isPayrollApproval,
   issuesWithoutNumber,
   limitBlocksWrite,
   paymentLinkNeedsApprover,
+  payrollDecisionRefusal,
+  rulesCoverPayroll,
   sameData,
   staffCompanyChangeOk,
   type RecordLookup,
 } from './roles';
+import { linkHasFeature } from './features';
 import type { CloudLink, OutboxEntry } from './types';
 
 /**
@@ -177,6 +182,35 @@ async function ownersFor(
   return (table, id) => found.get(`${table} ${id}`) ?? null;
 }
 
+/**
+ * The pay runs requests for their approval being written are about, as
+ * stored in this transaction (the cloud approves a pay run only as it was
+ * sent: see payrollDecisionRefusal).
+ */
+async function payRunsFor(
+  down: DBCore,
+  trans: DBCoreTransaction,
+  changes: Change[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const ids = [
+    ...new Set(
+      changes
+        .map((c) => c.before ?? c.after)
+        .filter((row) => isPayrollApproval(row) && typeof row?.subjectId === 'string')
+        .map((row) => row!.subjectId as string),
+    ),
+  ];
+  const found = new Map<string, Record<string, unknown>>();
+  if (ids.length === 0 || !down.schema.tables.some((t) => t.name === 'payRuns')) return found;
+  const rows = (await down.table('payRuns').getMany({ trans, keys: ids })) as (
+    Record<string, unknown> | undefined
+  )[];
+  ids.forEach((id, i) => {
+    if (rows[i]) found.set(id, rows[i]!);
+  });
+  return found;
+}
+
 /** The company records of these companies, as stored in this transaction. */
 async function companiesFor(
   down: DBCore,
@@ -205,6 +239,7 @@ function refuseByRules(
   table: string,
   change: Change,
   company: Record<string, unknown> | null | undefined,
+  runs?: Map<string, Record<string, unknown>>,
 ): string | null {
   if (table === 'companies') {
     return link.role !== 'owner' &&
@@ -234,13 +269,39 @@ function refuseByRules(
     return t('This invoice has no number yet. Issue it again to give it one.');
   }
   if (table === 'approvals' && change.after) {
-    const write = guardApprovalWrite(change.before, change.after, {
-      userId: link.userId,
-      approver,
-      owner: link.role === 'owner',
-      now: new Date().toISOString(),
-    });
-    return 'refused' in write ? t('Only an approver decides approval requests.') : null;
+    // Salary approval (#10), once the company's server has it.
+    const payroll = {
+      on: rulesCoverPayroll(rules) && linkHasFeature(link, 'payroll_approvals'),
+      poster: canPostPayroll(link.role, link.permissions),
+    };
+    const write = guardApprovalWrite(
+      change.before,
+      change.after,
+      {
+        userId: link.userId,
+        approver,
+        owner: link.role === 'owner',
+        now: new Date().toISOString(),
+      },
+      payroll,
+    );
+    if ('refused' in write) return t('Only an approver decides approval requests.');
+    if (!payroll.on || !isPayrollApproval(change.before ?? change.after)) return null;
+    const subject = (change.before ?? change.after)?.subjectId;
+    const refusal = payrollDecisionRefusal(
+      change.before,
+      change.after,
+      { userId: link.userId, owner: link.role === 'owner' },
+      typeof subject === 'string' ? runs?.get(subject) : undefined,
+    );
+    if (refusal === 'self') {
+      return t('Only the owner approves a pay run they sent for approval themselves.');
+    }
+    return refusal === 'stale'
+      ? t(
+          'This pay run changed after it was sent for approval. Reject this request; it can be sent again.',
+        )
+      : null;
   }
   if (!rules) return null;
   if (table === 'payments' || table === 'securityCheques') {
@@ -269,8 +330,11 @@ function refuse(
   change: Change,
   company: Record<string, unknown> | null | undefined,
   lookup: RecordLookup | undefined,
+  runs?: Map<string, Record<string, unknown>>,
 ): string | null {
-  return refuseByRole(link, table, change, lookup) ?? refuseByRules(link, table, change, company);
+  return (
+    refuseByRole(link, table, change, lookup) ?? refuseByRules(link, table, change, company, runs)
+  );
 }
 
 function refuseByRole(
@@ -353,7 +417,7 @@ async function capture(
   const companyIds = changes.map((c) => c.companyId);
   const linked = linksFor(down, trans, companyIds);
   // All at once: Dexie keeps its transaction across only so many waits.
-  const [links, companies, owners] = await Promise.all([
+  const [links, companies, owners, runs] = await Promise.all([
     linked,
     RULED.has(name) && down.schema.tables.some((t) => t.name === 'companies')
       ? companiesFor(
@@ -373,12 +437,14 @@ async function capture(
           return limited.length ? ownersFor(down, trans, limited) : undefined;
         })
       : undefined,
+    // The pay runs of requests for their approval (#10).
+    name === 'approvals' ? payRunsFor(down, trans, changes) : undefined,
   ]);
   for (const change of changes) {
     const link = change.companyId ? links.get(change.companyId) : null;
     if (!link) continue;
     const lookup = owners && hasLimits(link.role, link.permissions) ? owners : undefined;
-    const reason = refuse(link, name, change, companies?.get(link.companyId), lookup);
+    const reason = refuse(link, name, change, companies?.get(link.companyId), lookup, runs);
     if (reason) throw new CloudPermissionError(reason, link.companyId);
   }
 
@@ -423,6 +489,7 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
       const enabled = down.schema.tables.some((t) => t.name === 'outbox');
       if (!enabled) return {};
       const withCompanies = down.schema.tables.some((t) => t.name === 'companies');
+      const withPayRuns = down.schema.tables.some((t) => t.name === 'payRuns');
       // The records files are kept with, for the owner's limits (see ownersFor).
       const owners = ATTACHMENT_OWNER_TABLES.filter((name) =>
         down.schema.tables.some((t) => t.name === name),
@@ -436,6 +503,8 @@ export function outboxMiddleware(tables: readonly string[]): Middleware<DBCore> 
                 ? ['outbox', 'syncState', 'companies']
                 : ['outbox', 'syncState'];
             if (stores.includes('attachments')) wanted.push(...owners);
+            // Requests for a pay run's approval are judged with the pay run.
+            if (stores.includes('approvals') && withPayRuns) wanted.push('payRuns');
             const extra = wanted.filter((s) => !stores.includes(s));
             return down.transaction([...stores, ...extra], mode, options);
           }

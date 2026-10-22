@@ -33,7 +33,13 @@ export type ServerFeature =
    * approvers (the bell, Updates, and Settings → Email alerts → Changes by
    * your team). Only ever for companies kept in the cloud.
    */
-  | 'change_feed';
+  | 'change_feed'
+  /**
+   * 20261130000000_people_alerts.sql: salary approval by the Super Admin
+   * (Settings → Approvals → Pay runs): the cloud keeps a pay run's approval
+   * honest, and emails the approvers its totals by department and position.
+   */
+  | 'payroll_approvals';
 
 /**
  * Whether a company may use a feature: always when it is kept on this

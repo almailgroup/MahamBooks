@@ -11,6 +11,8 @@ import { useApprovalView, useCaughtUp, useMemberNames } from './hooks';
 import { ApprovalRequestCard } from './request-card';
 import { ChequeRequestCard } from './cheque-request-card';
 import { isChequeRequest } from '@/db/cheque-rules';
+import { isPayrollApproval } from '@/cloud/roles';
+import { PayrollRequestCard } from '@/features/payroll/approval-panel';
 
 type Tab = 'waiting' | 'decided' | 'mine';
 
@@ -108,7 +110,15 @@ export function ApprovalsInbox() {
         <ul className="divide-y divide-slate-100">
           {shown.map((request) => (
             <li key={request.id} className="px-5 py-4">
-              {isChequeRequest(request) ? (
+              {isPayrollApproval(request) ? (
+                <PayrollRequestCard
+                  request={request}
+                  names={names}
+                  approver={view.approver}
+                  link={view.link}
+                  showSubject
+                />
+              ) : isChequeRequest(request) ? (
                 <ChequeRequestCard
                   request={request}
                   clients={clients}

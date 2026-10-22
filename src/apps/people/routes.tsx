@@ -22,6 +22,7 @@ const LeaveReasons = lazy(() => import('./pages/payroll/leave-reasons'));
 const PayrollLoans = lazy(() => import('./pages/payroll/loans'));
 const PayrollSettings = lazy(() => import('./pages/payroll/settings'));
 const Payslips = lazy(() => import('./pages/payroll/payslips'));
+const PayrollSummary = lazy(() => import('./pages/payroll/summary'));
 const Settlement = lazy(() => import('./pages/payroll/settlement'));
 const SettlementPrint = lazy(() => import('./pages/payroll/settlement-print'));
 
@@ -34,7 +35,7 @@ const page = (path: string, element: ReactNode): RouteObject => ({
   element: <People>{element}</People>,
 });
 
-/** Payslips and the settlement, printed without the navigation. */
+/** Payslips, the register by department and the settlement, printed without the navigation. */
 export const peoplePrintRoutes: RouteObject[] = [
   {
     path: 'payroll/runs/:id/payslips',
@@ -42,6 +43,16 @@ export const peoplePrintRoutes: RouteObject[] = [
       <Bare>
         <People>
           <Payslips />
+        </People>
+      </Bare>
+    ),
+  },
+  {
+    path: 'payroll/runs/:id/summary',
+    element: (
+      <Bare>
+        <People>
+          <PayrollSummary />
         </People>
       </Bare>
     ),

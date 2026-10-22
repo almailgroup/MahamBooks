@@ -27,7 +27,7 @@ import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { registerExtrasOn } from '@/lib/compliance';
 import { fileFinderOn } from '@/db/files';
-import { approvalsOn } from '@/db/approvals';
+import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
 import { openStoredAttachment } from '@/features/purchases/attachments';
 import { CREATE_ACTIONS } from '@/features/shell/create';
 import { APPS } from '@/suite/apps';
@@ -162,6 +162,7 @@ function PaletteBody({
   const extras = registerExtrasOn(company);
   const finder = fileFinderOn(company);
   const approvals = approvalsOn(company);
+  const payrollApprovals = payrollApprovalsShown(company);
   const fmt = useFormat();
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
@@ -201,6 +202,7 @@ function PaletteBody({
         fileFinder: finder,
         chequePrinting: Boolean(company.chequePrinting),
         approvals,
+        payrollApprovals,
       }),
       makeEntry({
         key: 'action:sync-status',
@@ -263,6 +265,7 @@ function PaletteBody({
     extras,
     finder,
     approvals,
+    payrollApprovals,
     company.chequePrinting,
     language,
     dark,

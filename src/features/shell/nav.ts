@@ -19,6 +19,8 @@ export interface NavLink {
   fileFinderOnly?: boolean;
   /** Shown only once the owner has turned approvals on (Settings → Approvals). */
   approvalsOnly?: boolean;
+  /** Shown only once the owner has turned salary approval on (Settings → Approvals → Pay runs). */
+  payrollApprovalsOnly?: boolean;
 }
 
 export interface NavTopLink extends NavLink {
@@ -41,7 +43,8 @@ export type NavEntry = NavTopLink | NavGroup;
 /**
  * The entries shown for this company: VAT returns only when taxes are on,
  * Vehicles only with the register's extras, Files only with the document
- * finder, Approvals only with approvals on. Which app's entries, and
+ * finder, Approvals only with approvals on (in People, with salary
+ * approval on). Which app's entries, and
  * whether the person may open that app, is the suite's business
  * (src/suite/apps.ts).
  */
@@ -51,12 +54,14 @@ export function visibleNav(
   registerExtras = false,
   fileFinder = false,
   approvals = false,
+  payrollApprovals = false,
 ): NavEntry[] {
   const shown = (link: NavLink) =>
     (taxesOn || !link.taxesOnly) &&
     (registerExtras || !link.registerExtrasOnly) &&
     (fileFinder || !link.fileFinderOnly) &&
-    (approvals || !link.approvalsOnly);
+    (approvals || !link.approvalsOnly) &&
+    (payrollApprovals || !link.payrollApprovalsOnly);
   return nav
     .filter((entry) => entry.kind === 'group' || shown(entry))
     .map((entry) =>

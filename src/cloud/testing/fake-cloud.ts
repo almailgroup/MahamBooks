@@ -21,6 +21,7 @@ import {
   approvalRulesChanged,
   approvalRulesOf,
   canChangeMember,
+  canPostPayroll,
   companyBooksChanged,
   canWriteRecord,
   chequeChangeNeedsApprover,
@@ -30,12 +31,15 @@ import {
   grantableRoles,
   guardApprovalWrite,
   isApprover,
+  isPayrollApproval,
   isPrivateRecord,
   issuesWithoutNumber,
   keepPaymentLink,
   limitBlocksWrite,
   MAX_APPROVERS,
+  payrollDecisionRefusal,
   readPermissions,
+  rulesCoverPayroll,
   sameData,
   seesChange,
   staffCompanyChangeOk,
@@ -1018,14 +1022,37 @@ export class FakeCloud {
     if (tbl !== 'documents' && tbl !== 'approvals') return data;
     const approver = this.approver(company, user);
     if (tbl === 'approvals') {
+      // Salary approval (#10), once the server has 20261130000000_people_alerts.sql.
+      const payroll = {
+        on:
+          this.features.includes('payroll_approvals') &&
+          rulesCoverPayroll(this.approvalRules(company)),
+        poster: canPostPayroll(role, this.permissionsOf(company, user)),
+      };
       // Whether or not the rules are on.
-      const write = guardApprovalWrite(old, data, {
-        userId: user,
-        approver,
-        owner: role === 'owner',
-        now: this.now(),
-      });
+      const write = guardApprovalWrite(
+        old,
+        data,
+        {
+          userId: user,
+          approver,
+          owner: role === 'owner',
+          now: this.now(),
+        },
+        payroll,
+      );
       if ('refused' in write) throw fail(write.refused);
+      if (payroll.on && isPayrollApproval(old ?? data)) {
+        const subject = (old ?? data).subjectId;
+        const refusal = payrollDecisionRefusal(
+          old,
+          data,
+          { userId: user, owner: role === 'owner' },
+          typeof subject === 'string' ? this.record(company, 'payRuns', subject) : undefined,
+        );
+        if (refusal === 'self') throw fail('permission');
+        if (refusal === 'stale') throw fail('invalid');
+      }
       return write.data;
     }
     const companyData = this.records.get(this.key(company, 'companies', company))?.data;

@@ -72,7 +72,8 @@ export interface AlertLookups {
   newKeys?: ReadonlySet<string> | null;
 }
 
-const COLORS = {
+/** The emails' colours (shared with the payroll approval email). */
+export const COLORS = {
   page: '#f1f5f9',
   card: '#ffffff',
   text: '#0f172a',
@@ -89,10 +90,10 @@ const COLORS = {
  * The logo in the email: on its own white plate, so mail apps that darken
  * emails leave it readable (public/brand/maham-one-logo-email.png is 605×160).
  */
-const LOGO_HEIGHT = 40;
-const LOGO_WIDTH = Math.round((605 / 160) * LOGO_HEIGHT);
+export const LOGO_HEIGHT = 40;
+export const LOGO_WIDTH = Math.round((605 / 160) * LOGO_HEIGHT);
 
-const FONTS = {
+export const FONTS = {
   en: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   ar: "Tahoma, 'Segoe UI', Arial, sans-serif",
 };

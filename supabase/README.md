@@ -521,6 +521,65 @@ It stops before changing anything without the Super Admin file.
   the test cloud), `src/alerts/server.test.ts` ("notify") and
   `src/alerts/changes.test.ts`.
 
+## Salary approval
+
+`20261130000000_people_alerts.sql` (#10 of docs/requirements-plan.md, Phase 4's
+file: later Phase 4 requirements add to it). It stops before changing anything
+without the change feed file. Off until the owner sets `approvalRules.payroll`
+to `true` on the company record (Settings → Approvals → Pay runs, the owner's
+alone as every approval rule); until then nothing below looks at a record.
+
+- `records_guard` is replaced with the Super Admin file's definition and every
+  rule it had, plus, for an `approvals` row of kind `payroll` about `payRuns`
+  with the switch on (`almailbooks.payroll_approval_on`): approving it
+  (pending to approved, or to applied by anyone but the owner) is refused
+  (`almail:invalid`, 42501) unless the pay run stored now has the `updatedAt`
+  the request was made for (`after.runUpdatedAt`); a member allowed to
+  approve who sent it is refused (`almail:permission`, 42501), the owner may
+  approve their own; a request sent up already approved or applied by anyone
+  but the owner is stored as a new waiting one; and whoever may post the pay
+  run (`can_write_record(company, 'payRuns', '{}')`: owner, admin or
+  accountant whose People isn't limited) may move an approved request to
+  applied, the decision kept. The owner who posts a pay run moves a waiting
+  request to applied without the check (posting is their approval). Every
+  other record passes as before. Posting a pay run is **not** refused by the
+  server: its journal entries are separate records an older version would
+  still send; the app refuses it, and the feed reports every posted run.
+- `almailbooks.approval_emails` (`company_id`, `approval_id`, `user_id`,
+  `sent_at`, `finished_at`, `attempts`, `claimed_until`, `last_error`),
+  row-level security on, no grants: the email-alerts function (the database's
+  own connection) only.
+- `records_payroll_approval_email`, AFTER INSERT on `public.records` (`when`
+  the row is a payroll approval): with the switch on and the request waiting,
+  notes one row per approver (the owner and `can_approve` admins or
+  accountants, not the requester, not one the owner gave no access to
+  People), then `net.http_post` `{"action":"payroll_approval", companyId,
+approvalId}` with the email alerts secret. Each part inside its own
+  `exception when others`: without pg_net, the config or anything else it
+  needs, the push goes on and the rows wait for the schedule. An upsert of a
+  request already stored is an update, so it never emails twice.
+- `almailbooks.run_change_notifications()` is replaced with the change feed
+  file's definition plus: it also calls the function when an approval email
+  hasn't gone (not finished, fewer than 5 tries, under 3 days old). The
+  `notify` action then sends those too.
+- The function (`sendPayrollApprovalEmails` in `src/alerts/server.ts`)
+  claims the rows, sends only while the request waits, the switch is on and
+  the stored pay run is the one sent, to approvers with a confirmed address
+  in their language, with `Idempotency-Key: payroll-approval/<approval>/<user>`.
+  The totals come from the stored pay run (`payrollBreakdown`, groups of one
+  merged); no names, Civil IDs, IBANs, anyone's own pay or the note. Links
+  come from the `MAHAM_APP_URL` secret or the person's saved app address,
+  never from the call.
+- `server_features()` answers every earlier name and `payroll_approvals`.
+- Approval rows about pay runs were already private (`record_is_private` by
+  `subjectTbl`, 20261102000000_tables_v16.sql), and so are their changes in
+  the feed.
+- Tests: `src/cloud/people-alerts-sql.test.ts` (off = as before, every role
+  and a deputy, stale runs, the owner's own, done by whoever posts, older
+  copies, upserts, deletes, privacy, no pg_net, the schedule, the files run
+  twice, and the app's stand-ins), `src/alerts/payroll-approval.test.ts` and
+  `src/db/payroll-approvals.test.ts`.
+
 ## Email alerts
 
 `20261007000000_email_alerts.sql` and the `email-alerts` Edge Function

@@ -19,10 +19,13 @@ import {
   INVOICE_CONTENT_FIELDS,
   invoiceContent,
   isApprover,
+  isPayrollApproval,
   deleteKeptBy,
   rulesCoverDocument,
+  rulesCoverPayroll,
   sameData,
 } from '@/cloud/roles';
+import { linkHasFeature } from '@/cloud/features';
 import type { CloudLink } from '@/cloud/types';
 
 /**
@@ -73,12 +76,47 @@ export function rulesInEffect(
 }
 
 /**
- * Whether the owner has turned approvals on (Settings → Approvals): the
- * Approvals page is then in the sidebar. Kept once set, even when the rules
- * cover nothing any more, so earlier requests stay in reach.
+ * Whether pay runs wait for the Super Admin's approval (#10) in this
+ * company: one kept in the cloud, whose server has salary approval, with
+ * the owner's switch on (Settings → Approvals → Pay runs).
+ */
+export function payrollApprovalOn(
+  company: Pick<Company, 'approvalRules'> | null | undefined,
+  link: CloudLink | null | undefined,
+): boolean {
+  return (
+    Boolean(link) &&
+    linkHasFeature(link ?? null, 'payroll_approvals') &&
+    rulesCoverPayroll(rulesInEffect(company, link))
+  );
+}
+
+/** The rules of Books (invoices, credit notes and cheques). */
+const BOOKS_RULES = ['documentTypes', 'voidInsteadOfDelete', 'cheques'] as const;
+
+/**
+ * Whether the owner has turned approvals of Books on (Settings → Approvals):
+ * the Approvals page is then in the Books sidebar, and invoices are corrected
+ * by a new number (correctsByNewNumber). Kept once set, even when the rules
+ * cover nothing any more, so earlier requests stay in reach. Rules the owner
+ * set for pay runs only (#10) leave Books as it was.
  */
 export function approvalsOn(company: Pick<Company, 'approvalRules'> | null | undefined): boolean {
-  return approvalRulesOf(company) !== null;
+  const rules = approvalRulesOf(company);
+  if (!rules) return false;
+  return BOOKS_RULES.some((key) => key in rules) || !('payroll' in rules);
+}
+
+/**
+ * Whether the owner has turned salary approval on at some time (Settings →
+ * Approvals → Pay runs): Approvals is then in the People sidebar, so earlier
+ * requests stay in reach once it is off again.
+ */
+export function payrollApprovalsShown(
+  company: Pick<Company, 'approvalRules'> | null | undefined,
+): boolean {
+  const rules = approvalRulesOf(company);
+  return Boolean(rules && 'payroll' in rules);
 }
 
 /**
@@ -177,6 +215,15 @@ const CHEQUE_LOG: Record<keyof typeof LOG, string> = {
   expired: msg('Confirmation request for cheque {number} expired'),
 };
 
+/** The same for pay runs (#10): the Super Admin's decision is a موافقة, not the posting. */
+const PAYROLL_LOG: Record<keyof typeof LOG, string> = {
+  asked: msg('Pay run {period} sent for approval'),
+  cancelled: msg('Approval request for pay run {period} cancelled'),
+  approved: msg('Approval given for pay run {period}'),
+  rejected: msg('Approval refused for pay run {period}'),
+  expired: msg('Approval request for pay run {period} expired'),
+};
+
 /** The contact a cheque request is about, as far as this device knows it. */
 async function chequeContact(request: ApprovalRequest): Promise<ID | null> {
   const after = (request.after ?? {}) as Record<string, unknown>;
@@ -190,6 +237,14 @@ async function chequeContact(request: ApprovalRequest): Promise<ID | null> {
 
 /** Writes what happened to a request to the activity of the record it is about. */
 export async function logRequest(request: ApprovalRequest, what: keyof typeof LOG): Promise<void> {
+  if (isPayrollApproval(request)) {
+    // Payroll activity: private, as the pay run is.
+    await logActivity(request.companyId, 'payroll', request.subjectId, `approval:${what}`, {
+      text: PAYROLL_LOG[what],
+      vars: { period: request.subjectNumber },
+    });
+    return;
+  }
   if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
     await logActivity(
       request.companyId,
@@ -383,6 +438,9 @@ export async function decideApproval(
     throw new ApprovalError(t('Only an approver decides approval requests.'));
   }
   const link = await db.syncState.get(request.companyId);
+  if (decision === 'approved' && isPayrollApproval(request)) {
+    await assertPayrollDecision(request, link);
+  }
   const now = nowStamp();
   await db.transaction('rw', REQUEST_TABLES(), async () => {
     await db.approvals.put({
@@ -403,6 +461,36 @@ export async function decideApproval(
   }
   await dropUnusedFiles([request]);
   return false;
+}
+
+/**
+ * With salary approval on, as the cloud refuses it (records_guard in
+ * 20261130000000_people_alerts.sql): a member allowed to approve never
+ * approves a pay run they sent themselves (the owner may), and a pay run is
+ * approved only as it was sent.
+ */
+async function assertPayrollDecision(
+  request: ApprovalRequest,
+  link: CloudLink | null | undefined,
+): Promise<void> {
+  if (!link || !payrollApprovalOn(await db.companies.get(request.companyId), link)) return;
+  if (request.requestedBy === link.userId && link.role !== 'owner') {
+    throw new ApprovalError(
+      t('Only the owner approves a pay run they sent for approval themselves.'),
+    );
+  }
+  const run = await db.payRuns.get(request.subjectId);
+  const asked = (request.after as { runUpdatedAt?: unknown } | null | undefined)?.runUpdatedAt;
+  if (!run) {
+    throw new ApprovalError(t('This pay run isn’t on this device yet. Let it sync, then decide.'));
+  }
+  if (run.updatedAt !== asked) {
+    throw new ApprovalError(
+      t(
+        'The pay run on this device isn’t as it was sent for approval. Let the device sync; if it still differs, the pay run changed since: reject this request, and it can be sent again.',
+      ),
+    );
+  }
 }
 
 /** Whether this device has a change of the request the cloud hasn't taken yet (or refused). */
@@ -475,6 +563,9 @@ export function changedSinceAsked(request: ApprovalRequest, current: InvoiceDocu
 export async function applyApproval(id: ID): Promise<void> {
   const request = await db.approvals.get(id);
   if (!request || request.status !== 'approved') return;
+  // A pay run's approval (#10) is carried out by whoever approves (posts) the
+  // pay run, which marks the request done: nothing to do on this device.
+  if (isPayrollApproval(request)) return;
   if (request.subjectTbl === 'payments' || request.subjectTbl === 'securityCheques') {
     // Imported here: the cheque functions use this module for their own checks.
     const { applyChequeRequest } = await import('./cheque-approvals');

@@ -10,7 +10,10 @@ import { handleAlertsRequest } from './server';
  * Supabase gives the function SUPABASE_URL, SUPABASE_DB_URL and the
  * project's keys. The owner adds two secrets (Edge Functions → Secrets):
  * RESEND_API_KEY, and ALERTS_FROM, the sender, such as
- * "Maham Books <alerts@example.com>".
+ * "Maham Books <alerts@example.com>". A third, MAHAM_APP_URL (where the app
+ * is, such as https://app.example.com/), is optional: the links in the
+ * payroll approval emails use it, or else the address each person saved
+ * with their email alerts.
  */
 
 declare const Deno: {
@@ -44,6 +47,7 @@ Deno.serve((request) =>
       resendKey: env('RESEND_API_KEY'),
       from: env('ALERTS_FROM'),
       apiKey: publishableKey(),
+      appUrl: env('MAHAM_APP_URL'),
     },
     fetch: (input, init) => fetch(input, init),
     now: () => new Date(),

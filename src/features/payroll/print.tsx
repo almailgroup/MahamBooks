@@ -8,11 +8,22 @@ import common from '@/i18n/ar/common';
 import people from '@/i18n/ar/people';
 import payroll from '@/i18n/ar/payroll';
 import leaveReasons from '@/i18n/ar/req-15';
+import documentsPdf from '@/i18n/ar/documents-pdf';
+import suite from '@/i18n/ar/suite';
+import salaryApproval from '@/i18n/ar/req-10';
 import { formatMoney } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/misc';
 
-const ARABIC: Dictionary = { ...common, ...people, ...payroll, ...leaveReasons };
+const ARABIC: Dictionary = {
+  ...common,
+  ...people,
+  ...payroll,
+  ...leaveReasons,
+  ...documentsPdf,
+  ...suite,
+  ...salaryApproval,
+};
 
 export const PRINT_EN = 'en-KW';
 export const PRINT_AR = 'ar-KW-u-nu-latn';

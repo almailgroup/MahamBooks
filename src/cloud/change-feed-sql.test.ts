@@ -808,7 +808,23 @@ describe('server_features', () => {
   it('names change_feed once this file has run, and the app finds nothing before', async () => {
     const user = await h.user(`features-${Math.random().toString(36).slice(2)}@example.com`);
     const [row] = await h.rpc<{ server_features: string[] }>(user, 'server_features');
-    expect(row.server_features).toEqual([
+    // Later files name theirs too (20261130000000_people_alerts.sql).
+    expect(row.server_features).toEqual(
+      expect.arrayContaining([
+        'tables_v16',
+        'super_admin',
+        'approvals',
+        'cheque_approvals',
+        'change_feed',
+      ]),
+    );
+    // This file's own answer, before any later file.
+    const upto = await startDatabase(1, MIGRATIONS.indexOf(FILE) + 1);
+    const [own] = await upto.rpc<{ server_features: string[] }>(
+      await upto.user('feed-own@example.com'),
+      'server_features',
+    );
+    expect(own.server_features).toEqual([
       'tables_v16',
       'super_admin',
       'approvals',

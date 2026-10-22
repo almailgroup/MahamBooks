@@ -866,6 +866,59 @@ export function approvalRulesChanged(before: AnyRecord, after: AnyRecord): boole
   return !sameData(asRow(before)?.approvalRules ?? null, asRow(after)?.approvalRules ?? null);
 }
 
+/** Whether the rules keep pay runs for the Super Admin's approval (#10, approvalRules.payroll). */
+export function rulesCoverPayroll(rules: AnyRecord): boolean {
+  return asRow(rules)?.payroll === true;
+}
+
+/** A request for a pay run's approval (kind payroll, about a pay run). */
+export function isPayrollApproval(request: AnyRecord): boolean {
+  return asRow(request)?.kind === 'payroll' && asRow(request)?.subjectTbl === 'payRuns';
+}
+
+/**
+ * Whether the person may post pay runs, as almailbooks.can_write_record
+ * judges a pay run: an owner, admin or accountant whose People the owner
+ * hasn't made view only (or closed). A company kept on this device: yes.
+ */
+export function canPostPayroll(
+  role: MemberRole | null | undefined,
+  permissions: MemberPermissions | undefined,
+): boolean {
+  return canWriteRecord(role, 'payRuns', {}) && !limitBlocksWrite(role, permissions, 'payRuns', {});
+}
+
+/** A JSON value as ->> reads it: text, or null. */
+function asText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/**
+ * Why the cloud refuses to approve a request for a pay run, with the
+ * company's salary approval on (records_guard in
+ * 20261130000000_people_alerts.sql), or null: a member allowed to approve
+ * never approves a pay run they sent themselves (the owner may), and nobody
+ * approves one that changed since it was sent (`run` is the pay run as it is
+ * stored; its updatedAt must be the one the request was made for). The
+ * owner who posts the pay run carries out a waiting request as it is
+ * (pending to applied).
+ */
+export function payrollDecisionRefusal(
+  before: AnyRecord,
+  after: AnyRecord,
+  who: { userId: string; owner: boolean },
+  run: AnyRecord,
+): 'self' | 'stale' | null {
+  const was = asRow(before) ? (asText(asRow(before)?.status) ?? 'pending') : null;
+  const status = asText(asRow(after)?.status) ?? was;
+  if (was !== 'pending' || (status !== 'approved' && status !== 'applied')) return null;
+  if (asText(asRow(before)?.requestedBy) === who.userId && !who.owner) return 'self';
+  if (status === 'applied' && who.owner) return null;
+  const asked = asRow(asRow(before)?.after as AnyRecord)?.runUpdatedAt;
+  return asText(asRow(run)?.updatedAt) !== asText(asked) ? 'stale' : null;
+}
+
 const APPROVAL_FIXED = [
   'kind',
   'subjectTbl',
@@ -906,9 +959,20 @@ export function guardApprovalWrite(
   before: Row,
   after: Record<string, unknown>,
   who: { userId: string; approver: boolean; owner?: boolean; now: string },
+  /**
+   * The company's salary approval (#10, 20261130000000_people_alerts.sql),
+   * once its server has it: `on` with approvalRules.payroll, and whether the
+   * person may post pay runs (canPostPayroll). With it on, a pay run's
+   * request sent up already approved by anyone but the owner waits like any
+   * new one, and whoever posts the approved pay run marks its request done.
+   */
+  payroll?: { on: boolean; poster: boolean },
 ): ApprovalWrite {
+  const payrollOn = Boolean(payroll?.on) && isPayrollApproval(before ?? after);
   if (!before) {
-    if (who.approver && (after.status ?? 'pending') !== 'pending') {
+    const asked = after.status ?? 'pending';
+    const selfApproved = payrollOn && (asked === 'approved' || asked === 'applied');
+    if (who.approver && asked !== 'pending' && (who.owner || !selfApproved)) {
       if (who.owner) return { data: after };
       const data: Record<string, unknown> = { ...after };
       if (data.requestedBy !== who.userId) {
@@ -957,7 +1021,10 @@ export function guardApprovalWrite(
   if (!DECISIONS.has(status)) return { refused: 'invalid' };
   const takenBack =
     was === 'pending' && status === 'cancelled' && before.requestedBy === who.userId;
-  if (!who.approver && !takenBack) return { refused: 'permission' };
+  // The approved pay run posted: done, by whoever may post it.
+  const posted =
+    payrollOn && Boolean(payroll?.poster) && was === 'approved' && status === 'applied';
+  if (!who.approver && !takenBack && !posted) return { refused: 'permission' };
   // Expired only when an approver cancels a waiting request; what it made only when carried out.
   if (!(who.approver && was === 'pending' && status === 'cancelled')) {
     keptKey(data, before, 'expired');

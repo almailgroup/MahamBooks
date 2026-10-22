@@ -62,6 +62,15 @@ has to be added to the app or to Vercel.
     alerts script (step 7) and the email-alerts function
     ([`docs/email-alerts.md`](email-alerts.md)). If the fifth script is ever
     run again, run this one again after it.
+11. Then the seventh script,
+    [`supabase/migrations/20261130000000_people_alerts.sql`](../supabase/migrations/20261130000000_people_alerts.sql)
+    (a new query, paste, **Run**), after the sixth. It adds salary approval by
+    the Super Admin, **Settings → Approvals → Pay runs** (see "Salary
+    approval" below), and its emails. It stops with "Run
+    20261123000000_change_feed.sql first" if the sixth script hasn't run, and
+    then changes nothing. Running it changes nothing by itself either: pay
+    runs are approved as before until the owner turns the switch on. If the
+    fifth or sixth script is ever run again, run this one again after them.
 
 Each script is run once. A new version of the app that needs more from the
 database comes with a new script: run just that one, after the others. The
@@ -378,6 +387,48 @@ are kept 180 days.
 Each entry of a record's activity now also says who made it ("· by …"), in
 companies kept in the cloud; entries from before, and from older versions of
 the app, name nobody.
+
+## Salary approval
+
+**Settings → Approvals → Pay runs** (الإعدادات ← الاعتمادات ← مسيرات الرواتب),
+after the seventh script (step 1.11). Only the owner (the Super Admin) turns
+on **Pay runs need the Super Admin's approval** (مسيرات الرواتب تحتاج إلى
+موافقة المشرف العام); it is off at first, and until then pay runs are
+approved as before.
+
+- With it on, whoever prepares a pay run (an admin or accountant) clicks
+  **Ask for approval** (إرسال للموافقة) on the draft, with a note if needed.
+  **Approve** (اعتماد), which posts the pay run to the books, stays greyed
+  out until the owner, or an admin or accountant with **Can approve** who
+  didn't send it, clicks **Give approval** (موافقة) in **Approvals** (in the
+  People sidebar, and on the home page). The owner may approve a pay run
+  they sent themselves, and may approve (post) any pay run at once.
+- Any change to the pay run after it was sent (a line, the pay date, Update
+  from records) asks for a new approval. The pay run says so.
+- The owner and the members allowed to approve get an email: the totals by
+  department and position, the change since last month, and a link that
+  opens the pay run in the signed-in app. Groups of one person are merged
+  into "Other positions" or "Other departments", and a pay run of one person
+  has no amounts at all. Nobody's own pay, name, Civil ID or IBAN is ever in
+  it, nor the note: each employee's pay is in the app only. Opening the link
+  decides nothing.
+- The links use the function secret `MAHAM_APP_URL` (where the app is, for
+  example `https://mahamone.com/`), or else the address each person saved
+  with their email alerts or their changes by the team. Add it in Supabase:
+  **Edge Functions → Secrets → Add new secret**, name `MAHAM_APP_URL`. Without
+  it, someone who saved neither gets the email without a link.
+- The emails go out through the email-alerts function, as soon as a pay run
+  is sent (with pg_net), and the change feed's 5-minute schedule tries again
+  for three days. They need the email alerts set up
+  ([`docs/email-alerts.md`](email-alerts.md)) and count towards Resend's
+  daily allowance.
+- **Update every device first.** An older version of the app doesn't know
+  the switch and can still approve a pay run without approval; Updates
+  (المستجدات) report every pay run approved.
+- **Ask the auditor to confirm** that the approved pay run and its register
+  by department and position (the pay run → **Register by department**,
+  الكشف حسب القسم) are kept with the month's records. Nothing in the pay is
+  worked out differently.
 
 ## Problems
 

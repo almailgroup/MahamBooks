@@ -2,9 +2,11 @@ import type {
   Company,
   ComplianceDocument,
   ComplianceMark,
+  Department,
   Employee,
   InvoiceDocument,
   ISODate,
+  PayLine,
   Payment,
   PeopleSettings,
 } from '@/db/types';
@@ -17,9 +19,13 @@ import {
   type AlertData,
   type AlertTopic,
 } from './collect';
-import { renderAlertEmail, renderChangesEmail, type AlertEmailKind } from './email';
+import { renderAlertEmail, renderChangesEmail, safeAppUrl, type AlertEmailKind } from './email';
 import { notifyDecision, type ChangeEmailKind } from './changes';
+import { renderPayrollApprovalEmail } from './payroll-approval-email';
 import type { ChangeEvent } from '@/cloud/api';
+import { addPeriods, payrollBreakdown, payRunTotals } from '@/lib/hr/payroll';
+import { normalizeDepartments } from '@/lib/hr/departments';
+import { currencyPrecision } from '@/lib/money';
 
 /**
  * The email-alerts function (a Supabase Edge Function; see edge.ts for how
@@ -37,7 +43,13 @@ import type { ChangeEvent } from '@/cloud/api';
  *     the same secret): emails the owner and the approvers who turned on
  *     "Changes by your team" what the rest of the team changed, important
  *     changes at once and the rest in the 8:00 summary, within the caps
- *     (see notifyDecision in changes.ts);
+ *     (see notifyDecision in changes.ts), and the approval emails of pay
+ *     runs that haven't gone yet;
+ *   - a pay run sent for the Super Admin's approval (POST
+ *     {"action":"payroll_approval","companyId","approvalId"}, the same
+ *     secret, from the trigger of 20261130000000_people_alerts.sql): emails
+ *     the approvers its totals by department and position, never anyone's
+ *     own pay (see payroll-approval-email.ts);
  *
  * Every call writes the function's own address to the config, where the
  * schedule reads it. It reads the company's records with the database's
@@ -56,6 +68,12 @@ export interface AlertsEnv {
   from: string;
   /** A publishable key, to check a person's session with Auth. */
   apiKey: string;
+  /**
+   * Where the app is, for the links in the payroll approval emails (the
+   * function secret MAHAM_APP_URL). Empty: the address the person saved with
+   * their email alerts or their changes by the team, if any.
+   */
+  appUrl?: string;
 }
 
 export interface AlertsDeps {
@@ -778,6 +796,257 @@ export async function runChangeNotifications(deps: AlertsDeps): Promise<NotifySu
 }
 
 /* -------------------------------------------------------------------------- */
+/* A pay run sent for approval (#10, 20261130000000_people_alerts.sql)        */
+/* -------------------------------------------------------------------------- */
+
+export interface PayrollApprovalSummary {
+  sent: number;
+  /** Nothing more to do: decided meanwhile, not an approver any more, no address. */
+  finished: number;
+  /** Tried again by the next run. */
+  failed: number;
+}
+
+interface ApprovalEmailRow {
+  company_id: string;
+  approval_id: string;
+  user_id: string;
+}
+
+/** Records of a company by table and id. */
+async function recordData(
+  deps: AlertsDeps,
+  companyId: string,
+  tbl: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const [row] = await deps.sql<{ data: Record<string, unknown> }>(
+    'select data from public.records where company_id = $1 and tbl = $2 and id = $3',
+    [companyId, tbl, id],
+  );
+  return row?.data ?? null;
+}
+
+async function approvalEmailDone(
+  deps: AlertsDeps,
+  row: ApprovalEmailRow,
+  result: { sent?: boolean; finished?: boolean; problem?: string },
+): Promise<void> {
+  await deps.sql(
+    `update almailbooks.approval_emails
+     set sent_at = case when $4::boolean then now() else sent_at end,
+         finished_at = case when $5::boolean then now() else finished_at end,
+         claimed_until = null,
+         last_error = $6,
+         last_error_at = case when $6 = '' then null else now() end
+     where company_id = $1 and approval_id = $2 and user_id = $3::uuid`,
+    [
+      row.company_id,
+      row.approval_id,
+      row.user_id,
+      Boolean(result.sent),
+      Boolean(result.finished || result.sent),
+      (result.problem ?? '').slice(0, 1000),
+    ],
+  );
+}
+
+/** Where the app is for this person: the function's secret, or what they saved. */
+async function appUrlFor(deps: AlertsDeps, companyId: string, userId: string): Promise<string> {
+  const configured = safeAppUrl(deps.env.appUrl ?? '');
+  if (configured) return configured;
+  const rows = await deps.sql<{ app_url: string }>(
+    `select app_url from public.email_alerts where company_id = $1 and user_id = $2::uuid
+     union all
+     select app_url from public.notification_settings where company_id = $1 and user_id = $2::uuid`,
+    [companyId, userId],
+  );
+  return rows.map((r) => safeAppUrl(r.app_url ?? '')).find(Boolean) ?? '';
+}
+
+/**
+ * Emails the approvers of pay runs sent for approval (the rows the trigger of
+ * 20261130000000_people_alerts.sql noted), one request (`only`) or every one
+ * not sent yet: the owner and the members allowed to approve, at their
+ * account's confirmed address, in their language, once each (Resend's
+ * idempotency key is the request and the person). Only while the request
+ * waits, for the pay run as it was sent, with the owner's switch on. The
+ * totals come from the pay run as the cloud keeps it, with groups of one
+ * merged; never names, Civil IDs, IBANs or anyone's own pay.
+ */
+export async function sendPayrollApprovalEmails(
+  deps: AlertsDeps,
+  only?: { companyId: string; approvalId: string },
+): Promise<PayrollApprovalSummary> {
+  const summary: PayrollApprovalSummary = { sent: 0, finished: 0, failed: 0 };
+  let due: ApprovalEmailRow[];
+  try {
+    due = await deps.sql<ApprovalEmailRow>(
+      `update almailbooks.approval_emails a
+       set claimed_until = now() + interval '5 minutes', attempts = a.attempts + 1
+       where a.finished_at is null and a.attempts < 5
+         and a.created_at > now() - interval '3 days'
+         and (a.claimed_until is null or a.claimed_until < now())
+         and ($1::text is null or (a.company_id = $1 and a.approval_id = $2))
+       returning a.company_id, a.approval_id, a.user_id::text as user_id`,
+      [only?.companyId ?? null, only?.approvalId ?? null],
+    );
+  } catch (error) {
+    // 20261130000000_people_alerts.sql hasn't run: nothing to send.
+    if (!/does not exist/i.test(String(error))) {
+      deps.log(`email-alerts: payroll approvals not ready (${String(error)})`);
+    }
+    return summary;
+  }
+  const byRequest = new Map<string, ApprovalEmailRow[]>();
+  for (const row of due) {
+    const key = `${row.company_id} ${row.approval_id}`;
+    byRequest.set(key, [...(byRequest.get(key) ?? []), row]);
+  }
+  let first = true;
+  for (const rows of byRequest.values()) {
+    const { company_id: companyId, approval_id: approvalId } = rows[0];
+    const finishAll = async (problem: string) => {
+      for (const row of rows) await approvalEmailDone(deps, row, { finished: true, problem });
+      summary.finished += rows.length;
+    };
+    try {
+      const request = await recordData(deps, companyId, 'approvals', approvalId);
+      if (
+        !request ||
+        request.kind !== 'payroll' ||
+        request.subjectTbl !== 'payRuns' ||
+        (request.status ?? 'pending') !== 'pending'
+      ) {
+        await finishAll('The request is no longer waiting.');
+        continue;
+      }
+      const companyRecord = await recordData(deps, companyId, 'companies', companyId);
+      const rules = companyRecord?.approvalRules as Record<string, unknown> | undefined;
+      if (rules?.payroll !== true) {
+        await finishAll('Salary approval is off.');
+        continue;
+      }
+      const runId = String(request.subjectId ?? '');
+      const run = await recordData(deps, companyId, 'payRuns', runId);
+      const asked = (request.after as Record<string, unknown> | null)?.runUpdatedAt;
+      if (!run) {
+        // Not in the cloud yet: the next run tries again.
+        for (const row of rows) {
+          await approvalEmailDone(deps, row, { problem: 'The pay run is not in the cloud yet.' });
+        }
+        summary.failed += rows.length;
+        continue;
+      }
+      if (run.updatedAt !== asked) {
+        await finishAll('The pay run changed after it was sent for approval.');
+        continue;
+      }
+      const company = await companyForChanges(deps, companyId);
+      if (!company) {
+        await finishAll('The company is not in the cloud.');
+        continue;
+      }
+      const precision = currencyPrecision(company.currency);
+      const lines = (Array.isArray(run.lines) ? run.lines : []) as PayLine[];
+      const breakdown = payrollBreakdown(lines, precision, { minGroup: 2 });
+      const period = typeof run.period === 'string' ? run.period : String(request.subjectNumber);
+      // Last month's posted pay run, to compare.
+      const [last] = await deps.sql<{ data: Record<string, unknown> }>(
+        `select data from public.records
+         where company_id = $1 and tbl = 'payRuns' and data ->> 'period' = $2
+           and data ->> 'status' in ('approved', 'paid')
+         limit 1`,
+        [companyId, addPeriods(period, -1)],
+      );
+      const lastLines = (Array.isArray(last?.data.lines) ? last.data.lines : []) as PayLine[];
+      const lastTotals = last ? payRunTotals(lastLines, precision) : null;
+      // The company's departments, for their Arabic names (kept by company id).
+      const settings = await recordData(deps, companyId, 'peopleSettings', companyId);
+      const departments: Department[] = normalizeDepartments(settings?.departments);
+      const [asker] = await deps.sql<{ name: string | null }>(
+        `select coalesce(nullif(btrim(p.full_name), ''), p.email) as name
+         from public.profiles p where p.id::text = $1`,
+        [String(request.requestedBy ?? '')],
+      );
+      // Who may decide it, as the trigger noted them.
+      const approvers = new Set(
+        (
+          await deps.sql<{ user_id: string }>(
+            `select m.user_id::text as user_id from public.company_members m
+             where m.company_id = $1
+               and (m.role = 'owner' or (m.can_approve and m.role in ('admin', 'accountant')))
+               and coalesce(m.permissions -> 'apps' ->> 'people', '') <> 'none'`,
+            [companyId],
+          )
+        ).map((m) => m.user_id),
+      );
+      for (const row of rows) {
+        try {
+          if (!approvers.has(row.user_id) || row.user_id === request.requestedBy) {
+            await approvalEmailDone(deps, row, { finished: true, problem: 'Not an approver.' });
+            summary.finished += 1;
+            continue;
+          }
+          const who = await person(deps, row.user_id);
+          if (!who?.confirmed) {
+            await approvalEmailDone(deps, row, {
+              finished: true,
+              problem: 'The account has no confirmed email address.',
+            });
+            summary.finished += 1;
+            continue;
+          }
+          const appUrl = await appUrlFor(deps, companyId, row.user_id);
+          const email = await inLanguage(who.language, () =>
+            renderPayrollApprovalEmail({
+              company,
+              period,
+              breakdown,
+              previous:
+                last && lastTotals
+                  ? {
+                      period: String(last.data.period),
+                      employees: lastTotals.employees,
+                      net: lastTotals.net,
+                    }
+                  : null,
+              departments,
+              requestedBy: asker?.name ?? '',
+              hasNote: typeof request.reason === 'string' && request.reason.trim() !== '',
+              appUrl,
+              runId,
+              to: who.email,
+            }),
+          );
+          if (!first) await deps.sleep(PAUSE_BETWEEN_EMAILS_MS);
+          first = false;
+          await sendEmail(deps, {
+            to: who.email,
+            ...email,
+            idempotencyKey: `payroll-approval/${approvalId}/${row.user_id}`,
+          });
+          await approvalEmailDone(deps, row, { sent: true });
+          summary.sent += 1;
+        } catch (error) {
+          deps.log(`email-alerts: payroll approval ${approvalId}/${row.user_id}: ${String(error)}`);
+          const problem = error instanceof Error ? error.message : String(error);
+          await approvalEmailDone(deps, row, { problem: problem || 'Unknown problem' });
+          summary.failed += 1;
+        }
+      }
+    } catch (error) {
+      deps.log(`email-alerts: payroll approval ${approvalId}: ${String(error)}`);
+      for (const row of rows) {
+        await approvalEmailDone(deps, row, { problem: String(error) }).catch(() => undefined);
+      }
+      summary.failed += rows.length;
+    }
+  }
+  return summary;
+}
+
+/* -------------------------------------------------------------------------- */
 /* "Send it now" from the app                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -889,7 +1158,7 @@ export async function handleAlertsRequest(request: Request, deps: AlertsDeps): P
       message: 'Run supabase/migrations/20261007000000_email_alerts.sql in the SQL editor first.',
     });
   }
-  let body: { action?: unknown; companyId?: unknown };
+  let body: { action?: unknown; companyId?: unknown; approvalId?: unknown };
   try {
     const text = await request.text();
     if (text.length > 10_000) throw new Error('too large');
@@ -916,6 +1185,26 @@ export async function handleAlertsRequest(request: Request, deps: AlertsDeps): P
       }
       const summary = await runChangeNotifications(deps);
       deps.log(`email-alerts: changes ${JSON.stringify(summary)}`);
+      // Pay runs' approval emails that haven't gone yet.
+      const payroll = await sendPayrollApprovalEmails(deps);
+      if (payroll.sent || payroll.failed) {
+        deps.log(`email-alerts: payroll approvals ${JSON.stringify(payroll)}`);
+      }
+      return json(200, { ok: true, ...summary, payroll });
+    }
+    if (body.action === 'payroll_approval') {
+      const secret = await schedulerSecret(deps);
+      const given = request.headers.get('x-alerts-secret') ?? '';
+      if (!secret || !sameText(given, secret)) {
+        return json(401, { ok: false, error: 'auth', message: 'Only the database runs this.' });
+      }
+      const companyId = typeof body.companyId === 'string' ? body.companyId : '';
+      const approvalId = typeof body.approvalId === 'string' ? body.approvalId : '';
+      if (!COMPANY_ID.test(companyId) || !/^[A-Za-z0-9_:-]{1,100}$/.test(approvalId)) {
+        return json(400, { ok: false, error: 'invalid', message: 'Which request?' });
+      }
+      const summary = await sendPayrollApprovalEmails(deps, { companyId, approvalId });
+      deps.log(`email-alerts: payroll approval ${JSON.stringify(summary)}`);
       return json(200, { ok: true, ...summary });
     }
     if (body.action === 'send') {

@@ -170,6 +170,7 @@ const SAMPLE_URLS = [
   '/cheques/layouts?bank=KFHO',
   '/cheques/test-print?bank=BRGN',
   '/payroll/runs/r1/payslips',
+  '/payroll/runs/r1/summary',
   '/payroll/settlements/s1/print',
   '/employees/e1/settlement',
   '/reports/profit-and-loss',

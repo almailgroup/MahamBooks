@@ -57,6 +57,32 @@ only when someone has something new. These emails count towards Resend's
 100 a day too: with the owner and two approvers on, a busy day can take up
 to 60, so a paid Resend plan is advisable.
 
+## Pay runs sent for approval
+
+With salary approval on (**Settings → Approvals → Pay runs**, the owner's
+switch, after
+[`supabase/migrations/20261130000000_people_alerts.sql`](../supabase/migrations/20261130000000_people_alerts.sql)),
+the same function emails the owner and the admins or accountants allowed to
+approve when a pay run is sent for approval (not whoever sent it):
+
+- **Totals only**: how many employees, gross pay, deductions, net pay, the
+  employer's PIFSS share and the cost to the company, the change in net pay
+  since last month, and the totals by department and position.
+- **Never one person's pay**: a department or position of one person is
+  merged into "Other departments" or "Other positions", the change since last
+  month is left out when exactly one person joined or left, and a pay run of
+  one person shows no amounts at all. No names of employees, Civil IDs, IBANs
+  or the sender's note are in it. Each employee's pay is in the app only.
+- **A link that opens the pay run in the app**, where the person signs in as
+  usual and approves or rejects it. Opening the link decides nothing.
+- It goes out within a minute of the request reaching the cloud, and the
+  5-minute schedule tries again for three days if it couldn't. Each person
+  gets it once per request, in their language.
+
+The link uses the optional secret `MAHAM_APP_URL` (step 4), or else the
+address the person saved with their email alerts or their changes by the
+team. These emails count towards Resend's daily allowance too.
+
 ## How it works
 
 ```
@@ -161,6 +187,9 @@ new secret**, then **Save**):
 | ---------------- | ------------------------------------------------------------------ |
 | `RESEND_API_KEY` | the Resend API key from step 1.5 (`re_…`)                          |
 | `ALERTS_FROM`    | `Maham One <no-reply@almailgroup.com>` (any address on the domain) |
+
+Optional, for the links in the emails of pay runs sent for approval:
+`MAHAM_APP_URL`, where the app is (for example `https://mahamone.com/`).
 
 ### 5. Publish the function from GitHub
 

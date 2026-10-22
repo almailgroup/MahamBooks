@@ -255,6 +255,47 @@ is asked of the server.
   updated first. No database script: the reasons and switches are in the
   private payroll settings row.
 
+## Salary approval by the Super Admin
+
+- **Off until switched on.** Settings → Approvals → _Pay runs_ (مسيرات
+  الرواتب), once the server has `20261130000000_people_alerts.sql`
+  (`payroll_approvals` in `server_features`): only the owner (the Super
+  Admin) turns on _Pay runs need the Super Admin's approval_
+  (`Company.approvalRules.payroll`). Off, or in a company kept on this device,
+  pay runs are approved as before. Rules set for pay runs only leave Books as
+  it was (`approvalsOn` stays false: invoices are voided as before and the
+  Books sidebar has no Approvals).
+- **Ask, approve, post.** On a draft pay run an admin or accountant clicks
+  _Ask for approval_ (إرسال للموافقة), with a note: an approvals row of kind
+  `payroll` about the pay run (D6), private like it, carrying
+  `after = {runUpdatedAt, period, currency, totals, groups}` (totals by
+  department and position from `payrollBreakdown`, no names). _Approve_
+  (اعتماد, posting) stays greyed out until the owner, or a member with _Can
+  approve_ who didn't send it, clicks _Give approval_ (موافقة) on the pay run
+  or in Approvals (also in the People sidebar). Then whoever posts it marks the
+  request done (`applied`). The owner may approve their own request, and may
+  post any pay run at once (a request waiting for it as it is is done with
+  it). Rejected, taken back or expired, it is sent again.
+- **As it was sent.** Any change to the draft after sending (a line, the pay
+  date, _Update from records_) gives the run a later `updatedAt`, so the
+  request no longer matches: the pay run says so and asks for it to be sent
+  again; the cloud refuses to approve it (records_guard), and so does this
+  device first. Reopened after posting, it needs a new approval.
+- **Emails, totals only (D14).** The approvers get the totals by department
+  and position, the change since last month and a link that opens the pay run
+  in the signed-in app; groups of one person are merged and a pay run of one
+  person shows no amounts. Nobody's own pay, Civil ID, IBAN or name is
+  emailed: each employee's pay is in the app (the pay run, and _Show each
+  employee's pay_ on the request). See `docs/email-alerts.md`.
+- **The register.** _Register by department_ (الكشف حسب القسم) on the pay run
+  prints the bilingual register by department and position (كشف الرواتب حسب
+  القسم والوظيفة), with lines to sign for who prepared it and the Super
+  Admin's approval. It works with or without salary approval.
+- **Older versions** don't know the switch and can still post a pay run
+  without approval; the server doesn't refuse the posting (its journal
+  entries are separate records an older version would still send). Update
+  every device before turning it on; Updates report every pay run posted.
+
 ## Contracts, customers and vehicles
 
 - **Off until switched on.** Compliance → Settings has _Contracts, customers

@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   AlertTriangle,
   CheckCircle2,
   FileSpreadsheet,
+  LayoutList,
   ListChecks,
   MoreHorizontal,
   Printer,
@@ -28,7 +29,7 @@ import {
 } from '@/db/payroll';
 import { accountingSettings } from '@/db/chart-setup';
 import type { ManualJournal, PayLine } from '@/db/types';
-import { useCompany, useFormat } from '@/app/company';
+import { useCompany, useFormat, useOpenInCompany } from '@/app/company';
 import {
   addPeriods,
   calculatePayLine,
@@ -52,6 +53,7 @@ import { LeaveOpeningsDialog } from '@/features/payroll/leave-openings-dialog';
 import { PayLineDialog } from '@/features/payroll/line-dialog';
 import { SalaryFileDialog } from '@/features/payroll/salary-file-dialog';
 import { AmountRow, PayDialog, RunStatusBadge, useWarningText } from '@/features/payroll/shared';
+import { PayrollApprovalStrip, usePayrollApproval } from '@/features/payroll/approval-panel';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Card, CardBody, CardHeader, Spinner, Stat } from '@/components/ui/misc';
 import { Field, Select } from '@/components/ui/form';
@@ -83,10 +85,34 @@ function EntryLink({ journal, label }: { journal: ManualJournal | undefined; lab
   );
 }
 
+/**
+ * A link to a pay run in a company (#/payroll/runs/…?company=…, as the
+ * payroll approval emails have it) opens it in that company when this
+ * device has it.
+ */
+function useCompanyOfLink(current: string, runId: string) {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const openInCompany = useOpenInCompany();
+  const wanted = params.get('company');
+  useEffect(() => {
+    if (!wanted) return;
+    const here = `/payroll/runs/${runId}`;
+    if (wanted === current) {
+      navigate(here, { replace: true });
+      return;
+    }
+    void openInCompany(wanted, here).then((opened) => {
+      if (!opened) navigate(here, { replace: true });
+    });
+  }, [wanted, current, runId, navigate, openInCompany]);
+}
+
 export default function PayRunPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const company = useCompany();
+  useCompanyOfLink(company.id, id);
   const fmt = useFormat();
   const confirm = useConfirm();
   const { language } = useLanguage();
@@ -105,6 +131,8 @@ export default function PayRunPage() {
     );
     return (await db.journals.bulkGet(ids)).filter((j): j is ManualJournal => Boolean(j));
   }, [run]);
+  // Salary approval by the Super Admin (#10), once the owner turned it on.
+  const approval = usePayrollApproval(run);
   const [lineId, setLineId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'pay' | 'file' | 'openings' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -313,7 +341,15 @@ export default function PayRunPage() {
               >
                 <RefreshCw /> {t('Update from records')}
               </Button>
-              <Button onClick={() => void approve()} loading={busy}>
+              <ButtonLink to={`/payroll/runs/${run.id}/summary`} variant="outline">
+                <LayoutList /> {t('Register by department')}
+              </ButtonLink>
+              <Button
+                onClick={() => void approve()}
+                loading={busy}
+                // With salary approval on, once the Super Admin approved it (the strip says why).
+                disabled={!approval.postable}
+              >
                 <CheckCircle2 /> {t('Approve')}
               </Button>
             </>
@@ -321,6 +357,9 @@ export default function PayRunPage() {
             <>
               <ButtonLink to={`/payroll/runs/${run.id}/payslips`} variant="outline">
                 <Printer /> {t('Payslips')}
+              </ButtonLink>
+              <ButtonLink to={`/payroll/runs/${run.id}/summary`} variant="outline">
+                <LayoutList /> {t('Register by department')}
               </ButtonLink>
               <Button variant="outline" onClick={() => setDialog('file')}>
                 <FileSpreadsheet /> {t('Salary file')}
@@ -335,6 +374,8 @@ export default function PayRunPage() {
           {menu}
         </div>
       </div>
+
+      <PayrollApprovalStrip run={run} view={approval} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat

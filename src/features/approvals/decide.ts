@@ -91,3 +91,39 @@ async function keptInCloud(
   if (!record) return null;
   return typeof record.data.status === 'string' ? record.data.status : 'pending';
 }
+
+/**
+ * Decides a request that carries nothing out on the approver's device (a pay
+ * run's approval, #10: whoever posts the pay run carries it out), and sends
+ * the decision to the cloud now. 'waiting' while this device can't reach
+ * the cloud. Throws when the cloud refused it (another approver decided
+ * first, or the pay run changed since it was sent).
+ */
+export async function decideAndSend(
+  id: ID,
+  decision: 'approved' | 'rejected',
+  manager: SyncManager | null,
+  note = '',
+): Promise<Carried> {
+  await decideApproval(id, decision, note);
+  const request = await db.approvals.get(id);
+  const link = request ? await db.syncState.get(request.companyId) : null;
+  if (!request || !link) return 'done';
+  if (manager) {
+    for (let i = 0; i < 3 && (await decisionUnsent(id)); i++) {
+      await manager.syncNow(request.companyId).catch(() => undefined);
+    }
+  }
+  if (!(await decisionUnsent(id))) return 'done';
+  const refused = await db.outbox
+    .where('[table+id]')
+    .equals(['approvals', id])
+    .filter((e) => e.parked === 1)
+    .count();
+  if (refused) {
+    throw new ApprovalError(
+      t('The cloud did not take this decision. See Settings → Cloud and sync.'),
+    );
+  }
+  return 'waiting';
+}

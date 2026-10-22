@@ -25,7 +25,7 @@ import { useScrollEdges } from '@/components/ui/misc';
 import { useTaxesEnabled } from '@/features/company/taxes';
 import { registerExtrasOn } from '@/lib/compliance';
 import { fileFinderOn } from '@/db/files';
-import { approvalsOn } from '@/db/approvals';
+import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
 import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
 import { APPS } from '@/suite/apps';
@@ -296,6 +296,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     registerExtrasOn(company),
     fileFinderOn(company),
     approvalsOn(company),
+    payrollApprovalsShown(company),
   );
   const current = activeLink(pathname, [...navLinks(nav), ...app.footer]);
   const { state, toggle } = useGroupState(activeGroupId(pathname, nav));

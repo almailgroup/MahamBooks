@@ -473,6 +473,172 @@ export function payRunTotals(lines: PayLine[], precision: number): PayRunTotals 
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Totals by department and position (#10)                                    */
+/* -------------------------------------------------------------------------- */
+
+/** What a group of pay lines adds up to: a department, a position or the whole run. */
+export interface PayGroupTotals {
+  employees: number;
+  gross: number;
+  /** As payRunTotals: employee PIFSS (less what is owed), loan recoveries and other deductions. */
+  deductions: number;
+  net: number;
+  pifssEmployer: number;
+  /** Gross pay and the employer's PIFSS share. */
+  cost: number;
+}
+
+/** A position (job title) in a department. */
+export interface PayPositionGroup extends PayGroupTotals {
+  /** The job title in English as the lines keep it; '' for none; null for "Other positions". */
+  jobTitle: string | null;
+  jobTitleAr: string;
+}
+
+/** A department, with its positions. */
+export interface PayDepartmentGroup extends PayGroupTotals {
+  /** The department (English name) as the lines keep it; '' for none; null for "Other departments". */
+  department: string | null;
+  positions: PayPositionGroup[];
+}
+
+export interface PayrollBreakdown {
+  totals: PayGroupTotals;
+  departments: PayDepartmentGroup[];
+}
+
+const tidyText = (text: unknown) =>
+  typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '';
+
+interface Sums {
+  employees: number;
+  gross: number;
+  deductions: number;
+  net: number;
+  pifssEmployer: number;
+}
+
+function addLine(sums: Sums, line: PayLine, precision: number): void {
+  const m = (n: Numeric) => toMinor(n, precision);
+  sums.employees += 1;
+  sums.gross += m(line.gross);
+  sums.deductions +=
+    m(line.pifssEmployee) -
+    m(line.pifssOwed ?? 0) +
+    m(line.loanDeduction) +
+    m(line.otherDeductions);
+  sums.net += m(line.net);
+  sums.pifssEmployer += m(line.pifssEmployer);
+}
+
+function totalsOf(sums: Sums, precision: number): PayGroupTotals {
+  const f = (n: number) => fromMinor(n, precision);
+  return {
+    employees: sums.employees,
+    gross: f(sums.gross),
+    deductions: f(sums.deductions),
+    net: f(sums.net),
+    pifssEmployer: f(sums.pifssEmployer),
+    cost: f(sums.gross + sums.pifssEmployer),
+  };
+}
+
+interface Bucket<K> {
+  key: K;
+  lines: PayLine[];
+}
+
+/**
+ * Groups of fewer than `min` people go into one "other" group (key null), so
+ * no group's total is one person's pay. When that group would itself hold
+ * fewer than `min`, the smallest named groups join it until it holds
+ * enough: what the named groups leave over is never one person either.
+ */
+function mergeSmall<K>(buckets: Bucket<K>[], min: number): Bucket<K | null>[] {
+  if (min <= 1) return buckets;
+  const named: Bucket<K | null>[] = [];
+  const other: PayLine[] = [];
+  for (const bucket of buckets) {
+    if (bucket.lines.length < min) other.push(...bucket.lines);
+    else named.push(bucket);
+  }
+  while (other.length > 0 && other.length < min && named.length > 0) {
+    // The smallest named group, the last of them in order when several are.
+    let smallest = named.length - 1;
+    for (let i = named.length - 1; i >= 0; i--) {
+      if (named[i].lines.length < named[smallest].lines.length) smallest = i;
+    }
+    other.push(...named.splice(smallest, 1)[0].lines);
+  }
+  return other.length ? [...named, { key: null, lines: other }] : named;
+}
+
+function bucketsBy<K>(lines: PayLine[], keyOf: (line: PayLine) => { id: string; key: K }) {
+  const map = new Map<string, Bucket<K>>();
+  for (const line of lines) {
+    const { id, key } = keyOf(line);
+    const bucket = map.get(id);
+    if (bucket) bucket.lines.push(line);
+    else map.set(id, { key, lines: [line] });
+  }
+  return [...map.values()];
+}
+
+const byName = (a: string | null, b: string | null) => {
+  // Named first, then "none" (''), then "other" (null).
+  const rank = (x: string | null) => (x === null ? 2 : x === '' ? 1 : 0);
+  return rank(a) - rank(b) || (a ?? '').localeCompare(b ?? '', 'en', { sensitivity: 'base' });
+};
+
+/**
+ * A pay run's lines added up by department, and within each by position
+ * (job title), in minor units: the groups add up to payRunTotals to the
+ * fils. Departments are compared without case or extra spaces (the first
+ * spelling names them); lines prepared before departments were kept on them
+ * have none. With `minGroup` (the payroll approval email uses 2), groups of
+ * fewer people are merged into "Other departments" or "Other positions"
+ * (see mergeSmall), so a total never shows one person's pay.
+ */
+export function payrollBreakdown(
+  lines: PayLine[],
+  precision: number,
+  options: { minGroup?: number } = {},
+): PayrollBreakdown {
+  const min = Math.max(1, Math.floor(options.minGroup ?? 1));
+  const sumsOf = (group: PayLine[]) => {
+    const sums: Sums = { employees: 0, gross: 0, deductions: 0, net: 0, pifssEmployer: 0 };
+    for (const line of group) addLine(sums, line, precision);
+    return totalsOf(sums, precision);
+  };
+  const departments = mergeSmall(
+    bucketsBy(lines, (line) => {
+      const name = tidyText(line.department);
+      return { id: name.toLowerCase(), key: name };
+    }),
+    min,
+  ).map((department): PayDepartmentGroup => {
+    const positions = mergeSmall(
+      bucketsBy(department.lines, (line) => {
+        const title = tidyText(line.jobTitle);
+        return { id: title.toLowerCase(), key: title };
+      }),
+      min,
+    ).map((position): PayPositionGroup => ({
+      jobTitle: position.key,
+      jobTitleAr:
+        position.key === null
+          ? ''
+          : (position.lines.map((l) => tidyText(l.jobTitleAr)).find(Boolean) ?? ''),
+      ...sumsOf(position.lines),
+    }));
+    positions.sort((a, b) => byName(a.jobTitle, b.jobTitle));
+    return { department: department.key, positions, ...sumsOf(department.lines) };
+  });
+  departments.sort((a, b) => byName(a.department, b.department));
+  return { totals: sumsOf(lines), departments };
+}
+
 /** One side of an entry the payroll posts: positive minor units are a debit, negative a credit. */
 export interface Posting {
   key: PayrollAccountKey;

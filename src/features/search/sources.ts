@@ -133,6 +133,7 @@ export function staticEntries(
     fileFinder = false,
     chequePrinting = false,
     approvals = false,
+    payrollApprovals = false,
   }: {
     access?: AccessMap;
     current?: AppId;
@@ -141,6 +142,7 @@ export function staticEntries(
     fileFinder?: boolean;
     chequePrinting?: boolean;
     approvals?: boolean;
+    payrollApprovals?: boolean;
   } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
@@ -181,7 +183,14 @@ export function staticEntries(
         boost: 35,
       }),
     );
-    for (const entry of visibleNav(app.nav, taxesOn, registerExtras, fileFinder, approvals)) {
+    for (const entry of visibleNav(
+      app.nav,
+      taxesOn,
+      registerExtras,
+      fileFinder,
+      approvals,
+      payrollApprovals,
+    )) {
       if (entry.kind === 'link') {
         page(entry.to, entry.label, 30, entry.keywords, app.id === 'books' ? undefined : name);
       } else {

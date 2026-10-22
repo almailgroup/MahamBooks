@@ -11,8 +11,10 @@ import {
 } from './accounting';
 import { nowStamp } from './defaults';
 import { getPeopleSettings } from './people';
+import { markPayrollApplied, payrollGate, payrollRequests } from './payroll-approvals';
 import type {
   Account,
+  ApprovalRequest,
   AnnualLeaveDays,
   ChartTemplateId,
   Company,
@@ -1352,6 +1354,18 @@ export async function createPayRun(companyId: ID, period: string): Promise<PayRu
   });
 }
 
+/**
+ * When a draft is changed: always later than when it was last changed, so a
+ * request for its approval made for the earlier version (#10) is out of date
+ * even when both fall in the same millisecond.
+ */
+function changedStamp(run: Pick<PayRun, 'updatedAt'>): string {
+  const now = nowStamp();
+  if (now > run.updatedAt) return now;
+  const before = Date.parse(run.updatedAt);
+  return Number.isNaN(before) ? now : new Date(before + 1).toISOString();
+}
+
 async function loadRun(id: ID): Promise<PayRun> {
   const run = await db.payRuns.get(id);
   if (!run) throw new PayrollError(t('This pay run could not be found.'));
@@ -1374,7 +1388,7 @@ export async function refreshPayRun(id: ID): Promise<PayRun> {
     assertDraft(run);
     const ctx = await loadContext(run.companyId);
     const rules = payRulesFor(ctx.settings, run.period);
-    const next: PayRun = { ...run, rules, updatedAt: nowStamp() };
+    const next: PayRun = { ...run, rules, updatedAt: changedStamp(run) };
     next.lines = linesFor(next, ctx, run.lines);
     await db.payRuns.put(next);
     return next;
@@ -1432,7 +1446,7 @@ export async function updatePayLine(
       }
       return calculatePayLine(next, run.rules, p);
     });
-    const next: PayRun = { ...run, lines, updatedAt: nowStamp() };
+    const next: PayRun = { ...run, lines, updatedAt: changedStamp(run) };
     await db.payRuns.put(next);
     return next;
   });
@@ -1445,7 +1459,7 @@ export async function updatePayRun(
 ): Promise<PayRun> {
   return db.transaction('rw', [db.payRuns], async () => {
     const run = await loadRun(id);
-    const next: PayRun = { ...run, updatedAt: nowStamp() };
+    const next: PayRun = { ...run, updatedAt: changedStamp(run) };
     if (changes.payDate !== undefined) {
       if (run.status === 'paid') throw new PayrollError(t('This pay run is already paid.'));
       if (!isISODate(changes.payDate)) throw new PayrollError(t('Enter the pay date.'));
@@ -1569,7 +1583,9 @@ function assertLeaveDetail(lines: PayLine[], run: PayRun, ctx: Context): void {
  * end-of-service and leave salary provisions.
  */
 export async function approvePayRun(id: ID): Promise<PayRun> {
-  return db.transaction('rw', TABLES(), async () => {
+  // The request for the Super Admin's approval it is posted with (#10).
+  const approval: { done: ApprovalRequest | null } = { done: null };
+  const posted = await db.transaction('rw', [...TABLES(), db.approvals, db.syncState], async () => {
     const run = await loadRun(id);
     assertDraft(run);
     const ctx = await loadContext(run.companyId);
@@ -1620,6 +1636,13 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
     }
     assertLeaveDetail(lines, run, ctx);
     assertOpen(company, run.date);
+    // With salary approval on, only as the Super Admin approved it (#10).
+    approval.done = payrollGate(
+      company,
+      await db.syncState.get(company.id),
+      run,
+      await payrollRequests(run.id),
+    ).done;
 
     const totals = payRunTotals(lines, p);
     const accounts = await ensureAccounts(
@@ -1713,6 +1736,8 @@ export async function approvePayRun(id: ID): Promise<PayRun> {
     });
     return next;
   });
+  if (approval.done) await markPayrollApplied(approval.done.id);
+  return posted;
 }
 
 /** Records the salaries as paid: Dr 2300 salaries payable, Cr bank on the payment date. */

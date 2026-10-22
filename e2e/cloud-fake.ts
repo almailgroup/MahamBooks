@@ -348,6 +348,15 @@ function changeDetails(
 ): { important: boolean; summary: Data } | null {
   const row = (data ?? old)!;
   let what = !old ? 'added' : !data ? 'deleted' : 'updated';
+  // A request about payroll (#10): what happened to it, and nothing of the pay run.
+  if (isPrivate && tbl === 'approvals') {
+    if (!old) what = 'requested';
+    else if (data && data.status !== old.status) what = String(data.status);
+    return {
+      important: ['requested', 'approved', 'rejected'].includes(what),
+      summary: { what, request: row.kind, status: data?.status ?? 'pending' },
+    };
+  }
   if (isPrivate) return { important: false, summary: { what } };
   if (tbl === 'documents') {
     if (old && data) {
@@ -709,6 +718,7 @@ export class FakeSupabase {
       documentTypes?: string[];
       voidInsteadOfDelete?: boolean;
       cheques?: { issued?: boolean; received?: boolean; securityOut?: boolean };
+      payroll?: boolean;
     } | null;
     if (change.tbl === 'companies') {
       const before = canonical(old?.approvalRules ?? null);
@@ -782,10 +792,17 @@ export class FakeSupabase {
       else delete kept.paymentLink;
       return kept;
     }
-    // Approval requests, whether or not the rules are on.
+    // Approval requests, whether or not the rules are on. With salary
+    // approval on (#10, 20261130000000_people_alerts.sql), a pay run's.
     const now = new Date().toISOString();
+    const payroll =
+      rules?.payroll === true &&
+      (old ?? data).kind === 'payroll' &&
+      (old ?? data).subjectTbl === 'payRuns';
     if (!old) {
-      if (approver && (data.status ?? 'pending') !== 'pending') {
+      const wanted = data.status ?? 'pending';
+      const selfApproved = payroll && (wanted === 'approved' || wanted === 'applied');
+      if (approver && wanted !== 'pending' && (role === 'owner' || !selfApproved)) {
         if (role === 'owner') return data;
         const own: Record<string, unknown> = { ...data };
         if (own.requestedBy !== user) {
@@ -844,8 +861,30 @@ export class FakeSupabase {
       return same;
     }
     const takenBack = was === 'pending' && status === 'cancelled' && old.requestedBy === user;
-    if (!approver && !takenBack) {
+    // The approved pay run posted: done, by whoever may post it.
+    const posted =
+      payroll &&
+      was === 'approved' &&
+      status === 'applied' &&
+      (role === 'owner' || role === 'admin' || role === 'accountant') &&
+      !this.limited(company, user, 'payRuns', null);
+    if (!approver && !takenBack && !posted) {
       return refuse('almail:permission Only an approver decides approval requests.');
+    }
+    if (payroll && was === 'pending' && (status === 'approved' || status === 'applied')) {
+      if (old.requestedBy === user && role !== 'owner') {
+        return refuse(
+          'almail:permission Only the owner approves a pay run they sent for approval themselves.',
+        );
+      }
+      const run = this.records.get(`${company}/payRuns/${String(old.subjectId)}`);
+      const stored = run && !run.deleted ? run.data?.updatedAt : undefined;
+      const asked = (old.after as Record<string, unknown> | null | undefined)?.runUpdatedAt;
+      if (!(status === 'applied' && role === 'owner') && (stored ?? null) !== (asked ?? null)) {
+        return refuse(
+          'almail:invalid This pay run changed after it was sent for approval. Send it for approval again.',
+        );
+      }
     }
     if (!(approver && was === 'pending' && status === 'cancelled')) kept(next, 'expired');
     if (!(approver && status === 'applied')) kept(next, 'resultId');
@@ -881,6 +920,8 @@ export class FakeSupabase {
     const isPrivate =
       people.includes(tbl) ||
       row._private === true ||
+      // A request about payroll or people data (a pay run).
+      (tbl === 'approvals' && people.includes(String(row.subjectTbl))) ||
       (tbl === 'complianceDocuments' &&
         typeof row.employeeId === 'string' &&
         row.employeeId !== '');
@@ -1045,7 +1086,14 @@ export class FakeSupabase {
       case 'company_record_ids':
         return [];
       case 'server_features':
-        return ['tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed'];
+        return [
+          'tables_v16',
+          'super_admin',
+          'approvals',
+          'cheque_approvals',
+          'change_feed',
+          'payroll_approvals',
+        ];
       // The change feed (20261123000000_change_feed.sql).
       case 'notification_status': {
         if (!this.approver(company, me.id)) return [{ enabled: false, unread: 0, latest: 0 }];

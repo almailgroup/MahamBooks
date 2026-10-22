@@ -322,7 +322,8 @@ test('the company’s leave reasons: emergency leave from annual leave and leave
   await expect(dialog.getByText('10 calendar days', { exact: false })).toBeVisible();
   await expect(dialog.getByText(/Half pay · 0 of 10 days a year taken$/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText('Leave recorded for Made-up Cleaner')).toBeVisible();
+  // The first leave's toast may still be showing.
+  await expect(page.getByText('Leave recorded for Made-up Cleaner').last()).toBeVisible();
 
   await page.goto(`${employeePage}?tab=leave`);
   const reasons = page

@@ -680,6 +680,14 @@ export interface ApprovalRules {
    * Missing: none, as before.
    */
   cheques?: ChequeApprovalRules;
+  /**
+   * Pay runs the Super Admin approves (#10): with it on, a pay run is
+   * approved (posted, اعتماد) only once a request for it, as it stands, was
+   * approved (موافقة) by the owner or a member the owner allowed to approve,
+   * never by the member who sent it; the owner may post at once. Missing or
+   * false: pay runs are approved as before.
+   */
+  payroll?: boolean;
 }
 
 /**

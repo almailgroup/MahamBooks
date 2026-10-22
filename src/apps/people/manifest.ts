@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  ClipboardCheck,
   Coins,
   Contact,
   HandCoins,
@@ -83,6 +84,14 @@ export const PEOPLE: SuiteApp = {
       to: '/payroll/settings',
       label: msg('Payroll settings'),
       icon: SlidersHorizontal,
+    },
+    {
+      kind: 'link',
+      to: '/approvals',
+      label: msg('Approvals'),
+      icon: ClipboardCheck,
+      keywords: 'salary approval pay run requests',
+      payrollApprovalsOnly: true,
     },
   ],
   footer: [{ to: '/settings', label: msg('Settings'), icon: Settings }],

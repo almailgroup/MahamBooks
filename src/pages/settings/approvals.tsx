@@ -11,6 +11,13 @@ import { SaveBar, SettingsSection, useCompanyDraft } from './shared';
 /** Days a request waits before it is cancelled, when the owner first turns the rules on. */
 const DEFAULT_EXPIRE_DAYS = 14;
 
+/** The rules of Books: turning one on the first time voids issued documents instead of deleting them. */
+const BOOKS_KEYS: readonly (keyof ApprovalRules)[] = [
+  'documentTypes',
+  'voidInsteadOfDelete',
+  'cheques',
+];
+
 const COVERED: { type: DocumentType; label: string; description: string }[] = [
   {
     type: 'invoice',
@@ -70,6 +77,7 @@ export default function ApprovalSettings() {
   const link = useCloudLink(draft.id);
   const ready = useServerFeature(draft.id, 'approvals');
   const chequesReady = useServerFeature(draft.id, 'cheque_approvals');
+  const payrollReady = useServerFeature(draft.id, 'payroll_approvals');
 
   if (link === undefined) return <Spinner className="py-24" label={t('Loading…')} />;
   if (link === null) {
@@ -107,8 +115,9 @@ export default function ApprovalSettings() {
     update({
       approvalRules: {
         // Turned on for the first time: issued documents are voided, never
-        // deleted, and requests wait two weeks.
-        voidInsteadOfDelete: true,
+        // deleted, and requests wait two weeks. Salary approval alone (#10)
+        // leaves the documents as they were.
+        ...(BOOKS_KEYS.some((key) => key in patch) ? { voidInsteadOfDelete: true } : {}),
         expireDays: DEFAULT_EXPIRE_DAYS,
         ...rules,
         ...patch,
@@ -227,6 +236,37 @@ export default function ApprovalSettings() {
           </SettingsSection>
         ) : null}
 
+        {payrollReady ? (
+          <SettingsSection
+            title={t('Pay runs')}
+            description={t(
+              'A draft pay run is sent for approval as it stands, with a note if needed. It can be approved (posted to the books) and paid only once the owner, or a member allowed to approve who didn’t send it, has approved it. Any change after it was sent asks for a new approval. The owner may approve a pay run at once.',
+            )}
+          >
+            <div className="space-y-5">
+              <Switch
+                checked={rules?.payroll === true}
+                onChange={(on) => set({ payroll: on })}
+                label={t('Pay runs need the Super Admin’s approval')}
+                description={t(
+                  'The owner and the members allowed to approve get an email with the totals by department and position and a link to the pay run in the app. Nobody’s own pay is ever in the email: it is in the app only.',
+                )}
+                disabled={!owner}
+              />
+              <p className="text-sm text-slate-600">
+                {t(
+                  'Nothing in the pay is worked out differently: approval only decides when a pay run can be posted. Ask the auditor to confirm that the approved pay run and its register by department and position (Payroll → the pay run → Register by department) are kept with the month’s records.',
+                )}
+              </p>
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                {t(
+                  'Before turning this on, update every device that prepares pay runs and let it sync. An older version of the app doesn’t know this switch and can still approve a pay run without the Super Admin’s approval; Updates show every pay run approved.',
+                )}
+              </p>
+            </div>
+          </SettingsSection>
+        ) : null}
+
         <SettingsSection title={t('Who approves')}>
           <p className="text-sm text-slate-600">
             {t(
@@ -236,6 +276,13 @@ export default function ApprovalSettings() {
               {t('Team')}
             </Link>
           </p>
+          {payrollReady ? (
+            <p className="text-sm text-slate-600">
+              {t(
+                'Pay runs are approved by the owner, or by a member allowed to approve who didn’t send them. Their requests are in Approvals in the People sidebar too, seen only by those who see payroll.',
+              )}
+            </p>
+          ) : null}
           <p className="text-sm text-slate-600">
             {t(
               'Requests are in Approvals, in the Books sidebar, and on the home page. Payments, payment links and retention releases go on as before.',
