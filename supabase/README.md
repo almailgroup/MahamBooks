@@ -297,7 +297,10 @@ Releases after this one add files of their own instead, and only those are
 run. Had the first file been run again before there were any, run the later
 files again after it, in order. The v16 file also schedules the daily clean-up
 of deletion markers when `pg_cron` is on, as the first file does, so turning
-`pg_cron` on and running it again is enough.
+`pg_cron` on and running it again is enough, until there are manpower
+costings: then it can't run again either, and
+`20261207000000_staffing_costings.sql`, which schedules the clean-up the same
+way, is the one to run again.
 
 `server_features()` answers `{tables_v16}`. The app asks it as it syncs and
 keeps the answer on the device, so a feature that keeps these records stays
@@ -718,6 +721,10 @@ changes nothing when that file hasn't run.
   changed as a change to payroll and people data (private: it says only
   what happened).
 - `server_features()` answers every earlier name and `staffing_costings`.
+- The daily clean-up of deletion markers
+  (`almailbooks-purge-deleted-records`) is scheduled when `pg_cron` is on,
+  as in the v16 file, since that file can't run again once there are
+  costings: turning `pg_cron` on and running this file is enough.
 - Tests: `src/cloud/staffing-costings-sql.test.ts` (the guard, the file run
   twice after every earlier one, owner, admin, accountant, staff and viewer,
   deletion markers, People limits, an earlier `record_is_private` put back,

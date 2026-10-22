@@ -3,8 +3,10 @@ import { currentLanguage, t } from '@/i18n';
 import { formatAmount } from '@/lib/format';
 import {
   COSTING_CATEGORY_LABELS,
+  COSTING_RULES,
   costingWarningText,
   markupForMargin,
+  percentOf,
   type PricedCosting,
 } from '@/lib/hr/costing';
 
@@ -71,6 +73,9 @@ export function buildCostingSheet(input: CostingSheetInput): CostingSheetModel {
     ],
   }));
   const totals = priced.totals;
+  // As priced: an overhead or margin past the most allowed counts as the most.
+  const overhead = percentOf(costing.overheadPercent, COSTING_RULES.maxOverheadPercent);
+  const margin = percentOf(costing.marginPercent, COSTING_RULES.maxMarginPercent);
   return {
     dir: rtl ? 'rtl' : 'ltr',
     title: t('Cost sheet'),
@@ -83,12 +88,12 @@ export function buildCostingSheet(input: CostingSheetInput): CostingSheetModel {
       { label: t('Costing'), value: costing.name },
       { label: t('Customer'), value: input.customer || '—' },
       { label: t('Date'), value: input.printedOn },
-      { label: t('Overhead'), value: percent(costing.overheadPercent) },
+      { label: t('Overhead'), value: percent(overhead) },
       {
         label: t('Margin'),
         value: t('{margin} of the sell price ({markup} markup on cost)', {
-          margin: percent(costing.marginPercent),
-          markup: percent(markupForMargin(costing.marginPercent)),
+          margin: percent(margin),
+          markup: percent(markupForMargin(margin)),
         }),
       },
     ],

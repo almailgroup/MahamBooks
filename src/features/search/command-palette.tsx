@@ -30,7 +30,8 @@ import { fileFinderOn } from '@/db/files';
 import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
 import { openStoredAttachment } from '@/features/purchases/attachments';
 import { CREATE_ACTIONS } from '@/features/shell/create';
-import { useAppAccess, useApps, useCurrentApp } from '@/suite/current-app';
+import { rememberApp, useAppAccess, useApps, useCurrentApp } from '@/suite/current-app';
+import { isAppId } from '@/suite/apps';
 import type { SuiteApp } from '@/suite/types';
 import { useLanguage } from '@/i18n/provider';
 import { useSwitchLanguage } from '@/hooks/use-switch-language';
@@ -46,6 +47,7 @@ import { useCloudStatus } from '@/cloud/hooks';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { syncLabel } from '@/features/cloud/sync-status';
 import { useEmployeesEverywhere } from '@/features/people/hooks';
+import { useCostingShown } from '@/features/people/costing-hooks';
 
 const SECTION_LABELS: Record<SearchKind, string> = {
   recent: msg('Recent'),
@@ -176,6 +178,7 @@ function PaletteBody({
   const finder = fileFinderOn(company);
   const approvals = approvalsOn(company);
   const payrollApprovals = payrollApprovalsShown(company);
+  const costing = useCostingShown();
   const fmt = useFormat();
   const navigate = useNavigate();
   const taxesOn = useTaxesEnabled();
@@ -219,6 +222,8 @@ function PaletteBody({
         chequePrinting: Boolean(company.chequePrinting),
         approvals,
         payrollApprovals,
+        costing: costing.available,
+        costingOn: costing.on,
       }),
       makeEntry({
         key: 'action:sync-status',
@@ -282,6 +287,8 @@ function PaletteBody({
     finder,
     approvals,
     payrollApprovals,
+    costing.available,
+    costing.on,
     company.chequePrinting,
     language,
     dark,
@@ -404,6 +411,9 @@ function PaletteBody({
       openStoredAttachment(entry.key.slice('file:'.length));
       return;
     }
+    // An app opens with its own sidebar, even on a page the last app shares.
+    const appId = entry.key.startsWith('app:') ? entry.key.slice('app:'.length) : null;
+    if (isAppId(appId, apps)) rememberApp(appId);
     navigate(entry.to);
   };
 

@@ -6,6 +6,7 @@ import { createQuoteFromCosting, getCostingSettings, newCosting, saveCosting } f
 import type { Company } from '@/db/types';
 import { newPost } from '@/lib/hr/costing';
 import { FakeCloud } from './testing/fake-cloud';
+import { markRemote } from './outbox';
 import {
   FEATURES_RECHECK_MS,
   pulledTables,
@@ -188,5 +189,49 @@ describe('staff', () => {
     for (const secret of ['137.25', '41.5', 'Tower A, night shift']) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it('lose costing activity an older build kept for them, once this build catches up', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await startUpload(company.id, ctx);
+    await syncCompany(company.id, ctx);
+    server.addMember(company.id, STAFF, 'staff');
+    const staff = await newDevice(STAFF);
+    await startDownload({ id: company.id, name: company.name, role: 'staff' }, staff);
+    await syncCompany(company.id, staff);
+    // What a Phase 4 build stored while its member was still an accountant,
+    // and kept when they became staff: it didn't know the entity, and its
+    // copy drops the _private mark.
+    await db.transaction('rw', db.activities, async () => {
+      markRemote();
+      await db.activities.add({
+        id: 'act-old',
+        companyId: company.id,
+        at: new Date().toISOString(),
+        entity: 'costing',
+        entityId: 'cost-1',
+        clientId: null,
+        documentId: null,
+        action: 'created',
+        message: 'Manpower costing Tower B night guards created',
+      });
+    });
+    const before = DATA_TABLES.filter((name) => name !== 'staffingCostings');
+    await db.syncState.update(company.id, { tables: [...before] });
+
+    await syncCompany(company.id, staff);
+    expect(await db.activities.get('act-old')).toBeUndefined();
+    expect((await db.syncState.get(company.id))!.tables).toEqual([...DATA_TABLES]);
+    expect(await db.outbox.count()).toBe(0);
+  });
+});
+
+describe('costing activity', () => {
+  it('is marked confidential, which every build since Phase 0 keeps from staff and viewers', async () => {
+    const company = await setupCompany({ name: 'Made-up Guarding' });
+    await costingWithQuote(company);
+    const logged = await db.activities.filter((a) => a.entity === 'costing').toArray();
+    expect(logged.length).toBeGreaterThan(1);
+    expect(logged.every((a) => a.confidential === true)).toBe(true);
   });
 });

@@ -145,6 +145,8 @@ export function staticEntries(
     chequePrinting = false,
     approvals = false,
     payrollApprovals = false,
+    costing = false,
+    costingOn = false,
     apps: layout = APPS,
   }: {
     apps?: readonly SuiteApp[];
@@ -156,6 +158,10 @@ export function staticEntries(
     chequePrinting?: boolean;
     approvals?: boolean;
     payrollApprovals?: boolean;
+    /** Manpower costing can be used (its page is listed). */
+    costing?: boolean;
+    /** Manpower costing is on (New manpower costing is offered). */
+    costingOn?: boolean;
   } = {},
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
@@ -212,6 +218,7 @@ export function staticEntries(
       fileFinder,
       approvals,
       payrollApprovals,
+      costing,
     )) {
       if (entry.kind === 'link') {
         listed(app, entry.to, () =>
@@ -233,7 +240,7 @@ export function staticEntries(
     page(sub.to, sub.label, 10, sub.keywords);
   }
 
-  for (const group of create ? createGroups(current, access, layout) : []) {
+  for (const group of create ? createGroups(current, access, layout, { costing: costingOn }) : []) {
     for (const action of group.actions) {
       entries.push(
         makeEntry({

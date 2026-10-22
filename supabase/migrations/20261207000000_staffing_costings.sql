@@ -34,6 +34,10 @@
 --     to payroll and people data (change_kind), private: it says only what
 --     happened.
 --   * public.server_features() also answers 'staffing_costings'.
+--   * The daily clean-up of deletion markers is scheduled when pg_cron is on,
+--     as the first and fourth files do: once there are costings neither of
+--     them can run again, so turning pg_cron on and running this file is
+--     enough.
 --
 -- Every function this file replaces is as the latest earlier file left it,
 -- with only what is said above added.
@@ -312,6 +316,23 @@ as $$
     'tables_v16', 'super_admin', 'approvals', 'cheque_approvals', 'change_feed',
     'payroll_approvals', 'document_alerts', 'employee_letters', 'staffing_costings'
   ]::text[]
+$$;
+
+-- Daily clean-up of deletion markers (when pg_cron is enabled) ---------------------------
+
+-- As 20261102000000_tables_v16.sql schedules it: turning pg_cron on and
+-- running this file is enough (the first and fourth files can't run again
+-- once there are costings).
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then
+    perform cron.schedule(
+      'almailbooks-purge-deleted-records',
+      '17 3 * * *',
+      'select almailbooks.purge_all_deleted_records()'
+    );
+  end if;
+end
 $$;
 
 -- Who may run what ------------------------------------------------------------------

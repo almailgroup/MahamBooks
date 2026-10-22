@@ -4,6 +4,7 @@ import type {
   CostingPost,
   CostingRate,
   CostingSettings,
+  DocumentLanguage,
   Employee,
   GccScheme,
   LineItem,
@@ -32,10 +33,11 @@ import { contributionRates, contributions, PAYROLL_RULES } from './payroll';
  * price, not a markup on the cost.
  *
  * Hours past eight a day are overtime at 1.25 (art. 66 of Labour Law
- * 6/2010), which allows at most two hours of overtime a day unless an
- * exemption applies: a post that needs more is priced and flagged, for the
- * owner to confirm with counsel. Days past the working days of a month are
- * rest days worked, at 1.5 (art. 67, which gives a day off in lieu too).
+ * 6/2010), which limits overtime to two hours a day, three days a week and
+ * 180 hours a year unless an exemption applies: a post past any of these is
+ * priced and flagged, for the owner to confirm with counsel. Days past the
+ * working days of a month are rest days worked, at 1.5 (art. 67, which gives
+ * a day off in lieu too).
  *
  * Amounts are rounded to the currency's decimals (3 for KWD) once each, so
  * the cost sheet adds up to the fils. This is an estimate, not legal advice.
@@ -55,6 +57,9 @@ export const COSTING_RULES = {
   restDayRate: PAYROLL_RULES.overtime.restDay,
   /** Most overtime a day without an exemption (art. 66). */
   maxOvertimeHours: 2,
+  /** Most days with overtime a week, and overtime hours a year (art. 66). */
+  maxOvertimeDaysWeek: 3,
+  maxOvertimeHoursYear: 180,
   /** The law's annual leave (art. 70), when the company has no policy of its own. */
   annualLeaveDays: 30,
   defaultHoursPerDay: 8,
@@ -95,6 +100,22 @@ const isCategory = (value: unknown): value is CostingCategory =>
 const amountOf = (value: unknown, precision: number) =>
   typeof value === 'number' && Number.isFinite(value) ? round(Math.max(0, value), precision) : 0;
 
+/**
+ * The part of the allowances the indemnity is worked out on, as kept: none
+ * of them at least, all of them at most; undefined when all of them count
+ * (or none is said), which is how a rate or post without it is read.
+ */
+function eosAllowancesOf(
+  input: { eosAllowances?: unknown },
+  allowances: number,
+  precision: number,
+): number | undefined {
+  const value = input.eosAllowances;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const kept = round(Math.max(0, value), precision);
+  return kept < allowances ? kept : undefined;
+}
+
 /** A rate of the rate card as it is kept: a job title, its kind of staff and its pay. */
 export function normalizeRate(input: Partial<CostingRate>, precision = 3): CostingRate {
   const category = isCategory(input.category) ? input.category : 'expat';
@@ -104,6 +125,8 @@ export function normalizeRate(input: Partial<CostingRate>, precision = 3): Costi
       : '';
   const jobTitleAr = typeof input.jobTitleAr === 'string' ? input.jobTitleAr.trim() : '';
   const other = amountOf(input.otherCosts, precision);
+  const allowances = amountOf(input.allowances, precision);
+  const eos = eosAllowancesOf(input, allowances, precision);
   return {
     id: typeof input.id === 'string' && input.id ? input.id : shortId(),
     jobTitle: typeof input.jobTitle === 'string' ? input.jobTitle.trim() : '',
@@ -111,7 +134,8 @@ export function normalizeRate(input: Partial<CostingRate>, precision = 3): Costi
     category,
     ...(nationality ? { nationality } : {}),
     basic: amountOf(input.basic, precision),
-    allowances: amountOf(input.allowances, precision),
+    allowances,
+    ...(eos !== undefined ? { eosAllowances: eos } : {}),
     ...(other ? { otherCosts: other } : {}),
     ...(typeof input.count === 'number' && input.count > 0
       ? { count: Math.round(input.count) }
@@ -177,15 +201,25 @@ export const DEFAULT_COSTING_BASIS: CostingBasis = {
 };
 
 export type CostingWarningKind =
-  'overtime_limit' | 'rest_days' | 'below_minimum_wage' | 'pifss_missing' | 'gcc_scheme_missing';
+  | 'overtime_limit'
+  | 'overtime_year'
+  | 'rest_days'
+  | 'below_minimum_wage'
+  | 'pifss_missing'
+  | 'gcc_scheme_missing';
 
 export interface CostingWarning {
   kind: CostingWarningKind;
   postId: string;
   jobTitle: string;
   jobTitleAr?: string;
-  /** Overtime hours a day (overtime_limit), rest days a month (rest_days). */
+  /**
+   * Overtime hours a day (overtime_limit), overtime hours a year
+   * (overtime_year), rest days a month (rest_days).
+   */
   value?: number;
+  /** Days with overtime a week (overtime_year). */
+  days?: number;
 }
 
 /** What one person of a post costs and sells for a month. */
@@ -296,15 +330,19 @@ export function pricePost(
     allowances: round(Math.max(0, input.allowances || 0), p),
     otherCosts: round(Math.max(0, input.otherCosts || 0), p),
   };
+  const eosAllowances = eosAllowancesOf(input, post.allowances, p);
+  if (eosAllowances === undefined) delete post.eosAllowances;
+  else post.eosAllowances = eosAllowances;
   const category = categoryOf(post);
   const warnings: CostingWarning[] = [];
-  const warn = (kind: CostingWarningKind, value?: number) =>
+  const warn = (kind: CostingWarningKind, value?: number, days?: number) =>
     warnings.push({
       kind,
       postId: post.id,
       jobTitle: post.jobTitle,
       ...(post.jobTitleAr ? { jobTitleAr: post.jobTitleAr } : {}),
       ...(value !== undefined ? { value } : {}),
+      ...(days !== undefined ? { days } : {}),
     });
 
   const divisor = basis.dailyDivisor > 0 ? basis.dailyDivisor : PAYROLL_RULES.dailyDivisor;
@@ -324,7 +362,20 @@ export function pricePost(
     hourly.times(post.hoursPerDay).times(restDays).times(COSTING_RULES.restDayRate),
     p,
   );
-  if (overtimeHours > COSTING_RULES.maxOvertimeHours) warn('overtime_limit', overtimeHours);
+  if (overtimeHours > COSTING_RULES.maxOvertimeHours) {
+    warn('overtime_limit', overtimeHours);
+  } else if (overtimeHours > 0) {
+    // Overtime on each working day: art. 66 also limits the days a week
+    // (of a six-day week) and the hours a year.
+    const daysAWeek = round(dec(workingDays).times(12).dividedBy(52), 1);
+    const hoursAYear = round(dec(overtimeHours).times(workingDays).times(12), 0);
+    if (
+      daysAWeek > COSTING_RULES.maxOvertimeDaysWeek ||
+      hoursAYear > COSTING_RULES.maxOvertimeHoursYear
+    ) {
+      warn('overtime_year', hoursAYear, daysAWeek);
+    }
+  }
   if (restDays > 0) warn('rest_days', restDays);
   if (post.basic < basis.minimumWage) warn('below_minimum_wage');
 
@@ -341,8 +392,10 @@ export function pricePost(
   }
 
   // The indemnity a month of service earns, at the rate of the first five
-  // years (15 days' wage a year, art. 51): a post staffed afresh. Staff
-  // insured with PIFSS earn none when the payroll leaves them out of it.
+  // years (15 days' wage a year, art. 51): a post staffed afresh, on the
+  // basic salary and the allowances that count for it (eosWage in eosi.ts).
+  // Staff insured with PIFSS earn none when the payroll leaves them out of it.
+  const eosWage = dec(post.basic).plus(post.eosAllowances ?? post.allowances);
   const eosi =
     insured && !basis.eosForInsured
       ? 0
@@ -350,7 +403,7 @@ export function pricePost(
           dec(
             calculateEosi({
               payBasis: 'monthly',
-              monthlyWage: wage.toNumber(),
+              monthlyWage: eosWage.toNumber(),
               years: 1,
               reason: 'termination',
               dailyDivisor: basis.eosDivisor,
@@ -462,8 +515,13 @@ export function costingWarningText(warning: CostingWarning): string {
   switch (warning.kind) {
     case 'overtime_limit':
       return t(
-        '{title}: {value} hours of overtime a day. Article 66 of Labour Law 6/2010 allows at most 2 a day unless an exemption applies. Confirm with counsel before quoting, or add people to the post.',
+        '{title}: {value} hours of overtime a day. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies. Confirm with counsel before quoting, or add people to the post.',
         vars,
+      );
+    case 'overtime_year':
+      return t(
+        '{title}: overtime on about {days} days a week, about {value} hours a year. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies. Confirm with counsel before quoting, or add people to the post.',
+        { ...vars, days: warning.days ?? 0 },
       );
     case 'rest_days':
       return t(
@@ -500,6 +558,7 @@ export function newPost(rate?: Partial<CostingRate>): CostingPost {
     daysPerMonth: COSTING_RULES.defaultDaysPerMonth,
     basic: rate?.basic ?? 0,
     allowances: rate?.allowances ?? 0,
+    ...(rate?.eosAllowances !== undefined ? { eosAllowances: rate.eosAllowances } : {}),
     employerPifss: 0,
     eosiMonthly: 0,
     leaveMonthly: 0,
@@ -543,12 +602,17 @@ function mostCommon(values: string[]): string {
  * device, from the salaries of people the person may see: only for owners,
  * admins and accountants. Domestic workers (Law 68/2015), staff paid by the
  * day, the hour or the piece and employees without a job title are left
- * out. An average of one person is that person's salary.
+ * out, and so are those with no pay on their record yet (an import without
+ * salaries), as payroll flags them. An average of one person is that
+ * person's salary. The allowances that count for the indemnity are averaged
+ * too, when not all of them do.
  */
 export function averageRates(employees: readonly PayOf[], precision = 3): CostingRate[] {
   const groups = new Map<string, PayOf[]>();
+  const sumOf = (list: PayOf['allowances']) => list.reduce((s, a) => s.plus(a.amount), dec(0));
   for (const e of employees) {
     if (e.status === 'left' || e.category === 'domestic' || e.payBasis !== 'monthly') continue;
+    if (!(e.basicSalary > 0) && !sumOf(e.allowances).greaterThan(0)) continue;
     const title = titleKey(e.jobTitle ?? '');
     if (!title) continue;
     const category: CostingCategory =
@@ -565,6 +629,8 @@ export function averageRates(employees: readonly PayOf[], precision = 3): Costin
     const average = (pick: (e: PayOf) => Decimal) =>
       round(list.reduce((s, e) => s.plus(pick(e)), dec(0)).dividedBy(list.length), precision);
     const nationality = category === 'gcc' ? mostCommon(list.map((e) => e.nationality)) : '';
+    const allowances = average((e) => sumOf(e.allowances));
+    const eos = average((e) => sumOf(e.allowances.filter((a) => a.countsForEos)));
     rates.push({
       id: key,
       jobTitle,
@@ -572,7 +638,8 @@ export function averageRates(employees: readonly PayOf[], precision = 3): Costin
       category,
       ...(nationality ? { nationality } : {}),
       basic: average((e) => dec(e.basicSalary)),
-      allowances: average((e) => e.allowances.reduce((s, a) => s.plus(a.amount), dec(0))),
+      allowances,
+      ...(eos < allowances ? { eosAllowances: eos } : {}),
       count: list.length,
     });
   }
@@ -582,23 +649,42 @@ export function averageRates(employees: readonly PayOf[], precision = 3): Costin
 }
 
 /**
- * The quote's lines for a costing: one a post, with its job title, the
- * hours and days it covers, the headcount and the sell price per person a
- * month. Never anything else of the costing: no salary, allowance, PIFSS,
- * indemnity, leave, overhead, cost or margin (staff and viewers see quotes,
- * and clients get them).
+ * What a quote line says of its post, in the quote's language, whoever makes
+ * it: Arabic on an Arabic quote, both on a bilingual one (Arabic and
+ * English), English otherwise. Fixed wording, as printed words are, not the
+ * interface's; the Arabic says the numbers without counting them, so it
+ * reads right for any number.
  */
-export function quoteLines(posts: readonly CostingPost[], taxes: TaxLine[]): LineItem[] {
+export function postDescription(
+  post: Pick<CostingPost, 'hoursPerDay' | 'daysPerMonth'>,
+  language: DocumentLanguage,
+): string {
+  const english = `${post.hoursPerDay} hours a day, ${post.daysPerMonth} days a month, per person a month`;
+  const arabic = `ساعات العمل في اليوم: ${post.hoursPerDay}، أيام العمل في الشهر: ${post.daysPerMonth}، السعر للفرد في الشهر`;
+  if (language === 'ar') return arabic;
+  if (language === 'ar-en') return `${arabic}\n${english}`;
+  return english;
+}
+
+/**
+ * The quote's lines for a costing: one a post, with its job title, the
+ * hours and days it covers (in the quote's language), the headcount and the
+ * sell price per person a month. Never anything else of the costing: no
+ * salary, allowance, PIFSS, indemnity, leave, overhead, cost or margin
+ * (staff and viewers see quotes, and clients get them).
+ */
+export function quoteLines(
+  posts: readonly CostingPost[],
+  taxes: TaxLine[],
+  language: DocumentLanguage = 'en',
+): LineItem[] {
   return posts.map((post) => ({
     id: shortId(),
     kind: 'item' as const,
     productId: null,
     name: post.jobTitle,
     ...(post.jobTitleAr ? { nameAr: post.jobTitleAr } : {}),
-    description: t('{hours} hours a day, {days} days a month, per person a month', {
-      hours: post.hoursPerDay,
-      days: post.daysPerMonth,
-    }),
+    description: postDescription(post, language),
     quantity: post.headcount,
     unit: '',
     unitPrice: post.sellPrice,

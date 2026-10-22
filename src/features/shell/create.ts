@@ -35,6 +35,8 @@ export interface CreateAction {
   to: string;
   icon: LucideIcon;
   keywords?: string;
+  /** Offered only while manpower costing is in effect (#3): available, and switched on. */
+  costingOnly?: boolean;
 }
 
 export interface CreateGroup {
@@ -182,7 +184,7 @@ export const CREATE_ACTIONS = {
     icon: MailPlus,
     keywords: 'salary certificate experience employment warning noc',
   },
-  // Manpower costing (#3): the costing page says when it is off.
+  // Manpower costing (#3): offered once it is on (and the cloud has it).
   costing: {
     id: 'costing',
     label: msg('Manpower costing'),
@@ -190,6 +192,7 @@ export const CREATE_ACTIONS = {
     to: '/people/costing?new=1',
     icon: Calculator,
     keywords: 'quotation pricing guards cleaners rate card manpower',
+    costingOnly: true,
   },
   journal: {
     id: 'journal',

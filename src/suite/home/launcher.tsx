@@ -9,7 +9,7 @@ import { cn } from '@/lib/cn';
 import { useLanguage } from '@/i18n/provider';
 import { t, tp } from '@/i18n';
 import { appById, appTitle, visibleApps, type AccessMap } from '../apps';
-import { useApps, useCurrentApp } from '../current-app';
+import { rememberApp, useApps, useCurrentApp } from '../current-app';
 import { APP_TONES, AppMark, PreviewBadge } from '../switcher';
 import type { AppId } from '../types';
 import {
@@ -86,7 +86,10 @@ export function Launcher({
   const open = (tile: Tile | undefined) => {
     if (!tile) return;
     if (tile.href) window.open(tile.href, '_blank', 'noopener,noreferrer');
-    else if (tile.to) navigate(tile.to);
+    else if (tile.to) {
+      if (tile.app) rememberApp(tile.app);
+      void navigate(tile.to);
+    }
   };
 
   return (
@@ -327,6 +330,9 @@ function RoundTile({
       ) : (
         <Link
           to={tile.to ?? '/'}
+          // An app, or one of its tools, opens with that app's sidebar,
+          // even on a page the last app shares (src/suite/current-app.ts).
+          onClick={tile.app ? () => rememberApp(tile.app!) : undefined}
           className={className}
           aria-label={tile.name ?? (describedBy ? tile.label : undefined)}
           aria-describedby={describedBy || undefined}

@@ -47,8 +47,8 @@ export default {
     'سعّر وظائف الحراس وعمال النظافة وغيرهم بحسب تكلفتهم، مع المصاريف غير المباشرة وهامش الربح، وأعدّ للعميل عرض سعر بأسعار البيع فقط.',
   'Off: nothing changes, as before. On: the owner, admins and accountants make costings here. Costings, their salaries, costs and margins stay private like payroll: staff and viewers never see them, and the quote shows the sell prices only.':
     'متوقف: لا يتغير شيء، كما كان من قبل. مُشغَّل: يُعدّ المالك والمديرون والمحاسبون التسعيرات هنا. وتبقى التسعيرات ورواتبها وتكاليفها وهوامشها سرية مثل الرواتب: لا يراها الموظفون والمشاهدون أبداً، ويُظهر عرض السعر أسعار البيع فقط.',
-  'Hours past 8 a day are priced as overtime at 1.25. A post that needs more than 2 hours of overtime a day is flagged: article 66 of Labour Law 6/2010 allows that only with an exemption. Confirm with counsel before quoting such a post.':
-    'تُسعَّر الساعات التي تزيد على 8 في اليوم عملاً إضافياً بنسبة 1.25. ويُنبَّه إلى الوظيفة التي تحتاج إلى أكثر من ساعتين من العمل الإضافي في اليوم، إذ لا تجيز المادة 66 من قانون العمل 6/2010 ذلك إلا باستثناء. تأكد من المستشار القانوني قبل تسعير مثل هذه الوظيفة.',
+  'Hours past 8 a day are priced as overtime at 1.25. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies, so a post with more is flagged. Confirm with counsel before quoting such a post.':
+    'تُسعَّر الساعات التي تزيد على 8 في اليوم عملاً إضافياً بنسبة 1.25. وتحدّ المادة 66 من قانون العمل 6/2010 العمل الإضافي بساعتين في اليوم وثلاثة أيام في الأسبوع و180 ساعة في السنة إلا باستثناء، فيُنبَّه إلى الوظيفة التي تتجاوز ذلك. تأكد من المستشار القانوني قبل تسعير مثل هذه الوظيفة.',
   'Posts priced from staff cost, with overhead and a margin, and the quotes they make.':
     'وظائف مسعّرة بحسب تكلفة العمالة، مع المصاريف غير المباشرة وهامش الربح، وعروض الأسعار المُعدّة منها.',
   'No costings yet': 'لا توجد تسعيرات بعد',
@@ -99,6 +99,7 @@ export default {
   'Add a job title': 'إضافة مسمى وظيفي',
   'Arabic job title': 'المسمى الوظيفي بالعربية',
   'Other costs': 'تكاليف أخرى',
+  'Allowances for indemnity': 'البدلات المحتسبة في مكافأة نهاية الخدمة',
 
   // A costing.
   'Make quote': 'إعداد عرض سعر',
@@ -142,11 +143,19 @@ export default {
   Margin: 'هامش الربح',
   'Margin of the sell price': 'هامش الربح من سعر البيع',
   'Markup on cost': 'الإضافة على التكلفة',
+  'The sell prices are before tax: tax, when the company charges it, is added on top.':
+    'أسعار البيع قبل الضريبة: وتُضاف الضريبة عليها إن كانت الشركة تفرضها.',
+  'The quote is made in {currency}, the company’s currency, as the costing is, though this customer’s documents are usually in {other}.':
+    'يُعدّ عرض السعر بعملة {currency}، عملة الشركة، كما هو التسعير، مع أن مستندات هذا العميل تكون عادةً بعملة {other}.',
+  'The owner has made quotes view only for you (in Maham Books, and Maham Sales when it has its own app), so no quote can be made from the costing. Ask the owner if you need to change it.':
+    'جعل المالك عروض الأسعار للاطلاع فقط بالنسبة لك (في مهام بوكس، وفي مهام سيلز حين يكون تطبيقاً مستقلاً)، فلا يمكن إعداد عرض سعر من التسعير. اطلب من المالك إن احتجت إلى تغيير ذلك.',
 
   // What a post needs a second look for (lib/hr/costing.ts).
   'A post': 'وظيفة',
-  '{title}: {value} hours of overtime a day. Article 66 of Labour Law 6/2010 allows at most 2 a day unless an exemption applies. Confirm with counsel before quoting, or add people to the post.':
-    '{title}: {value} ساعات عمل إضافي في اليوم. لا تجيز المادة 66 من قانون العمل 6/2010 أكثر من ساعتين في اليوم إلا باستثناء. تأكد من المستشار القانوني قبل التسعير، أو أضف أفراداً إلى الوظيفة.',
+  '{title}: {value} hours of overtime a day. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies. Confirm with counsel before quoting, or add people to the post.':
+    '{title}: ساعات العمل الإضافي في اليوم: {value}. وتحدّ المادة 66 من قانون العمل 6/2010 العمل الإضافي بساعتين في اليوم وثلاثة أيام في الأسبوع و180 ساعة في السنة إلا باستثناء. تأكد من المستشار القانوني قبل التسعير، أو أضف أفراداً إلى الوظيفة.',
+  '{title}: overtime on about {days} days a week, about {value} hours a year. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies. Confirm with counsel before quoting, or add people to the post.':
+    '{title}: أيام العمل الإضافي في الأسبوع: نحو {days}، وساعاته في السنة: نحو {value}. وتحدّ المادة 66 من قانون العمل 6/2010 العمل الإضافي بساعتين في اليوم وثلاثة أيام في الأسبوع و180 ساعة في السنة إلا باستثناء. تأكد من المستشار القانوني قبل التسعير، أو أضف أفراداً إلى الوظيفة.',
   '{title}: {value} rest days worked a month, priced at 1.5. Article 67 also gives a day off in lieu for each; relief staff may cost less.':
     '{title}: {value} أيام راحة يُعمل فيها في الشهر، مسعّرة بنسبة 1.5. وتمنح المادة 67 أيضاً يوم راحة بديلاً عن كل منها، وقد تكون العمالة البديلة أقل تكلفة.',
   '{title}: the basic salary is below the minimum wage in Payroll settings.':
@@ -155,9 +164,8 @@ export default {
     '{title}: لم تُحدَّد نسب التأمينات الاجتماعية في إعدادات الرواتب، فلم تُحتسب حصة صاحب العمل.',
   '{title}: no rates are set for this GCC nationality in Payroll settings, so the employer’s share is left out.':
     '{title}: لم تُحدَّد نسب هذه الجنسية الخليجية في إعدادات الرواتب، فلم تُحتسب حصة صاحب العمل.',
-  '{hours} hours a day, {days} days a month, per person a month':
-    '{hours} ساعات في اليوم، {days} يوماً في الشهر، للفرد في الشهر',
-  '{hours} hours a day, {days} days a month': '{hours} ساعات في اليوم، {days} يوماً في الشهر',
+  '{hours} hours a day, {days} days a month':
+    'ساعات العمل في اليوم: {hours}، أيام العمل في الشهر: {days}',
 
   // The cost sheet (كشف التكلفة), src/pdf/costing.tsx.
   'Cost sheet': 'كشف التكلفة',

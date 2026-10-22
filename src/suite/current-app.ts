@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { useLocation } from 'react-router';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { useCompany } from '@/app/company';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { accessMap, appById, appForPath, appsFor, canOpen, isAppId, type AccessMap } from './apps';
@@ -38,6 +38,23 @@ export function rememberApp(id: AppId): void {
   listeners.forEach((listener) => listener());
 }
 
+/**
+ * Opens an app chosen as a whole (the switcher, the phone's app tiles, the
+ * home's tiles, the palette's apps): remembered first, so its home opens
+ * with its own sidebar even where the last app shares that page (in the
+ * split layout Books lists Sales' invoices and Inventory's stock).
+ */
+export function useOpenApp(): (app: Pick<SuiteApp, 'id' | 'home'>) => void {
+  const navigate = useNavigate();
+  return useCallback(
+    (app) => {
+      rememberApp(app.id);
+      void navigate(app.home);
+    },
+    [navigate],
+  );
+}
+
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -73,7 +90,9 @@ export function useAppAccess(): AccessMap {
  * the suite's own pages. An app the person may not open is never shown:
  * staff on a People page see Books around the lock card. The last app is
  * forgotten when it isn't in the layout (Sales, after the layout went back
- * to the four apps): Books then.
+ * to the four apps). When neither can be opened (CRM remembered, but the
+ * owner closed it), the page's owner in the layout (Sales for quotes in
+ * the split layout), and Books after that.
  */
 export function useCurrentApp(): SuiteApp {
   const { pathname } = useLocation();
@@ -81,22 +100,29 @@ export function useCurrentApp(): SuiteApp {
   const access = useAppAccess();
   const remembered = useLastApp();
   const fromPath = appForPath(pathname, remembered, apps);
-  const id = [fromPath, remembered].find(
+  const owner = appForPath(pathname, null, apps);
+  const id = [fromPath, remembered, owner].find(
     (candidate): candidate is AppId =>
       candidate != null && isAppId(candidate, apps) && canOpen(access[candidate]),
   );
   return appById(id ?? 'books', apps);
 }
 
-/** Remembers the app of the page being visited, for the suite's own pages. */
+/**
+ * Remembers the app of the page being visited, for the suite's own pages:
+ * its owner when the app that shares it can't be opened.
+ */
 export function useRememberApp(): void {
   const { pathname } = useLocation();
   const apps = useApps();
   const access = useAppAccess();
   const remembered = useLastApp();
   const fromPath = appForPath(pathname, remembered, apps);
-  const allowed = fromPath !== null && canOpen(access[fromPath]);
+  const owner = appForPath(pathname, null, apps);
+  const id = [fromPath, owner].find(
+    (candidate): candidate is AppId => candidate != null && canOpen(access[candidate]),
+  );
   useEffect(() => {
-    if (fromPath && allowed) rememberApp(fromPath);
-  }, [fromPath, allowed]);
+    if (id) rememberApp(id);
+  }, [id]);
 }

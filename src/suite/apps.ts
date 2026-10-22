@@ -183,12 +183,14 @@ export function visibleApps(access: AccessMap, apps: readonly SuiteApp[] = APPS)
 /**
  * What the New menus offer: the current app's groups first, then those of
  * the other apps the person works in, each action once and each group (by
- * its name) once. Nothing for an app the person only looks at.
+ * its name) once. Nothing for an app the person only looks at, and a new
+ * manpower costing only while costing is in effect (`costing`).
  */
 export function createGroups(
   current: AppId,
   access: AccessMap,
   apps: readonly SuiteApp[] = APPS,
+  { costing = false }: { costing?: boolean } = {},
 ): (CreateGroup & { column?: 0 | 1 })[] {
   const first = appById(current, apps);
   const order = [first, ...apps.filter((app) => app.id !== first.id)];
@@ -197,7 +199,9 @@ export function createGroups(
   for (const app of order) {
     if (!canEdit(access[app.id])) continue;
     for (const group of app.create) {
-      const actions = group.actions.filter((a: CreateAction) => !seen.has(a.id));
+      const actions = group.actions.filter(
+        (a: CreateAction) => !seen.has(a.id) && (costing || !a.costingOnly),
+      );
       actions.forEach((a) => seen.add(a.id));
       if (!actions.length) continue;
       // One "Sales" group, whichever apps add to it.

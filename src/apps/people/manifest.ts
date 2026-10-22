@@ -95,6 +95,8 @@ export const PEOPLE: SuiteApp = {
       label: msg('Manpower costing'),
       icon: Calculator,
       keywords: 'quotation quote pricing guards cleaners rate card manpower cost sheet',
+      // Hidden in the cloud until its server has the costings file (D4).
+      costingOnly: true,
     },
     {
       kind: 'link',

@@ -399,6 +399,17 @@ describe('manpower costings', () => {
     for (const id of PRIVATE) expect(ids, id).not.toContain(id);
     expect(await outcome(push(t.owner, t.company, [costing(t.company, 'cost-after')]))).toBe('ok');
   });
+
+  it('schedule the daily clean-up of deletion markers as the fourth file does, which can’t run again', () => {
+    // PGlite has no pg_cron: the block is compared with the fourth file's.
+    const schedule = (file: string) =>
+      /if exists \(select 1 from pg_catalog\.pg_extension where extname = 'pg_cron'\) then\s+perform cron\.schedule\([^;]*\);\s+end if;/.exec(
+        readFileSync(file, 'utf8'),
+      )?.[0];
+    expect(schedule(FILE)).toBeDefined();
+    expect(schedule(FILE)).toBe(schedule(V16));
+    expect(schedule(FILE)).toContain("'almailbooks-purge-deleted-records'");
+  });
 });
 
 describe('an older version of the app', () => {

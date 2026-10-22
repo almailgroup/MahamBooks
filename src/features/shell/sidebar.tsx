@@ -26,6 +26,7 @@ import { useTaxesEnabled } from '@/features/company/taxes';
 import { registerExtrasOn } from '@/lib/compliance';
 import { fileFinderOn } from '@/db/files';
 import { approvalsOn, payrollApprovalsShown } from '@/db/approvals';
+import { useCostingShown } from '@/features/people/costing-hooks';
 import { companyTypeName } from '@/features/company/company-types';
 import { AccountMenu } from '@/features/cloud/account-menu';
 import { useCurrentApp } from '@/suite/current-app';
@@ -288,6 +289,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation();
   // The open app's sidebar; apps the person may not open never show.
   const app = useCurrentApp();
+  const costing = useCostingShown();
   const nav = visibleNav(
     app.nav,
     taxesOn,
@@ -295,6 +297,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     fileFinderOn(company),
     approvalsOn(company),
     payrollApprovalsShown(company),
+    costing.available,
   );
   const current = activeLink(pathname, [...navLinks(nav), ...app.footer]);
   const { state, toggle } = useGroupState(activeGroupId(pathname, nav));

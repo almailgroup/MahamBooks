@@ -1654,6 +1654,10 @@ async function catchUpTables(
       }
     }
   }
+  // What an older build kept for a role that doesn't see payroll and people
+  // data, not knowing it was private (activity about a manpower costing,
+  // pulled before the role changed): gone once, now this build knows.
+  if (!canSeePeople(link.role)) await removeHiddenData(companyId);
   await db.syncState.update(companyId, { tables: [...DATA_TABLES] });
 }
 

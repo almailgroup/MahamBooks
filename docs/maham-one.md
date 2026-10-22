@@ -142,7 +142,12 @@ What changes and what doesn't:
   Settings → Links says so. Nothing stored is rewritten.
 - **The last app used** on Settings and the home is remembered in the
   browser. When it isn't in the layout any more (Sales, after the switch
-  went off), the sidebar is Books'.
+  went off), the sidebar is Books'. An app chosen as a whole (the switcher,
+  the phone's app tiles, the home's app and tool tiles, the palette's apps)
+  is remembered as it opens, so Maham Sales opens at its invoices with its
+  own sidebar even when Books, which lists them under Receivables, was the
+  last app. When neither the page's app nor the last one can be opened (CRM
+  closed by the owner's limits), the page's owner in the layout is shown.
 - Sales is violet and Inventory teal; every theme, light and dark, has both.
 
 ## Employees across companies
@@ -484,8 +489,10 @@ pre-filled with the current averages per job title.
   Kuwaiti, GCC). Until one is saved it is the average of the current
   salaries per job title and category, worked out on the device of someone
   who sees payroll (`averageRates` in `src/lib/hr/costing.ts`; leavers,
-  domestic workers and staff not paid monthly left out). An average of one
-  person is their salary, and the page says so.
+  domestic workers, staff not paid monthly and employees with no pay on
+  their record yet left out). An average of one person is their salary, and
+  the page says so. The allowances that count for the indemnity are averaged
+  too (_Allowances for indemnity_, `eosAllowances`, missing when all count).
 - **A costing** (`staffingCostings`, Dexie 17, private like payroll): a name,
   a customer, posts (job title, category, headcount, hours a day, days a
   month, pay), overhead, margin, status (draft, quote made, won, lost) and
@@ -493,19 +500,26 @@ pre-filled with the current averages per job title.
   (`pricePost`): the wage; overtime past 8 hours a day at 1.25 and rest days
   past the payroll's working days at 1.5; the employer's PIFSS share for
   Kuwaiti and GCC posts only (the payroll's rates and cap); the indemnity a
-  month of service earns (15 days' wage a year, `src/lib/hr/eosi.ts`, none
+  month of service earns (15 days' wage a year on the basic salary and the
+  allowances that count for it, as `eosWage` in `src/lib/hr/eosi.ts`; none
   for insured staff when the payroll leaves them out of the provision); a
   month's share of the annual leave's pay; other costs. Overhead is added on
   that cost, and the sell price is cost ÷ (1 − margin): the margin is a
   share of the sell price, so 15% is a markup of 17.65%. KWD to 3 decimals,
-  each amount rounded once. A post that needs more than 2 hours of overtime
-  a day is flagged (art. 66 of Labour Law 6/2010; the owner confirms with
+  each amount rounded once. Art. 66 of Labour Law 6/2010 limits overtime to
+  2 hours a day, 3 days a week and 180 hours a year unless an exemption
+  applies: a post past any of these is flagged (the owner confirms with
   counsel), and so are rest days worked, pay below the minimum wage and
-  missing PIFSS or GCC rates.
+  missing PIFSS or GCC rates. The overhead and margin are at most 200% and
+  90%; the page and the cost sheet show what was used.
 - **Make quote** makes a draft quote for the customer through the
   documents' own save (numbered like any quote): one line a post with the
-  job title (and its Arabic), hours and days, the headcount and the sell
-  price per person a month. Nothing else: no salary, PIFSS, indemnity, cost,
+  job title (and its Arabic), hours and days (in the quote's language), the
+  headcount and the sell price per person a month. The quote is in the
+  company's currency, whatever the customer's documents usually are (the
+  page says so), and its prices are before tax, tax added on top, so its
+  total before tax is the costing's sell total. It needs Maham Books (or
+  Sales) not to be view only for the person. Nothing else: no salary, PIFSS, indemnity, cost,
   overhead or margin in its lines, notes, terms or activity. The quote keeps
   the costing's id (`InvoiceDocument.costingId`) and the costing the quote's
   (`quoteId`); an older build that drops `costingId` leaves the costing's
@@ -515,10 +529,14 @@ pre-filled with the current averages per job title.
   the interface language, with each post's cost, overhead, sell price and
   the margin. Downloaded from the costing only; never attached to the quote
   or emailed.
-- **Where.** People → Manpower costing (nav), _New manpower costing_ in the
-  New menu, and the link on the quote. Staff and viewers never see any of it:
-  the People gate keeps the pages from them, the cloud never sends them
-  costings or their activity, and refuses theirs.
+- **Where.** People → Manpower costing (nav, once the company can use it:
+  in the cloud, once the server has the file), _New manpower costing_ in the
+  New menus and the palette once it is on, and the link on the quote. Staff
+  and viewers never see any of it: the People gate keeps the pages from
+  them, the cloud never sends them costings or their activity, and refuses
+  theirs. Costing activity is also marked `confidential`, which every build
+  since Phase 0 keeps from staff and viewers; a device whose member became
+  staff on an older build drops what it kept once this build catches up.
 
 ## Contracts, customers and vehicles
 

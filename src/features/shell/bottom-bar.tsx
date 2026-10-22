@@ -6,6 +6,7 @@ import { t } from '@/i18n';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { createGroups } from '@/suite/apps';
 import { useAppAccess, useApps, useCurrentApp } from '@/suite/current-app';
+import { useCostingShown } from '@/features/people/costing-hooks';
 import { useHasStickyActions, useTyping } from './store';
 
 /**
@@ -118,7 +119,8 @@ export function useCreateGroups() {
   const access = useAppAccess();
   // The header and tab bar sit outside the page's read-only context.
   const { readOnly } = useRoleView().readOnly;
-  return readOnly ? [] : createGroups(app.id, access, apps);
+  const costing = useCostingShown();
+  return readOnly ? [] : createGroups(app.id, access, apps, { costing: costing.on });
 }
 
 /** Everything that can be created, as a sheet from the bottom of the screen. */

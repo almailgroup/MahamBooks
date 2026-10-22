@@ -17,6 +17,7 @@ import type { CostingCategory, CostingPost, CostingRate, StaffingCosting } from 
 import {
   COSTING_CATEGORIES,
   COSTING_CATEGORY_LABELS,
+  COSTING_RULES,
   COSTING_STATUS_LABELS,
   costingWarningText,
   newPost,
@@ -29,10 +30,11 @@ import { buildCostingSheet } from '@/pdf/costing-model';
 import { downloadBlob, pdfFileName } from '@/pdf/client';
 import { useCompany, useFormat } from '@/app/company';
 import {
+  customerChoices,
+  useClients,
   useCosting,
   useCostingBasis,
   useCostingView,
-  useCustomers,
   useRateCard,
 } from '@/features/people/costing-hooks';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
@@ -64,7 +66,7 @@ export default function CostingEditorPage() {
   const [params] = useSearchParams();
   const view = useCostingView();
   const stored = useCosting(isNew ? undefined : id);
-  const customers = useCustomers();
+  const clients = useClients();
   const card = useRateCard();
   const basis = useCostingBasis();
   const [draft, setDraft] = useState<StaffingCosting | null>(null);
@@ -93,7 +95,7 @@ export default function CostingEditorPage() {
   );
   const allowNavigation = useUnsavedGuard(draft !== null && busy === null);
 
-  if (view.loading || !customers || !card || !basis || (!isNew && stored === undefined)) {
+  if (view.loading || !clients || !card || !basis || (!isNew && stored === undefined)) {
     return <Spinner className="py-24" label={t('Loading…')} />;
   }
   if (!view.available || !view.on || (!isNew && stored === null) || !costing || !priced) {
@@ -177,7 +179,7 @@ export default function CostingEditorPage() {
     setBusy('sheet');
     try {
       const customer = costing.clientId
-        ? localName(customers.find((c) => c.id === costing.clientId))
+        ? localName(clients.find((c) => c.id === costing.clientId))
         : '';
       const model = buildCostingSheet({
         costing,
@@ -222,7 +224,11 @@ export default function CostingEditorPage() {
   };
 
   const totals = priced.totals;
-  const options = customers.map((c) => ({
+  const customer = clients.find((c) => c.id === costing.clientId);
+  // Quotes are in the company's currency, as the costing is.
+  const otherCurrency =
+    customer?.currency && customer.currency !== company.currency ? customer.currency : null;
+  const options = customerChoices(clients, costing.clientId).map((c) => ({
     value: c.id,
     label: localName(c),
     detail: c.number,
@@ -252,13 +258,15 @@ export default function CostingEditorPage() {
             ) : null}
             {editable ? (
               <>
-                <Button
-                  variant="outline"
-                  onClick={() => void makeQuote()}
-                  disabled={busy !== null || costing.posts.length === 0 || !costing.clientId}
-                >
-                  <ScrollText /> {t('Make quote')}
-                </Button>
+                {view.canQuote ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => void makeQuote()}
+                    disabled={busy !== null || costing.posts.length === 0 || !customer}
+                  >
+                    <ScrollText /> {t('Make quote')}
+                  </Button>
+                ) : null}
                 <Button onClick={() => void save()} disabled={busy !== null}>
                   {t('Save')}
                 </Button>
@@ -281,7 +289,21 @@ export default function CostingEditorPage() {
                 />
               )}
             </Field>
-            <Field label={t('Customer')}>
+            <Field
+              label={t('Customer')}
+              hint={
+                !view.canQuote
+                  ? t(
+                      'The owner has made quotes view only for you (in Maham Books, and Maham Sales when it has its own app), so no quote can be made from the costing. Ask the owner if you need to change it.',
+                    )
+                  : otherCurrency
+                    ? t(
+                        'The quote is made in {currency}, the company’s currency, as the costing is, though this customer’s documents are usually in {other}.',
+                        { currency: company.currency, other: otherCurrency },
+                      )
+                    : undefined
+              }
+            >
               {(fid) => (
                 <Combobox
                   id={fid}
@@ -293,7 +315,10 @@ export default function CostingEditorPage() {
                 />
               )}
             </Field>
-            <Field label={t('Overhead (%)')}>
+            <Field
+              label={t('Overhead (%)')}
+              hint={t('At most {max}%.', { max: COSTING_RULES.maxOverheadPercent })}
+            >
               {(fid) => (
                 <NumberInput
                   id={fid}
@@ -306,7 +331,7 @@ export default function CostingEditorPage() {
             </Field>
             <Field
               label={t('Margin (% of the sell price)')}
-              hint={marginExplained(costing.marginPercent)}
+              hint={`${t('At most {max}%.', { max: COSTING_RULES.maxMarginPercent })} ${marginExplained(costing.marginPercent)}`}
             >
               {(fid) => (
                 <NumberInput
@@ -458,6 +483,12 @@ export default function CostingEditorPage() {
                       onChange={(n) => editPost(i, { allowances: n })}
                     />
                     <NumberField
+                      label={t('Allowances for indemnity')}
+                      value={costing.posts[i].eosAllowances ?? costing.posts[i].allowances}
+                      disabled={!editable}
+                      onChange={(n) => editPost(i, { eosAllowances: n })}
+                    />
+                    <NumberField
                       label={t('Other costs')}
                       value={costing.posts[i].otherCosts}
                       disabled={!editable}
@@ -532,9 +563,9 @@ export default function CostingEditorPage() {
         <Card>
           <CardHeader
             title={t('Totals a month')}
-            description={t(
+            description={`${t(
               'The quote shows the job titles, hours, days, people and sell prices only. Costs, salaries and the margin stay here.',
-            )}
+            )} ${t('The sell prices are before tax: tax, when the company charges it, is added on top.')}`}
           />
           <CardBody>
             <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">

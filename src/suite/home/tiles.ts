@@ -30,7 +30,7 @@ export interface Tile {
   href?: string;
   /** Marks a tile that creates something. */
   plus?: boolean;
-  /** The app an app tile opens. */
+  /** The app an app tile opens, or whose tool a tool tile is (its sidebar opens with it). */
   app?: AppId;
   /** What the filter matches, normalised. */
   terms: string;
@@ -75,6 +75,7 @@ export function toolGroups(
       app,
       tiles: app.tools.map((tool) => ({
         key: `tool:${app.id}:${tool.to}`,
+        app: app.id,
         label: t(tool.label),
         icon: tool.icon,
         tone: app.tone,

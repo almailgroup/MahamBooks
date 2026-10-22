@@ -185,7 +185,29 @@ test('Settings → Team splits Maham Books into Sales, Books and Inventory, at t
   await expect(page).toHaveURL(/#\/invoices$/);
   await expect(nav.getByRole('button', { name: 'Receivables' })).toBeVisible();
 
-  // The home has the six apps, with what needs attention in each.
+  // Sales chosen in the switcher opens with its own sidebar, though Books,
+  // the last app, lists its invoices.
+  const switcher = page.getByRole('button', { name: 'Switch app' });
+  await switcher.click();
+  await expect(page.getByRole('menuitem', { name: /Maham Books/ })).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  await page.getByRole('menuitem', { name: /Maham Sales/ }).click();
+  await expect(page).toHaveURL(/#\/invoices$/);
+  await expect(nav.getByRole('link', { name: 'Quotes', exact: true })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Receivables' })).toHaveCount(0);
+  await switcher.click();
+  await expect(page.getByRole('menuitem', { name: /Maham Sales/ })).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  await page.keyboard.press('Escape');
+
+  // The home has the six apps, with what needs attention in each. Books
+  // (bills) is the last app again, and Inventory's tile opens Inventory.
+  await page.goto('#/bills');
+  await expect(nav.getByRole('button', { name: 'Purchases' })).toBeVisible();
   await page.goto('#/');
   const apps = page.getByRole('main').getByRole('region', { name: 'Your apps' });
   for (const name of ['Maham Sales', 'Maham Books', 'Maham Inventory', 'Maham CRM']) {
@@ -194,16 +216,24 @@ test('Settings → Team splits Maham Books into Sales, Books and Inventory, at t
   await expect(
     apps.getByRole('link', { name: 'Maham Sales', exact: true }),
   ).toHaveAccessibleDescription(/overdue invoice|Nothing overdue/);
+  await apps.getByRole('link', { name: 'Maham Inventory', exact: true }).click();
+  await expect(page).toHaveURL(/#\/inventory$/);
+  await expect(nav.getByRole('link', { name: 'Stock count' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Receivables' })).toHaveCount(0);
 
-  // Search finds the new apps.
+  // Search finds the new apps, and opens them with their own sidebar from Books.
+  await page.goto('#/books');
+  await expect(nav.getByRole('button', { name: 'Receivables' })).toBeVisible();
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Search' });
   await palette.getByRole('combobox', { name: 'Search' }).fill('maham inventory');
   await expect(palette.getByRole('option').first()).toContainText('Maham Inventory');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/#\/inventory$/);
+  await expect(nav.getByRole('link', { name: 'Stock count' })).toBeVisible();
 
-  // Back to the four apps: the last app was Inventory, so Books.
+  // Back to the four apps: the last app was Inventory, which isn't one of
+  // them any more, so Books.
   await page.goto('#/settings/team');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');

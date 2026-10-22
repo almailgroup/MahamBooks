@@ -69,6 +69,15 @@ describe('navigation', () => {
     expect(links(true)).toEqual(['/', '/compliance', '/compliance/documents', '/files']);
   });
 
+  it('shows Manpower costing only where it can be used (on this device, or once the cloud has it)', () => {
+    const links = (costing: boolean) =>
+      navLinks(visibleNav(PEOPLE.nav, false, false, false, false, false, costing)).map((l) => l.to);
+    expect(links(false)).not.toContain('/people/costing');
+    expect(links(true)).toContain('/people/costing');
+    // Letters are as before.
+    expect(links(false)).toContain('/people/letters');
+  });
+
   it('remembers open and closed groups', () => {
     expect(isGroupOpen({}, 'sales')).toBe(true);
     expect(isGroupOpen({}, 'accounting')).toBe(false);

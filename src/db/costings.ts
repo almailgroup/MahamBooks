@@ -45,6 +45,15 @@ import type { CloudLink } from '@/cloud/types';
 
 export class CostingError extends Error {}
 
+/**
+ * How costing activity is logged: marked confidential as well as being of
+ * entity "costing". Every build since Phase 0 (and every server rule) keeps
+ * a confidential activity from staff and viewers; builds before this one
+ * don't know the entity, and would otherwise keep it on a device whose
+ * member later becomes staff.
+ */
+const COSTING_ACTIVITY = { confidential: true } as const;
+
 async function linkOf(companyId: ID): Promise<CloudLink | null> {
   return (await db.syncState.get(companyId)) ?? null;
 }
@@ -71,6 +80,22 @@ export function canEditCostings(link: CloudLink | null | undefined): boolean {
     canSeeCostings(link) &&
     canWriteRecord(link.role, 'staffingCostings', {}) &&
     !limitBlocksWrite(link.role, link.permissions, 'staffingCostings', {})
+  );
+}
+
+/**
+ * Makes the quote of a costing: someone who edits costings, unless the owner
+ * made quotes view only for them. Quotes are Maham Books' documents (Maham
+ * Sales' in the split layout, which follows the same limit).
+ */
+export function canMakeCostingQuote(link: CloudLink | null | undefined): boolean {
+  if (link === undefined) return false;
+  if (!link) return true;
+  const quote = { type: 'quote' };
+  return (
+    canEditCostings(link) &&
+    canWriteRecord(link.role, 'documents', quote) &&
+    !limitBlocksWrite(link.role, link.permissions, 'documents', quote)
   );
 }
 
@@ -127,8 +152,15 @@ async function updateCostingSettings(
         updatedAt: nowStamp(),
       };
       await db.peopleSettings.put(settings);
-      // Private, like the rest of payroll and people.
-      await logActivity(companyId, 'costing', settings.id, 'settings', { text: message });
+      // Private, like the rest of payroll and people (see COSTING_ACTIVITY).
+      await logActivity(
+        companyId,
+        'costing',
+        settings.id,
+        'settings',
+        { text: message },
+        COSTING_ACTIVITY,
+      );
       return next;
     },
   );
@@ -287,7 +319,7 @@ export async function saveCosting(input: StaffingCosting): Promise<StaffingCosti
           : msg('Manpower costing {name} created'),
         vars: { name: costing.name },
       },
-      { clientId: costing.clientId },
+      { ...COSTING_ACTIVITY, clientId: costing.clientId },
     );
     return costing;
   });
@@ -317,7 +349,7 @@ export async function setCostingStatus(id: ID, status: CostingStatus): Promise<S
               : msg('Manpower costing {name} updated'),
         vars: { name: costing.name },
       },
-      { clientId: costing.clientId },
+      { ...COSTING_ACTIVITY, clientId: costing.clientId },
     );
     return next;
   });
@@ -336,7 +368,7 @@ export async function deleteCosting(id: ID): Promise<void> {
       costing.id,
       'deleted',
       { text: msg('Manpower costing {name} deleted'), vars: { name: costing.name } },
-      { clientId: costing.clientId },
+      { ...COSTING_ACTIVITY, clientId: costing.clientId },
     );
   });
 }
@@ -349,12 +381,24 @@ export async function deleteCosting(id: ID): Promise<void> {
  * it: no salary, allowance, PIFSS, indemnity, cost, overhead or margin, in
  * its lines, notes, terms or activity. The costing keeps the quote's id and
  * is marked quoted. The costing is worked out again first, so the quote has
- * today's prices.
+ * today's prices. The quote is in the company's currency, whatever the
+ * customer's documents usually are, since that is what the prices were
+ * worked out in, and its prices are before tax (tax, when charged, is added
+ * on top), so the quote's total before tax is the costing's sell total. Its
+ * lines say the hours and days in the quote's language.
  */
 export async function createQuoteFromCosting(id: ID): Promise<InvoiceDocument> {
   const stored = await db.staffingCostings.get(id);
   if (!stored) throw new CostingError(t('Costing not found'));
-  assertMayEdit(await linkOf(stored.companyId));
+  const link = await linkOf(stored.companyId);
+  assertMayEdit(link);
+  if (!canMakeCostingQuote(link)) {
+    throw new CostingError(
+      t(
+        'The owner has made quotes view only for you (in Maham Books, and Maham Sales when it has its own app), so no quote can be made from the costing. Ask the owner if you need to change it.',
+      ),
+    );
+  }
   if (!stored.clientId) throw new CostingError(t('Choose the customer of the costing first.'));
   if (stored.posts.length === 0) throw new CostingError(t('Add a post to the costing first.'));
   const [company, client] = await Promise.all([
@@ -370,9 +414,13 @@ export async function createQuoteFromCosting(id: ID): Promise<InvoiceDocument> {
   }
   const costing = priced(stored, await costingBasis(stored.companyId));
   const draft = await draftDocument(company, 'quote', client);
+  const language = client.language ?? company.language ?? 'en';
   const quote = await saveDocument({
     ...draft,
-    items: quoteLines(costing.posts, draft.items[0]?.taxes ?? []),
+    // The prices are in the company's currency, before tax.
+    currency: company.currency,
+    pricesIncludeTax: false,
+    items: quoteLines(costing.posts, draft.items[0]?.taxes ?? [], language),
     costingId: costing.id,
   });
   await db.transaction('rw', [db.staffingCostings, db.activities, db.syncState], async () => {
@@ -398,7 +446,7 @@ export async function createQuoteFromCosting(id: ID): Promise<InvoiceDocument> {
             vars: { number: quote.number, name: costing.name },
           }
         : { text: msg('A quote made from manpower costing {name}'), vars: { name: costing.name } },
-      { clientId: costing.clientId },
+      { ...COSTING_ACTIVITY, clientId: costing.clientId },
     );
   });
   return quote;

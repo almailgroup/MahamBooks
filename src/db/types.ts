@@ -1497,7 +1497,8 @@ export interface Activity {
   employeeId?: ID | null;
   /**
    * The event concerns a register document marked confidential (or its
-   * renewal): it stays private even after the document is gone.
+   * renewal), or a manpower costing: it stays private even after the
+   * document or costing is gone.
    */
   confidential?: boolean;
   action: string;
@@ -1963,6 +1964,11 @@ export interface CostingRate {
   nationality?: string;
   basic: number;
   allowances: number;
+  /**
+   * The part of the allowances the end-of-service indemnity is worked out on
+   * (allowances that count for it, as on an employee's record). Missing: all.
+   */
+  eosAllowances?: number;
   /** Uniform, residency, medical cover, transport and the like, per person a month. */
   otherCosts?: number;
   /** How many current employees the averages were worked out from (none when typed in). */
@@ -1990,6 +1996,8 @@ export interface CostingPost {
   daysPerMonth: number;
   basic: number;
   allowances: number;
+  /** The part of the allowances the indemnity is worked out on. Missing: all of them. */
+  eosAllowances?: number;
   /** Worked out: overtime past 8 hours a day at 1.25 and rest days worked at 1.5. */
   overtimeMonthly?: number;
   /** Worked out: the employer's PIFSS share (Kuwaiti and GCC posts only). */

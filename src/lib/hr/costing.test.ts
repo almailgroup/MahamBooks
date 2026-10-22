@@ -8,6 +8,8 @@ import {
   marginForMarkup,
   markupForMargin,
   newPost,
+  normalizeRate,
+  postDescription,
   priceCosting,
   pricePost,
   quoteLines,
@@ -98,10 +100,28 @@ describe('overtime', () => {
     expect(costingWarningText(priced.warnings[0])).toContain('Article 66 of Labour Law 6/2010');
   });
 
-  it('allows two hours a day without a warning (art. 66)', () => {
+  it('flags two hours a day on every working day: past art. 66’s 3 days a week and 180 hours a year', () => {
     const priced = pricePost(post({ hoursPerDay: 10 }), basis, 10, 15);
     expect(priced.perPerson.overtime).toBe(46.875);
+    // 2 hours × 26 days × 12 months; 26 days a month is 6 days a week.
+    expect(priced.warnings).toEqual([
+      { kind: 'overtime_year', postId: 'p1', jobTitle: 'Security Guard', value: 624, days: 6 },
+    ]);
+    const text = costingWarningText(priced.warnings[0]);
+    expect(text).toContain('about 6 days a week, about 624 hours a year');
+    expect(text).toContain('2 hours a day, 3 days a week and 180 hours a year');
+    // A 9-hour post: 312 hours a year.
+    const nine = pricePost(post({ hoursPerDay: 9 }), basis, 10, 15);
+    expect(nine.warnings.map((w) => [w.kind, w.value])).toEqual([['overtime_year', 312]]);
+  });
+
+  it('allows overtime within art. 66’s limits without a warning', () => {
+    // 2 hours on 7 days a month: under 2 days a week and 168 hours a year.
+    const priced = pricePost(post({ hoursPerDay: 10, daysPerMonth: 7 }), basis, 10, 15);
+    expect(priced.perPerson.overtime).toBeGreaterThan(0);
     expect(priced.warnings).toEqual([]);
+    // No overtime, no warning.
+    expect(pricePost(post({ hoursPerDay: 8 }), basis, 10, 15).warnings).toEqual([]);
   });
 
   it('works overtime out on the basic salary when the payroll does', () => {
@@ -116,6 +136,39 @@ describe('overtime', () => {
     expect(priced.perPerson.restDays).toBe(4);
     expect(priced.perPerson.restDayPay).toBe(34.615);
     expect(priced.warnings.map((w) => w.kind)).toEqual(['rest_days']);
+  });
+});
+
+describe('the indemnity', () => {
+  it('is worked out on the basic salary and the allowances that count for it, as payroll does', () => {
+    // A 30 transport allowance that doesn't count: 120 × 15 ÷ 26 ÷ 12, not 150 × 15 ÷ 26 ÷ 12.
+    const priced = pricePost(post({ eosAllowances: 0 }), basis, 10, 15);
+    expect(priced.perPerson.eosi).toBe(5.769);
+    expect(priced.post.eosAllowances).toBe(0);
+    // The wage, overtime and leave still take every allowance.
+    expect(priced.perPerson.wage).toBe(150);
+    expect(priced.perPerson.leave).toBe(14.423);
+  });
+
+  it('takes every allowance when the part that counts isn’t said, or is all of them', () => {
+    expect(pricePost(post(), basis, 10, 15).perPerson.eosi).toBe(7.212);
+    const all = pricePost(post({ eosAllowances: 45 }), basis, 10, 15);
+    expect(all.perPerson.eosi).toBe(7.212);
+    expect(all.post.eosAllowances).toBeUndefined();
+  });
+
+  it('keeps the part on a rate of the rate card, and gives it to a post made from it', () => {
+    const rate = normalizeRate({
+      jobTitle: 'Driver',
+      basic: 150,
+      allowances: 40,
+      eosAllowances: 10,
+    });
+    expect(rate.eosAllowances).toBe(10);
+    expect(newPost(rate).eosAllowances).toBe(10);
+    expect(
+      normalizeRate({ jobTitle: 'Driver', allowances: 40, eosAllowances: 40 }),
+    ).not.toHaveProperty('eosAllowances');
   });
 });
 
@@ -319,6 +372,23 @@ describe('the rate card from current salaries', () => {
     ).toEqual([]);
   });
 
+  it('leaves out employees with no pay on their record yet (imported without salaries)', () => {
+    const [rate] = averageRates([
+      person({ allowances: [allowance(30)] }),
+      person({ allowances: [allowance(30)] }),
+      person({ basicSalary: 0, allowances: [] }),
+    ]);
+    expect(rate).toMatchObject({ basic: 120, allowances: 30, count: 2 });
+  });
+
+  it('averages the allowances that count for the indemnity, when not all of them do', () => {
+    const [rate] = averageRates([
+      person({ allowances: [{ ...allowance(30), countsForEos: false }] }),
+      person({ allowances: [{ ...allowance(20), countsForEos: false }, allowance(10)] }),
+    ]);
+    expect(rate).toMatchObject({ basic: 120, allowances: 30, eosAllowances: 5, count: 2 });
+  });
+
   it('keeps a GCC nationality for its scheme', () => {
     const [rate] = averageRates([person({ category: 'gcc', nationality: 'BH' })]);
     expect(rate).toMatchObject({ category: 'gcc', nationality: 'BH' });
@@ -365,6 +435,22 @@ describe('the quote’s lines', () => {
       expect(text, String(amount)).not.toContain(String(amount));
     }
     expect(text).not.toMatch(/cost|salar|pifss|eosi|indemnity|margin|overhead|allowance|basic/i);
+  });
+
+  it('say the hours and days in the quote’s language, whatever the interface’s', () => {
+    const lines = quoteLines([post({ hoursPerDay: 12, sellPrice: 300 })], [], 'ar');
+    expect(lines[0].description).toBe(
+      'ساعات العمل في اليوم: 12، أيام العمل في الشهر: 26، السعر للفرد في الشهر',
+    );
+    expect(postDescription({ hoursPerDay: 8, daysPerMonth: 22 }, 'en')).toBe(
+      '8 hours a day, 22 days a month, per person a month',
+    );
+    expect(postDescription({ hoursPerDay: 8, daysPerMonth: 22 }, 'fr')).toBe(
+      '8 hours a day, 22 days a month, per person a month',
+    );
+    expect(postDescription({ hoursPerDay: 8, daysPerMonth: 22 }, 'ar-en').split('\n')).toHaveLength(
+      2,
+    );
   });
 });
 

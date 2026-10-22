@@ -1,11 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { db } from '@/db/db';
 import { saveCompany, setupCompany } from '@/db/records';
 import type { Company } from '@/db/types';
 import { CompanyProvider } from '@/app/company';
-import { rememberApp, resetLastApp, useApps, useCurrentApp, useRememberApp } from './current-app';
+import type { CloudLink } from '@/cloud/types';
+import type { MemberPermissions, MemberRole } from '@/cloud/roles';
+import { SALES } from '@/apps/sales/manifest';
+import { INVENTORY } from '@/apps/inventory/manifest';
+import {
+  rememberApp,
+  resetLastApp,
+  useApps,
+  useCurrentApp,
+  useOpenApp,
+  useRememberApp,
+} from './current-app';
+import type { SuiteApp } from './types';
 
 /**
  * The app the shell shows, in each layout of the apps (#3): the page's app,
@@ -16,12 +28,42 @@ import { rememberApp, resetLastApp, useApps, useCurrentApp, useRememberApp } fro
 function Probe() {
   const app = useCurrentApp();
   const apps = useApps();
+  // What the switcher, the app tiles and the palette do: open an app as a whole.
+  const openApp = useOpenApp();
   useRememberApp();
   return (
-    <p>
-      {app.id} of {apps.map((a) => a.id).join(',')}
-    </p>
+    <>
+      <p>
+        {app.id} of {apps.map((a) => a.id).join(',')}
+      </p>
+      {[SALES, INVENTORY].map((chosen) => (
+        <button key={chosen.id} type="button" onClick={() => openApp(chosen)}>
+          {`open ${chosen.id}`}
+        </button>
+      ))}
+    </>
   );
+}
+
+const choose = (app: SuiteApp) =>
+  fireEvent.click(screen.getByRole('button', { name: `open ${app.id}` }));
+
+/** The company kept in the cloud, with this role and the owner's limits. */
+async function linkAs(role: MemberRole, permissions?: MemberPermissions) {
+  const link: CloudLink = {
+    companyId: company.id,
+    userId: 'user-1',
+    role,
+    status: 'ready',
+    cursor: 0,
+    name: company.name,
+    linkedAt: new Date().toISOString(),
+    lastSyncAt: null,
+    lastError: null,
+    lastErrorAt: null,
+    permissions,
+  };
+  await db.syncState.put(link);
 }
 
 async function show(path: string) {
@@ -110,6 +152,53 @@ describe('the app open in the split layout', () => {
       const { appLayout: _layout, ...classic } = company;
       await saveCompany(classic);
     });
+    await shown(`books of ${CLASSIC}`);
+  });
+
+  it('opens Sales and Inventory with their own sidebars when Books, which lists their pages, was the last app', async () => {
+    const router = await show('/books');
+    await shown(`books of ${SPLIT}`);
+    // The switcher, the home's tiles or the palette: Sales' home is /invoices,
+    // which Books lists under Receivables.
+    choose(SALES);
+    await shown(`sales of ${SPLIT}`);
+    expect(router.state.location.pathname).toBe('/invoices');
+    await act(() => router.navigate('/books'));
+    await shown(`books of ${SPLIT}`);
+    await act(() => router.navigate('/'));
+    await shown(`books of ${SPLIT}`);
+    choose(INVENTORY);
+    await shown(`inventory of ${SPLIT}`);
+    expect(router.state.location.pathname).toBe('/inventory');
+    // Receivables in Books still keep Books' sidebar when opened from it.
+    await act(() => router.navigate('/cheques'));
+    await shown(`books of ${SPLIT}`);
+    await act(() => router.navigate('/invoices'));
+    await shown(`books of ${SPLIT}`);
+  });
+
+  it('shows the page’s owner, Sales, when the remembered CRM is closed by the owner', async () => {
+    await linkAs('admin', { apps: { crm: 'none' } });
+    rememberApp('crm');
+    const router = await show('/quotes');
+    await shown(`sales of ${SPLIT}`);
+    await act(() => router.navigate('/clients'));
+    await shown(`sales of ${SPLIT}`);
+    await act(() => router.navigate('/sales-orders/new'));
+    await shown(`sales of ${SPLIT}`);
+    // Sales is remembered from then on, for the suite's own pages.
+    await act(() => router.navigate('/settings/team'));
+    await shown(`sales of ${SPLIT}`);
+  });
+});
+
+describe('the owner of a page as the last resort in the classic layout', () => {
+  it('is Books, as before, for CRM’s shared pages when CRM is closed', async () => {
+    await linkAs('admin', { apps: { crm: 'none' } });
+    rememberApp('crm');
+    const router = await show('/quotes');
+    await shown(`books of ${CLASSIC}`);
+    await act(() => router.navigate('/crm'));
     await shown(`books of ${CLASSIC}`);
   });
 });

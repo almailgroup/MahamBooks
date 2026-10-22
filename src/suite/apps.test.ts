@@ -255,6 +255,7 @@ const FLAGS = [
   'fileFinderOnly',
   'approvalsOnly',
   'payrollApprovalsOnly',
+  'costingOnly',
 ] as const;
 const flags = (link: NavLink & { end?: boolean }) =>
   [link.end ? 'end' : '', ...FLAGS.filter((f) => link[f])]
@@ -365,7 +366,7 @@ describe('the classic layout', () => {
       '  nav /payroll/loans Staff loans · HandCoins',
       '  nav /people/letters Letters · Mails',
       // Manpower costing (#3, part b).
-      '  nav /people/costing Manpower costing · Calculator',
+      '  nav /people/costing Manpower costing · Calculator [costingOnly]',
       '  nav /payroll/settings Payroll settings · SlidersHorizontal',
       '  nav /approvals Approvals · ClipboardCheck [payrollApprovalsOnly]',
       '  footer /settings Settings',
@@ -671,11 +672,14 @@ describe('the split layout', () => {
     );
     expect(staff.flatMap((g) => g.actions.map((a) => a.id))).not.toContain('employee');
     // Limited to view only in Books: nothing of Sales, Books or Inventory.
-    const limited = createGroups(
-      'sales',
-      accessMap('accountant', true, { apps: { books: 'view' } }, SPLIT_APPS),
-      SPLIT_APPS,
-    ).flatMap((g) => g.actions.map((a) => a.id));
+    const limitedAccess = accessMap('accountant', true, { apps: { books: 'view' } }, SPLIT_APPS);
+    const limited = createGroups('sales', limitedAccess, SPLIT_APPS, { costing: true }).flatMap(
+      (g) => g.actions.map((a) => a.id),
+    );
     expect(limited).toEqual(['employee', 'letter', 'costing']);
+    // A new manpower costing only while costing is in effect (#3, D1 and D4).
+    expect(
+      createGroups('sales', limitedAccess, SPLIT_APPS).flatMap((g) => g.actions.map((a) => a.id)),
+    ).toEqual(['employee', 'letter']);
   });
 });

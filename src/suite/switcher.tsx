@@ -8,7 +8,7 @@ import { suiteName } from '@/lib/brand';
 import { useLanguage } from '@/i18n/provider';
 import { t } from '@/i18n';
 import { appTitle, visibleApps } from './apps';
-import { useAppAccess, useApps, useCurrentApp } from './current-app';
+import { useAppAccess, useApps, useCurrentApp, useOpenApp } from './current-app';
 import type { AppTone, SuiteApp } from './types';
 import { SuiteLogo } from './logo';
 
@@ -73,6 +73,7 @@ export function PreviewBadge({ className }: { className?: string }) {
  */
 export function AppSwitcher({ className }: { className?: string }) {
   const navigate = useNavigate();
+  const openApp = useOpenApp();
   const { language } = useLanguage();
   const current = useCurrentApp();
   const apps = visibleApps(useAppAccess(), useApps());
@@ -99,7 +100,7 @@ export function AppSwitcher({ className }: { className?: string }) {
               return (
                 <Menu.Item
                   key={app.id}
-                  onSelect={() => navigate(app.home)}
+                  onSelect={() => openApp(app)}
                   aria-current={active ? 'true' : undefined}
                   className={cn(
                     'relative flex cursor-pointer flex-col items-center gap-1.5 rounded-xl px-1.5 pt-3 pb-2 text-center outline-none select-none data-[highlighted]:bg-slate-100',
@@ -153,7 +154,7 @@ export function CurrentApp({ onNavigate }: { onNavigate?: () => void }) {
 
 /** In the phone's menu: every app a tap away. */
 export function AppTiles({ onNavigate }: { onNavigate?: () => void }) {
-  const navigate = useNavigate();
+  const openApp = useOpenApp();
   const { language } = useLanguage();
   const current = useCurrentApp();
   const apps = visibleApps(useAppAccess(), useApps());
@@ -169,7 +170,7 @@ export function AppTiles({ onNavigate }: { onNavigate?: () => void }) {
             aria-current={app.id === current.id ? 'true' : undefined}
             onClick={() => {
               onNavigate?.();
-              navigate(app.home);
+              openApp(app);
             }}
             className={cn(
               'flex w-full flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-center text-[0.6875rem] leading-tight font-medium text-slate-700 pointer-coarse:min-h-12',

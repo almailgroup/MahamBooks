@@ -17,9 +17,9 @@ import { shortId } from '@/lib/ids';
 import { lookup } from '@/lib/known';
 import { useCompany, useFormat } from '@/app/company';
 import {
+  useClients,
   useCostings,
   useCostingView,
-  useCustomers,
   useRateCard,
   type CostingView,
 } from '@/features/people/costing-hooks';
@@ -90,7 +90,7 @@ function CostingSwitch({ view }: { view: CostingView }) {
         )}
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
           {t(
-            'Hours past 8 a day are priced as overtime at 1.25. A post that needs more than 2 hours of overtime a day is flagged: article 66 of Labour Law 6/2010 allows that only with an exemption. Confirm with counsel before quoting such a post.',
+            'Hours past 8 a day are priced as overtime at 1.25. Article 66 of Labour Law 6/2010 limits overtime to 2 hours a day, 3 days a week and 180 hours a year unless an exemption applies, so a post with more is flagged. Confirm with counsel before quoting such a post.',
           )}
         </p>
       </CardBody>
@@ -246,6 +246,7 @@ function RateCard({ view }: { view: CostingView }) {
                 <th className="px-3 py-2 text-start font-medium">{t('Category')}</th>
                 <th className="px-3 py-2 text-end font-medium">{t('Basic salary')}</th>
                 <th className="px-3 py-2 text-end font-medium">{t('Allowances')}</th>
+                <th className="px-3 py-2 text-end font-medium">{t('Allowances for indemnity')}</th>
                 <th className="px-3 py-2 text-end font-medium">{t('Other costs')}</th>
                 <th className="px-5 py-2 text-end font-medium">{t('Employees')}</th>
                 {view.canEdit ? <th className="w-10" /> : null}
@@ -310,6 +311,16 @@ function RateCard({ view }: { view: CostingView }) {
                   </td>
                   <td className="px-3 py-2">
                     <NumberInput
+                      value={rate.eosAllowances ?? rate.allowances}
+                      allowNegative={false}
+                      disabled={!view.canEdit}
+                      aria-label={t('Allowances for indemnity')}
+                      className="min-w-24"
+                      onValueChange={(n) => edit(i, { eosAllowances: n })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <NumberInput
                       value={rate.otherCosts ?? 0}
                       allowNegative={false}
                       disabled={!view.canEdit}
@@ -365,7 +376,7 @@ function RateCard({ view }: { view: CostingView }) {
 export default function CostingListPage() {
   const view = useCostingView();
   const costings = useCostings();
-  const customers = useCustomers();
+  const clients = useClients();
   const fmt = useFormat();
   const [params] = useSearchParams();
   const quoteIds = useMemo(
@@ -382,16 +393,21 @@ export default function CostingListPage() {
     [quoteIds.join(',')],
   );
 
-  if (view.loading || !costings || !customers || !quotes) {
+  if (view.loading || !costings || !clients || !quotes) {
     return <Spinner className="py-24" label={t('Loading…')} />;
   }
   // New costing from the New menu.
   if (params.get('new') && view.on && view.canEdit) {
     return <Navigate to="/people/costing/new" replace />;
   }
-  const byId = new Map(customers.map((c) => [c.id, c]));
-  const customerOf = (c: StaffingCosting) =>
-    c.clientId ? localName(byId.get(c.clientId)) || t('A customer no longer here') : '—';
+  // Every contact, so an archived customer is named (and said to be archived).
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const customerOf = (c: StaffingCosting) => {
+    if (!c.clientId) return '—';
+    const found = byId.get(c.clientId);
+    if (!found) return t('A customer no longer here');
+    return found.archived ? `${localName(found)} · ${t('Archived')}` : localName(found);
+  };
   const statusBadge = (c: StaffingCosting) => (
     <Badge tone={lookup(COSTING_STATUS_TONES, c.status, 'gray')}>
       {t(lookup(COSTING_STATUS_LABELS, c.status, COSTING_STATUS_LABELS.draft))}

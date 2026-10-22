@@ -1,5 +1,5 @@
 import type { StaffingCosting } from '@/db/types';
-import { markupForMargin, sellPriceFor } from '@/lib/hr/costing';
+import { COSTING_RULES, markupForMargin, percentOf, sellPriceFor } from '@/lib/hr/costing';
 import { dec, round } from '@/lib/money';
 import type { StatusTone } from '@/lib/status';
 import { t } from '@/i18n';
@@ -20,12 +20,13 @@ export function costingMonthly(costing: Pick<StaffingCosting, 'posts'>): number 
   );
 }
 
-/** A margin and the markup it makes, in words. */
-export function marginExplained(margin: number): string {
+/** A margin and the markup it makes, in words: as priced, at most COSTING_RULES.maxMarginPercent. */
+export function marginExplained(typed: number): string {
+  const margin = percentOf(typed, COSTING_RULES.maxMarginPercent);
   return t(
     'A {margin}% margin is a {markup}% markup on cost: a cost of 100.000 sells at {price}. The margin is a share of the sell price; a markup is added to the cost.',
     {
-      margin: Math.round(margin * 100) / 100,
+      margin,
       markup: markupForMargin(margin),
       price: sellPriceFor(100, margin).toFixed(3),
     },

@@ -8,6 +8,7 @@ import { DEFAULT_COSTING_BASIS, newPost, priceCosting } from '@/lib/hr/costing';
 import { loadLanguage } from '@/i18n';
 import { registerFonts } from './fonts';
 import { buildCostingSheet } from './costing-model';
+import { marginExplained } from '@/features/people/costing-text';
 import { COSTING_FONTS, costingDocument } from './costing';
 
 /**
@@ -80,6 +81,22 @@ describe('the cost sheet', () => {
     );
     expect(model.warnings).toHaveLength(1);
     expect(model.warnings[0]).toContain('Article 66');
+  });
+
+  it('states the overhead and margin the amounts were worked out with, at most the rules allow', async () => {
+    await loadLanguage('en');
+    const typed = { ...costing, overheadPercent: 250, marginPercent: 95 };
+    const model = buildCostingSheet({
+      ...input(),
+      costing: typed,
+      priced: priceCosting(typed, DEFAULT_COSTING_BASIS),
+    });
+    expect(model.meta.find((m) => m.label === 'Overhead')?.value).toBe('200%');
+    expect(model.meta.find((m) => m.label === 'Margin')?.value).toBe(
+      '90% of the sell price (900% markup on cost)',
+    );
+    expect(model.summary.find((s) => s.label === 'Margin')?.value).toMatch(/\(90%\)$/);
+    expect(marginExplained(95)).toContain('A 90% margin is a 900% markup on cost');
   });
 
   it('is in Arabic, right to left, for Arabic readers', async () => {

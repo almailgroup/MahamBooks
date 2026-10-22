@@ -2,11 +2,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
 import {
   canEditCostings,
+  canMakeCostingQuote,
   canSeeCostings,
   costingBasis,
   costingsAvailable,
   rateCard,
 } from '@/db/costings';
+import { isCustomer } from '@/db/purchases';
 import type { Client, CostingRate, CostingSettings, ID, StaffingCosting } from '@/db/types';
 import { costingSettingsOf, type CostingBasis } from '@/lib/hr/costing';
 import { useCompany } from '@/app/company';
@@ -31,6 +33,8 @@ export interface CostingView {
   canSee: boolean;
   /** Makes costings and turns them on or off (unless People is view only for them). */
   canEdit: boolean;
+  /** Makes quotes from costings: unless the owner made quotes (Maham Books, or Sales) view only. */
+  canQuote: boolean;
 }
 
 export function useCostingView(): CostingView {
@@ -47,7 +51,18 @@ export function useCostingView(): CostingView {
     on: available && settings.on,
     canSee: canSeeCostings(link),
     canEdit: canEditCostings(link),
+    canQuote: canMakeCostingQuote(link),
   };
+}
+
+/**
+ * Where manpower costing shows in the shell: its page in the sidebar and
+ * the palette once the company can use it (D4: in the cloud, once its
+ * server has it), and New manpower costing once it is on.
+ */
+export function useCostingShown(): { available: boolean; on: boolean } {
+  const view = useCostingView();
+  return { available: view.available, on: view.on };
 }
 
 /** The company's costings, the latest changed first. */
@@ -72,16 +87,29 @@ export function useCosting(id: ID | undefined): StaffingCosting | null | undefin
   }, [company.id, id]);
 }
 
-/** The company's customers (not vendors, not archived), by name. */
-export function useCustomers(): Client[] | undefined {
+/**
+ * The company's contacts, by name, customers or not and archived or not: a
+ * costing's customer is found by its id even once archived or ticked as a
+ * vendor too (see customerChoices for those offered).
+ */
+export function useClients(): Client[] | undefined {
   const company = useCompany();
   return useLiveQuery(
     async () =>
-      (await db.clients.where('companyId').equals(company.id).toArray())
-        .filter((c) => !c.isVendor && !c.archived)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      (await db.clients.where('companyId').equals(company.id).toArray()).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
     [company.id],
   );
+}
+
+/**
+ * The customers a costing may be for: those not archived that buy from the
+ * company (a contact that also sells to it included), and the costing's own
+ * customer whatever has happened to it since, as the other editors do.
+ */
+export function customerChoices(clients: readonly Client[], current: ID | null): Client[] {
+  return clients.filter((c) => (!c.archived && isCustomer(c)) || c.id === current);
 }
 
 /** The rate card: saved, or worked out from the current salaries until it is. */

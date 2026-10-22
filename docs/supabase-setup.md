@@ -102,7 +102,9 @@ after it, in order.
 marker (no data) for 30 days. They are also cleaned up as the app syncs, but a
 daily job does it for every company. The email alerts script (step 7) turns it
 on; without email alerts, open **Database → Extensions**, search for
-**pg_cron**, enable it, then run the fourth script once more (step 8).
+**pg_cron**, enable it, then run the latest script once more (the eighth, step
+12). The fourth script schedules it too, but once there are manpower costings
+it can't run again.
 
 To check: **Table Editor** now lists `profiles`, `companies`,
 `company_members`, `company_invites`, `records`, `deleted_records` and

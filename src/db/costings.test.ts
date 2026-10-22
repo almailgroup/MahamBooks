@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from './db';
-import { createClient } from './defaults';
-import { saveClient, setupCompany } from './records';
+import { createClient, createTaxRate } from './defaults';
+import { saveClient, saveCompany, saveTaxRate, setupCompany } from './records';
 import { createEmployee, getPeopleSettings, savePeopleSettings, saveEmployee } from './people';
 import { convertDocument, saveDocument } from './documents';
 import {
   canEditCostings,
+  canMakeCostingQuote,
   canSeeCostings,
+  costingBasis,
   costingsAvailable,
   CostingError,
   createQuoteFromCosting,
@@ -21,7 +23,7 @@ import {
   setCostingStatus,
 } from './costings';
 import type { Company, CostingPost, StaffingCosting } from './types';
-import { newPost } from '@/lib/hr/costing';
+import { newPost, priceCosting } from '@/lib/hr/costing';
 import { CloudPermissionError } from '@/cloud/outbox';
 import { isPrivateRecord, type MemberRole } from '@/cloud/roles';
 import type { CloudLink } from '@/cloud/types';
@@ -72,8 +74,12 @@ const guard = (extra: Partial<CostingPost> = {}): CostingPost => ({
   ...extra,
 });
 
-async function costingFor(c: Company, extra: Partial<StaffingCosting> = {}) {
-  const client = await saveClient(createClient(c.id, { name: 'Made-up Towers Co.' }));
+async function costingFor(
+  c: Company,
+  extra: Partial<StaffingCosting> = {},
+  customer: Partial<Parameters<typeof createClient>[1]> = {},
+) {
+  const client = await saveClient(createClient(c.id, { name: 'Made-up Towers Co.', ...customer }));
   const draft = newCosting(c.id, await getCostingSettings(c.id), client.id);
   return saveCosting({ ...draft, name: 'Tower A, night shift', posts: [guard()], ...extra });
 }
@@ -174,6 +180,43 @@ describe('the rate card', () => {
       fromSalaries: false,
       rates: [{ id: 'r1', jobTitle: 'Cleaner', category: 'expat', basic: 95, allowances: 15 }],
     });
+  });
+
+  it('leaves out employees with no pay yet, and averages the allowances that count for the indemnity', async () => {
+    const c = await company();
+    for (const [name, basic, allowances] of [
+      ['Made-up Guard One', 120, [{ id: 'a', name: 'Transport', amount: 30, countsForEos: false }]],
+      [
+        'Made-up Guard Two',
+        120,
+        [
+          { id: 'a', name: 'Transport', amount: 20, countsForEos: false },
+          { id: 'b', name: 'Housing', amount: 10, countsForEos: true },
+        ],
+      ],
+      // Imported without a salary column.
+      ['Made-up Guard Three', 0, []],
+    ] as const) {
+      await saveEmployee(
+        createEmployee(c.id, {
+          name,
+          jobTitle: 'Security Guard',
+          category: 'expat',
+          nationality: 'IN',
+          basicSalary: basic,
+          allowances: allowances.map((a) => ({ ...a })),
+        }),
+      );
+    }
+    expect(await rateCardFromSalaries(c.id)).toEqual([
+      expect.objectContaining({
+        jobTitle: 'Security Guard',
+        basic: 120,
+        allowances: 30,
+        eosAllowances: 5,
+        count: 2,
+      }),
+    ]);
   });
 
   it('is worked out from salaries only for someone who sees payroll', async () => {
@@ -314,6 +357,82 @@ describe('the quote made from a costing', () => {
     const own = await db.activities.where('entityId').equals(costing.id).toArray();
     expect(own.map((a) => a.action)).toContain('quoted');
     for (const a of own) expect(isPrivateRecord('activities', { ...a })).toBe(true);
+  });
+
+  it('is in the company’s currency, at the costing’s prices, for a customer whose documents are in another', async () => {
+    const c = await company();
+    const costing = await costingFor(c, {}, { currency: 'USD' });
+    const quote = await createQuoteFromCosting(costing.id);
+    expect(quote.currency).toBe('KWD');
+    expect(quote.exchangeRate).toBeUndefined();
+    expect(quote.items[0].unitPrice).toBe(422.046);
+    // To the fils: the costing's sell total, 6 × 422.046.
+    expect(quote.totals.total).toBe(2532.276);
+  });
+
+  it('has prices before tax, with tax on top, when the company’s prices include tax', async () => {
+    const c = await company();
+    const vat = await saveTaxRate(createTaxRate(c.id, { name: 'VAT', rate: 5 }));
+    await saveCompany({
+      ...c,
+      defaults: {
+        ...c.defaults,
+        defaultTaxRateIds: [vat.id],
+        lineTaxes: true,
+        documentTaxes: false,
+        pricesIncludeTax: true,
+      },
+    });
+    const costing = await costingFor(c);
+    const quote = await createQuoteFromCosting(costing.id);
+    const sell = priceCosting(costing, await costingBasis(c.id)).totals.sell;
+    expect(sell).toBe(2532.276);
+    expect(quote.pricesIncludeTax).toBe(false);
+    expect(quote.items[0].taxes.map((tax) => tax.rate)).toEqual([5]);
+    // The company keeps the whole sell price; the tax is the customer's to pay on top.
+    expect(quote.totals.subtotal).toBe(sell);
+    expect(quote.totals.taxTotal).toBe(126.614);
+    expect(quote.totals.total).toBe(2658.89);
+  });
+
+  it('says the hours and days in the quote’s language, whoever makes it', async () => {
+    const c = await company();
+    const arabic = await createQuoteFromCosting(
+      (await costingFor(c, {}, { name: 'Made-up Arabic Towers', language: 'ar' })).id,
+    );
+    expect(arabic.items[0].description).toBe(
+      'ساعات العمل في اليوم: 12، أيام العمل في الشهر: 26، السعر للفرد في الشهر',
+    );
+    const english = await createQuoteFromCosting(
+      (await costingFor(c, {}, { name: 'Made-up English Towers', language: 'en' })).id,
+    );
+    expect(english.items[0].description).toBe(
+      '12 hours a day, 26 days a month, per person a month',
+    );
+    const both = await createQuoteFromCosting(
+      (await costingFor(c, {}, { name: 'Made-up Bilingual Towers', language: 'ar-en' })).id,
+    );
+    expect(both.items[0].description.split('\n')).toEqual([
+      'ساعات العمل في اليوم: 12، أيام العمل في الشهر: 26، السعر للفرد في الشهر',
+      '12 hours a day, 26 days a month, per person a month',
+    ]);
+  });
+
+  it('is refused, saying why, to a member the owner made Maham Books view only for', async () => {
+    const c = await company();
+    const costing = await costingFor(c);
+    await link(c, 'accountant', { permissions: { apps: { books: 'view' } } });
+    const l = (await db.syncState.get(c.id))!;
+    expect(canEditCostings(l)).toBe(true);
+    expect(canMakeCostingQuote(l)).toBe(false);
+    const before = await db.documents.count();
+    await expect(createQuoteFromCosting(costing.id)).rejects.toThrow(
+      /made quotes view only for you \(in Maham Books/,
+    );
+    expect(await db.documents.count()).toBe(before);
+    await link(c, 'accountant', { permissions: { apps: { people: 'edit' } } });
+    expect(canMakeCostingQuote((await db.syncState.get(c.id))!)).toBe(true);
+    await expect(createQuoteFromCosting(costing.id)).resolves.toMatchObject({ type: 'quote' });
   });
 
   it('needs a customer and a post', async () => {
