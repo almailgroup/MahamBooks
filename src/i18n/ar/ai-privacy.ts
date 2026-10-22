@@ -3,9 +3,10 @@ import type { Dictionary } from '../index';
 /**
  * The AI assistant before it goes live: the note under a question when ID
  * numbers, IBANs and the like were hidden before sending (src/features/ai),
- * and what the app says when the AI service refuses an account or isn't set
- * up yet (errors.ts). The assistant is المساعد الذكي; IBAN is رقم الآيبان,
- * as in the glossary.
+ * and what the app says when the AI service refuses an account, isn't set
+ * up or switched on, has reached its limit or needs a newer app, and when a
+ * question is kept on the device (errors.ts). The assistant is المساعد
+ * الذكي; IBAN is رقم الآيبان, as in the glossary.
  */
 export default {
   // Under a question (assistant-panel.tsx): "Hidden before sending: …".
@@ -58,4 +59,13 @@ export default {
   'The AI assistant is not available for this account.': 'المساعد الذكي غير متاح لهذا الحساب.',
   'The AI assistant is not set up yet. Ask the owner.':
     'لم تكتمل تهيئة المساعد الذكي بعد. اسأل المالك.',
+  'The AI assistant is not switched on for this company. Ask the owner.':
+    'المساعد الذكي غير مفعّل لهذه الشركة. اسأل المالك.',
+  'The AI assistant has reached today’s limit for this company. Try again tomorrow.':
+    'بلغ المساعد الذكي حدّ اليوم لهذه الشركة. حاول مرة أخرى غداً.',
+  'The AI assistant needs the latest version of the app. Reload the page and try again.':
+    'يحتاج المساعد الذكي إلى أحدث إصدار من التطبيق. أعد تحميل الصفحة وحاول مرة أخرى.',
+  // The last check before sending (client.ts) found what should have been hidden.
+  'This was not sent: it still holds an ID number, an IBAN or another private detail. Start a new chat and ask without it.':
+    'لم يُرسَل: ما زال فيه رقم هوية أو رقم آيبان أو بيان خاص آخر. ابدأ محادثة جديدة واسأل من دونه.',
 } satisfies Dictionary;

@@ -21,7 +21,7 @@ import { MAX_QUESTION_LENGTH } from './config';
 import { aiErrorMessage } from './errors';
 import { useKnownValues } from './known-values';
 import { Markdown } from './markdown';
-import { HIDDEN_KINDS, type HiddenCounts, type HiddenKind } from './scrub';
+import { HIDDEN_KINDS, type HiddenCounts, type HiddenKind, type KnownValue } from './scrub';
 import {
   closeAssistant,
   isAnswering,
@@ -176,7 +176,13 @@ function PanelBody() {
           <Welcome starters={starters} onAsk={ask} disabled={!online} />
         ) : (
           turns.map((turn) => (
-            <Turn key={turn.id} turn={turn} answering={answering} system={system} />
+            <Turn
+              key={turn.id}
+              turn={turn}
+              answering={answering}
+              system={system}
+              known={known ?? []}
+            />
           ))
         )}
       </div>
@@ -334,7 +340,17 @@ function HiddenNote({ hidden }: { hidden: HiddenCounts }) {
   );
 }
 
-function Turn({ turn, answering, system }: { turn: ChatTurn; answering: boolean; system: string }) {
+function Turn({
+  turn,
+  answering,
+  system,
+  known,
+}: {
+  turn: ChatTurn;
+  answering: boolean;
+  system: string;
+  known: readonly KnownValue[];
+}) {
   if (turn.role === 'user') {
     return (
       <div className="flex flex-col items-end gap-1">
@@ -383,7 +399,7 @@ function Turn({ turn, answering, system }: { turn: ChatTurn; answering: boolean;
           <Button
             variant="outline"
             size="xs"
-            onClick={() => retryAnswer(turn.id, system)}
+            onClick={() => retryAnswer(turn.id, system, known)}
             disabled={answering}
           >
             <RotateCcw aria-hidden />
@@ -397,7 +413,7 @@ function Turn({ turn, answering, system }: { turn: ChatTurn; answering: boolean;
           <Button
             variant="ghost"
             size="xs"
-            onClick={() => retryAnswer(turn.id, system)}
+            onClick={() => retryAnswer(turn.id, system, known)}
             disabled={answering}
           >
             <RotateCcw aria-hidden />

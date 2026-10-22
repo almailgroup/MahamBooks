@@ -156,6 +156,108 @@ describe('numbers', () => {
   });
 });
 
+describe('numbers however they are spaced', () => {
+  it('hides Civil IDs and IBANs with no-break, thin or double spaces, marks, line breaks and dots', () => {
+    for (const typed of [
+      '2870\u00a04151\u00a02345',
+      '2870\u202f4151\u202f2345',
+      '2870  4151  2345',
+      '2870\u200f4151\u200f2345',
+      '287041\n512345',
+      '2870.4151.2345',
+      '287,041,512,345',
+      '2870 - 4151 - 2345',
+    ]) {
+      expect(scrubText(`my civil id ${typed} please`), typed).toMatchObject({
+        text: 'my civil id [ID number hidden] please',
+        hidden: { id: 1 },
+      });
+    }
+    for (const typed of [
+      IBAN_SPACED.replaceAll(' ', '\u00a0'),
+      'KW81 CBKU 0000\n0000 0000 1234 5601 01',
+      `IBAN${IBAN}`,
+    ]) {
+      expect(scrubText(`to ${typed} today`).text, typed).toMatch(
+        /^to (IBAN)?\[IBAN hidden\] today$/,
+      );
+    }
+  });
+
+  it('hides long numbers and phones grouped with no-break spaces, as the app’s PDFs print them', () => {
+    expect(scrubText('ref 1234\u00a05678\u00a09012 here').text).toBe('ref [number hidden] here');
+    expect(scrubText('ref 123\u2009456\u2009789\u2009012 here').text).toBe(
+      'ref [number hidden] here',
+    );
+    expect(scrubText('Call 9876\u00a05432 now').text).toBe('Call [phone number hidden] now');
+    expect(scrubText('Call +965\u00a09876\u00a05432 now').text).toBe(
+      'Call [phone number hidden] now',
+    );
+  });
+
+  it('leaves alone a list of numbers on separate lines, amounts and dates', () => {
+    for (const text of [
+      'Quantities:\n1001\n1002\n1003\n1004',
+      'Totals 12,345.678 and 98,765.432',
+      'Amounts: 1,250.000 2,500.000 3,750.000',
+      'Dates 2026-10-22 2026-11-05 2026-12-01',
+      'IDs 287041512346, 287041512347',
+    ]) {
+      expect(scrubText(text).text, text).not.toMatch(/\[ID number hidden\]|\[IBAN hidden\]/);
+    }
+  });
+});
+
+describe('numbers after a word for an ID paper', () => {
+  it('are hidden in English and Arabic, with letters before or after them', () => {
+    expect(scrubText('residency no 123456789').text).toBe('residency no [ID number hidden]');
+    expect(scrubText('His passport is X98765.').text).toBe('His passport is [ID number hidden].');
+    expect(scrubText('passportX98765').text).toBe('passport[ID number hidden]');
+    expect(scrubText('work permit: 55443322').text).toBe('work permit: [ID number hidden]');
+    expect(scrubText('PIFSS number 7766554').text).toBe('PIFSS number [ID number hidden]');
+    expect(scrubText('iqama 2345\n67890').text).toBe('iqama [ID number hidden]');
+    expect(scrubText(`رقم الإقامة ${arabicDigits('123456789')} من فضلك`)).toMatchObject({
+      text: 'رقم الإقامة [رقم هوية مخفي] من فضلك',
+      hidden: { id: 1 },
+    });
+    expect(scrubText(`جوازه رقم ${arabicDigits('5544332')}`).text).toBe(
+      'جوازه رقم [رقم هوية مخفي]',
+    );
+    expect(scrubText(`إذن العمل ${arabicDigits('99887766')}`).text).toBe(
+      'إذن العمل [رقم هوية مخفي]',
+    );
+    expect(scrubText(`رقم التأمينات ${arabicDigits('7766554')}`).text).toBe(
+      'رقم التأمينات [رقم هوية مخفي]',
+    );
+    // With its short vowels.
+    expect(scrubText(`الإِقَامَة ${arabicDigits('123456789')}`).text).toBe(
+      'الإِقَامَة [رقم هوية مخفي]',
+    );
+  });
+
+  it('are not dates, amounts, times or short numbers', () => {
+    for (const text of [
+      'My passport expires on 2027-01-10, how do I renew?',
+      'Residency renewal costs 10.000 KD',
+      'PIFSS is 11.5% of 1,250.000 this month',
+      'PIFSS 1250.000 this month',
+      'work permit for 3 employees',
+      `التأمينات الاجتماعية ${arabicDigits('125.500')} دينار`,
+      `الإقامة تنتهي في ${arabicDigits('2027/01/10')}`,
+      'passport renewal at 10:30 tomorrow',
+      'the residency report for 2026',
+      'civil works tender 20260042',
+    ]) {
+      expect(scrubText(text), text).toEqual({ text, hidden: {}, count: 0 });
+    }
+  });
+
+  it('a passport number may end with a letter', () => {
+    expect(scrubText('P1234567A is mine').text).toBe('[ID number hidden] is mine');
+    expect(scrubText('passport:P1234567A.').text).toBe('passport:[ID number hidden].');
+  });
+});
+
 describe('placeholders', () => {
   afterEach(async () => {
     await loadLanguage('en');
@@ -214,8 +316,14 @@ describe('the company’s own values on this device', () => {
       hidden: { id: 1 },
       count: 1,
     });
-    // Without the values, nothing in it looks like a passport.
-    expect(scrubText('His passport is X98765, what do I renew?').count).toBe(0);
+    // Without the values, and without a word for a passport before it,
+    // nothing in it looks like a passport: only the check against the values hides it.
+    expect(scrubText('Renew X98765 before it runs out').count).toBe(0);
+    expect(scrubText('Renew X98765 before it runs out', known)).toEqual({
+      text: 'Renew [ID number hidden] before it runs out',
+      hidden: { id: 1 },
+      count: 1,
+    });
     // Another company's values are not this one's.
     expect(scrubText('Z55555', known).count).toBe(0);
   });
@@ -242,9 +350,91 @@ describe('the company’s own values on this device', () => {
 
   it('are not hidden in the middle of a longer number or word', async () => {
     const known = await knownValues(company.id);
-    for (const text of ['REF123456789X', 'REFX98765Q', 'PIFSS 77665549']) {
+    for (const text of [
+      'REF123456789X',
+      'REFX98765Q',
+      'Order 77665549',
+      'Total 7766554.5 and 1,7766554',
+      'Due 1.123456789',
+    ]) {
       expect(scrubText(text, known).text, text).not.toContain('hidden]');
     }
+    // After the word PIFSS a number of 5 digits or more is hidden as an ID
+    // number by its place; the values add nothing to it.
+    expect(scrubText('PIFSS 77665549', known)).toEqual(scrubText('PIFSS 77665549'));
+  });
+
+  it('are found with dots, commas, slashes, odd spaces, line breaks and full-width digits', async () => {
+    const known = await knownValues(company.id);
+    for (const typed of [
+      '2870.4151.2345',
+      '287,041,512,345',
+      '2870/4151/2345',
+      '287041\n512345',
+      '2870\u00a04151\u00a02345',
+      '2870\u200e4151\u200e2345',
+      '２８７０４１５１２３４５',
+    ]) {
+      expect(scrubText(`Civil ID ${typed} please`, known), typed).toMatchObject({
+        text: 'Civil ID [ID number hidden] please',
+        hidden: { id: 1 },
+      });
+    }
+    expect(scrubText('account 0011.2233.44 and 0011/2233/44', known)).toMatchObject({
+      text: 'account [account number hidden] and [account number hidden]',
+      hidden: { account: 2 },
+    });
+  });
+
+  it('include who signed for a delivery, cheque drawers and the numbers of private papers', async () => {
+    const SIGNED = '286022012341';
+    const DRAWER = '279121512340';
+    const HOLDER = '300010112349';
+    await db.documents.put({
+      id: 'note-1',
+      companyId: company.id,
+      type: 'delivery_note',
+      receiverCivilId: SIGNED,
+    } as never);
+    await db.payments.put({
+      id: 'payment-1',
+      companyId: company.id,
+      cheque: { drawerCivilId: DRAWER },
+    } as never);
+    await db.securityCheques.put({
+      id: 'security-1',
+      companyId: company.id,
+      drawerCivilId: HOLDER,
+    } as never);
+    for (const [id, type, number] of [
+      ['paper-1', 'passport', 'Q4455667'],
+      ['paper-2', 'driving_licence', 'DL-778899'],
+      ['paper-3', 'authorised_signatories', 'AS 5544332'],
+      ['paper-4', 'commercial_licence', 'CL-2026-1234'],
+    ]) {
+      await db.complianceDocuments.put({ id, companyId: company.id, type, number } as never);
+    }
+    const known = await knownValues(company.id);
+    expect(known).toEqual(
+      expect.arrayContaining([
+        { value: SIGNED, kind: 'id' },
+        { value: DRAWER, kind: 'id' },
+        { value: HOLDER, kind: 'id' },
+        { value: 'Q4455667', kind: 'id' },
+        { value: 'DL-778899', kind: 'id' },
+        { value: 'AS 5544332', kind: 'id' },
+      ]),
+    );
+    // A company paper of another type is not a person's.
+    expect(known.map((k) => k.value)).not.toContain('CL-2026-1234');
+    // Split over two lines, which no pattern takes for one number.
+    expect(scrubText(`receiver ${SIGNED.slice(0, 6)}\n${SIGNED.slice(6)}`, known).text).toBe(
+      'receiver [ID number hidden]',
+    );
+    expect(scrubText('licence dl 778 899 and signatories AS5544332', known)).toMatchObject({
+      text: 'licence [ID number hidden] and signatories [ID number hidden]',
+      hidden: { id: 2 },
+    });
   });
 
   it('ignores values too short to be told from ordinary numbers', () => {

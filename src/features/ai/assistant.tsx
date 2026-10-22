@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn';
 import { t } from '@/i18n';
 import { useCompany } from '@/app/company';
 import { useCloud } from '@/cloud/store';
-import type { MemberPermissions, MemberRole } from '@/cloud/roles';
+import { readPermissions, type MemberPermissions, type MemberRole } from '@/cloud/roles';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { useHasBottomBar, useTyping } from '@/features/shell/store';
 import { useAiAvailability } from './availability';
@@ -27,20 +27,14 @@ export function assistantShortcutLabel(): string {
   return /mac|iphone|ipad/i.test(platform) ? '⌘J' : 'Ctrl J';
 }
 
-/** The person's role and the owner's limits on them, as one comparable text. */
+/**
+ * The person's role and the owner's limits on them, as one comparable text:
+ * the limits as this version reads them (readPermissions, in a fixed order),
+ * so none read yet, none set and an empty list are the same, and the first
+ * check of the limits after signing in changes nothing.
+ */
 function accessKey(role: MemberRole | null, permissions?: MemberPermissions): string {
-  const sorted = (value: unknown): unknown =>
-    Array.isArray(value)
-      ? value.map(sorted)
-      : value && typeof value === 'object'
-        ? Object.fromEntries(
-            Object.entries(value as Record<string, unknown>)
-              .filter(([, v]) => v !== undefined)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([k, v]) => [k, sorted(v)]),
-          )
-        : value;
-  return JSON.stringify([role, sorted(permissions ?? null)]);
+  return JSON.stringify([role, readPermissions(permissions)]);
 }
 
 /**

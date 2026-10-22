@@ -1181,34 +1181,48 @@ describe('what is sent to Google is rebuilt from allowlists', () => {
     expect(geminiBody().generationConfig).toEqual({ ...generationConfig, candidateCount: 1 });
   });
 
-  it('asks for low thinking when the request sets none, and leaves a request’s own alone', async () => {
+  it('asks for low thinking when the request sets none, and never more than low', async () => {
     await ask(question);
     await ask(withConfig({ temperature: 0.3 }));
     await ask(withConfig({ thinkingConfig: { thinkingBudget: 512 } }));
     await ask(withConfig({ thinkingConfig: { thinkingLevel: 'high' } }));
+    await ask(withConfig({ thinkingConfig: { thinkingLevel: 'MEDIUM', includeThoughts: false } }));
+    await ask(withConfig({ thinkingConfig: { thinkingLevel: 'minimal' } }));
     await ask(withConfig({ thinkingConfig: { includeThoughts: false } }));
     expect(geminiCalls().map((_, i) => geminiBody(i).generationConfig.thinkingConfig)).toEqual([
       { thinkingLevel: 'low' },
       { thinkingLevel: 'low' },
       // Never a level next to a budget: Google refuses the two together.
       { thinkingBudget: 512 },
-      { thinkingLevel: 'high' },
+      { thinkingLevel: 'low' },
+      { thinkingLevel: 'low', includeThoughts: false },
+      // Less than low stays as asked.
+      { thinkingLevel: 'minimal' },
       { includeThoughts: false },
     ]);
   });
 
-  it('caps thinkingBudget at MAX_OUTPUT_TOKENS and refuses unknown thinking fields', async () => {
+  it('caps thinkingBudget at 1024 (and MAX_OUTPUT_TOKENS), even "let the model decide"', async () => {
     await ask(withConfig({ thinkingConfig: { thinkingBudget: 50_000 } }));
     await ask(withConfig({ thinkingConfig: { thinkingBudget: -1 } }));
     await ask(withConfig({ thinkingConfig: { thinkingBudget: 0 } }));
+    await ask(withConfig({ thinkingConfig: { thinkingBudget: 700 } }));
     expect(
       geminiCalls().map((_, i) => geminiBody(i).generationConfig.thinkingConfig.thinkingBudget),
-    ).toEqual([1024, -1, 0]);
+    ).toEqual([1024, 1024, 0, 700]);
+    await send('/v1/generate', {
+      env: makeEnv({ MAX_OUTPUT_TOKENS: '600' }),
+      body: withConfig({ thinkingConfig: { thinkingBudget: -1 } }),
+    });
+    expect(geminiBody(4).generationConfig.thinkingConfig.thinkingBudget).toBe(600);
+  });
+
+  it('refuses unknown thinking fields and budgets that are not whole numbers', async () => {
     await refused(withConfig({ thinkingConfig: { thinking_budget: 50_000 } }));
     await refused(withConfig({ thinkingConfig: { thinkingBudget: -2 } }));
     await refused(withConfig({ thinkingConfig: { thinkingBudget: 1.5 } }));
     await refused(withConfig({ thinkingConfig: 'high' }));
-    expect(geminiCalls()).toHaveLength(3);
+    expect(geminiCalls()).toHaveLength(0);
   });
 
   it.each(['MEDIA_RESOLUTION_HIGH', 'MEDIA_RESOLUTION_ULTRA_HIGH', 'high', 1])(

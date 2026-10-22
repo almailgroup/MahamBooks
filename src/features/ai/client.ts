@@ -1,6 +1,7 @@
 import { getAccessToken } from '@/cloud/session';
 import { AI_PROXY_URL, CHAT_MAX_OUTPUT_TOKENS, CHAT_THINKING_LEVEL, MAX_TURNS } from './config';
 import { AiError, errorFromBody, isAiError } from './errors';
+import { holdsPrivate, type KnownValue } from './scrub';
 import { SseParser, type SseEvent } from './sse';
 
 /**
@@ -38,6 +39,11 @@ export interface AskOptions {
   messages: ChatMessage[];
   /** What the assistant is told about itself and the page (context.ts). */
   system: string;
+  /**
+   * This company's never-send values on this device (known-values.ts), for
+   * the last check of the person's messages before they are sent.
+   */
+  known?: readonly KnownValue[];
   signal?: AbortSignal;
 }
 
@@ -91,11 +97,20 @@ export function recentTurns(messages: ChatMessage[], max = MAX_TURNS): ChatMessa
 /**
  * The request body both /v1 routes take: a chat answer's length and low
  * thinking every time, so an answer stays short and cheap whichever
- * version of the Worker passes it on.
+ * version of the Worker passes it on. The last check first: a message of
+ * the person's that still holds one of `known`, a Civil ID or an IBAN
+ * (holdsPrivate) is not sent at all, whatever way it came in.
  */
-export function requestBody({ messages, system }: Pick<AskOptions, 'messages' | 'system'>) {
+export function requestBody({
+  messages,
+  system,
+  known = [],
+}: Pick<AskOptions, 'messages' | 'system' | 'known'>) {
   const turns = recentTurns(messages);
   if (turns.length === 0) throw new AiError('bad_request', { detail: 'Nothing to ask.' });
+  if (turns.some((m) => m.role === 'user' && holdsPrivate(m.text, known))) {
+    throw new AiError('kept_private');
+  }
   return {
     contents: turns.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
     systemInstruction: { parts: [{ text: system }] },
@@ -239,8 +254,8 @@ export function createAiClient(options: AiClientOptions = {}): AiClient {
   };
 
   return {
-    async streamChat({ messages, system, signal, onText }) {
-      const body = requestBody({ messages, system });
+    async streamChat({ messages, system, known, signal, onText }) {
+      const body = requestBody({ messages, system, known });
       const response = await post('/v1/stream', body, signal);
       const answer = new AnswerReader();
       const parser = new SseParser();
@@ -288,8 +303,8 @@ export function createAiClient(options: AiClientOptions = {}): AiClient {
       return answer.finish();
     },
 
-    async generate({ messages, system, signal }) {
-      const body = requestBody({ messages, system });
+    async generate({ messages, system, known, signal }) {
+      const body = requestBody({ messages, system, known });
       const response = await post('/v1/generate', body, signal);
       let data: unknown;
       try {

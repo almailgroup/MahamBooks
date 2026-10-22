@@ -65,6 +65,16 @@ export function cloudSnapshot(): CloudSnapshot {
   return snapshot;
 }
 
+/**
+ * Calls `listener` after each change of the account or the cloud, outside
+ * React (for what must happen even when no page is shown, such as on a
+ * sign-out that removed the companies from this device). Returns how to stop.
+ */
+export function subscribeCloud(listener: () => void): () => void {
+  const stop = subscribe(listener);
+  return () => void stop();
+}
+
 /* -------------------------------------------------------------------------- */
 /* Session                                                                    */
 /* -------------------------------------------------------------------------- */

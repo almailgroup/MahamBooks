@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { cloudSnapshot, subscribeCloud } from '@/cloud/store';
 import { newId } from '@/lib/ids';
 import { streamChat as defaultStreamChat, type ChatMessage, type StreamOptions } from './client';
 import { AiError, isAiError } from './errors';
@@ -167,6 +168,18 @@ export function forgetConversation(): void {
   forget();
 }
 
+/**
+ * Signed out, or another person signed in: forgotten, with the answer being
+ * written, wherever the app is. Watched here, outside React, as well as by
+ * the panel: a sign-out that removes the companies from this device takes
+ * the app shell, and the panel with it, away before the person is signed
+ * out, and the panel would never see it.
+ */
+subscribeCloud(() => {
+  const user = cloudSnapshot().user;
+  if (!user || (owner !== null && !owner.startsWith(`${user.id}:`))) forgetConversation();
+});
+
 function forget({ close = true }: { close?: boolean } = {}): void {
   const empty =
     state.turns.length === 0 && state.draft === '' && state.pending === null && running === null;
@@ -199,7 +212,7 @@ function historyBefore(turns: readonly ChatTurn[], id: string): ChatMessage[] {
     .map((turn) => ({ role: turn.role, text: turn.text }));
 }
 
-async function answer(id: string, system: string) {
+async function answer(id: string, system: string, known: readonly KnownValue[]) {
   const controller = new AbortController();
   running = controller;
   const forEpoch = epoch;
@@ -207,6 +220,7 @@ async function answer(id: string, system: string) {
     const result = await ask({
       messages: historyBefore(state.turns, id),
       system,
+      known,
       signal: controller.signal,
       onText: (_delta, text) => {
         if (epoch === forEpoch && !controller.signal.aborted) updateTurn(id, { text });
@@ -243,14 +257,14 @@ export function sendQuestion(
   if (sent.count > 0) asked.hidden = sent.hidden;
   const reply: ChatTurn = { id: newId(), role: 'model', text: '', status: 'streaming' };
   set({ turns: [...state.turns, asked, reply] });
-  void answer(reply.id, system);
+  void answer(reply.id, system, known);
 }
 
-/** Asks again for an answer that failed or was stopped. */
-export function retryAnswer(id: string, system: string): void {
+/** Asks again for an answer that failed or was stopped (`known` as for sendQuestion). */
+export function retryAnswer(id: string, system: string, known: readonly KnownValue[] = []): void {
   if (isAnswering()) return;
   updateTurn(id, { text: '', status: 'streaming', error: undefined });
-  void answer(id, system);
+  void answer(id, system, known);
 }
 
 /** For tests: forget everything and answer with `fake` instead of the service. */

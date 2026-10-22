@@ -291,6 +291,10 @@ describe('what each failure becomes', () => {
     ['upstream_timeout', 504],
     ['not_found', 404],
     ['internal', 500],
+    // The server check planned next (ai-plan R1).
+    ['not_enabled', 403],
+    ['budget_exceeded', 429],
+    ['update_required', 426],
   ])('the Worker’s %s', async (code, status) => {
     const { fetch } = fakeFetch(workerError(code, status));
     const error = await ask(fetch).catch((e: unknown) => e);
@@ -312,7 +316,7 @@ describe('what each failure becomes', () => {
     expect(await said(workerError('forbidden_origin', 403))).toBe(origin);
     // Any other 403: in general words, never the web address's.
     for (const response of [
-      workerError('not_enabled', 403),
+      workerError('not_known_to_this_version', 403),
       workerError('some_later_code', 403),
       new Response('<html>Forbidden</html>', { status: 403 }),
       new Response('', { status: 403 }),
@@ -329,6 +333,16 @@ describe('what each failure becomes', () => {
     expect(await said(internal('The AI service is not set up yet.'))).toBe(notSetUp);
     expect(await said(internal('Something broke.'))).toBe(
       'Something went wrong with the AI assistant. Try again.',
+    );
+    // The server check planned next: switched off there, today's limit, an old app.
+    expect(await said(workerError('not_enabled', 403))).toBe(
+      'The AI assistant is not switched on for this company. Ask the owner.',
+    );
+    expect(await said(workerError('budget_exceeded', 429))).toBe(
+      'The AI assistant has reached today’s limit for this company. Try again tomorrow.',
+    );
+    expect(await said(workerError('update_required', 426))).toBe(
+      'The AI assistant needs the latest version of the app. Reload the page and try again.',
     );
     setDictionaryForTests('ar', {
       [notMember]: 'حسابك ليس عضواً في الشركة التي هُيّئ لها المساعد الذكي. اسأل المالك.',
@@ -419,6 +433,10 @@ describe('what each failure becomes', () => {
       'upstream_timeout',
       'not_found',
       'internal',
+      'not_enabled',
+      'budget_exceeded',
+      'update_required',
+      'kept_private',
       'signed_out',
       'offline',
       'network',
@@ -497,5 +515,63 @@ describe('the messages sent', () => {
       { role: 'user', text: 'Again' },
     ]);
     expect(() => requestBody({ messages: [], system: SYSTEM })).toThrow(AiError);
+  });
+});
+
+describe('the last check before sending', () => {
+  /** Made up to pass their checks; nobody's. */
+  const CIVIL_ID = '287041512345';
+  const IBAN = 'KW81CBKU0000000000001234560101';
+  const known = [{ value: 'X98765', kind: 'id' as const }];
+
+  it('sends nothing when a message of the person’s still holds a Civil ID, an IBAN or a known value', async () => {
+    for (const text of [
+      `My Civil ID is ${CIVIL_ID}`,
+      `Pay to ${IBAN.replace(/(.{4})/g, '$1 ')}`,
+      'Renew X98765',
+      `رقمي ${CIVIL_ID.replace(/\d/g, (d) => String.fromCharCode(0x0660 + Number(d)))}`,
+    ]) {
+      const { fetch, seen } = fakeFetch(sse([chunk('Should not be asked')]));
+      const error = await client(fetch)
+        .streamChat({
+          messages: [
+            { role: 'user', text: 'How do I add an employee?' },
+            { role: 'model', text: 'Open Maham People.' },
+            { role: 'user', text },
+          ],
+          system: SYSTEM,
+          known,
+          onText: () => {},
+        })
+        .catch((e: unknown) => e);
+      expect(error, text).toMatchObject({ code: 'kept_private' });
+      expect(seen, text).toEqual([]);
+      expect(aiErrorMessage(error)).toBe(
+        'This was not sent: it still holds an ID number, an IBAN or another private detail. Start a new chat and ask without it.',
+      );
+    }
+    const { fetch, seen } = fakeFetch();
+    await expect(
+      client(fetch).generate({
+        messages: [{ role: 'user', text: `IBAN ${IBAN}` }],
+        system: SYSTEM,
+      }),
+    ).rejects.toMatchObject({ code: 'kept_private' });
+    expect(seen).toEqual([]);
+  });
+
+  it('lets through what was hidden, the answers, and numbers that only look alike', () => {
+    expect(() =>
+      requestBody({
+        messages: [
+          { role: 'user', text: 'My Civil ID is [ID number hidden], passport 1234 5678' },
+          // An answer may show the standard example IBAN: the answers are the model's.
+          { role: 'model', text: `An IBAN looks like ${IBAN}.` },
+          { role: 'user', text: 'Invoice 287041512346 and X987650' },
+        ],
+        system: SYSTEM,
+        known,
+      }),
+    ).not.toThrow();
   });
 });

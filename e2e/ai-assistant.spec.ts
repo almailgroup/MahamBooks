@@ -39,7 +39,11 @@ interface AiCall {
 }
 
 /** The stand-in AI service: /health, and /v1/stream answering in pieces. */
-async function fakeAiService(page: Page): Promise<AiCall[]> {
+async function fakeAiService(
+  page: Page,
+  /** With `hold` set, an answer is still being written: nothing is sent back. */
+  service: { hold: boolean } = { hold: false },
+): Promise<AiCall[]> {
   const calls: AiCall[] = [];
   await page.route(`${AI_URL}/**`, async (route: Route) => {
     const request = route.request();
@@ -59,6 +63,7 @@ async function fakeAiService(page: Page): Promise<AiCall[]> {
     if (pathname === '/v1/stream') {
       const body = request.postData() ?? '';
       calls.push({ body, authorization: request.headers().authorization });
+      if (service.hold) return;
       const question = (
         JSON.parse(body) as { contents: { parts: { text: string }[] }[] }
       ).contents.at(-1)!.parts[0].text;
@@ -292,6 +297,17 @@ test('the owner turns the assistant on; a question on an employee’s page is an
   }
   expect(scrubbed).toContain('[ID number hidden]');
   expect(scrubbed).toContain('[IBAN hidden]');
+  // Written with dots, with no-break spaces, or over two lines, they are hidden too.
+  await question.fill(
+    `Civil ID ${EMPLOYEE.civilId.replace(/(.{4})(?=.)/g, '$1.')}, IBAN ${EMPLOYEE.iban.replace(/(.{4})(?=.)/g, '$1\u00a0')}, and ${EMPLOYEE.civilId.slice(0, 6)}\n${EMPLOYEE.civilId.slice(6)}`,
+  );
+  await question.press('Enter');
+  await expect(panel.getByText('2 ID numbers were hidden before sending')).toBeVisible();
+  expect(calls).toHaveLength(5);
+  const odd = JSON.parse(calls[4].body) as { contents: { parts: { text: string }[] }[] };
+  const oddText = odd.contents.at(-1)!.parts[0].text;
+  expect(oddText).toBe('Civil ID [ID number hidden], IBAN [IBAN hidden], and [ID number hidden]');
+  expect(oddText.replace(/\D/g, '')).toBe('');
   // A short answer, every time.
   expect(JSON.parse(scrubbed).generationConfig).toEqual({
     maxOutputTokens: 2048,
@@ -309,6 +325,64 @@ test('the owner turns the assistant on; a question on an employee’s page is an
   await expect(page.getByRole('button', { name: 'Ask AI' })).toHaveCount(0);
   await expect(account).toContainText('Synced', { timeout: 30_000 });
   expect(cloud.rows(companyId, 'companies')[0].data).not.toHaveProperty('ai');
+});
+
+test('signing out and removing the companies from this device stops the answer and forgets the chat', async ({
+  page,
+}) => {
+  test.slow();
+  const cloud = new FakeSupabase();
+  await cloud.install(page);
+  const service = { hold: false };
+  const calls = await fakeAiService(page, service);
+  cloud.addUser(OWNER.email, OWNER.password, OWNER.name);
+  await createCompany(page, 'Made-up Shared Desk Co');
+  const account = await signIn(page, OWNER);
+  await page.getByRole('button', { name: 'Keep in the cloud' }).click();
+  await expect(account).toContainText('Synced', { timeout: 30_000 });
+  await page.goto('#/settings/ai');
+  await page.getByRole('switch', { name: /Use the AI assistant/ }).click();
+  await expect(page.getByText('AI assistant turned on')).toBeVisible();
+  await expect(account).toContainText('Synced', { timeout: 30_000 });
+
+  // A question whose answer is still being written on a shared computer.
+  service.hold = true;
+  const stopped = page.waitForEvent('requestfailed', (r) => r.url().endsWith('/v1/stream'));
+  await page.getByRole('button', { name: 'Ask AI' }).click();
+  const panel = page.getByRole('dialog', { name: 'AI assistant' });
+  const question = panel.getByRole('textbox', { name: 'Your question' });
+  await question.fill('A question on a shared computer');
+  await question.press('Enter');
+  await expect(panel.getByText('Writing the answer…')).toBeVisible();
+  await expect.poll(() => calls.length).toBe(1);
+  await question.fill('a draft not sent');
+
+  // Signed out, the companies removed from this device: the answer is stopped.
+  await account.click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sign out?' });
+  await dialog.getByText('Remove them from this device').click();
+  await dialog.getByRole('button', { name: 'Sign out' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Work from any device, with your team' }),
+  ).toBeVisible();
+  await stopped;
+
+  // The same person signs in again and the company comes back: nothing of before.
+  service.hold = false;
+  await signIn(page, OWNER);
+  await expect(page.getByRole('button', { name: 'Switch company' })).toContainText(
+    'Made-up Shared Desk Co',
+    { timeout: 30_000 },
+  );
+  const ask = page.getByRole('button', { name: 'Ask AI' });
+  await expect(ask).toBeVisible({ timeout: 30_000 });
+  await expect(panel).toBeHidden();
+  await ask.click();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText('A question on a shared computer')).toHaveCount(0);
+  await expect(question).toHaveValue('');
+  expect(calls).toHaveLength(1);
 });
 
 test('a company kept on this device only never shows the assistant, even with the switch set', async ({

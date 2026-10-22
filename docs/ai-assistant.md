@@ -48,9 +48,11 @@ show it. Turning the switch off removes the button for everyone.
   tab: it is gone on reload, never stored and never synced. Each question
   carries at most the last 20 messages of the conversation.
 - The conversation is also forgotten, and an answer being written is
-  stopped, when the person signs out, opens another company, when their
-  role or the owner's limits on them change, and when the assistant is
-  switched off.
+  stopped, when the person signs out (also when the sign-out removes the
+  companies from the device, as on a shared computer), when someone else
+  signs in, when another company is opened, when their role or the owner's
+  limits on them change, and when the assistant is switched off. The
+  first check of those limits after signing in is not a change.
 - Answers are kept short: the app asks for at most 2,048 tokens (about
   1,500 words) and for the model's "low" thinking level, so each question
   costs little.
@@ -85,23 +87,39 @@ before anything is sent (below).
 Before a question leaves the device, the app replaces these with a short
 placeholder, in the language of the question:
 
-| What                                                                                                                                    | Becomes                                  |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Kuwaiti Civil IDs (12 digits that pass the Civil ID check)                                                                              | `[ID number hidden]` / `[رقم هوية مخفي]` |
-| Passport-like numbers (one or two letters and 6 to 9 digits, as K1234567)                                                               | `[ID number hidden]`                     |
-| IBANs of any country, with or without spaces (a Kuwaiti one even with a mistake in it)                                                  | `[IBAN hidden]` / `[رقم آيبان مخفي]`     |
-| Phone numbers with a country code (+965, 00965…), written as two groups of four (9876 5432), or after a word such as "mobile" or "هاتف" | `[phone number hidden]`                  |
-| Email addresses                                                                                                                         | `[email address hidden]`                 |
-| Any other run of 10 or more digits                                                                                                      | `[number hidden]`                        |
+| What                                                                                                                                                                                                                                | Becomes                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Kuwaiti Civil IDs (12 digits that pass the Civil ID check)                                                                                                                                                                          | `[ID number hidden]` / `[رقم هوية مخفي]` |
+| Passport-like numbers (one or two letters and 6 to 9 digits, maybe a letter after, as K1234567 or P1234567A)                                                                                                                        | `[ID number hidden]`                     |
+| A number of 5 digits or more after a word for an ID paper: passport, residency, iqama, work permit, Civil ID, central card, PIFSS, جواز, إقامة, إذن عمل, تصريح عمل, التأمينات, الرقم المدني, هوية (not a date, an amount or a time) | `[ID number hidden]`                     |
+| IBANs of any country, with or without spaces (a Kuwaiti one even with a mistake in it)                                                                                                                                              | `[IBAN hidden]` / `[رقم آيبان مخفي]`     |
+| Phone numbers with a country code (+965, 00965…), written as two groups of four (9876 5432), or after a word such as "mobile" or "هاتف"                                                                                             | `[phone number hidden]`                  |
+| Email addresses                                                                                                                                                                                                                     | `[email address hidden]`                 |
+| Any other run of 10 or more digits                                                                                                                                                                                                  | `[number hidden]`                        |
+
+Numbers are found however their groups are spaced: with ordinary,
+no-break or thin spaces (the app's own PDFs print numbers with no-break
+spaces, so a number copied from one has them), several spaces, dashes, the
+invisible marks of right-to-left text, and over a line break for Civil IDs
+and IBANs, and with dots, commas or slashes between the groups for Civil IDs
+(2870.4151.2345). Arabic-Indic (٠١٢), Persian (۰۱۲) and full-width (０１２)
+digits count as 0 to 9.
 
 It also checks the question against this company's own private numbers held
 on the device: its employees' Civil ID, passport, residency, work permit,
 central agency card and PIFSS numbers, IBANs and account numbers (and the
-copies kept on pay runs), its customers' and vendors' Civil IDs, and the
-company's own IBANs and account numbers. One found anywhere in the question
-is hidden too, however it was typed: with spaces or dashes, in capitals or
-not, in Arabic-Indic (٠١٢) or Persian (۰۱۲) digits. Numbers shorter than 5
-characters are not looked for, as they are too common.
+copies kept on pay runs), its customers' and vendors' Civil IDs, the Civil
+ID of whoever signed for a delivery, the drawers' Civil IDs on cheques
+(payments and security cheques), the numbers of identity and other private
+papers in Compliance (Civil ID, passport, residency, work permit, central
+agency card, driving licence, health insurance, employment contract,
+authorised signatories, salary certificate and customer cost papers,
+whoever owns them), and the company's own IBANs and account numbers. One
+found anywhere in the question is hidden too, however it was typed: with
+spaces, dashes, dots, commas or slashes, over two lines, in capitals or not,
+in any of those digits. It must stand on its own: the same digits inside a
+longer number, an amount (12,345.000) or a code are left alone. Numbers
+shorter than 5 characters are not looked for, as they are too common.
 
 Arabic is handled carefully: the digits are compared as 0 to 9, but only the
 number itself is replaced, so the rest of the question, its letters, marks
@@ -114,6 +132,18 @@ The person sees their question as it was sent, placeholders included, with a
 small note under it such as "1 ID number was hidden before sending" (or
 "أُخفي قبل الإرسال: رقم هوية واحد"). What was typed is not kept: not in the
 conversation, not on the device, not in any log.
+
+A last check runs on the request itself, just before it is sent: if any of
+the person's messages in it still holds one of the company's own numbers, a
+Civil ID or an IBAN that passes its check, nothing is sent and the panel
+says "This was not sent: it still holds an ID number, an IBAN or another
+private detail. Start a new chat and ask without it." It should never be
+seen: it is there to catch a mistake in the app, not the person's.
+
+Not hidden yet: salaries and other amounts, and people's names. The panel
+asks not to type salaries; hiding names (as codes) and pay figures comes
+with the next phase, which reads the page's records through the same
+filter.
 
 This is a safety net, not a licence: describe the case instead of pasting
 someone's details, as the panel asks.
@@ -186,8 +216,10 @@ Cloudflare Worker at
 - answers only the web address `https://mahamone.com` (so it works from the
   live app, not from a preview or a copy on another address);
 - limits how many questions each person asks a minute, and caps the length of
-  answers (2,048 tokens unless the app asks for more, never more than 8,192,
-  and the model's low thinking level unless the app chooses another);
+  answers (2,048 tokens unless the app asks for more, never more than 8,192)
+  and the model's thinking (the "low" level unless a request asks for less;
+  a higher level is sent as "low", and a thinking budget is at most 1,024
+  tokens);
 - logs only metadata (route, status, model, token counts), never questions or
   answers.
 
@@ -209,12 +241,22 @@ the wait in seconds), the service busy or slow, the service not set up yet
 (English) is never shown in the chat, and the message about the web address
 (mahamone.com) only when that is what the Worker said.
 
+The app already knows the codes the next version of the Worker is planned to
+send, when the server checks every request (plan R1): the assistant not
+switched on for the company there (`not_enabled`), today's limit reached
+(`budget_exceeded`), and an app too old for it (`update_required`: "The AI
+assistant needs the latest version of the app. Reload the page and try
+again."). It does not send the company's id in a header yet
+(`X-Maham-Company`): the Worker live today would refuse any header beyond the
+sign-in and the content type, so it comes once the new Worker is in place.
+A Worker that needs it must answer this version with `update_required`.
+
 ## Updating the AI service (for the owner)
 
 The Worker running today is the first version, which answers anyone signed
 in. The new version, in [`workers/ai-proxy/src/worker.js`](../workers/ai-proxy/src/worker.js),
-serves only your company's members and gives shorter answers. To put it in
-place, in a few minutes:
+serves only your company's members, gives shorter answers and keeps the
+model's thinking cheap. To put it in place, in a few minutes:
 
 1. **Find your company's id.** In Supabase, open the project, then **SQL
    Editor** → **New query**, paste `select id, name from public.companies;`

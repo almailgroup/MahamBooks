@@ -1,13 +1,15 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
-import type { Employee, ID, PayLine } from '@/db/types';
+import type { ComplianceDocumentType, Employee, ID, PayLine } from '@/db/types';
 import type { HiddenKind, KnownValue } from './scrub';
 
 /**
  * This company's own values that are never sent to the AI assistant, as
  * this device holds them: the ID numbers and bank details of its employees
  * (and of the pay runs, which keep their own copies), the Civil IDs of its
- * customers and vendors, and its own IBANs and account numbers. What the
+ * customers and vendors, of whoever signed for a delivery and of the
+ * drawers of cheques, the numbers of identity and other private papers in
+ * the register, and its own IBANs and account numbers. What the
  * person types is checked against them (scrubText), with digits folded and
  * spaces left out, before anything is sent. They are read here and kept in
  * memory only while the chat is open; they never leave the device.
@@ -31,14 +33,38 @@ const PAY_LINE_FIELDS = [
   ['accountNumber', 'account'],
 ] as const satisfies readonly (readonly [keyof PayLine, HiddenKind])[];
 
+/**
+ * Papers whose number is never sent, whoever owns them: identity papers,
+ * and those that carry a person's details or pay (plan 3d, Compliance).
+ */
+const PRIVATE_PAPERS: ReadonlySet<ComplianceDocumentType> = new Set<ComplianceDocumentType>([
+  'civil_id',
+  'passport',
+  'residency',
+  'work_permit',
+  'central_agency_card',
+  'driving_licence',
+  'health_insurance',
+  'employment_contract',
+  'authorised_signatories',
+  'pam_salary_certificate',
+  'customer_cost',
+]);
+
 export async function knownValues(companyId: ID): Promise<KnownValue[]> {
-  const [employees, clients, company, accounts, runs] = await Promise.all([
-    db.employees.where('companyId').equals(companyId).toArray(),
-    db.clients.where('companyId').equals(companyId).toArray(),
-    db.companies.get(companyId),
-    db.accounts.where('companyId').equals(companyId).toArray(),
-    db.payRuns.where('companyId').equals(companyId).toArray(),
-  ]);
+  const [employees, clients, company, accounts, runs, deliveries, payments, cheques, papers] =
+    await Promise.all([
+      db.employees.where('companyId').equals(companyId).toArray(),
+      db.clients.where('companyId').equals(companyId).toArray(),
+      db.companies.get(companyId),
+      db.accounts.where('companyId').equals(companyId).toArray(),
+      db.payRuns.where('companyId').equals(companyId).toArray(),
+      // Only delivery notes say who signed for the goods.
+      db.documents.where('[companyId+type]').equals([companyId, 'delivery_note']).toArray(),
+      db.payments.where('companyId').equals(companyId).toArray(),
+      db.securityCheques.where('companyId').equals(companyId).toArray(),
+      db.complianceDocuments.where('companyId').equals(companyId).toArray(),
+    ]);
   const found: KnownValue[] = [];
   // Records from older versions or other devices may miss a field, or hold another type.
   const add = (value: unknown, kind: HiddenKind) => {
@@ -59,6 +85,12 @@ export async function knownValues(companyId: ID): Promise<KnownValue[]> {
     for (const line of Array.isArray(run.lines) ? run.lines : []) {
       for (const [field, kind] of PAY_LINE_FIELDS) add(line?.[field], kind);
     }
+  }
+  for (const note of deliveries) add(note.receiverCivilId, 'id');
+  for (const payment of payments) add(payment.cheque?.drawerCivilId, 'id');
+  for (const cheque of cheques) add(cheque.drawerCivilId, 'id');
+  for (const paper of papers) {
+    if (PRIVATE_PAPERS.has(paper.type)) add(paper.number, 'id');
   }
   return found;
 }

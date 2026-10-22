@@ -33,22 +33,23 @@ const cloud = vi.hoisted(() => ({
 }));
 vi.mock('@/cloud/store', async (original) => {
   const { useSyncExternalStore } = await import('react');
+  const subscribe = (listener: () => void) => {
+    cloud.listeners.add(listener);
+    return () => void cloud.listeners.delete(listener);
+  };
+  const snapshot = () => ({
+    user: cloud.user,
+    api: null,
+    manager: null,
+    configured: true,
+    ready: true,
+    redirectError: null,
+  });
   return {
     ...(await original<typeof import('@/cloud/store')>()),
-    useCloud: () => ({
-      user: useSyncExternalStore(
-        (listener) => {
-          cloud.listeners.add(listener);
-          return () => cloud.listeners.delete(listener);
-        },
-        () => cloud.user,
-      ),
-      api: null,
-      manager: null,
-      configured: true,
-      ready: true,
-      redirectError: null,
-    }),
+    useCloud: () => ({ ...snapshot(), user: useSyncExternalStore(subscribe, () => cloud.user) }),
+    cloudSnapshot: snapshot,
+    subscribeCloud: subscribe,
   };
 });
 
@@ -623,6 +624,48 @@ describe('the conversation is forgotten', () => {
     expect(screen.queryByText('Half an answer')).toBeNull();
   });
 
+  it('with the answer stopped, on a sign-out that removed the companies first', async () => {
+    // As signOutCloud({removeCompanies: true}): the company leaves the device
+    // (and the app shell, the panel with it), then the person is signed out.
+    await askAndWait();
+    const kept = (await db.companies.get(company.id))!;
+    await act(async () => {
+      await db.syncState.delete(company.id);
+      await db.companies.delete(company.id);
+    });
+    await screen.findByText('Welcome');
+    setUser(null);
+    expect(assistantState().turns).toEqual([]);
+    expect(assistantState().open).toBe(false);
+    expect(asked[0].options.signal?.aborted).toBe(true);
+
+    // The same person signs in again and the company comes back: nothing of before.
+    setUser(USER);
+    await act(async () => {
+      await db.companies.put(kept);
+      await linkCompany();
+    });
+    await askButton();
+    act(() => asked[0].write(' and the rest'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(assistantState().turns).toEqual([]);
+    fireEvent.click(await askButton());
+    expect(within(panel()).queryByText('A question')).toBeNull();
+    expect(within(panel()).queryByText(/Half an answer/)).toBeNull();
+  });
+
+  it('when another person signs in, wherever the app is', async () => {
+    await askAndWait();
+    await act(async () => {
+      await db.syncState.delete(company.id);
+      await db.companies.delete(company.id);
+    });
+    await screen.findByText('Welcome');
+    setUser({ ...USER, id: 'user-2', email: 'someone@example.com' } as CloudUser);
+    expect(assistantState().turns).toEqual([]);
+    expect(asked[0].options.signal?.aborted).toBe(true);
+  });
+
   it('when another company is opened', async () => {
     let other = await setupCompany({ name: 'Another Made-up Co', currency: 'KWD' });
     other = await saveCompany(withAiSwitch(other, true));
@@ -650,6 +693,20 @@ describe('the conversation is forgotten', () => {
     );
     await waitFor(() => expect(assistantState().turns).toEqual([]));
     expect(asked[1].options.signal?.aborted).toBe(true);
+  });
+
+  it('not when the owner’s limits are first read, none being set', async () => {
+    await askAndWait();
+    // The first check after signing in writes the server's empty limits.
+    await act(() => linkCompany(USER.id, { permissions: {} }));
+    await act(() => linkCompany(USER.id, { permissions: { apps: {} } }));
+    await act(() => linkCompany(USER.id, { permissions: undefined }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked[0].options.signal?.aborted).toBe(false);
+    expect(assistantState().turns).toHaveLength(2);
+    act(() => asked[0].write(' and the rest'));
+    await within(panel()).findByText('Half an answer and the rest');
+    act(() => asked[0].finish());
   });
 
   it('when the assistant is switched off', async () => {

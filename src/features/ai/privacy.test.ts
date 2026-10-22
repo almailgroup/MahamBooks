@@ -7,7 +7,7 @@ import type { Company } from '@/db/types';
 import { createAiClient, type StreamOptions } from './client';
 import { AiError } from './errors';
 import { knownValues } from './known-values';
-import type { KnownValue } from './scrub';
+import { foldValue, type KnownValue } from './scrub';
 import {
   assistantState,
   claimConversation,
@@ -169,6 +169,69 @@ describe('the request body', () => {
     expect(asked[0].text).toBe(
       'His Civil ID is [ID number hidden], passport [ID number hidden] and residency [ID number hidden].',
     );
+  });
+
+  it('never holds one written with odd spaces, dots or line breaks, nor the other records’ numbers', async () => {
+    const more = {
+      receiverCivilId: '286022012341',
+      drawerCivilId: '279121512340',
+      holderCivilId: '300010112349',
+      paperNumber: 'Q4455667',
+    };
+    await db.documents.put({
+      id: 'note-1',
+      companyId: company.id,
+      type: 'delivery_note',
+      receiverCivilId: more.receiverCivilId,
+    } as never);
+    await db.payments.put({
+      id: 'payment-1',
+      companyId: company.id,
+      cheque: { drawerCivilId: more.drawerCivilId },
+    } as never);
+    await db.securityCheques.put({
+      id: 'security-1',
+      companyId: company.id,
+      drawerCivilId: more.holderCivilId,
+    } as never);
+    await db.complianceDocuments.put({
+      id: 'paper-1',
+      companyId: company.id,
+      type: 'passport',
+      number: more.paperNumber,
+    } as never);
+    const all = await knownValues(company.id);
+    const { sent, client } = fakeWorker();
+    resetAssistantForTests((options: StreamOptions) => client.streamChat(options));
+    const nbsp = (text: string) => text.replace(/(.{4})(?=.)/g, '$1\u00a0');
+    const questions = [
+      `dots ${SEEDED.civilId.replace(/(.{4})(?=.)/g, '$1.')} and ${SEEDED.residencyNumber.replace(/(.{3})(?=.)/g, '$1,')}`,
+      `split ${SEEDED.civilId.slice(0, 6)}\n${SEEDED.civilId.slice(6)} end`,
+      `no-break ${nbsp(SEEDED.iban)} and ${nbsp(SEEDED.companyIban)}`,
+      `marks ${SEEDED.accountNumber.split('').join('\u200f')} end`,
+      `receiver ${more.receiverCivilId.slice(0, 6)}\n${more.receiverCivilId.slice(6)}`,
+      `cheque by ${more.drawerCivilId.replace(/(.{4})(?=.)/g, '$1/')}, held by ${arabicDigits(more.holderCivilId)}`,
+      `the paper q 4455 667`,
+    ];
+    for (const question of questions) {
+      sendQuestion(question, 'You are the Maham One assistant.', all);
+      await answered();
+    }
+    expect(sent).toHaveLength(questions.length);
+    for (const [i, { body }] of sent.entries()) {
+      const typed = (body.contents as { role: string; parts: { text: string }[] }[])
+        .filter((content) => content.role === 'user')
+        .map((content) => foldValue(content.parts[0].text));
+      for (const value of [...Object.values(SEEDED), ...Object.values(more)]) {
+        for (const text of typed)
+          expect(text, `body ${i}: ${value}`).not.toContain(foldValue(value));
+      }
+    }
+    expect(
+      assistantState()
+        .turns.filter((turn) => turn.role === 'user')
+        .every((turn) => turn.hidden !== undefined),
+    ).toBe(true);
   });
 
   it('is sent as typed when nothing in it is private', async () => {

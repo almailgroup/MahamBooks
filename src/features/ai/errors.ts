@@ -3,15 +3,21 @@ import { t } from '@/i18n';
 /**
  * What can go wrong asking the AI assistant, each with a message for the
  * person in their language (`aiErrorMessage`). The Worker's own codes
- * (workers/ai-proxy: unauthorized … internal), and the app's: refused for
- * this account without a code the app knows, nobody signed in, no
- * internet, the service out of reach, an answer cut off, empty or withheld,
- * and a question stopped by the person.
+ * (workers/ai-proxy: unauthorized … internal), those of the server check
+ * planned next (not_enabled, budget_exceeded, update_required), and the
+ * app's: refused for this account without a code the app knows, a question
+ * kept on the device because it still held a private detail, nobody signed
+ * in, no internet, the service out of reach, an answer cut off, empty or
+ * withheld, and a question stopped by the person.
  */
 export type AiErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'forbidden_origin'
+  | 'not_enabled'
+  | 'budget_exceeded'
+  | 'update_required'
+  | 'kept_private'
   | 'not_available'
   | 'bad_request'
   | 'payload_too_large'
@@ -41,6 +47,13 @@ const WORKER_CODES = new Set<string>([
   'upstream_timeout',
   'not_found',
   'internal',
+  // The server check planned next (ai-plan R1): the assistant not switched
+  // on for the company there, today's limit reached, or this version of the
+  // app too old for it.
+  'not_enabled',
+  'budget_exceeded',
+  'update_required',
+  'kept_private',
 ]);
 
 /** Seconds to wait when the service asks to wait but doesn't say how long. */
@@ -147,6 +160,18 @@ export function aiErrorMessage(error: unknown): string {
       return t('The AI assistant is not available for this account.');
     case 'forbidden_origin':
       return t('The AI assistant works only in the app at mahamone.com.');
+    case 'not_enabled':
+      return t('The AI assistant is not switched on for this company. Ask the owner.');
+    case 'budget_exceeded':
+      return t('The AI assistant has reached today’s limit for this company. Try again tomorrow.');
+    case 'update_required':
+      return t(
+        'The AI assistant needs the latest version of the app. Reload the page and try again.',
+      );
+    case 'kept_private':
+      return t(
+        'This was not sent: it still holds an ID number, an IBAN or another private detail. Start a new chat and ask without it.',
+      );
     case 'bad_request':
       return t('The AI service could not use this question. Try asking it another way.');
     case 'payload_too_large':

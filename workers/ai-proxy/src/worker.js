@@ -29,7 +29,8 @@
  *     contents: Content[],        // required, as in the Gemini API
  *     systemInstruction?: Content,          // text parts only
  *     generationConfig?: object,  // allowlisted fields; maxOutputTokens capped, one candidate,
- *                                 // DEFAULT_ANSWER_TOKENS and low thinking when left out
+ *                                 // DEFAULT_ANSWER_TOKENS and low thinking when left out,
+ *                                 // thinking never above low (budget at most 1024)
  *     safetySettings?: object[],
  *     tools?: [{functionDeclarations: [...]}],  // function calling only
  *     toolConfig?: {functionCallingConfig: {...}}
@@ -109,6 +110,13 @@ const DEFAULT_ANSWER_TOKENS = 2048;
  * only), and later Flash models (3.8) no longer accept minimal.
  */
 const DEFAULT_THINKING_LEVEL = 'low';
+/**
+ * Thinking is kept cheap whatever a request asks: a higher level than
+ * DEFAULT_THINKING_LEVEL is sent as that level, and a thinking budget (the
+ * older way, in tokens) is at most this, -1 ("let the model decide") included.
+ */
+const LOWERED_THINKING_LEVELS = ['medium', 'high'];
+const MAX_THINKING_BUDGET = 1024;
 /**
  * generateContent sends nothing until the whole answer is written, so this
  * is the time allowed for the whole answer (thinking included). Long answers
@@ -1009,7 +1017,14 @@ function cleanGenerationConfig(input, config) {
       if (!isWholeNumber(budget) || budget < -1) {
         throw badRequest('thinkingConfig.thinkingBudget must be a whole number, -1 or more.');
       }
-      thinking.thinkingBudget = Math.min(budget, maxOutputTokens);
+      // Never more than MAX_THINKING_BUDGET: "let the model decide" is that much at most.
+      const most = Math.min(MAX_THINKING_BUDGET, maxOutputTokens);
+      thinking.thinkingBudget = budget === -1 ? most : Math.min(budget, most);
+    }
+    const level = thinking.thinkingLevel;
+    if (typeof level === 'string' && LOWERED_THINKING_LEVELS.includes(level.toLowerCase())) {
+      // Kept cheap: a higher level is sent as the default one.
+      thinking.thinkingLevel = DEFAULT_THINKING_LEVEL;
     }
     clean.thinkingConfig = thinking;
   } else {
