@@ -29,6 +29,7 @@ import { getPayrollSettings, savePayrollSettings } from './payroll';
 import { setFileFinder } from './files';
 import { saveItem } from './inventory';
 import { addProductImages } from './product-images';
+import type { NumberingRule } from './types';
 
 beforeEach(async () => {
   await db.delete();
@@ -319,6 +320,22 @@ describe('backup', () => {
     expect(restoredB.payment.next).toBe(6);
     // The rest is the backup's.
     expect(restoredA.invoice.pattern).toBe(pattern);
+  });
+
+  it("keeps this device's rule on Replace when its reset was changed since the backup", async () => {
+    const a = await setupCompany({ name: 'A' });
+    const set = async (rule: Partial<NumberingRule>) => {
+      const company = (await db.companies.get(a.id))!;
+      const invoice = { ...company.numbering.invoice, ...rule };
+      await db.companies.put({ ...company, numbering: { ...company.numbering, invoice } });
+    };
+    await set({ reset: 'never', pattern: 'INV-{counter}', next: 10 });
+    const backup = await exportBackup();
+    // INV-0010 to INV-0012 are given, then invoices are numbered by year.
+    await set({ reset: 'yearly', pattern: 'INV-{year}-{counter}', period: '2026', next: 2 });
+    await importBackup(backup, 'replace');
+    const invoice = (await db.companies.get(a.id))!.numbering.invoice;
+    expect(invoice).toMatchObject({ reset: 'yearly', pattern: 'INV-{year}-{counter}', next: 2 });
   });
 
   it('merges without deleting existing data', async () => {

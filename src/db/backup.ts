@@ -465,13 +465,23 @@ export async function importBackup(
  * After a backup replaced what was here: each company that was here keeps
  * the higher of its counters and the backup's (the backup's patterns), so a
  * number given after the backup was made, and perhaps printed, isn't given
- * again. A backup restored on another device can't know them.
+ * again. A backup restored on another device can't know them. A rule whose
+ * reset was changed here since the backup keeps this device's rule: its
+ * counter and the backup's count different series.
  */
 async function keepCounters(counters: Map<ID, Company['numbering'] | undefined>): Promise<void> {
   for (const company of await db.companies.toArray()) {
     const here = counters.get(company.id);
     if (!here || !company.numbering) continue;
-    const numbering = mergeNumbering(here, company.numbering);
+    const restored = { ...company.numbering };
+    for (const key of Object.keys(restored) as (keyof typeof restored)[]) {
+      const mine = here[key];
+      const theirs = restored[key];
+      if (mine && theirs && (mine.reset ?? '') !== (theirs.reset ?? '')) {
+        Object.assign(restored, { [key]: mine });
+      }
+    }
+    const numbering = mergeNumbering(here, restored);
     if (numbering && JSON.stringify(numbering) !== JSON.stringify(company.numbering)) {
       await db.companies.put({ ...company, numbering });
     }
