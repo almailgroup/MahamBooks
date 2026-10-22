@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { Company } from '@/db/types';
 import { saveCompany } from '@/db/records';
@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/misc';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
 import { ReadOnlyNote, SaveArea } from '@/components/ui/read-only';
 import { t } from '@/i18n';
+import { registerBottomBar } from '@/features/shell/store';
 
 /** Local editable copy of the company with save/reset and a leave guard. */
 export function useCompanyDraft() {
@@ -96,6 +97,8 @@ export function SaveBar({
   onSave: () => void;
   onReset: () => void;
 }) {
+  // Floating buttons (Ask AI) move up while it shows.
+  useEffect(() => (dirty ? registerBottomBar() : undefined), [dirty]);
   if (!dirty) return null;
   return (
     <div

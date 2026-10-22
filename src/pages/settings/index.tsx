@@ -1,29 +1,8 @@
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router';
-import {
-  BellRing,
-  BookOpen,
-  Building2,
-  ClipboardCheck,
-  Cloud,
-  UserRound,
-  UsersRound,
-  Database,
-  FileCog,
-  FileUp,
-  Hash,
-  Languages,
-  Layers,
-  Link2,
-  Mail,
-  Package,
-  Palette,
-  Percent,
-  ShieldCheck,
-  Wallet,
-} from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { msg, t } from '@/i18n';
+import { t } from '@/i18n';
+import { SETTINGS_GROUPS } from '@/features/shell/settings-sections';
 import { PageHeader, Spinner } from '@/components/ui/misc';
 
 const CompanySettings = lazy(() => import('./company'));
@@ -46,57 +25,7 @@ const CloudSettings = lazy(() => import('./cloud'));
 const LinkSettings = lazy(() => import('./links'));
 const AlertSettings = lazy(() => import('./alerts'));
 const ComplianceSettingsPage = lazy(() => import('./compliance'));
-
-const GROUPS: { title: string; items: { path: string; label: string; icon: ReactNode }[] }[] = [
-  {
-    title: msg('Business'),
-    items: [
-      { path: 'company', label: msg('Company profile'), icon: <Building2 /> },
-      { path: 'companies', label: msg('Companies'), icon: <Layers /> },
-      { path: 'links', label: msg('Links'), icon: <Link2 /> },
-      { path: 'compliance', label: msg('Compliance and files'), icon: <ShieldCheck /> },
-    ],
-  },
-  {
-    title: msg('Account and team'),
-    items: [
-      { path: 'account', label: msg('Your account'), icon: <UserRound /> },
-      { path: 'alerts', label: msg('Email alerts'), icon: <BellRing /> },
-      { path: 'team', label: msg('Team'), icon: <UsersRound /> },
-      { path: 'approvals', label: msg('Approvals'), icon: <ClipboardCheck /> },
-      { path: 'cloud', label: msg('Cloud and sync'), icon: <Cloud /> },
-    ],
-  },
-  {
-    title: msg('Documents'),
-    items: [
-      { path: 'documents', label: msg('Invoice defaults'), icon: <FileCog /> },
-      { path: 'numbering', label: msg('Numbering'), icon: <Hash /> },
-      { path: 'items', label: msg('Items and units'), icon: <Package /> },
-      { path: 'emails', label: msg('Email templates'), icon: <Mail /> },
-      { path: 'labels', label: msg('Language & wording'), icon: <Languages /> },
-    ],
-  },
-  {
-    title: msg('Money'),
-    items: [
-      { path: 'payments', label: msg('Payment details'), icon: <Wallet /> },
-      { path: 'taxes', label: msg('Taxes'), icon: <Percent /> },
-      { path: 'accounting', label: msg('Accounting'), icon: <BookOpen /> },
-    ],
-  },
-  {
-    title: msg('Data'),
-    items: [
-      { path: 'import', label: msg('Import data'), icon: <FileUp /> },
-      { path: 'data', label: msg('Backup & data'), icon: <Database /> },
-    ],
-  },
-  {
-    title: msg('This device'),
-    items: [{ path: 'appearance', label: msg('Appearance'), icon: <Palette /> }],
-  },
-];
+const AiSettings = lazy(() => import('./ai'));
 
 export default function SettingsPage() {
   const { pathname } = useLocation();
@@ -128,7 +57,7 @@ export default function SettingsPage() {
             ref={row}
             className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 lg:flex-col lg:gap-5 lg:overflow-visible lg:pb-0"
           >
-            {GROUPS.map((group) => (
+            {SETTINGS_GROUPS.map((group) => (
               <div key={group.title} className="contents lg:block">
                 <p className="hidden px-3 pb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase lg:block">
                   {t(group.title)}
@@ -181,6 +110,7 @@ export default function SettingsPage() {
               <Route path="links" element={<LinkSettings />} />
               <Route path="alerts" element={<AlertSettings />} />
               <Route path="compliance" element={<ComplianceSettingsPage />} />
+              <Route path="ai" element={<AiSettings />} />
               <Route path="*" element={<Navigate to="company" replace />} />
             </Routes>
           </Suspense>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AlertTriangle, Info, RotateCcw, Ruler } from 'lucide-react';
@@ -32,6 +32,7 @@ import { useConfirm } from '@/components/ui/overlay';
 import { useReadOnly } from '@/components/ui/read-only';
 import { useRoleView } from '@/features/cloud/role-gates';
 import { useUnsavedGuard } from '@/hooks/use-unsaved-guard';
+import { registerBottomBar } from '@/features/shell/store';
 import { ChequeLeaf, sampleFace, useChequeFit } from '@/apps/books/features/cheques/cheque-leaf';
 
 /** A crossing's place for layouts saved without one. */
@@ -154,6 +155,8 @@ function LayoutEditor({
   const [crossed, setCrossed] = useState(true);
   const dirty = JSON.stringify(draft) !== JSON.stringify(layout);
   useUnsavedGuard(dirty && !saving);
+  // The save bar floats at the bottom while there are changes: Ask AI moves up.
+  useEffect(() => (dirty && !locked ? registerBottomBar() : undefined), [dirty, locked]);
   const problem = layoutProblem(draft);
   const face = sampleFace(draft, today(), crossed);
   const fit = useChequeFit(draft, face);

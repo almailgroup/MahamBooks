@@ -109,6 +109,7 @@ const COMPANY_SETTINGS: [path: string, label: string][] = [
   ['dashboard', msg('Books dashboard')],
   ['appLayout', msg('App layout')],
   ['approvalRules', msg('Approvals')],
+  ['ai', msg('AI assistant')],
 ];
 
 /** The settings fields of the company record belong to, each once (English keys). */

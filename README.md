@@ -177,6 +177,11 @@ and the compliance calendar (Maham Compliance).
   when papers expire, deadlines and cheques come due, bills are to pay or
   invoices become overdue, and a summary every Sunday (Settings → Email
   alerts; setup in [`docs/email-alerts.md`](docs/email-alerts.md)).
+- **AI assistant** (first version, off until the owner or an admin turns it
+  on in Settings → AI assistant, for companies kept in the cloud): an Ask AI
+  button on every page that explains how to do things in Maham One, in Arabic
+  or English. It is sent only what you type and the page you are on, never
+  your records ([`docs/ai-assistant.md`](docs/ai-assistant.md)).
 - Import contacts, items, opening balances and open invoices from CSV or
   Excel (Settings → Import data, or Import on Products & services). Items can
   bring their type, cost, barcode, reorder level and stock: with a quantity

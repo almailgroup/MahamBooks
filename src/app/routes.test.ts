@@ -192,6 +192,8 @@ const SAMPLE_URLS = [
   '/files',
   '/settings/alerts',
   '/settings/team',
+  // The AI assistant's switch and connection test.
+  '/settings/ai',
   '/people',
   '/people/directory',
   '/people/all',

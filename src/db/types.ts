@@ -668,8 +668,24 @@ export interface Company {
    * nothing waits for approval, as before. Only the owner changes them.
    */
   approvalRules?: ApprovalRules;
+  /**
+   * The AI assistant (Settings → AI assistant), for companies kept in the
+   * cloud: an Ask AI button on every page, for everyone in the company who
+   * is signed in. Only the owner or an admin changes it. Missing (every
+   * company until one of them turns it on), or `on` missing or false: no
+   * assistant, as before.
+   */
+  ai?: AiSettings;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * The company's AI assistant. In this first version it is sent only what
+ * people type in the chat and where they are in the app, never records.
+ */
+export interface AiSettings {
+  on?: boolean;
 }
 
 /**

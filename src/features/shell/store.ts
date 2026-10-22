@@ -3,7 +3,8 @@ import { useSyncExternalStore } from 'react';
 /**
  * Small shared state of the app shell that pages affect without props:
  * whether a page shows sticky editor actions (the phone tab bar makes way
- * for them) and whether someone is typing (the phone keyboard is likely open).
+ * for them) or a bar floating at its bottom, and whether someone is typing
+ * (the phone keyboard is likely open).
  */
 
 type Listener = () => void;
@@ -32,6 +33,30 @@ export function useHasStickyActions(): boolean {
   return useSyncExternalStore(
     subscribe,
     () => stickyActions > 0,
+    () => false,
+  );
+}
+
+let bottomBars = 0;
+
+/**
+ * Called while a bar floats at the bottom of the page (the settings' Save
+ * changes bar); returns the cleanup. Floating buttons (Ask AI) move up
+ * above it.
+ */
+export function registerBottomBar(): () => void {
+  bottomBars += 1;
+  emit();
+  return () => {
+    bottomBars -= 1;
+    emit();
+  };
+}
+
+export function useHasBottomBar(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => bottomBars > 0,
     () => false,
   );
 }

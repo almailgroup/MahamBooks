@@ -17,6 +17,7 @@ import {
   Palette,
   Paperclip,
   Search,
+  Sparkles,
   Sun,
   Truck,
   Users,
@@ -48,6 +49,8 @@ import { useRoleView } from '@/features/cloud/role-gates';
 import { syncLabel } from '@/features/cloud/sync-status';
 import { useEmployeesEverywhere } from '@/features/people/hooks';
 import { useCostingShown } from '@/features/people/costing-hooks';
+import { useAiAvailability } from '@/features/ai/availability';
+import { openAssistant } from '@/features/ai/store';
 
 const SECTION_LABELS: Record<SearchKind, string> = {
   recent: msg('Recent'),
@@ -121,11 +124,15 @@ const LANGUAGE_KEY = 'action:language';
 const THEME_KEY = 'action:theme';
 const THEME_SWITCH_KEY = 'action:theme-switch';
 const SYNC_KEY = 'action:sync-now';
+/** Asks the AI assistant what was typed (with the assistant switched on). */
+const ASK_AI_KEY = 'action:ask-ai';
 
 interface Section {
   kind: SearchKind;
   label: string;
   entries: SearchEntry[];
+  /** When two sections are of one kind (Ask AI is an action of its own). */
+  id?: string;
 }
 
 /** "Ctrl K" or "⌘K", for the search button and help. */
@@ -205,6 +212,7 @@ function PaletteBody({
     () => (hidePeople ? saved.filter((item) => !isPeopleItem(item)) : saved),
     [saved, hidePeople],
   );
+  const askAi = useAiAvailability() === 'on';
   const sync = useCloudStatus(company.id);
   const { manager } = useCloud();
   const syncText = syncLabel(sync);
@@ -320,6 +328,26 @@ function PaletteBody({
 
   const sections = useMemo<Section[]>(() => {
     const all = records ? [...fixed, ...records] : fixed;
+    // Last, whatever was found: Ask AI with what was typed.
+    const ai: Section[] = askAi
+      ? [
+          {
+            kind: 'action',
+            id: 'ai',
+            label: t('AI assistant'),
+            entries: [
+              makeEntry({
+                key: ASK_AI_KEY,
+                kind: 'action',
+                title: t('Ask AI…'),
+                subtitle: deferred.trim() || undefined,
+                to: '',
+                names: [],
+              }),
+            ],
+          },
+        ]
+      : [];
     if (!deferred.trim()) {
       const byKey = new Map(all.map((e) => [e.key, e]));
       const recentEntries = recent.map(
@@ -340,6 +368,7 @@ function PaletteBody({
       return [
         { kind: 'recent' as const, label: t(SECTION_LABELS.recent), entries: recentEntries },
         { kind: 'action' as const, label: t('Quick actions'), entries: quick },
+        ...ai,
       ].filter((s) => s.entries.length > 0);
     }
     // Sections in the order of their best result.
@@ -350,12 +379,15 @@ function PaletteBody({
       list.push(entry);
       map.set(entry.kind, list);
     }
-    return [...map.entries()].map(([kind, entries]) => ({
-      kind,
-      label: t(SECTION_LABELS[kind]),
-      entries,
-    }));
-  }, [fixed, records, deferred, recent]);
+    return [
+      ...[...map.entries()].map(([kind, entries]) => ({
+        kind,
+        label: t(SECTION_LABELS[kind]),
+        entries,
+      })),
+      ...ai,
+    ];
+  }, [fixed, records, deferred, recent, askAi]);
 
   const flat = useMemo(() => sections.flatMap((s) => s.entries), [sections]);
   const current = Math.min(active, Math.max(0, flat.length - 1));
@@ -370,6 +402,11 @@ function PaletteBody({
   const choose = (entry: SearchEntry | undefined) => {
     if (!entry) return;
     onClose();
+    if (entry.key === ASK_AI_KEY) {
+      // The panel opens with the question asked; never kept as a recent item.
+      openAssistant(query);
+      return;
+    }
     if (entry.key === LANGUAGE_KEY) {
       // Asks first when a form has unsaved changes.
       void switchLanguage(language === 'ar' ? 'en' : 'ar');
@@ -482,9 +519,13 @@ function PaletteBody({
           <Empty searching={searching} query={deferred} loading={!records && searching} />
         ) : (
           sections.map((section) => (
-            <div key={section.kind} role="group" aria-labelledby={`${listId}-${section.kind}`}>
+            <div
+              key={section.id ?? section.kind}
+              role="group"
+              aria-labelledby={`${listId}-${section.id ?? section.kind}`}
+            >
               <p
-                id={`${listId}-${section.kind}`}
+                id={`${listId}-${section.id ?? section.kind}`}
                 className="px-3 pt-3 pb-1.5 text-xs font-semibold text-slate-500"
               >
                 {section.label}
@@ -494,15 +535,17 @@ function PaletteBody({
                 const i = index;
                 const Icon =
                   icons.get(entry.key) ??
-                  (entry.key === LANGUAGE_KEY
-                    ? Languages
-                    : entry.key === THEME_KEY
-                      ? Palette
-                      : entry.key === THEME_SWITCH_KEY
-                        ? dark
-                          ? Sun
-                          : Moon
-                        : KIND_ICONS[entry.kind]);
+                  (entry.key === ASK_AI_KEY
+                    ? Sparkles
+                    : entry.key === LANGUAGE_KEY
+                      ? Languages
+                      : entry.key === THEME_KEY
+                        ? Palette
+                        : entry.key === THEME_SWITCH_KEY
+                          ? dark
+                            ? Sun
+                            : Moon
+                          : KIND_ICONS[entry.kind]);
                 return (
                   <div
                     key={entry.key}

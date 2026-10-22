@@ -14,6 +14,7 @@ import { BottomBar, NewSheet } from '@/features/shell/bottom-bar';
 import { isTypingTarget } from '@/features/shell/store';
 import { watchScrolling } from '@/features/shell/scrolling';
 import { CommandPalette } from '@/features/search/command-palette';
+import { AiAssistant } from '@/features/ai/assistant';
 import { ThemeMenu } from '@/features/theme/menu';
 import { ReadOnlyContext } from '@/components/ui/read-only';
 import { useRoleView, ViewOnlyBanner } from '@/features/cloud/role-gates';
@@ -189,6 +190,8 @@ export function AppLayout() {
       />
       <NewSheet open={newOpen} onOpenChange={setNewOpen} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} onOpenItem={setItemId} />
+      {/* Ask AI, once the company has the AI assistant switched on (Settings → AI assistant). */}
+      <AiAssistant />
       {itemId ? (
         <Suspense fallback={null}>
           <ItemOpener id={itemId} onClose={() => setItemId(null)} />
