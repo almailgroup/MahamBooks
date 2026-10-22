@@ -40,10 +40,19 @@ ALLOWED_ORIGINS = "https://mahamone.com"
 # The publishable key is public by design: it only names the project.
 SUPABASE_URL = "https://gagdyhintrxdkiqhahzh.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_KyVAkWtemw_XDnNK8ZKRpA_-5x4pk8d"
+# REQUIRED. The company whose members may use the AI service: its cloud id
+# (README step 2.0 shows how to find it). Anyone can create an account in the
+# app, so a sign-in alone is not enough. While this is empty the Worker
+# refuses every AI request ("The AI service is not set up yet").
+COMPANY_ID = ""
 # The longest answer, in tokens (Gemini counts its thinking in this too).
 MAX_OUTPUT_TOKENS = "8192"
 # The largest request the Worker accepts, in bytes (256 KB).
 MAX_BODY_BYTES = "262144"
+# Optional timeouts, in milliseconds (these are the defaults):
+# GENERATE_TIMEOUT_MS = "90000"     # /v1/generate: the whole answer
+# STREAM_START_TIMEOUT_MS = "30000" # /v1/stream: until the first byte
+# STREAM_IDLE_TIMEOUT_MS = "60000"  # /v1/stream: the longest pause
 
 # Per-user limit: 30 requests a minute for each signed-in person. Counted in
 # each Cloudflare location separately, so it is a guard against runaway loops,
@@ -77,6 +86,8 @@ ALLOWED_MODELS = "gemini-3.6-flash"
 ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
 SUPABASE_URL = "https://gagdyhintrxdkiqhahzh.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_KyVAkWtemw_XDnNK8ZKRpA_-5x4pk8d"
+# A test company's id, so the dev Worker never serves the real company's people.
+COMPANY_ID = ""
 MAX_OUTPUT_TOKENS = "8192"
 MAX_BODY_BYTES = "262144"
 

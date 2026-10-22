@@ -8,6 +8,11 @@
  * Supabase access token; the Worker checks the token, applies limits, and
  * calls Google with the key. The person's token is never sent to Google.
  *
+ * Who may use it: only signed-in members of one company (COMPANY_ID). The app
+ * lets anyone create an account, so being signed in is not enough: after
+ * Supabase confirms the token, the Worker asks Supabase, with the person's own
+ * token, whether they are a member of that company. Anyone else gets 403.
+ *
  * Routes
  *   GET  /health        No sign-in needed. Answers {ok: true, model}. Never secrets.
  *   POST /v1/generate   One whole answer, as JSON (Gemini's generateContent).
@@ -22,21 +27,26 @@
  *   {
  *     model?: string,             // one of ALLOWED_MODELS; GEMINI_MODEL if left out
  *     contents: Content[],        // required, as in the Gemini API
- *     systemInstruction?: Content,
- *     generationConfig?: object,  // maxOutputTokens is capped at MAX_OUTPUT_TOKENS
+ *     systemInstruction?: Content,          // text parts only
+ *     generationConfig?: object,  // allowlisted fields; maxOutputTokens capped, one candidate
  *     safetySettings?: object[],
  *     tools?: [{functionDeclarations: [...]}],  // function calling only
- *     toolConfig?: object
+ *     toolConfig?: {functionCallingConfig: {...}}
  *   }
- * Any other field is dropped. The answer is Gemini's own response body
- * (generate) or Gemini's own SSE events (stream).
+ * Any other top-level field is dropped. Inside these fields only the Gemini
+ * fields listed below (ALLOWED_* constants), in their camelCase spelling, are
+ * accepted; anything else is refused with bad_request. Google also accepts the
+ * snake_case spellings (file_data, max_output_tokens), so checking for blocked
+ * names would not be enough: what is sent to Google is rebuilt from the
+ * allowlists. The answer is Gemini's own response body (generate) or Gemini's
+ * own SSE events (stream).
  *
  * Errors are always JSON, {error: {code, message, status}}, where status is
- * the HTTP status and code is one of: unauthorized, forbidden_origin,
- * bad_request, payload_too_large, model_not_allowed, rate_limited,
- * upstream_error, upstream_timeout, not_found, internal. Once a stream has
- * started, a failure ends it with an SSE event named "error" whose data is the
- * same JSON. README.md explains each code.
+ * the HTTP status and code is one of: unauthorized, forbidden,
+ * forbidden_origin, bad_request, payload_too_large, model_not_allowed,
+ * rate_limited, upstream_error, upstream_timeout, not_found, internal. Once a
+ * stream has started, a failure ends it with an SSE event named "error" whose
+ * data is the same JSON. README.md explains each code.
  *
  * Logs hold metadata only (route, status, model, a hash of the user id,
  * duration, token counts). Prompts, answers, tokens and the key are never
@@ -59,17 +69,19 @@
  * @property {string} [ALLOWED_ORIGINS] Comma-separated web origins allowed by CORS.
  * @property {string} [SUPABASE_URL] The Supabase project that signs people in.
  * @property {string} [SUPABASE_PUBLISHABLE_KEY] Its publishable key (public by design).
+ * @property {string} [COMPANY_ID] The company whose members may use the service.
  * @property {string | number} [MAX_OUTPUT_TOKENS] Cap on generationConfig.maxOutputTokens.
  * @property {string | number} [MAX_BODY_BYTES] Largest request body accepted.
- * @property {string | number} [UPSTREAM_TIMEOUT_MS] How long to wait for Google's first byte.
+ * @property {string | number} [GENERATE_TIMEOUT_MS] Longest wait for a whole /v1/generate answer.
+ * @property {string | number} [STREAM_START_TIMEOUT_MS] Longest wait for a stream's first byte.
  * @property {string | number} [STREAM_IDLE_TIMEOUT_MS] Longest pause allowed inside a stream.
  * @property {RateLimiter} [AI_RATE_LIMITER] Per-user limit ([[ratelimits]] in wrangler.toml).
  */
 
 /**
- * @typedef {'unauthorized' | 'forbidden_origin' | 'bad_request' | 'payload_too_large'
- *   | 'model_not_allowed' | 'rate_limited' | 'upstream_error' | 'upstream_timeout'
- *   | 'not_found' | 'internal'} ErrorCode
+ * @typedef {'unauthorized' | 'forbidden' | 'forbidden_origin' | 'bad_request'
+ *   | 'payload_too_large' | 'model_not_allowed' | 'rate_limited' | 'upstream_error'
+ *   | 'upstream_timeout' | 'not_found' | 'internal'} ErrorCode
  */
 
 /** @typedef {Record<string, string | number | boolean | object | undefined>} LogEntry */
@@ -78,16 +90,27 @@ const GEMINI_MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/mode
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
-/** To Google's first byte. For generate that is the whole answer. */
-const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+/**
+ * generateContent sends nothing until the whole answer is written, so this
+ * is the time allowed for the whole answer (thinking included). Long answers
+ * should use /v1/stream.
+ */
+const DEFAULT_GENERATE_TIMEOUT_MS = 90_000;
+/** /v1/stream: the time allowed until Google's first byte. */
+const DEFAULT_STREAM_START_TIMEOUT_MS = 30_000;
 /** A stream may run as long as it keeps sending, with no pause longer than this. */
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
 
+/** For each call to Supabase (the sign-in check and the membership check). */
 const AUTH_TIMEOUT_MS = 5_000;
 /** A checked token is trusted for at most this long, and never past its expiry. */
 const AUTH_CACHE_MS = 60_000;
 const AUTH_CACHE_MAX_ENTRIES = 1_000;
 const MAX_TOKEN_LENGTH = 8_192;
+/** Supabase user ids are UUIDs; anything else is refused before it goes in a URL. */
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The app's company ids (companies_id_format in the Supabase migration). */
+const COMPANY_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 /** The period of the [[ratelimits]] binding in wrangler.toml, in seconds. */
 const RATE_LIMIT_RETRY_AFTER_S = 60;
@@ -99,6 +122,83 @@ const MAX_CONTENTS = 1_000;
  * the URL sent to Google.
  */
 const MODEL_NAME = /^[a-z0-9][a-z0-9.-]{0,79}$/;
+
+// What may be sent to Google. Every object below is rebuilt from these lists,
+// in Gemini's camelCase spelling only; any other key (including the snake_case
+// spellings Google also accepts, such as file_data or candidate_count) is
+// refused. Left out on purpose:
+//   fileData (and functionResponse.parts): makes Google fetch a file or video
+//     of any length itself, outside the body limit.
+//   candidateCount above 1, responseModalities, speechConfig: multiply the
+//     cost or produce images or audio.
+//   mediaResolution HIGH (generationConfig, or per part): more tokens per image.
+//   cachedContent, Google Search, URL context, code execution, retrievalConfig:
+//     send data elsewhere, bill separately, or read other people's caches.
+
+const ALLOWED_CONTENT_FIELDS = ['role', 'parts'];
+const ALLOWED_PART_FIELDS = [
+  'text',
+  'inlineData',
+  'functionCall',
+  'functionResponse',
+  'thought',
+  'thoughtSignature',
+];
+const ALLOWED_INLINE_FIELDS = ['mimeType', 'data'];
+const ALLOWED_FUNCTION_CALL_FIELDS = ['id', 'name', 'args'];
+const ALLOWED_FUNCTION_RESPONSE_FIELDS = ['id', 'name', 'response'];
+const ALLOWED_GENERATION_FIELDS = [
+  'temperature',
+  'topP',
+  'topK',
+  'maxOutputTokens',
+  'candidateCount',
+  'stopSequences',
+  'responseMimeType',
+  'responseSchema',
+  'responseJsonSchema',
+  'thinkingConfig',
+  'seed',
+  'presencePenalty',
+  'frequencyPenalty',
+  'mediaResolution',
+];
+const ALLOWED_THINKING_FIELDS = ['thinkingBudget', 'thinkingLevel', 'includeThoughts'];
+const ALLOWED_MEDIA_RESOLUTIONS = ['MEDIA_RESOLUTION_LOW', 'MEDIA_RESOLUTION_MEDIUM'];
+const ALLOWED_SAFETY_FIELDS = ['category', 'threshold', 'method'];
+const ALLOWED_TOOL_FIELDS = ['functionDeclarations'];
+const ONLY_FUNCTIONS = 'tools may only hold functionDeclarations.';
+const ALLOWED_FUNCTION_FIELDS = [
+  'name',
+  'description',
+  'behavior',
+  'parameters',
+  'parametersJsonSchema',
+  'response',
+  'responseJsonSchema',
+];
+const ALLOWED_TOOL_CONFIG_FIELDS = ['functionCallingConfig'];
+const ALLOWED_CALLING_CONFIG_FIELDS = ['mode', 'allowedFunctionNames'];
+
+/**
+ * Files sent inline (inlineData): pictures, PDFs and plain text. Audio and
+ * video are refused: a small, low-quality file can hold hours, and Google
+ * bills them by length, not size.
+ */
+const ALLOWED_INLINE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+  'text/plain',
+];
+/**
+ * Google bills each picture by a flat number of tokens whatever its size
+ * (and each PDF page), so many tiny pictures cost far more than their bytes.
+ */
+const MAX_INLINE_PARTS = 10;
 
 /** @type {Record<string, {name: 'health' | 'generate' | 'stream', method: string}>} */
 const ROUTES = {
@@ -116,6 +216,7 @@ const SECURITY_HEADERS = {
 /** @type {Record<ErrorCode, number>} */
 const DEFAULT_STATUS = {
   unauthorized: 401,
+  forbidden: 403,
   forbidden_origin: 403,
   bad_request: 400,
   payload_too_large: 413,
@@ -148,8 +249,11 @@ class ProxyError extends Error {
 /** @param {string} message */
 const badRequest = (message) => new ProxyError('bad_request', message);
 
-/** Checked tokens, keyed by the SHA-256 of the token: the token itself is never kept. */
-/** @type {Map<string, {userId: string, until: number}>} */
+/**
+ * Tokens that passed both checks (signed in, and a member of companyId), keyed
+ * by the SHA-256 of the token: the token itself is never kept.
+ * @type {Map<string, {userId: string, companyId: string, until: number}>}
+ */
 const authCache = new Map();
 
 /** For the tests only: the Worker never reads this. */
@@ -218,9 +322,11 @@ function readConfig(env) {
     origins: new Set(list(env.ALLOWED_ORIGINS).map(normalizeOrigin)),
     supabaseUrl: text(env.SUPABASE_URL).replace(/\/+$/, ''),
     supabaseKey: text(env.SUPABASE_PUBLISHABLE_KEY),
+    companyId: text(env.COMPANY_ID),
     maxOutputTokens: positiveInt(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
     maxBodyBytes: positiveInt(env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
-    upstreamTimeoutMs: positiveInt(env.UPSTREAM_TIMEOUT_MS, DEFAULT_UPSTREAM_TIMEOUT_MS),
+    generateTimeoutMs: positiveInt(env.GENERATE_TIMEOUT_MS, DEFAULT_GENERATE_TIMEOUT_MS),
+    streamStartMs: positiveInt(env.STREAM_START_TIMEOUT_MS, DEFAULT_STREAM_START_TIMEOUT_MS),
     streamIdleMs: positiveInt(env.STREAM_IDLE_TIMEOUT_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS),
     limiter: env.AI_RATE_LIMITER,
   };
@@ -269,6 +375,10 @@ function assertConfigured(config) {
   else if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(config.supabaseUrl))
     problem = 'SUPABASE_URL is not an https address';
   else if (!config.supabaseKey) problem = 'SUPABASE_PUBLISHABLE_KEY is not set';
+  // Without it anyone who creates an account could use the service, so the
+  // Worker refuses everyone until it is set.
+  else if (!COMPANY_ID.test(config.companyId))
+    problem = 'COMPANY_ID is missing or not a company id';
   if (problem) {
     throw new ProxyError('internal', 'The AI service is not set up yet.', { log: { problem } });
   }
@@ -281,8 +391,8 @@ function assertConfigured(config) {
 // this Worker's answers, so other websites can't build on it in their
 // visitors' browsers. Anything that isn't a browser (curl, a script, a server)
 // can send any Origin header, or none, and CORS does nothing to stop it. The
-// real gate is the sign-in check in authenticate() below, which every /v1
-// request must pass whatever its origin.
+// real gate is the sign-in check in authenticate() and the membership check in
+// authorize() below, which every /v1 request must pass whatever its origin.
 
 /**
  * @param {string | null} origin
@@ -328,7 +438,10 @@ async function handleAi(request, config, context) {
   const user = await authenticate(request, config);
   context.entry.user = await hashUserId(user.userId);
   context.entry.auth = user.cached ? 'cache' : 'checked';
+  // Before the membership check, so an account outside the company can't
+  // make the Worker call Supabase more than the limit allows either.
   await enforceRateLimit(config.limiter, user.userId);
+  await authorize(user, config);
   const input = await readJsonBody(request, config.maxBodyBytes);
   const { model, body } = buildGeminiRequest(input, config);
   context.entry.model = model;
@@ -341,12 +454,23 @@ async function handleAi(request, config, context) {
 // Authentication: the signed-in person's Supabase access token
 
 /**
+ * @typedef {object} SignedIn
+ * @property {string} userId The Supabase user id.
+ * @property {boolean} cached True when this token passed both checks (signed
+ *   in, and a member of COMPANY_ID) less than a minute ago.
+ * @property {string} token The access token, only for the membership check.
+ * @property {string} cacheKey The SHA-256 of the token.
+ * @property {number} until How long a positive result may be remembered.
+ */
+
+/**
  * Checks the Bearer token with Supabase (GET /auth/v1/user), which works for
- * both the older HS256 tokens and the newer asymmetric ones. A positive answer
- * is remembered for at most AUTH_CACHE_MS, and never past the token's expiry.
+ * both the older HS256 tokens and the newer asymmetric ones. A token that has
+ * passed both this and authorize() is remembered for at most AUTH_CACHE_MS,
+ * and never past its expiry.
  * @param {Request} request
  * @param {Config} config
- * @returns {Promise<{userId: string, cached: boolean}>}
+ * @returns {Promise<SignedIn>}
  */
 async function authenticate(request, config) {
   const header = request.headers.get('Authorization') ?? '';
@@ -358,26 +482,12 @@ async function authenticate(request, config) {
   const cacheKey = await sha256Hex(token);
 
   const cached = authCache.get(cacheKey);
-  if (cached && cached.until > Date.now()) return { userId: cached.userId, cached: true };
+  if (cached && cached.until > Date.now() && cached.companyId === config.companyId) {
+    return { userId: cached.userId, cached: true, token, cacheKey, until: cached.until };
+  }
   if (cached) authCache.delete(cacheKey);
 
-  /** @type {Response} */
-  let response;
-  try {
-    response = await fetch(`${config.supabaseUrl}/auth/v1/user`, {
-      headers: { apikey: config.supabaseKey, Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (errorName(error) === 'TimeoutError') {
-      throw new ProxyError('upstream_timeout', 'Checking your sign-in took too long. Try again.', {
-        log: { failure: 'auth timeout' },
-      });
-    }
-    throw new ProxyError('upstream_error', 'Could not check your sign-in. Try again.', {
-      log: { failure: `auth ${errorName(error)}` },
-    });
-  }
+  const response = await askSupabase(`${config.supabaseUrl}/auth/v1/user`, token, config, 'auth');
 
   // Supabase answers 401 or 403 for a bad or expired token (400 for some
   // malformed ones, 404 when the account was deleted).
@@ -389,13 +499,7 @@ async function authenticate(request, config) {
         log: { problem: 'Supabase refused SUPABASE_PUBLISHABLE_KEY' },
       });
     }
-    throw new ProxyError(
-      'unauthorized',
-      'Your sign-in has expired or is not valid. Sign in again.',
-      {
-        log: { authStatus: response.status },
-      },
-    );
+    throw expiredSignIn({ authStatus: response.status });
   }
   if (!response.ok) {
     await discard(response);
@@ -406,17 +510,111 @@ async function authenticate(request, config) {
 
   /** @type {any} */
   const user = await response.json().catch(() => null);
-  if (!user || typeof user.id !== 'string' || user.id === '') {
+  if (!user || typeof user.id !== 'string' || !USER_ID.test(user.id)) {
     throw new ProxyError('unauthorized', 'Your sign-in is not valid. Sign in again.');
   }
   if (user.is_anonymous === true) {
     throw new ProxyError('unauthorized', 'Sign in with your account to use the AI assistant.');
   }
 
-  const expiresAt = tokenExpiry(token);
-  const until = Math.min(Date.now() + AUTH_CACHE_MS, expiresAt ?? 0);
-  if (until > Date.now()) remember(cacheKey, { userId: user.id, until });
-  return { userId: user.id, cached: false };
+  const until = Math.min(Date.now() + AUTH_CACHE_MS, tokenExpiry(token) ?? 0);
+  return { userId: user.id, cached: false, token, cacheKey, until };
+}
+
+/**
+ * Only members of the company in COMPANY_ID may use the service. The app lets
+ * anyone create an account (and then a company of their own), so a valid
+ * sign-in alone would let strangers spend the company's Gemini budget.
+ *
+ * The question goes to Supabase's REST API with the person's own token, so
+ * the database's row-level security answers it: a member can read their
+ * company's rows in company_members, and nobody else can. No service key is
+ * needed. A positive answer is remembered together with the sign-in.
+ * @param {SignedIn} user
+ * @param {Config} config
+ */
+async function authorize(user, config) {
+  if (user.cached) return;
+  const query = new URLSearchParams({
+    select: 'role',
+    company_id: `eq.${config.companyId}`,
+    user_id: `eq.${user.userId}`,
+    limit: '1',
+  });
+  const response = await askSupabase(
+    `${config.supabaseUrl}/rest/v1/company_members?${query}`,
+    user.token,
+    config,
+    'membership',
+  );
+  if (response.status === 401) {
+    await discard(response);
+    throw expiredSignIn({ memberStatus: 401 });
+  }
+  if (!response.ok) {
+    await discard(response);
+    throw new ProxyError('upstream_error', 'Could not check your access. Try again.', {
+      log: { memberStatus: response.status },
+    });
+  }
+  /** @type {unknown} */
+  const rows = await response.json().catch(() => null);
+  if (!Array.isArray(rows)) {
+    throw new ProxyError('upstream_error', 'Could not check your access. Try again.', {
+      log: { memberStatus: response.status, failure: 'membership answer not a list' },
+    });
+  }
+  if (rows.length === 0) {
+    throw new ProxyError(
+      'forbidden',
+      'This account is not a member of the company that uses this AI service.',
+    );
+  }
+  if (user.until > Date.now()) {
+    remember(user.cacheKey, {
+      userId: user.userId,
+      companyId: config.companyId,
+      until: user.until,
+    });
+  }
+}
+
+/**
+ * GET from Supabase with the person's token and the publishable key.
+ * @param {string} url
+ * @param {string} token
+ * @param {Config} config
+ * @param {'auth' | 'membership'} what For the log line.
+ */
+async function askSupabase(url, token, config, what) {
+  try {
+    return await fetch(url, {
+      headers: {
+        apikey: config.supabaseKey,
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (errorName(error) === 'TimeoutError') {
+      throw new ProxyError('upstream_timeout', 'Checking your sign-in took too long. Try again.', {
+        log: { failure: `${what} timeout` },
+      });
+    }
+    throw new ProxyError('upstream_error', 'Could not check your sign-in. Try again.', {
+      log: { failure: `${what} ${errorName(error)}` },
+    });
+  }
+}
+
+/** @param {LogEntry} log */
+function expiredSignIn(log) {
+  return new ProxyError(
+    'unauthorized',
+    'Your sign-in has expired or is not valid. Sign in again.',
+    { log },
+  );
 }
 
 /**
@@ -440,7 +638,7 @@ function tokenExpiry(token) {
 
 /**
  * @param {string} key
- * @param {{userId: string, until: number}} value
+ * @param {{userId: string, companyId: string, until: number}} value
  */
 function remember(key, value) {
   if (authCache.size >= AUTH_CACHE_MAX_ENTRIES) {
@@ -557,8 +755,10 @@ async function readJsonBody(request, maxBytes) {
 }
 
 /**
- * Keeps only the fields the app needs, with the model checked against the
- * allowlist and the answer length capped.
+ * Builds what is sent to Google from the fields the app needs, with the model
+ * checked against the allowlist and the answer length capped. Every object is
+ * rebuilt from the ALLOWED_* lists above; nothing from the request is passed
+ * on without going through them.
  * @param {unknown} input
  * @param {Config} config
  * @returns {{model: string, body: Record<string, unknown>}}
@@ -580,58 +780,51 @@ function buildGeminiRequest(input, config) {
   }
   if (contents.length > MAX_CONTENTS)
     throw badRequest(`contents may have at most ${MAX_CONTENTS} items.`);
-  for (const content of contents) checkContent(content, 'contents');
-
+  const files = { count: 0 };
   /** @type {Record<string, unknown>} */
-  const body = { contents };
+  const body = { contents: contents.map((content) => cleanContent(content, files)) };
 
   if (input.systemInstruction !== undefined) {
-    checkContent(input.systemInstruction, 'systemInstruction');
-    body.systemInstruction = input.systemInstruction;
+    body.systemInstruction = cleanSystemInstruction(input.systemInstruction);
   }
-
-  if (input.generationConfig !== undefined && !isObject(input.generationConfig)) {
-    throw badRequest('generationConfig must be an object.');
-  }
-  /** @type {Record<string, unknown>} */
-  const generationConfig = { ...(isObject(input.generationConfig) ? input.generationConfig : {}) };
-  const asked = generationConfig.maxOutputTokens;
-  if (asked === undefined) {
-    generationConfig.maxOutputTokens = config.maxOutputTokens;
-  } else if (typeof asked !== 'number' || !Number.isInteger(asked) || asked < 1) {
-    throw badRequest('generationConfig.maxOutputTokens must be a whole number above 0.');
-  } else {
-    generationConfig.maxOutputTokens = Math.min(asked, config.maxOutputTokens);
-  }
-  // One answer per request: more candidates would multiply the cost.
-  if (generationConfig.candidateCount !== undefined) generationConfig.candidateCount = 1;
-  body.generationConfig = generationConfig;
+  body.generationConfig = cleanGenerationConfig(input.generationConfig, config.maxOutputTokens);
 
   if (input.safetySettings !== undefined) {
-    if (!Array.isArray(input.safetySettings) || !input.safetySettings.every(isObject)) {
+    if (!Array.isArray(input.safetySettings)) {
       throw badRequest('safetySettings must be a list of objects.');
     }
-    body.safetySettings = input.safetySettings;
+    body.safetySettings = input.safetySettings.map((setting) =>
+      pick(setting, ALLOWED_SAFETY_FIELDS, 'Each item in safetySettings'),
+    );
   }
 
   if (input.tools !== undefined) {
     // Function calling only. Google Search, URL context and code execution
     // would send data to other services or bill separately, so they are refused.
-    const onlyFunctions =
-      Array.isArray(input.tools) &&
-      input.tools.every(
-        (tool) =>
-          isObject(tool) &&
-          Array.isArray(tool.functionDeclarations) &&
-          Object.keys(tool).every((key) => key === 'functionDeclarations'),
-      );
-    if (!onlyFunctions) throw badRequest('tools may only hold functionDeclarations.');
-    body.tools = input.tools;
+    if (!Array.isArray(input.tools)) throw badRequest(ONLY_FUNCTIONS);
+    body.tools = input.tools.map((tool) => {
+      const clean = pick(tool, ALLOWED_TOOL_FIELDS, 'Each item in tools', ONLY_FUNCTIONS);
+      if (!Array.isArray(clean.functionDeclarations)) throw badRequest(ONLY_FUNCTIONS);
+      clean.functionDeclarations = clean.functionDeclarations.map((declaration) => {
+        const fn = pick(declaration, ALLOWED_FUNCTION_FIELDS, 'Each function declaration');
+        if (typeof fn.name !== 'string')
+          throw badRequest('Each function declaration needs a name.');
+        return fn;
+      });
+      return clean;
+    });
   }
 
   if (input.toolConfig !== undefined) {
-    if (!isObject(input.toolConfig)) throw badRequest('toolConfig must be an object.');
-    body.toolConfig = input.toolConfig;
+    const toolConfig = pick(input.toolConfig, ALLOWED_TOOL_CONFIG_FIELDS, 'toolConfig');
+    if (toolConfig.functionCallingConfig !== undefined) {
+      toolConfig.functionCallingConfig = pick(
+        toolConfig.functionCallingConfig,
+        ALLOWED_CALLING_CONFIG_FIELDS,
+        'toolConfig.functionCallingConfig',
+      );
+    }
+    body.toolConfig = toolConfig;
   }
 
   return { model, body };
@@ -639,21 +832,182 @@ function buildGeminiRequest(input, config) {
 
 /**
  * @param {unknown} content
- * @param {string} where
+ * @param {{count: number}} files Inline files seen so far in the request.
  */
-function checkContent(content, where) {
-  if (!isObject(content) || !Array.isArray(content.parts)) {
+function cleanContent(content, files) {
+  const where = 'contents';
+  const clean = pick(content, ALLOWED_CONTENT_FIELDS, `Each item in ${where}`);
+  if (clean.role !== undefined && clean.role !== 'user' && clean.role !== 'model') {
+    throw badRequest('role must be "user" or "model".');
+  }
+  if (!Array.isArray(clean.parts)) {
     throw badRequest(`Each item in ${where} must be an object with a list of parts.`);
   }
-  for (const part of content.parts) {
-    if (!isObject(part)) throw badRequest(`Each part in ${where} must be an object.`);
+  clean.parts = clean.parts.map((part) => cleanPart(part, where, files));
+  return clean;
+}
+
+/**
+ * @param {unknown} part
+ * @param {string} where
+ * @param {{count: number}} files
+ */
+function cleanPart(part, where, files) {
+  if (isObject(part) && (part.fileData !== undefined || part.file_data !== undefined)) {
     // A file link makes Google fetch a file of any size, outside the body limit.
-    if (part.fileData !== undefined) {
+    throw badRequest('File links (fileData) are not accepted. Send the file inline (inlineData).');
+  }
+  const clean = pick(part, ALLOWED_PART_FIELDS, `Each part in ${where}`);
+  if (clean.text !== undefined && typeof clean.text !== 'string') {
+    throw badRequest('text must be a string.');
+  }
+  if (clean.thought !== undefined && typeof clean.thought !== 'boolean') {
+    throw badRequest('thought must be true or false.');
+  }
+  if (clean.thoughtSignature !== undefined && typeof clean.thoughtSignature !== 'string') {
+    throw badRequest('thoughtSignature must be a string.');
+  }
+  if (clean.inlineData !== undefined) {
+    files.count += 1;
+    if (files.count > MAX_INLINE_PARTS) {
+      throw badRequest(`A request may hold at most ${MAX_INLINE_PARTS} files (inlineData).`);
+    }
+    const inline = pick(clean.inlineData, ALLOWED_INLINE_FIELDS, 'inlineData');
+    const type = typeof inline.mimeType === 'string' ? inline.mimeType.trim().toLowerCase() : '';
+    if (!ALLOWED_INLINE_TYPES.includes(type)) {
+      throw badRequest(
+        'inlineData may only hold a picture (PNG, JPEG, WebP, HEIC), a PDF or plain text.',
+      );
+    }
+    if (typeof inline.data !== 'string' || inline.data === '') {
+      throw badRequest('inlineData.data must be the file as base64 text.');
+    }
+    clean.inlineData = { mimeType: type, data: inline.data };
+  }
+  if (clean.functionCall !== undefined) {
+    const call = pick(clean.functionCall, ALLOWED_FUNCTION_CALL_FIELDS, 'functionCall');
+    if (typeof call.name !== 'string') throw badRequest('functionCall needs a name.');
+    if (call.args !== undefined && !isObject(call.args)) {
+      throw badRequest('functionCall.args must be an object.');
+    }
+    clean.functionCall = call;
+  }
+  if (clean.functionResponse !== undefined) {
+    // Not functionResponse.parts: those can carry file links too.
+    const reply = pick(
+      clean.functionResponse,
+      ALLOWED_FUNCTION_RESPONSE_FIELDS,
+      'functionResponse',
+    );
+    if (typeof reply.name !== 'string') throw badRequest('functionResponse needs a name.');
+    if (reply.response !== undefined && !isObject(reply.response)) {
+      throw badRequest('functionResponse.response must be an object.');
+    }
+    clean.functionResponse = reply;
+  }
+  return clean;
+}
+
+/**
+ * The system instruction: text parts only.
+ * @param {unknown} instruction
+ */
+function cleanSystemInstruction(instruction) {
+  const where = 'systemInstruction';
+  const clean = pick(instruction, ALLOWED_CONTENT_FIELDS, where);
+  if (!Array.isArray(clean.parts)) {
+    throw badRequest(`${where} must be an object with a list of parts.`);
+  }
+  clean.parts = clean.parts.map((part) => {
+    if (isObject(part) && (part.fileData !== undefined || part.file_data !== undefined)) {
       throw badRequest(
         'File links (fileData) are not accepted. Send the file inline (inlineData).',
       );
     }
+    const text = pick(part, ['text'], `Each part in ${where}`, 'Only text is accepted there.');
+    if (typeof text.text !== 'string') throw badRequest(`Each part in ${where} must be text.`);
+    return text;
+  });
+  return clean;
+}
+
+/**
+ * @param {unknown} input
+ * @param {number} maxOutputTokens The cap (MAX_OUTPUT_TOKENS).
+ */
+function cleanGenerationConfig(input, maxOutputTokens) {
+  if (input !== undefined && !isObject(input)) {
+    throw badRequest('generationConfig must be an object.');
   }
+  const clean = pick(input ?? {}, ALLOWED_GENERATION_FIELDS, 'generationConfig');
+
+  const asked = clean.maxOutputTokens;
+  if (asked === undefined) {
+    clean.maxOutputTokens = maxOutputTokens;
+  } else if (!isWholeNumber(asked) || asked < 1) {
+    throw badRequest('generationConfig.maxOutputTokens must be a whole number above 0.');
+  } else {
+    clean.maxOutputTokens = Math.min(asked, maxOutputTokens);
+  }
+  // One answer per request, always: more candidates would multiply the cost.
+  clean.candidateCount = 1;
+
+  if (clean.mediaResolution !== undefined) {
+    if (!ALLOWED_MEDIA_RESOLUTIONS.includes(/** @type {any} */ (clean.mediaResolution))) {
+      throw badRequest(
+        'generationConfig.mediaResolution may only be MEDIA_RESOLUTION_LOW or MEDIA_RESOLUTION_MEDIUM.',
+      );
+    }
+  }
+
+  if (clean.thinkingConfig !== undefined) {
+    const thinking = pick(
+      clean.thinkingConfig,
+      ALLOWED_THINKING_FIELDS,
+      'generationConfig.thinkingConfig',
+    );
+    const budget = thinking.thinkingBudget;
+    if (budget !== undefined) {
+      // -1 lets the model decide; 0 turns thinking off where the model allows it.
+      if (!isWholeNumber(budget) || budget < -1) {
+        throw badRequest('thinkingConfig.thinkingBudget must be a whole number, -1 or more.');
+      }
+      thinking.thinkingBudget = Math.min(budget, maxOutputTokens);
+    }
+    clean.thinkingConfig = thinking;
+  }
+  return clean;
+}
+
+/**
+ * A copy of `source` with only the `allowed` keys, refusing any other key
+ * rather than dropping it, so the app learns at once that Google never saw it.
+ * @param {unknown} source
+ * @param {readonly string[]} allowed
+ * @param {string} where What the object is, for the error message.
+ * @param {string} [hint] Added to the message for an unknown key.
+ * @returns {Record<string, any>}
+ */
+function pick(source, allowed, where, hint) {
+  if (!isObject(source)) throw badRequest(`${where} must be an object.`);
+  /** @type {Record<string, any>} */
+  const clean = {};
+  for (const key of Object.keys(source)) {
+    if (!allowed.includes(key)) {
+      const name = /^[A-Za-z0-9_]{1,40}$/.test(key) ? `"${key}"` : 'that field';
+      throw badRequest(`${where} may not hold ${name}.${hint ? ` ${hint}` : ''}`);
+    }
+    clean[key] = source[key];
+  }
+  return clean;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is number}
+ */
+function isWholeNumber(value) {
+  return typeof value === 'number' && Number.isInteger(value);
 }
 
 /**
@@ -673,13 +1027,13 @@ function isObject(value) {
 class UpstreamCall {
   /**
    * @param {Request} request
-   * @param {number} firstByteMs
+   * @param {number} timeoutMs Until stopTimer() or done() is called.
    */
-  constructor(request, firstByteMs) {
+  constructor(request, timeoutMs) {
     this.controller = new AbortController();
     /** @type {'timeout' | 'client' | null} */
     this.reason = null;
-    this.timer = setTimeout(() => this.abort('timeout'), firstByteMs);
+    this.timer = setTimeout(() => this.abort('timeout'), timeoutMs);
     this.clientSignal = request.signal;
     this.onClientGone = () => this.abort('client');
     if (this.clientSignal?.aborted) this.abort('client');
@@ -752,6 +1106,8 @@ function callGemini(model, stream, body, apiKey, signal) {
 
 /**
  * POST /v1/generate: waits for the whole answer and returns Gemini's JSON.
+ * Google sends nothing until the answer is complete, so GENERATE_TIMEOUT_MS
+ * covers the whole call, reading the answer included.
  * @param {Request} request
  * @param {Config} config
  * @param {string} model
@@ -759,7 +1115,7 @@ function callGemini(model, stream, body, apiKey, signal) {
  * @param {{cors: Record<string, string>, entry: LogEntry}} context
  */
 async function generateAnswer(request, config, model, body, context) {
-  const call = new UpstreamCall(request, config.upstreamTimeoutMs);
+  const call = new UpstreamCall(request, config.generateTimeoutMs);
   try {
     const upstream = await callGemini(model, false, body, config.apiKey, call.signal);
     if (!upstream.ok) throw await upstreamFailure(upstream, config.apiKey);
@@ -785,8 +1141,9 @@ async function generateAnswer(request, config, model, body, context) {
 
 /**
  * POST /v1/stream: passes Gemini's Server-Sent Events through as they come.
- * Until Google's first byte arrives a failure is an ordinary JSON error; after
- * that, the stream ends with an "error" event.
+ * Until Google's first byte arrives (at most STREAM_START_TIMEOUT_MS) a
+ * failure is an ordinary JSON error; after that, the stream ends with an
+ * "error" event, and only pauses longer than STREAM_IDLE_TIMEOUT_MS end it.
  * @param {Request} request
  * @param {Config} config
  * @param {string} model
@@ -795,7 +1152,7 @@ async function generateAnswer(request, config, model, body, context) {
  *   deferred: {log: boolean}}} context
  */
 async function streamAnswer(request, config, model, body, context) {
-  const call = new UpstreamCall(request, config.upstreamTimeoutMs);
+  const call = new UpstreamCall(request, config.streamStartMs);
   /** @type {ReadableStreamDefaultReader<Uint8Array> | undefined} */
   let reader;
   /** @type {Uint8Array} */

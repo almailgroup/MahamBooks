@@ -10,6 +10,9 @@ const SUPABASE_URL = 'https://project-ref.supabase.co';
 const PUBLISHABLE = 'sb_publishable_test-only';
 const APP = 'https://mahamone.com';
 const WORKER = 'https://maham-ai-proxy.example.workers.dev';
+const COMPANY = 'maham-company-0001';
+const USER_1 = '0f8fad5b-d9cb-469f-a165-70867728950e';
+const USER_2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models/';
 /** Marks text that must never appear in a log line. */
 const PROMPT = 'PRIVATE-PROMPT What is the salary of employee 4471?';
@@ -31,6 +34,10 @@ let worker;
 let testing;
 /** token -> the user Supabase answers with (or a Response to send instead). */
 let users;
+/** "companyId userId" for each member; what row-level security lets a member read. */
+let members;
+/** Replaces the fake company_members answer when set. */
+let membership;
 /** Answers the fake Google; replaced per test. */
 let gemini;
 let calls;
@@ -43,8 +50,10 @@ beforeEach(async () => {
   issued = [];
   calls = [];
   logs = [];
-  TOKEN = jwt({ sub: 'user-1', exp: nowSeconds() + 3600 });
-  users = new Map([[TOKEN, { id: 'user-1', aud: 'authenticated', is_anonymous: false }]]);
+  TOKEN = jwt({ sub: USER_1, exp: nowSeconds() + 3600 });
+  users = new Map([[TOKEN, { id: USER_1, aud: 'authenticated', is_anonymous: false }]]);
+  members = new Set([`${COMPANY} ${USER_1}`, `${COMPANY} ${USER_2}`]);
+  membership = undefined;
   gemini = () => Response.json(geminiAnswer());
   vi.stubGlobal('fetch', vi.fn(fakeFetch));
   for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
@@ -61,8 +70,9 @@ afterEach(() => {
   expect(all).not.toContain(KEY);
   for (const token of issued) expect(all).not.toContain(token);
   expect(all).not.toContain('PRIVATE-');
-  expect(all).not.toContain('user-1');
-  expect(all).not.toContain('user-2');
+  expect(all).not.toContain(USER_1);
+  expect(all).not.toContain(USER_2);
+  expect(all).not.toContain(COMPANY);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -86,11 +96,27 @@ async function fakeFetch(input, init = {}) {
       ? Response.json(user)
       : Response.json({ code: 403, error_code: 'bad_jwt', msg: 'invalid JWT' }, { status: 403 });
   }
+  if (url.startsWith(`${SUPABASE_URL}/rest/v1/company_members?`)) {
+    if (membership) return membership(call);
+    // Like PostgREST with row-level security: the token's own user, and only
+    // rows of a company that user is a member of.
+    const token = (call.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
+    const user = users.get(token);
+    if (!user?.id) return Response.json({ code: 'PGRST301', message: 'JWT' }, { status: 401 });
+    const query = new URL(url).searchParams;
+    const company = (query.get('company_id') ?? '').replace(/^eq\./, '');
+    const member = (query.get('user_id') ?? '').replace(/^eq\./, '');
+    const visible =
+      members.has(`${company} ${user.id}`) && members.has(`${company} ${member}`) ? 1 : 0;
+    return Response.json(visible ? [{ role: 'staff' }] : []);
+  }
   if (url.startsWith(GEMINI)) return gemini(call);
   throw new Error(`Unexpected fetch to ${url}`);
 }
 
 const supabaseCalls = () => calls.filter((call) => call.url.startsWith(SUPABASE_URL));
+const authCalls = () => calls.filter((call) => call.url === `${SUPABASE_URL}/auth/v1/user`);
+const memberCalls = () => calls.filter((call) => call.url.includes('/rest/v1/company_members'));
 const geminiCalls = () => calls.filter((call) => call.url.startsWith(GEMINI));
 const geminiBody = (index = 0) => JSON.parse(geminiCalls()[index].body);
 
@@ -102,6 +128,7 @@ function makeEnv(overrides = {}) {
     ALLOWED_ORIGINS: 'https://mahamone.com',
     SUPABASE_URL,
     SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE,
+    COMPANY_ID: COMPANY,
     MAX_OUTPUT_TOKENS: '1024',
     ...overrides,
   };
@@ -426,8 +453,8 @@ describe('sign-in check', () => {
   });
 
   it('refuses a token Supabase rejects (401 or 403)', async () => {
-    const bad = jwt({ sub: 'user-2', exp: nowSeconds() + 3600 });
-    const expired = jwt({ sub: 'user-2', exp: nowSeconds() + 3600 });
+    const bad = jwt({ sub: USER_2, exp: nowSeconds() + 3600 });
+    const expired = jwt({ sub: USER_2, exp: nowSeconds() + 3600 });
     users.set(expired, Response.json({ code: 401, msg: 'token is expired' }, { status: 401 }));
     for (const token of [bad, expired]) {
       const response = await send('/v1/generate', { token });
@@ -440,7 +467,7 @@ describe('sign-in check', () => {
   it('checks a valid token with Supabase, with the publishable key', async () => {
     const response = await send('/v1/generate');
     expect(response.status).toBe(200);
-    const [check] = supabaseCalls();
+    const [check] = authCalls();
     expect(check.url).toBe(`${SUPABASE_URL}/auth/v1/user`);
     expect(check.method).toBe('GET');
     expect(check.headers.get('apikey')).toBe(PUBLISHABLE);
@@ -454,10 +481,11 @@ describe('sign-in check', () => {
     });
     expect(response.status).toBe(200);
     expect(supabaseCalls()[0].url).toBe(`${SUPABASE_URL}/auth/v1/user`);
+    expect(supabaseCalls()[1].url).toMatch(`${SUPABASE_URL}/rest/v1/company_members?`);
   });
 
   it('refuses anonymous Supabase users', async () => {
-    users.set(TOKEN, { id: 'user-1', is_anonymous: true });
+    users.set(TOKEN, { id: USER_1, is_anonymous: true });
     const response = await send('/v1/generate');
     expect(response.status).toBe(401);
     expect(geminiCalls()).toHaveLength(0);
@@ -519,7 +547,8 @@ describe('sign-in cache', () => {
     expect((await send('/v1/generate')).status).toBe(200);
     now += 30_000;
     expect((await send('/v1/generate')).status).toBe(200);
-    expect(supabaseCalls()).toHaveLength(1);
+    expect(authCalls()).toHaveLength(1);
+    expect(memberCalls()).toHaveLength(1);
     expect(logLines().map((line) => line.auth)).toEqual(['checked', 'cache']);
   });
 
@@ -527,35 +556,36 @@ describe('sign-in cache', () => {
     await send('/v1/generate');
     now += 60_001;
     await send('/v1/generate');
-    expect(supabaseCalls()).toHaveLength(2);
+    expect(authCalls()).toHaveLength(2);
+    expect(memberCalls()).toHaveLength(2);
   });
 
   it('never trusts a token past its expiry, even within 60 seconds', async () => {
-    const shortLived = jwt({ sub: 'user-2', exp: Math.floor(now / 1000) + 10 });
-    users.set(shortLived, { id: 'user-2' });
+    const shortLived = jwt({ sub: USER_2, exp: Math.floor(now / 1000) + 10 });
+    users.set(shortLived, { id: USER_2 });
     await send('/v1/generate', { token: shortLived });
     const [entry] = testing.authCache.values();
     expect(entry.until).toBeLessThanOrEqual((Math.floor(now / 1000) + 10) * 1000);
     now += 11_000;
     await send('/v1/generate', { token: shortLived });
-    expect(supabaseCalls()).toHaveLength(2);
+    expect(authCalls()).toHaveLength(2);
   });
 
   it('does not cache a token without an expiry', async () => {
-    const noExp = jwt({ sub: 'user-2' });
-    users.set(noExp, { id: 'user-2' });
+    const noExp = jwt({ sub: USER_2 });
+    users.set(noExp, { id: USER_2 });
     await send('/v1/generate', { token: noExp });
     await send('/v1/generate', { token: noExp });
-    expect(supabaseCalls()).toHaveLength(2);
+    expect(authCalls()).toHaveLength(2);
     expect(testing.authCache.size).toBe(0);
   });
 
   it('does not cache a refusal', async () => {
-    const bad = jwt({ sub: 'user-2', exp: nowSeconds() + 3600 });
+    const bad = jwt({ sub: USER_2, exp: nowSeconds() + 3600 });
     await send('/v1/generate', { token: bad });
-    users.set(bad, { id: 'user-2' });
+    users.set(bad, { id: USER_2 });
     expect((await send('/v1/generate', { token: bad })).status).toBe(200);
-    expect(supabaseCalls()).toHaveLength(2);
+    expect(authCalls()).toHaveLength(2);
   });
 
   it('keys the cache by a SHA-256 hash of the token, never the token', async () => {
@@ -564,6 +594,146 @@ describe('sign-in cache', () => {
     expect(keys).toEqual([await sha256Hex(TOKEN)]);
     expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify([...testing.authCache.entries()])).not.toContain(TOKEN);
+  });
+});
+
+describe('company membership (COMPANY_ID)', () => {
+  it("asks Supabase, with the person's own token, whether they are a member", async () => {
+    expect((await send('/v1/generate')).status).toBe(200);
+    const [check] = memberCalls();
+    const url = new URL(check.url);
+    expect(url.pathname).toBe('/rest/v1/company_members');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      select: 'role',
+      company_id: `eq.${COMPANY}`,
+      user_id: `eq.${USER_1}`,
+      limit: '1',
+    });
+    expect(check.method).toBe('GET');
+    expect(check.headers.get('apikey')).toBe(PUBLISHABLE);
+    expect(check.headers.get('Authorization')).toBe(`Bearer ${TOKEN}`);
+    expect([...check.headers.values()].join(' ')).not.toContain(KEY);
+    // The sign-in check comes first: its user id is the one asked about.
+    expect(supabaseCalls().map((call) => new URL(call.url).pathname)).toEqual([
+      '/auth/v1/user',
+      '/rest/v1/company_members',
+    ]);
+  });
+
+  it('refuses a signed-in account that is not a member, with 403 forbidden', async () => {
+    // Anyone can create an account in the app; that alone must not be enough.
+    const stranger = jwt({ sub: 'a5c8f4e2-0b7d-4e1a-9c3f-2d6b8e0f1a4c', exp: nowSeconds() + 3600 });
+    users.set(stranger, { id: 'a5c8f4e2-0b7d-4e1a-9c3f-2d6b8e0f1a4c', is_anonymous: false });
+    for (const path of ['/v1/generate', '/v1/stream']) {
+      const response = await send(path, { token: stranger });
+      expect(response.status).toBe(403);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe(APP);
+      expect(await errorOf(response)).toEqual({
+        code: 'forbidden',
+        message: 'This account is not a member of the company that uses this AI service.',
+        status: 403,
+      });
+    }
+    expect(geminiCalls()).toHaveLength(0);
+    expect(logLines().map((line) => line.code)).toEqual(['forbidden', 'forbidden']);
+  });
+
+  it('refuses a member of another company', async () => {
+    members = new Set([`other-company-0001 ${USER_1}`]);
+    const response = await send('/v1/generate');
+    expect(response.status).toBe(403);
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it.each([undefined, '', 'short', 'has spaces in it', 'x'.repeat(65), 'a/../../b-c'])(
+    'refuses everyone when COMPANY_ID is %j, without asking anyone',
+    async (companyId) => {
+      const response = await send('/v1/generate', { env: makeEnv({ COMPANY_ID: companyId }) });
+      expect(response.status).toBe(500);
+      expect(await errorOf(response)).toEqual({
+        code: 'internal',
+        message: 'The AI service is not set up yet.',
+        status: 500,
+      });
+      expect(calls).toHaveLength(0);
+      expect(logLines()[0].problem).toMatch(/COMPANY_ID/);
+    },
+  );
+
+  it('treats a 401 from the membership check as an expired sign-in', async () => {
+    membership = () => Response.json({ code: 'PGRST303', message: 'JWT expired' }, { status: 401 });
+    const response = await send('/v1/generate');
+    expect(response.status).toBe(401);
+    expect((await errorOf(response)).code).toBe('unauthorized');
+    expect(logLines()[0]).toMatchObject({ memberStatus: 401 });
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ['a 500', () => new Response('oops', { status: 500 }), 502, 'upstream_error'],
+    ['a 403', () => Response.json({ code: '42501' }, { status: 403 }), 502, 'upstream_error'],
+    ['an answer that is not a list', () => Response.json({ role: 'owner' }), 502, 'upstream_error'],
+    ['an answer that is not JSON', () => new Response('<html>'), 502, 'upstream_error'],
+    [
+      'a network failure',
+      () => Promise.reject(new TypeError('fetch failed')),
+      502,
+      'upstream_error',
+    ],
+    [
+      'a timeout',
+      () => Promise.reject(new DOMException('timed out', 'TimeoutError')),
+      504,
+      'upstream_timeout',
+    ],
+  ])('fails closed on %s from the membership check', async (_, answer, status, code) => {
+    membership = answer;
+    const response = await send('/v1/generate');
+    expect(response.status).toBe(status);
+    expect((await errorOf(response)).code).toBe(code);
+    expect(geminiCalls()).toHaveLength(0);
+    expect(testing.authCache.size).toBe(0);
+  });
+
+  it('remembers a member with the sign-in, and does not remember a refusal', async () => {
+    members = new Set();
+    expect((await send('/v1/generate')).status).toBe(403);
+    expect(testing.authCache.size).toBe(0);
+    members = new Set([`${COMPANY} ${USER_1}`]);
+    expect((await send('/v1/generate')).status).toBe(200);
+    expect((await send('/v1/generate')).status).toBe(200);
+    expect(authCalls()).toHaveLength(2);
+    expect(memberCalls()).toHaveLength(2);
+    expect(logLines().map((line) => line.auth)).toEqual(['checked', 'checked', 'cache']);
+  });
+
+  it('asks again when COMPANY_ID changes', async () => {
+    members.add(`other-company-0001 ${USER_1}`);
+    await send('/v1/generate');
+    await send('/v1/generate', { env: makeEnv({ COMPANY_ID: 'other-company-0001' }) });
+    expect(memberCalls()).toHaveLength(2);
+    members = new Set();
+    // A token remembered for one company is not trusted for another.
+    const response = await send('/v1/generate', {
+      env: makeEnv({ COMPANY_ID: 'third-company-01' }),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('counts a non-member in the rate limit before asking about membership', async () => {
+    members = new Set();
+    const limit = vi.fn(async () => ({ success: false }));
+    const response = await send('/v1/generate', { env: makeEnv({ AI_RATE_LIMITER: { limit } }) });
+    expect(response.status).toBe(429);
+    expect(limit).toHaveBeenCalledWith({ key: USER_1 });
+    expect(memberCalls()).toHaveLength(0);
+  });
+
+  it('refuses a user id from Supabase that is not a UUID, before it goes in a URL', async () => {
+    users.set(TOKEN, { id: `${USER_1}&company_id=eq.anything`, is_anonymous: false });
+    const response = await send('/v1/generate');
+    expect(response.status).toBe(401);
+    expect(memberCalls()).toHaveLength(0);
   });
 });
 
@@ -720,6 +890,7 @@ describe('request limits and fields', () => {
       temperature: 0.2,
       responseMimeType: 'application/json',
       maxOutputTokens: 1024,
+      candidateCount: 1,
     });
     expect(sent.tools).toEqual(body.tools);
     expect(sent.toolConfig).toEqual(body.toolConfig);
@@ -803,6 +974,350 @@ describe('request limits and fields', () => {
   });
 });
 
+describe('what is sent to Google is rebuilt from allowlists', () => {
+  const ask = (body) => send('/v1/generate', { body });
+  const withConfig = (generationConfig) => ({ ...question, generationConfig });
+
+  async function refused(body, message) {
+    const response = await ask(body);
+    expect(response.status).toBe(400);
+    const error = await errorOf(response);
+    expect(error.code).toBe('bad_request');
+    if (message) expect(error.message).toMatch(message);
+    return error;
+  }
+
+  afterEach(() => {
+    // Nothing refused may have reached Google.
+    for (const call of geminiCalls()) {
+      expect(call.body).not.toMatch(
+        /file_?[dD]ata|_count|max_output|media_resolution|MEDIA_RESOLUTION_HIGH/,
+      );
+    }
+  });
+
+  it.each([
+    ['file_data', { file_data: { file_uri: 'https://www.youtube.com/watch?v=x' } }],
+    ['fileData', { fileData: { fileUri: 'https://www.youtube.com/watch?v=x' } }],
+    ['inline_data', { inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' } }],
+    ['videoMetadata', { text: 'x', videoMetadata: { startOffset: '0s' } }],
+    ['executableCode', { executableCode: { language: 'PYTHON', code: 'print(1)' } }],
+    ['codeExecutionResult', { codeExecutionResult: { outcome: 'OUTCOME_OK' } }],
+    [
+      'per-part mediaResolution',
+      { text: 'x', mediaResolution: { level: 'MEDIA_RESOLUTION_HIGH' } },
+    ],
+    ['per-part media_resolution', { text: 'x', media_resolution: 'MEDIA_RESOLUTION_HIGH' }],
+    ['thought_signature', { text: 'x', thought_signature: 'abc' }],
+    ['function_call', { function_call: { name: 'find_invoice' } }],
+  ])('refuses a part with %s, in contents', async (_, part) => {
+    await refused({ contents: [{ role: 'user', parts: [{ text: 'summarise' }, part] }] });
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ['file_data', { file_data: { file_uri: 'https://www.youtube.com/watch?v=x' } }],
+    ['fileData', { fileData: { fileUri: 'https://example.com/a.pdf' } }],
+    ['inlineData', { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } }],
+    ['a snake_case text key', { text: 'x', text_: 'y' }],
+  ])('refuses a systemInstruction part with %s (text only)', async (_, part) => {
+    await refused({ ...question, systemInstruction: { parts: [part] } });
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('refuses file links inside a function response', async () => {
+    await refused({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'find_invoice',
+                response: { ok: true },
+                parts: [{ fileData: { fileUri: 'https://www.youtube.com/watch?v=x' } }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('refuses unknown fields on a content item, and roles other than user and model', async () => {
+    await refused({ contents: [{ role: 'user', parts: [{ text: 'x' }], extra_parts: [] }] });
+    await refused({ contents: [{ role: 'system', parts: [{ text: 'x' }] }] }, /role/);
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('refuses a __proto__ key instead of passing it on', async () => {
+    const response = await send('/v1/generate', {
+      body: '{"contents":[{"parts":[{"text":"x","__proto__":{"fileData":{"fileUri":"u"}}}]}]}',
+    });
+    expect(response.status).toBe(400);
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('refuses candidate_count, and always asks for exactly one candidate', async () => {
+    await refused(withConfig({ candidate_count: 8 }), /candidate_count/);
+    expect(geminiCalls()).toHaveLength(0);
+    await ask(withConfig({ candidateCount: 8 }));
+    await ask(withConfig({ temperature: 1 }));
+    await ask(question);
+    expect(geminiCalls().map((_, i) => geminiBody(i).generationConfig.candidateCount)).toEqual([
+      1, 1, 1,
+    ]);
+  });
+
+  it('refuses max_output_tokens next to maxOutputTokens, in either order', async () => {
+    for (const json of [
+      '{"contents":[{"parts":[{"text":"x"}]}],"generationConfig":{"maxOutputTokens":8192,"max_output_tokens":65536}}',
+      '{"contents":[{"parts":[{"text":"x"}]}],"generationConfig":{"max_output_tokens":65536,"maxOutputTokens":8192}}',
+      '{"contents":[{"parts":[{"text":"x"}]}],"generationConfig":{"max_output_tokens":65536}}',
+    ]) {
+      const response = await send('/v1/generate', { body: json });
+      expect(response.status).toBe(400);
+      expect((await errorOf(response)).message).toMatch(/max_output_tokens/);
+    }
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('sends maxOutputTokens once, capped, even when the request repeats it', async () => {
+    const json =
+      '{"contents":[{"parts":[{"text":"x"}]}],"generationConfig":{"maxOutputTokens":1,"maxOutputTokens":99999}}';
+    expect((await send('/v1/generate', { body: json })).status).toBe(200);
+    const sent = geminiCalls()[0].body;
+    expect(sent.match(/maxOutputTokens/g)).toHaveLength(1);
+    expect(JSON.parse(sent).generationConfig.maxOutputTokens).toBe(1024);
+  });
+
+  it.each([
+    'responseModalities',
+    'speechConfig',
+    'responseLogprobs',
+    'enableEnhancedCivicAnswers',
+    'top_p',
+    'response_mime_type',
+    'thinking_config',
+  ])('refuses generationConfig.%s', async (key) => {
+    await refused(withConfig({ [key]: ['AUDIO'] }), new RegExp(key));
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('keeps the generationConfig fields the app may use', async () => {
+    const generationConfig = {
+      temperature: 0.4,
+      topP: 0.9,
+      topK: 20,
+      maxOutputTokens: 500,
+      stopSequences: ['END'],
+      responseMimeType: 'application/json',
+      responseSchema: { type: 'OBJECT', properties: { total_amount: { type: 'NUMBER' } } },
+      responseJsonSchema: { type: 'object' },
+      thinkingConfig: { thinkingLevel: 'low', includeThoughts: false },
+      seed: 7,
+      presencePenalty: 0.1,
+      frequencyPenalty: 0.2,
+      mediaResolution: 'MEDIA_RESOLUTION_LOW',
+    };
+    expect((await ask(withConfig(generationConfig))).status).toBe(200);
+    expect(geminiBody().generationConfig).toEqual({ ...generationConfig, candidateCount: 1 });
+  });
+
+  it('caps thinkingBudget at MAX_OUTPUT_TOKENS and refuses unknown thinking fields', async () => {
+    await ask(withConfig({ thinkingConfig: { thinkingBudget: 50_000 } }));
+    await ask(withConfig({ thinkingConfig: { thinkingBudget: -1 } }));
+    await ask(withConfig({ thinkingConfig: { thinkingBudget: 0 } }));
+    expect(
+      geminiCalls().map((_, i) => geminiBody(i).generationConfig.thinkingConfig.thinkingBudget),
+    ).toEqual([1024, -1, 0]);
+    await refused(withConfig({ thinkingConfig: { thinking_budget: 50_000 } }));
+    await refused(withConfig({ thinkingConfig: { thinkingBudget: -2 } }));
+    await refused(withConfig({ thinkingConfig: { thinkingBudget: 1.5 } }));
+    await refused(withConfig({ thinkingConfig: 'high' }));
+    expect(geminiCalls()).toHaveLength(3);
+  });
+
+  it.each(['MEDIA_RESOLUTION_HIGH', 'MEDIA_RESOLUTION_ULTRA_HIGH', 'high', 1])(
+    'refuses mediaResolution %j',
+    async (mediaResolution) => {
+      await refused(withConfig({ mediaResolution }), /mediaResolution/);
+      expect(geminiCalls()).toHaveLength(0);
+    },
+  );
+
+  it('allows LOW and MEDIUM mediaResolution', async () => {
+    for (const mediaResolution of ['MEDIA_RESOLUTION_LOW', 'MEDIA_RESOLUTION_MEDIUM']) {
+      expect((await ask(withConfig({ mediaResolution }))).status).toBe(200);
+    }
+  });
+
+  it('passes text, function calls, function responses and thought signatures through', async () => {
+    const contents = [
+      { role: 'user', parts: [{ text: 'Find invoice 12' }] },
+      {
+        role: 'model',
+        parts: [
+          {
+            functionCall: { id: 'c1', name: 'find_invoice', args: { number: '12', due_date: 'x' } },
+            thoughtSignature: 'c2lnbmF0dXJl',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          { functionResponse: { id: 'c1', name: 'find_invoice', response: { found: false } } },
+        ],
+      },
+      { role: 'model', parts: [{ text: 'thinking', thought: true }, { text: '' }] },
+    ];
+    expect((await ask({ contents })).status).toBe(200);
+    expect(geminiBody().contents).toEqual(contents);
+  });
+
+  it.each([
+    [{ functionCall: { name: 'f', args: {}, will_continue: true } }],
+    [{ functionCall: { args: {} } }],
+    [{ functionCall: { name: 'f', args: 'x' } }],
+    [{ functionResponse: { name: 'f', response: {}, scheduling: 'SILENT' } }],
+    [{ functionResponse: { name: 'f', response: 'done' } }],
+    [{ text: 42 }],
+    [{ thought: 'yes' }],
+    [{ thoughtSignature: 5 }],
+  ])('refuses the part %j', async (part) => {
+    await refused({ contents: [{ role: 'model', parts: [part] }] });
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it('drops unknown top-level fields, snake_case spellings included', async () => {
+    const body = {
+      ...question,
+      generation_config: { max_output_tokens: 65_536, candidate_count: 8 },
+      system_instruction: { parts: [{ file_data: { file_uri: 'https://example.com/a.pdf' } }] },
+      safety_settings: [{ category: 'x', threshold: 'BLOCK_NONE' }],
+      tool_config: { retrieval_config: {} },
+      cached_content: 'cachedContents/someone-elses',
+    };
+    expect((await ask(body)).status).toBe(200);
+    expect(Object.keys(geminiBody()).sort()).toEqual(['contents', 'generationConfig']);
+    expect(geminiBody().generationConfig).toEqual({ maxOutputTokens: 1024, candidateCount: 1 });
+  });
+
+  it('checks safetySettings, function declarations and toolConfig field by field', async () => {
+    const good = {
+      ...question,
+      safetySettings: [{ category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' }],
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: 'find_invoice',
+              description: 'Finds one.',
+              parameters: { type: 'OBJECT', properties: { invoice_number: { type: 'STRING' } } },
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['find_invoice'] },
+      },
+    };
+    expect((await ask(good)).status).toBe(200);
+    const sent = geminiBody();
+    expect(sent.safetySettings).toEqual(good.safetySettings);
+    expect(sent.tools).toEqual(good.tools);
+    expect(sent.toolConfig).toEqual(good.toolConfig);
+
+    await refused({ ...question, safetySettings: [{ category: 'x', threshold: 'y', extra: 1 }] });
+    await refused({ ...question, safetySettings: ['x'] });
+    await refused({
+      ...question,
+      tools: [{ functionDeclarations: [{ name: 'f', google_search: {} }] }],
+    });
+    await refused({ ...question, tools: [{ functionDeclarations: [{ description: 'no name' }] }] });
+    await refused({ ...question, tools: [{ function_declarations: [{ name: 'f' }] }] });
+    await refused({ ...question, toolConfig: { retrievalConfig: { languageCode: 'en' } } });
+    await refused({ ...question, toolConfig: { function_calling_config: { mode: 'ANY' } } });
+    await refused({
+      ...question,
+      toolConfig: { functionCallingConfig: { mode: 'ANY', allowed_function_names: ['f'] } },
+    });
+    expect(geminiCalls()).toHaveLength(1);
+  });
+});
+
+describe('inline files', () => {
+  const picture = { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } };
+  const withParts = (parts) => ({ contents: [{ role: 'user', parts }] });
+
+  it('accepts up to 10 inline files in a request, and refuses an 11th', async () => {
+    const ten = Array.from({ length: 10 }, () => picture);
+    expect((await send('/v1/generate', { body: withParts([{ text: 'x' }, ...ten]) })).status).toBe(
+      200,
+    );
+    // Counted across the whole conversation, not per message.
+    const spread = {
+      contents: [
+        { role: 'user', parts: ten.slice(0, 6) },
+        { role: 'model', parts: [{ text: 'ok' }] },
+        { role: 'user', parts: [...ten.slice(0, 5), { text: 'and these' }] },
+      ],
+    };
+    const response = await send('/v1/generate', { body: spread });
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).message).toMatch(/at most 10 files/);
+    expect(geminiCalls()).toHaveLength(1);
+  });
+
+  it('refuses a request made of many tiny pictures', async () => {
+    const tiny = Array.from({ length: 1_794 }, () => picture);
+    const response = await send('/v1/generate', {
+      body: { ...withParts(tiny), generationConfig: { mediaResolution: 'MEDIA_RESOLUTION_HIGH' } },
+    });
+    expect(response.status).toBe(400);
+    expect(geminiCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'application/pdf',
+    'text/plain',
+  ])('accepts %s', async (mimeType) => {
+    const body = withParts([{ inlineData: { mimeType, data: 'aGVsbG8=' } }]);
+    expect((await send('/v1/generate', { body })).status).toBe(200);
+    expect(geminiBody().contents[0].parts[0].inlineData).toEqual({ mimeType, data: 'aGVsbG8=' });
+  });
+
+  it('sends the type in lower case', async () => {
+    const body = withParts([{ inlineData: { mimeType: 'IMAGE/PNG', data: 'aGVsbG8=' } }]);
+    expect((await send('/v1/generate', { body })).status).toBe(200);
+    expect(geminiBody().contents[0].parts[0].inlineData.mimeType).toBe('image/png');
+  });
+
+  it.each([
+    [{ mimeType: 'video/mp4', data: 'AAAA' }],
+    [{ mimeType: 'audio/mpeg', data: 'AAAA' }],
+    [{ mimeType: 'application/zip', data: 'AAAA' }],
+    [{ mimeType: 'image/png' }],
+    [{ mimeType: 'image/png', data: '' }],
+    [{ mimeType: 'image/png', data: 42 }],
+    [{ data: 'AAAA' }],
+    [{ mime_type: 'image/png', data: 'AAAA' }],
+    [{ mimeType: 'image/png', data: 'AAAA', displayName: 'x.png' }],
+    ['AAAA'],
+  ])('refuses inlineData %j', async (inlineData) => {
+    const response = await send('/v1/generate', { body: withParts([{ inlineData }]) });
+    expect(response.status).toBe(400);
+    expect(geminiCalls()).toHaveLength(0);
+  });
+});
+
 describe('rate limit', () => {
   it('answers 429 with Retry-After when the per-user limit is reached, without calling Google', async () => {
     const limit = vi.fn(async () => ({ success: false }));
@@ -811,7 +1326,7 @@ describe('rate limit', () => {
     expect(response.headers.get('Retry-After')).toBe('60');
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(APP);
     expect((await errorOf(response)).code).toBe('rate_limited');
-    expect(limit).toHaveBeenCalledWith({ key: 'user-1' });
+    expect(limit).toHaveBeenCalledWith({ key: USER_1 });
     expect(geminiCalls()).toHaveLength(0);
   });
 
@@ -1035,7 +1550,7 @@ describe('Google errors', () => {
 
   it('times out a slow answer with upstream_timeout', async () => {
     gemini = hang;
-    const response = await send('/v1/generate', { env: makeEnv({ UPSTREAM_TIMEOUT_MS: '30' }) });
+    const response = await send('/v1/generate', { env: makeEnv({ GENERATE_TIMEOUT_MS: '30' }) });
     expect(response.status).toBe(504);
     expect((await errorOf(response)).code).toBe('upstream_timeout');
     expect(geminiCalls()[0].signal.aborted).toBe(true);
@@ -1043,8 +1558,65 @@ describe('Google errors', () => {
 
   it('times out an answer whose body stalls', async () => {
     gemini = (call) => new Response(sseBody([], { signal: call.signal, then: 'hang' }));
-    const response = await send('/v1/generate', { env: makeEnv({ UPSTREAM_TIMEOUT_MS: '30' }) });
+    const response = await send('/v1/generate', { env: makeEnv({ GENERATE_TIMEOUT_MS: '30' }) });
     expect(response.status).toBe(504);
+  });
+
+  it('gives /v1/generate 90 seconds for the whole answer, and streams 30 to start', async () => {
+    const delays = [];
+    const real = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...rest) => {
+      delays.push(ms);
+      return real(fn, ms, ...rest);
+    });
+    await send('/v1/generate');
+    expect(delays).toContain(90_000);
+    expect(delays).not.toContain(30_000);
+    delays.length = 0;
+    gemini = (call) => sseResponse(STREAM_EVENTS, call);
+    await (await send('/v1/stream')).text();
+    expect(delays).toContain(30_000);
+    expect(delays).not.toContain(90_000);
+  });
+
+  it('times /v1/generate by GENERATE_TIMEOUT_MS only, including reading the answer', async () => {
+    const slowly = (call) =>
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve(new Response(sseBody([JSON.stringify(geminiAnswer())], call))),
+          60,
+        ),
+      );
+    gemini = slowly;
+    const fast = makeEnv({ STREAM_START_TIMEOUT_MS: '10', GENERATE_TIMEOUT_MS: '2000' });
+    expect((await send('/v1/generate', { env: fast })).status).toBe(200);
+
+    // A body that starts at once but takes longer than the limit to finish.
+    gemini = (call) => {
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('{"candidates":'));
+            call.signal.addEventListener('abort', () =>
+              controller.error(new DOMException('aborted', 'AbortError')),
+            );
+          },
+        }),
+      );
+    };
+    const response = await send('/v1/generate', { env: makeEnv({ GENERATE_TIMEOUT_MS: '40' }) });
+    expect(response.status).toBe(504);
+    expect((await errorOf(response)).code).toBe('upstream_timeout');
+  });
+
+  it('times the start of /v1/stream by STREAM_START_TIMEOUT_MS only', async () => {
+    gemini = (call) =>
+      new Promise((resolve) => setTimeout(() => resolve(sseResponse(STREAM_EVENTS, call)), 60));
+    const env = makeEnv({ GENERATE_TIMEOUT_MS: '10', STREAM_START_TIMEOUT_MS: '2000' });
+    const response = await send('/v1/stream', { env });
+    expect(response.status).toBe(200);
+    expect(await chunksOf(response)).toEqual(STREAM_EVENTS);
   });
 
   it('stops waiting for Google when the app goes away', async () => {
@@ -1135,14 +1707,14 @@ describe('POST /v1/stream', () => {
 
   it('times out when Google sends nothing at all, as JSON', async () => {
     gemini = hang;
-    const response = await send('/v1/stream', { env: makeEnv({ UPSTREAM_TIMEOUT_MS: '30' }) });
+    const response = await send('/v1/stream', { env: makeEnv({ STREAM_START_TIMEOUT_MS: '30' }) });
     expect(response.status).toBe(504);
     expect((await errorOf(response)).code).toBe('upstream_timeout');
   });
 
   it('times out when Google answers but never sends the first byte, as JSON', async () => {
     gemini = (call) => sseResponse([], call, 'hang');
-    const response = await send('/v1/stream', { env: makeEnv({ UPSTREAM_TIMEOUT_MS: '30' }) });
+    const response = await send('/v1/stream', { env: makeEnv({ STREAM_START_TIMEOUT_MS: '30' }) });
     expect(response.status).toBe(504);
     expect((await errorOf(response)).code).toBe('upstream_timeout');
     expect(geminiCalls()[0].signal.aborted).toBe(true);
